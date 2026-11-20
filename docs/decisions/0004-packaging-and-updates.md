@@ -75,6 +75,15 @@ Date: 2026-11-20
 - Revisit if Velopack 1.3 becomes stable (pin both sides together), if `GithubSource` rate limits bite, or if a free signing route appears.
 - To verify in M1 on real runners and a real release, because it cannot be done locally: `vpk pack` unsigned on macOS and whether the ad-hoc signature survives packaging (or `--signAppIdentity -`); first launch and self-update on macOS arm64 and x64; AppImage install, desktop entry and self-update; `GithubSource` against real release assets; `vpk upload --merge` from one job for four channels; both `install` scripts; SmartScreen on a browser download.
 
+## Amendments from the M1 pipeline (2026-11-20)
+Read in the vpk 1.2.161 source and observed with a local Windows pack; the macOS and Linux points still need the first real run.
+- Exact asset names: `Acta-win-x64-Setup.exe`, `Acta-win-x64-Portable.zip`, `Acta-osx-arm64-Portable.zip`, `Acta-osx-x64-Portable.zip`, `Acta-linux-x64.AppImage`, `Acta-<v>-<ch>-full.nupkg`, `Acta-<v>-<ch>-delta.nupkg`, `releases.<ch>.json`. `vpk upload github` does not upload `assets.<ch>.json` or `RELEASES-<ch>`; they stay build-side.
+- macOS signing has to happen inside `vpk pack` (`--signAppIdentity -`): vpk copies `UpdateMac` into the bundle after staging, which invalidates a signature made before. vpk then runs `codesign -s - -f --timestamp --options runtime --entitlements <its default> --deep`. `scripts/package.sh` verifies the signature of the bundle inside the portable zip and fails the build otherwise.
+- Bundle id `io.github.alegzandr.acta` (a domain the project controls) instead of `com.acta.app`.
+- The Linux AppImage is built by vpk with `mksquashfs` (`squashfs-tools` on the runner).
+- `release.yml` also runs as a dry run (no release, no attestation) on pushes to `main` and on `workflow_dispatch`; this is where a broken release build of any channel, including `osx-x64`, is caught before a tag, and it fills the cargo cache that tag builds read.
+- Yanking: `GithubSource` is created with `prerelease = false` and skips pre-releases and drafts, so marking a release as pre-release hides it from clients. See `docs/releasing.md`.
+
 ## Evidence
 Spike: `spikes/updater` (Windows 11 26300, rustc 1.97.1 MSVC, velopack 1.2.161, vpk 1.2.161, .NET SDK 10.0.302). `pack.ps1 <version>` builds and packages; the feed was the `releases/` folder served on `http://127.0.0.1:8765/` through `HttpSource`. Observed on Windows only:
 - `vpk pack` took under 1 s and produced `ActaSpike-0.0.1-win-x64-full.nupkg`, `ActaSpike-win-x64-Setup.exe` (11.6 MB for a 3.4 MB app), `ActaSpike-win-x64-Portable.zip`, `releases.win-x64.json`; packing 0.0.2 in the same folder added a 2.9 kB delta. Without `--runtime` vpk assumes x86.
