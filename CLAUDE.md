@@ -8,7 +8,7 @@ Local-first desktop app that complements Claude Code: a project tracker for the 
 - `docs/decisions/` - ADRs. One short file per decision; read the relevant ones before changing architecture.
 - `.claude/agents/` - the team: product-designer, gpui-engineer, integration-engineer, release-engineer, reviewer.
 - `spikes/` - throwaway experiments backing the ADRs. Not part of the workspace, never depended upon.
-- Building the encrypted storage on Windows needs a native Perl for vendored OpenSSL (ADR 0003). Git's Perl does not work. On the lead's machine a portable Strawberry Perl lives at `F:\devcta-tools\strawberry-perl`; set `OPENSSL_SRC_PERL` to its `perlin\perl.exe` in the shell that runs cargo. CI runners already have Perl.
+- Building the encrypted storage on Windows needs a native Perl for vendored OpenSSL (ADR 0003). Git's Perl does not work. On the lead's machine a portable Strawberry Perl lives at `F:/dev/acta-tools/strawberry-perl`; set `OPENSSL_SRC_PERL` to its `perl/bin/perl.exe` in the shell that runs cargo. CI runners already have Perl.
 
 ## Conventions
 - Everything in English: code, docs, commits.
