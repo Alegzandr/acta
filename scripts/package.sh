@@ -87,6 +87,9 @@ done
 licenses=dist/licenses
 [ -s "$licenses/THIRD-PARTY-RUST.txt" ] || die "$licenses is missing or incomplete; run scripts/licenses.sh first"
 command -v vpk >/dev/null 2>&1 || die "vpk not found; run: dotnet tool install -g vpk --version 1.2.161"
+# A vpk that cannot start (no .NET 10 runtime where its launcher looks: set DOTNET_ROOT)
+# must stop here, not be mistaken below for "no previous release".
+vpk --help >/dev/null || die "vpk is installed but does not start; see its message above"
 
 echo "Packaging $PACK_ID $version for $channel from $bin_dir into $out"
 
