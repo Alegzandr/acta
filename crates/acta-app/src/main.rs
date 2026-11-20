@@ -322,17 +322,14 @@ async fn wait_for_launch(
             LaunchStep::Apply => {
                 let Some(apply) = apply else { continue };
                 cx.update(|cx| {
-                    for window in cx.windows() {
-                        let _ = window.update(cx, |_, window, _| window.remove_window());
-                    }
-                    settings::flush(cx);
-                    // Returns only if the apply failed; Velopack applies the
-                    // package at the next launch. Open as the app is, in
-                    // this same update, so the app never sits windowless.
-                    if let Err(err) = apply() {
-                        log::line(&format!("update: {err}; opening without it"));
-                        open_main(options, cx);
-                    }
+                    apply_at_launch(
+                        apply,
+                        &mut GpuiLaunch {
+                            options,
+                            updater,
+                            cx,
+                        },
+                    );
                 });
                 return;
             }
@@ -368,6 +365,51 @@ async fn wait_for_launch(
     }
 }
 
+/// What [`apply_at_launch`] does to the app, so its order can be tested
+/// without a display.
+trait Launch {
+    fn flush_preferences(&mut self);
+    fn open_main_window(&mut self);
+    fn close_updater_window(&mut self);
+}
+
+struct GpuiLaunch<'a> {
+    options: Options,
+    updater: Option<AnyWindowHandle>,
+    cx: &'a mut App,
+}
+
+impl Launch for GpuiLaunch<'_> {
+    fn flush_preferences(&mut self) {
+        settings::flush(self.cx);
+    }
+
+    fn open_main_window(&mut self) {
+        open_main(self.options, self.cx);
+    }
+
+    fn close_updater_window(&mut self) {
+        if let Some(handle) = self.updater.take() {
+            let _ = handle.update(self.cx, |_, window, _| window.remove_window());
+        }
+    }
+}
+
+/// Run a posted apply on the UI thread: write the preferences, then apply,
+/// which ends the process on success. No window is closed first: closing
+/// the last one queues GPUI's quit, which a failed apply could not take
+/// back. On failure (Velopack applies the package at the next launch) the
+/// main window opens first and the updater window closes after it, as when
+/// no update is applied, so the app is never without a window.
+fn apply_at_launch(apply: update::Apply, launch: &mut impl Launch) {
+    launch.flush_preferences();
+    if let Err(err) = apply() {
+        log::line(&format!("update: {err}; opening without it"));
+        launch.open_main_window();
+        launch.close_updater_window();
+    }
+}
+
 /// Open the main window (or the specimen). Without a window there is
 /// nothing to show an error in, so a failure is logged and the app quits.
 fn open_main(options: Options, cx: &mut App) {
@@ -393,6 +435,61 @@ fn open_main(options: Options, cx: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The windows of a launch with the updater window showing, and every
+    /// call in order. The app quits when its last window closes.
+    struct FakeLaunch {
+        windows: usize,
+        quit: bool,
+        calls: Vec<&'static str>,
+    }
+
+    impl Launch for FakeLaunch {
+        fn flush_preferences(&mut self) {
+            self.calls.push("flush");
+        }
+
+        fn open_main_window(&mut self) {
+            self.calls.push("open main");
+            self.windows += 1;
+        }
+
+        fn close_updater_window(&mut self) {
+            self.calls.push("close updater");
+            self.windows -= 1;
+            self.quit |= self.windows == 0;
+        }
+    }
+
+    fn launch_with_updater() -> FakeLaunch {
+        FakeLaunch {
+            windows: 1,
+            quit: false,
+            calls: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_failed_apply_opens_the_main_window_and_never_quits() {
+        let mut launch = launch_with_updater();
+        apply_at_launch(
+            Box::new(|| Err("apply failed: other error".into())),
+            &mut launch,
+        );
+        assert_eq!(launch.calls, ["flush", "open main", "close updater"]);
+        assert_eq!(launch.windows, 1, "the main window is open");
+        assert!(!launch.quit);
+    }
+
+    #[test]
+    fn preferences_are_written_before_the_apply_and_no_window_is_closed() {
+        let mut launch = launch_with_updater();
+        // A real apply exits the process; this one records that it ran.
+        apply_at_launch(Box::new(|| Ok(())), &mut launch);
+        assert_eq!(launch.calls, ["flush"]);
+        assert_eq!(launch.windows, 1);
+        assert!(!launch.quit);
+    }
 
     #[test]
     fn options_default_to_the_product_and_read_the_aids() {

@@ -120,7 +120,7 @@ impl Shell {
         let content = Content::Workbench {
             page: start.page,
             first_run: cx.new(|_| FirstRun),
-            settings: cx.new(SettingsPage::new),
+            settings: cx.new(|cx| SettingsPage::new(window, cx)),
         };
         Self::new(content, start.sidebar, window, cx)
     }

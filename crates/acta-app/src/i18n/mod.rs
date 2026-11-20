@@ -90,11 +90,11 @@ macro_rules! catalogue {
 
         impl Key {
             /// Every key, in catalogue order.
-            #[allow(dead_code, reason = "read by the tests against DESIGN.md")]
+            #[cfg(test)]
             pub const ALL: &'static [Key] = &[ $( Key::$variant, )* ];
 
             /// The key as DESIGN.md writes it, e.g. `common.cancel`.
-            #[allow(dead_code, reason = "read by the tests against DESIGN.md")]
+            #[cfg(test)]
             pub fn id(self) -> &'static str {
                 match self {
                     $( Key::$variant => $id, )*

@@ -15,8 +15,8 @@
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     App, Context, Div, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent, ParentElement,
-    Render, Stateful, StatefulInteractiveElement, Styled, Window, anchored, deferred, div, point,
-    px, transparent_black,
+    Render, Stateful, StatefulInteractiveElement, Styled, Subscription, Window, anchored, deferred,
+    div, point, px, transparent_black,
 };
 
 use crate::first_run::COLUMN_MAX;
@@ -33,8 +33,11 @@ const THEMES: [ThemeSetting; 3] = [
 ];
 
 /// The theme `key` moves to from `current` on the segmented control, if any.
-/// The ends do not wrap.
-fn theme_after_key(current: ThemeSetting, key: &str) -> Option<ThemeSetting> {
+/// The ends do not wrap; a key pressed with a modifier is not ours.
+fn theme_after_key(current: ThemeSetting, key: &str, modified: bool) -> Option<ThemeSetting> {
+    if modified {
+        return None;
+    }
     let at = THEMES.iter().position(|theme| *theme == current)?;
     let to = match key {
         "left" => at.checked_sub(1)?,
@@ -58,7 +61,18 @@ enum MenuKey {
 }
 
 /// `selected` is the current value's item, `highlighted` the open menu's.
-fn menu_key(open: bool, selected: usize, highlighted: usize, count: usize, key: &str) -> MenuKey {
+/// Keys pressed with a modifier are not the menu's.
+fn menu_key(
+    open: bool,
+    selected: usize,
+    highlighted: usize,
+    count: usize,
+    key: &str,
+    modified: bool,
+) -> MenuKey {
+    if modified {
+        return MenuKey::Ignore;
+    }
     match (open, key) {
         (false, "enter" | "space" | "down") => MenuKey::Open(selected),
         (false, _) => MenuKey::Ignore,
@@ -75,15 +89,25 @@ pub struct SettingsPage {
     language_focus: FocusHandle,
     language_menu_open: bool,
     language_highlighted: usize,
+    _language_blur: Subscription,
 }
 
 impl SettingsPage {
-    pub fn new(cx: &mut Context<Self>) -> Self {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let language_focus = cx.focus_handle();
+        // The menu belongs to its control: it closes when focus leaves it.
+        let language_blur = cx.on_blur(&language_focus, window, |page, _, cx| {
+            if page.language_menu_open {
+                page.language_menu_open = false;
+                cx.notify();
+            }
+        });
         Self {
             theme_focus: cx.focus_handle(),
-            language_focus: cx.focus_handle(),
+            language_focus,
             language_menu_open: false,
             language_highlighted: 0,
+            _language_blur: language_blur,
         }
     }
 
@@ -185,7 +209,11 @@ impl SettingsPage {
         });
         focus_ring("theme-control", &self.theme_focus, RADIUS_SM, t)
             .on_key_down(move |event: &KeyDownEvent, _, cx| {
-                if let Some(next) = theme_after_key(current, &event.keystroke.key) {
+                if let Some(next) = theme_after_key(
+                    current,
+                    &event.keystroke.key,
+                    event.keystroke.modifiers.modified(),
+                ) {
                     settings::set_theme(next, cx);
                     cx.stop_propagation();
                 }
@@ -238,6 +266,7 @@ impl SettingsPage {
                     page.language_highlighted,
                     Locale::ALL.len(),
                     &event.keystroke.key,
+                    event.keystroke.modifiers.modified(),
                 );
                 match key {
                     MenuKey::Open(index) => {
@@ -370,28 +399,41 @@ mod tests {
     #[test]
     fn arrows_move_between_theme_segments_without_wrapping() {
         use ThemeSetting::*;
-        assert_eq!(theme_after_key(System, "right"), Some(Light));
-        assert_eq!(theme_after_key(Light, "right"), Some(Dark));
-        assert_eq!(theme_after_key(Dark, "right"), None);
-        assert_eq!(theme_after_key(Dark, "left"), Some(Light));
-        assert_eq!(theme_after_key(System, "left"), None);
-        assert_eq!(theme_after_key(System, "a"), None);
+        assert_eq!(theme_after_key(System, "right", false), Some(Light));
+        assert_eq!(theme_after_key(Light, "right", false), Some(Dark));
+        assert_eq!(theme_after_key(Dark, "right", false), None);
+        assert_eq!(theme_after_key(Dark, "left", false), Some(Light));
+        assert_eq!(theme_after_key(System, "left", false), None);
+        assert_eq!(theme_after_key(System, "a", false), None);
+        assert_eq!(
+            theme_after_key(System, "right", true),
+            None,
+            "Ctrl+Right is not ours"
+        );
     }
 
     #[test]
     fn the_dropdown_opens_moves_chooses_and_closes_by_keyboard() {
         // Closed: Enter, Space and Down open it on the current value.
         for key in ["enter", "space", "down"] {
-            assert_eq!(menu_key(false, 1, 0, 2, key), MenuKey::Open(1));
+            assert_eq!(menu_key(false, 1, 0, 2, key, false), MenuKey::Open(1));
         }
-        assert_eq!(menu_key(false, 1, 0, 2, "escape"), MenuKey::Ignore);
+        assert_eq!(menu_key(false, 1, 0, 2, "escape", false), MenuKey::Ignore);
         // Open: the highlight moves and stops at the ends.
-        assert_eq!(menu_key(true, 0, 0, 2, "down"), MenuKey::Highlight(1));
-        assert_eq!(menu_key(true, 0, 1, 2, "down"), MenuKey::Highlight(1));
-        assert_eq!(menu_key(true, 0, 0, 2, "up"), MenuKey::Highlight(0));
-        assert_eq!(menu_key(true, 0, 1, 2, "enter"), MenuKey::Choose(1));
-        assert_eq!(menu_key(true, 0, 1, 2, "space"), MenuKey::Choose(1));
-        assert_eq!(menu_key(true, 0, 1, 2, "escape"), MenuKey::Close);
-        assert_eq!(menu_key(true, 0, 1, 2, "x"), MenuKey::Ignore);
+        assert_eq!(
+            menu_key(true, 0, 0, 2, "down", false),
+            MenuKey::Highlight(1)
+        );
+        assert_eq!(
+            menu_key(true, 0, 1, 2, "down", false),
+            MenuKey::Highlight(1)
+        );
+        assert_eq!(menu_key(true, 0, 0, 2, "up", false), MenuKey::Highlight(0));
+        assert_eq!(menu_key(true, 0, 1, 2, "enter", false), MenuKey::Choose(1));
+        assert_eq!(menu_key(true, 0, 1, 2, "space", false), MenuKey::Choose(1));
+        assert_eq!(menu_key(true, 0, 1, 2, "escape", false), MenuKey::Close);
+        assert_eq!(menu_key(true, 0, 1, 2, "x", false), MenuKey::Ignore);
+        assert_eq!(menu_key(false, 0, 0, 2, "down", true), MenuKey::Ignore);
+        assert_eq!(menu_key(true, 0, 1, 2, "enter", true), MenuKey::Ignore);
     }
 }

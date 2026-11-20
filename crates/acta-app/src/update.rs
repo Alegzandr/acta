@@ -42,9 +42,11 @@ pub const CHECK_BUDGET: Duration = Duration::from_secs(2);
 /// How long the launch then waits for the download. The ADR only says "slow";
 /// this is long enough for a delta on an ordinary connection.
 pub const DOWNLOAD_BUDGET: Duration = Duration::from_secs(5);
-/// How long the launch waits for a worker that claimed the apply. A working
-/// apply exits the process within moments; past this the window opens anyway.
-pub const APPLY_BUDGET: Duration = Duration::from_secs(15);
+/// How long the launch waits, once the worker has claimed the apply, for it
+/// to post the apply and finish. Nothing slow happens in between (the apply
+/// itself runs on the UI thread), so this only bounds a worker that died or
+/// hung there; past it the launch is ready and the UI decides.
+pub const APPLY_BUDGET: Duration = Duration::from_secs(1);
 
 /// The updater window appears when the main window is not ready this long
 /// after launch (DESIGN.md 6.3).
@@ -201,8 +203,9 @@ pub enum Progress {
     Finished,
 }
 
-/// Wait for the worker within the budgets. Returns when the window should
-/// open; if the worker applies the update the process exits instead.
+/// Wait for the worker within the budgets. Returns when the launch is
+/// decided: either the window may open, or the worker has posted an apply
+/// for the UI thread (see [`LaunchState::take_apply`]).
 pub fn wait_for_launch_decision(
     progress: &Receiver<Progress>,
     gate: &Gate,
@@ -221,10 +224,11 @@ pub fn wait_for_launch_decision(
                     log::line("update: budget spent, opening; it continues in the background");
                     return;
                 }
-                // The worker claimed first and is applying: the process is
-                // about to exit. Only a failed or stuck apply gets past this.
+                // The worker claimed first: it is posting the apply for the
+                // UI thread and finishing, which takes moments. Only a worker
+                // that died or hung there gets past this bound.
                 if progress.recv_timeout(apply_budget) == Err(RecvTimeoutError::Timeout) {
-                    log::line("update: apply did not finish in time, opening");
+                    log::line("update: the worker did not hand over the apply in time");
                 }
                 return;
             }
@@ -476,13 +480,12 @@ mod tests {
     }
 
     #[test]
-    fn launch_waits_while_the_worker_applies() {
+    fn launch_waits_while_the_worker_hands_over_the_apply() {
         let (sender, receiver) = mpsc::channel();
         let gate = Arc::new(Gate::default());
         assert!(gate.claim_apply());
 
-        // Stands in for an apply that fails after a while; a successful one
-        // exits the process and never reports.
+        // Stands in for a worker that posts its apply, then finishes.
         let worker = thread::spawn(move || {
             thread::sleep(SHORT * 3);
             sender.send(Progress::Finished).unwrap();
