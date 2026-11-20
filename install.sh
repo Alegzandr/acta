@@ -51,20 +51,27 @@ cleanup() {
     if [ -n "$tmp" ]; then rm -rf "$tmp"; fi
 }
 
-# Processes of this user running the GUI of the installed bundle. The command line and
-# MCP server never run from the bundle (ADR 0004).
+# Process ids of this user's GUI started from the installed bundle; empty when there is
+# none. The command line and MCP server never run from the bundle (ADR 0004).
+# The executable path is compared as a plain string, not as a pattern: a home directory
+# may contain spaces or characters that mean something in a regular expression.
 acta_pids() {
-    pgrep -u "$(id -u)" -f "^$app/Contents/MacOS/Acta( |\$)" 2>/dev/null
+    ps -x -o pid= -o comm= | ACTA_EXE="$app/Contents/MacOS/Acta" awk '{
+        pid = $1
+        sub(/^[[:space:]]*[0-9]+[[:space:]]+/, "")
+        if ($0 == ENVIRON["ACTA_EXE"]) print pid
+    }'
 }
 
 # Ask a running Acta to terminate and wait for it; fails if it is still there.
 quit_acta() {
-    pids=$(acta_pids) || return 0
+    pids=$(acta_pids)
+    [ -n "$pids" ] || return 0
     echo "Acta is running: closing it to replace it..."
     # shellcheck disable=SC2086 # one argument per process id
     kill $pids 2>/dev/null || true
     waited=0
-    while acta_pids >/dev/null; do
+    while [ -n "$(acta_pids)" ]; do
         [ "$waited" -lt 10 ] || return 1
         sleep 1
         waited=$((waited + 1))
@@ -145,9 +152,11 @@ main() {
             if [ -e "$app" ]; then
                 quit_acta ||
                     die "Acta is still running; quit it and run this installer again (nothing was changed)"
-                mv "$app" "$tmp/previous.app" ||
-                    die "could not move the installed $app aside; nothing was changed"
+                # Set before the move: an interruption right after it must find the
+                # previous app and put it back.
                 previous=$tmp/previous.app
+                mv "$app" "$previous" ||
+                    die "could not move the installed $app aside; nothing was changed"
             fi
             # On failure the EXIT trap puts the previous app back.
             mv "$tmp/unpacked/Acta.app" "$app" || die "could not move Acta.app into $dest_dir"
@@ -178,13 +187,12 @@ main() {
     esac
 
     # This script never touches PATH or a shell profile, so it has no "open a new
-    # terminal" to announce. It only reports a link that is there and cannot be found.
-    if [ -e "$HOME/.local/bin/acta" ]; then
-        case ":${PATH:-}:" in
-            *":$HOME/.local/bin:"*) ;;
-            *) echo "The acta command is in $HOME/.local/bin, which is not on your PATH." ;;
-        esac
-    fi
+    # terminal" to announce. Acta creates the link shortly after it first starts, so it
+    # may not be there yet: only the directory can be checked.
+    case ":${PATH:-}:" in
+        *":$HOME/.local/bin:"*) ;;
+        *) echo "Acta links the acta command into $HOME/.local/bin; add that directory to your PATH to use it." ;;
+    esac
 }
 
 main "$@"
