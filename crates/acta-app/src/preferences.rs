@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 
 use acta_core::paths::{self, BaseDirs, Os};
 
+use crate::i18n::Locale;
 use crate::theme::ThemeSetting;
 
 pub const FILE_NAME: &str = "preferences.json";
@@ -30,6 +31,7 @@ pub const VERSION: u32 = 1;
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Preferences {
     pub theme: ThemeSetting,
+    pub language: Locale,
 }
 
 /// The file as stored. Every field but the version may be missing (it then
@@ -39,6 +41,34 @@ struct Stored {
     version: u32,
     #[serde(default)]
     theme: StoredTheme,
+    #[serde(default)]
+    language: StoredLanguage,
+}
+
+#[derive(Clone, Copy, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum StoredLanguage {
+    #[default]
+    En,
+    Fr,
+}
+
+impl From<StoredLanguage> for Locale {
+    fn from(value: StoredLanguage) -> Self {
+        match value {
+            StoredLanguage::En => Locale::En,
+            StoredLanguage::Fr => Locale::Fr,
+        }
+    }
+}
+
+impl From<Locale> for StoredLanguage {
+    fn from(value: Locale) -> Self {
+        match value {
+            Locale::En => StoredLanguage::En,
+            Locale::Fr => StoredLanguage::Fr,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Default, Serialize, Deserialize)]
@@ -97,6 +127,7 @@ pub fn parse(text: &str) -> Result<Preferences, LoadError> {
     let stored: Stored = serde_json::from_str(text).map_err(|_| LoadError::Malformed)?;
     Ok(Preferences {
         theme: stored.theme.into(),
+        language: stored.language.into(),
     })
 }
 
@@ -105,6 +136,7 @@ pub fn serialize(prefs: &Preferences) -> String {
     let stored = Stored {
         version: VERSION,
         theme: prefs.theme.into(),
+        language: prefs.language.into(),
     };
     // A struct of plain enums and numbers always serializes.
     let mut text = serde_json::to_string_pretty(&stored).unwrap_or_default();
@@ -226,6 +258,7 @@ mod tests {
         let prefs = load_from(&tmp.path().join(FILE_NAME)).unwrap();
         assert_eq!(prefs, Preferences::default());
         assert_eq!(prefs.theme, ThemeSetting::System);
+        assert_eq!(prefs.language, Locale::En);
     }
 
     #[test]
@@ -234,12 +267,14 @@ mod tests {
         let path = tmp.path().join("ActaData").join(FILE_NAME);
         let prefs = Preferences {
             theme: ThemeSetting::Light,
+            language: Locale::Fr,
         };
         save_to(&path, &prefs).unwrap();
         assert_eq!(load_from(&path).unwrap(), prefs);
 
         let dark = Preferences {
             theme: ThemeSetting::Dark,
+            language: Locale::En,
         };
         save_to(&path, &dark).unwrap();
         assert_eq!(load_from(&path).unwrap(), dark);
@@ -255,8 +290,10 @@ mod tests {
     fn the_file_holds_settings_only() {
         let text = serialize(&Preferences {
             theme: ThemeSetting::Dark,
+            language: Locale::Fr,
         });
-        assert_eq!(text, "{\n  \"version\": 1,\n  \"theme\": \"dark\"\n}\n");
+        let expected = "{\n  \"version\": 1,\n  \"theme\": \"dark\",\n  \"language\": \"fr\"\n}\n";
+        assert_eq!(text, expected);
     }
 
     #[test]
@@ -266,6 +303,10 @@ mod tests {
         assert_eq!(parse("not json at all"), Err(LoadError::Malformed));
         assert_eq!(
             parse("{\"version\": 1, \"theme\": \"sepia\"}"),
+            Err(LoadError::Malformed)
+        );
+        assert_eq!(
+            parse("{\"version\": 1, \"language\": \"de\"}"),
             Err(LoadError::Malformed)
         );
         assert_eq!(
@@ -295,7 +336,10 @@ mod tests {
         let path = tmp.path().join(FILE_NAME);
         let writer = Writer::new(Some(path.clone()));
         for theme in [ThemeSetting::Dark, ThemeSetting::Dark, ThemeSetting::Light] {
-            writer.save(Preferences { theme });
+            writer.save(Preferences {
+                theme,
+                ..Preferences::default()
+            });
         }
         drop(writer);
         assert_eq!(load_from(&path).unwrap().theme, ThemeSetting::Light);

@@ -4,6 +4,7 @@
 
 use gpui_kit::{App, Global, actions};
 
+use crate::i18n::Locale;
 use crate::preferences::{self, Preferences, Writer};
 use crate::theme::{self, ThemeSetting};
 
@@ -16,6 +17,10 @@ actions!(
         ThemeLight,
         /// Palette: "Theme: Dark".
         ThemeDark,
+        /// Palette: "Language: English".
+        LanguageEnglish,
+        /// Palette: "Language: Français".
+        LanguageFrench,
     ]
 );
 
@@ -37,6 +42,8 @@ pub fn init(cx: &mut App) {
     cx.on_action(|_: &ThemeSystem, cx| set_theme(ThemeSetting::System, cx));
     cx.on_action(|_: &ThemeLight, cx| set_theme(ThemeSetting::Light, cx));
     cx.on_action(|_: &ThemeDark, cx| set_theme(ThemeSetting::Dark, cx));
+    cx.on_action(|_: &LanguageEnglish, cx| set_language(Locale::En, cx));
+    cx.on_action(|_: &LanguageFrench, cx| set_language(Locale::Fr, cx));
 }
 
 pub fn current(cx: &App) -> &Preferences {
@@ -56,4 +63,19 @@ pub fn set_theme(setting: ThemeSetting, cx: &mut App) {
     }
     change(cx, |prefs| prefs.theme = setting);
     theme::apply(setting, cx);
+}
+
+/// The interface language in force.
+pub fn locale(cx: &App) -> Locale {
+    current(cx).language
+}
+
+/// Change the language: every window repaints in the new language at once,
+/// without a restart (DESIGN.md 10).
+pub fn set_language(locale: Locale, cx: &mut App) {
+    if current(cx).language == locale {
+        return;
+    }
+    change(cx, |prefs| prefs.language = locale);
+    cx.refresh_windows();
 }
