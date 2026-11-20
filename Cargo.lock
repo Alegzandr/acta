@@ -88,6 +88,8 @@ version = "0.1.0"
 dependencies = [
  "acta-core",
  "gpui-kit",
+ "serde",
+ "serde_json",
  "tempfile",
  "velopack",
  "windows-sys 0.61.2",

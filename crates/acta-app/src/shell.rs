@@ -5,10 +5,11 @@ use gpui_kit::component::window_border;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyView, App, AppContext, Bounds, Context, Entity, IntoElement, ParentElement, Render, Styled,
-    TitlebarOptions, Window, WindowBounds, WindowDecorations, WindowOptions, div, point, px, size,
+    Subscription, TitlebarOptions, Window, WindowBounds, WindowDecorations, WindowOptions, div,
+    point, px, size,
 };
 
-use crate::theme::Tokens;
+use crate::theme::{self, Tokens};
 use crate::titlebar::{self, TitleBar};
 use crate::type_scale;
 
@@ -19,13 +20,19 @@ pub const MIN_SIZE: (f32, f32) = (880., 560.);
 pub struct Shell {
     titlebar: Entity<TitleBar>,
     content: AnyView,
+    _appearance: Subscription,
 }
 
 impl Shell {
-    pub fn new(content: AnyView, cx: &mut Context<Self>) -> Self {
+    pub fn new(content: AnyView, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        // System follows the OS live (DESIGN.md 2).
+        let appearance = cx.observe_window_appearance(window, |_, window, cx| {
+            theme::os_appearance_changed(window.appearance(), cx);
+        });
         Self {
             titlebar: cx.new(|_| TitleBar::new(acta_core::APP_NAME)),
             content,
+            _appearance: appearance,
         }
     }
 }

@@ -8,6 +8,8 @@ mod desktop_entry;
 mod first_run;
 mod fonts;
 mod log;
+mod preferences;
+mod settings;
 mod shell;
 mod specimen;
 mod theme;
@@ -201,7 +203,7 @@ fn run_app(specimen: bool) {
     gpui_kit::application().run(move |cx| {
         gpui_kit::init(cx);
         fonts::register(cx);
-        theme::install(theme::Tokens::dark(), cx);
+        settings::init(cx);
 
         if specimen {
             open(specimen::WINDOW_SIZE, cx, |_| specimen::Specimen);
@@ -227,9 +229,9 @@ fn open<V: Render>(
     content: impl FnOnce(&mut gpui_kit::Context<V>) -> V + 'static,
 ) {
     let options = shell::window_options(default_size, cx);
-    let opened = gpui_kit::open_window(options, cx, |_, cx| {
+    let opened = gpui_kit::open_window(options, cx, |window, cx| {
         let content = cx.new(content);
-        cx.new(|cx| Shell::new(content.into(), cx))
+        cx.new(|cx| Shell::new(content.into(), window, cx))
     });
     if let Err(err) = opened {
         log::line(&format!("could not open the window: {err}"));

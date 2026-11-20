@@ -1,12 +1,17 @@
 //! DESIGN.md section 2.1, in one place. No other module contains a colour.
 //!
 //! [`Tokens`] is what Acta's own views read (`cx.global::<Tokens>()`).
-//! [`install`] also writes the tokens into the gpui-kit `Theme`, so that any
+//! [`apply`] also writes the tokens into the gpui-kit `Theme`, so that any
 //! gpui-component widget starts from Acta's palette instead of its default
 //! (ADR 0001, decision 3).
+//!
+//! The Appearance setting (DESIGN.md 2) is System, Light or Dark. System
+//! follows the OS live: every window reports appearance changes to
+//! [`os_appearance_changed`]. Switching replaces the tokens and refreshes
+//! every window in the same frame; nothing animates.
 
 use gpui_kit::component::{Theme, ThemeMode};
-use gpui_kit::{App, BoxShadow, Global, Hsla, point, px, rgb};
+use gpui_kit::{App, BoxShadow, Global, Hsla, WindowAppearance, point, px, rgb};
 
 pub const FONT_SANS: &str = "Source Sans 3";
 pub const FONT_MONO: &str = "JetBrains Mono NL";
@@ -183,15 +188,112 @@ impl Tokens {
     }
 }
 
-/// Make `tokens` the active theme: Acta's global, and the gpui-kit `Theme`.
-/// Dark is the only mode shipped for now; light exists as tokens.
-pub fn install(tokens: Tokens, cx: &mut App) {
+/// The Appearance setting of DESIGN.md 2. System is the default.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ThemeSetting {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
+/// The theme actually shown.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mode {
+    Light,
+    Dark,
+}
+
+impl Mode {
+    pub fn tokens(self) -> Tokens {
+        match self {
+            Mode::Light => Tokens::light(),
+            Mode::Dark => Tokens::dark(),
+        }
+    }
+
+    /// What the OS reports, as a mode.
+    pub fn of(appearance: WindowAppearance) -> Mode {
+        match appearance {
+            WindowAppearance::Light | WindowAppearance::VibrantLight => Mode::Light,
+            WindowAppearance::Dark | WindowAppearance::VibrantDark => Mode::Dark,
+        }
+    }
+}
+
+/// The mode a setting resolves to. `os` is `None` when the OS reports no
+/// preference; DESIGN.md 2 then asks for dark.
+pub fn resolve(setting: ThemeSetting, os: Option<Mode>) -> Mode {
+    match setting {
+        ThemeSetting::Light => Mode::Light,
+        ThemeSetting::Dark => Mode::Dark,
+        ThemeSetting::System => os.unwrap_or(Mode::Dark),
+    }
+}
+
+/// The current setting and the mode it resolved to (a GPUI global).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Appearance {
+    pub setting: ThemeSetting,
+    pub mode: Mode,
+}
+
+impl Global for Appearance {}
+
+/// The OS appearance as GPUI reports it. The pinned GPUI always reports one:
+/// on Linux a desktop without a colour-scheme preference reads as light (its
+/// portal maps "no preference" to light), so the dark fallback of DESIGN.md
+/// 2 can only apply where the platform says nothing at all.
+fn os_mode(cx: &App) -> Option<Mode> {
+    Some(Mode::of(cx.window_appearance()))
+}
+
+/// Apply `setting`: resolve it, install the tokens, repaint every window.
+pub fn apply(setting: ThemeSetting, cx: &mut App) {
+    // A forced appearance on macOS also themes the native window chrome;
+    // System clears it so the OS value can be read and followed.
+    cx.set_window_appearance(match setting {
+        ThemeSetting::System => None,
+        ThemeSetting::Light => Some(WindowAppearance::Light),
+        ThemeSetting::Dark => Some(WindowAppearance::Dark),
+    });
+    let mode = resolve(setting, os_mode(cx));
+    cx.set_global(Appearance { setting, mode });
+    install(mode, cx);
+}
+
+/// A window saw the OS appearance change. Only System follows it.
+pub fn os_appearance_changed(appearance: WindowAppearance, cx: &mut App) {
+    let Some(current) = cx.try_global::<Appearance>().copied() else {
+        return;
+    };
+    if current.setting != ThemeSetting::System {
+        return;
+    }
+    let mode = resolve(ThemeSetting::System, Some(Mode::of(appearance)));
+    if mode != current.mode {
+        cx.set_global(Appearance { mode, ..current });
+        install(mode, cx);
+    }
+}
+
+/// Make `mode` the active theme: Acta's tokens, and the gpui-kit `Theme` in
+/// the same mode with its colours taken from the tokens. `Theme::update`
+/// refreshes every window.
+fn install(mode: Mode, cx: &mut App) {
+    let tokens = mode.tokens();
     // Loading the mode replaces the colours, so it is a separate edit
     // (see `Theme::update`).
-    Theme::change(ThemeMode::Dark, None, cx);
+    let theme_mode = match mode {
+        Mode::Light => ThemeMode::Light,
+        Mode::Dark => ThemeMode::Dark,
+    };
+    // Acta's global first: the refresh below repaints with it.
+    cx.set_global(tokens.clone());
+    Theme::change(theme_mode, None, cx);
     Theme::update(cx, |theme| {
         theme.font_family = FONT_SANS.into();
-        theme.font_size = px(14.);
+        theme.font_size = px(13.);
         theme.mono_font_family = FONT_MONO.into();
         theme.mono_font_size = px(13.);
         theme.radius = px(RADIUS_SM);
@@ -249,7 +351,6 @@ pub fn install(tokens: Tokens, cx: &mut App) {
         c.drag_border = t.accent;
         c.drop_target = t.accent_subtle;
     });
-    cx.set_global(tokens);
 }
 
 #[cfg(test)]
@@ -560,6 +661,21 @@ mod tests {
             rounded(blend(t.fill_selected, t.bg_sunken)),
         );
         check("light", measured, 4.48);
+    }
+
+    #[test]
+    fn system_follows_the_os_and_falls_back_to_dark() {
+        assert_eq!(
+            resolve(ThemeSetting::System, Some(Mode::Light)),
+            Mode::Light
+        );
+        assert_eq!(resolve(ThemeSetting::System, Some(Mode::Dark)), Mode::Dark);
+        assert_eq!(resolve(ThemeSetting::System, None), Mode::Dark);
+        assert_eq!(resolve(ThemeSetting::Light, Some(Mode::Dark)), Mode::Light);
+        assert_eq!(resolve(ThemeSetting::Dark, Some(Mode::Light)), Mode::Dark);
+        assert_eq!(ThemeSetting::default(), ThemeSetting::System);
+        assert_eq!(Mode::of(WindowAppearance::VibrantDark), Mode::Dark);
+        assert_eq!(Mode::of(WindowAppearance::VibrantLight), Mode::Light);
     }
 
     #[test]
