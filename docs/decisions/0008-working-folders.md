@@ -45,6 +45,9 @@ If nothing is attached anywhere up the chain, the terminal asks for a folder onc
 - **Include inherited stays off by default.** A topic in its own git worktree must not also get the main checkout. The list shows which inherited folders are not used.
 - **Bulk repair.** After one unresolved folder is located, Acta offers to apply the same root replacement to the other unresolved folders that share the old root. Built with import in M2.
 - **Missing additional folder** does not block a launch: it is left out and reported, as the design specifies. Only a missing primary stops it.
+- **Path identity.** A folder is stored as an absolute, canonical path (symlinks and junctions resolved, no trailing separator, no `\\?\` prefix, drive letter upper-case) and shown as stored. Two paths are the same folder when their stored forms are equal, compared case-insensitively on Windows and macOS. The UI, the CLI and hook resolution share one implementation of this.
+- **Nothing attached anywhere.** "Set working folder..." then attaches to the project, from whichever view it is used, matching what the terminal prompt saves. Once any level has a folder, the command targets the current view.
+- **Paths in process arguments.** `--add-dir <path>` exposes folder paths to other processes of the same user. Accepted: the working directory of the same process already exposes the primary folder, and the rule in CLAUDE.md protects content and key material. Nothing else from the database goes on a command line.
 
 ## Evidence
 None yet. Design decision. `--add-dir` exists in the Claude Code CLI as of the lead's knowledge; to be confirmed against the installed version when M4 is built.
