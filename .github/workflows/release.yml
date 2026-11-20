@@ -42,6 +42,8 @@ jobs:
       prerelease: ${{ steps.version.outputs.prerelease }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Rust toolchain
         run: scripts/ci/setup-rust.sh
       - name: Workspace version, tag and vpk pin
@@ -112,6 +114,8 @@ jobs:
       TARGET: ${{ matrix.target }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Linux system packages
         if: runner.os == 'Linux'
         run: scripts/ci/linux-deps.sh --package --headless
@@ -166,11 +170,73 @@ jobs:
           compression-level: 0
           retention-days: 14
 
-  publish:
-    name: ${{ needs.check.outputs.publish == 'true' && 'publish release' || 'collect (dry run)' }}
+  # Read-only half of what used to be one job: it only reads the build artifacts and
+  # writes checksums, so it never holds a token that can write to the repository.
+  collect:
+    name: collect and checksum
     needs: [check, build]
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      CHANNELS: win-x64 osx-arm64 osx-x64 linux-x64
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: acta-*
+          path: artifacts
+      - name: Write SHA256SUMS
+        run: |
+          mkdir extras
+          cp install.sh install.ps1 extras/
+          sums=$PWD/extras/SHA256SUMS
+          : > "$sums"
+          for channel in $CHANNELS; do
+            dir=artifacts/acta-$channel
+            if [ ! -f "$dir/assets.$channel.json" ]; then
+              echo "::error::the $channel build produced no assets.$channel.json"
+              exit 1
+            fi
+            jq -r '.[].RelativeFileName' "$dir/assets.$channel.json" | tr -d '\r' |
+              while read -r file; do
+                (cd "$dir" && sha256sum "$file") >> "$sums"
+              done
+          done
+          (cd extras && sha256sum install.sh install.ps1) >> "$sums"
+          cat "$sums"
+          duplicates=$(awk '{ print $2 }' "$sums" | sort | uniq -d)
+          if [ -n "$duplicates" ]; then
+            echo "::error::asset names collide between channels: $duplicates"
+            exit 1
+          fi
+          for expected in Acta-win-x64-Setup.exe Acta-osx-arm64-Portable.zip Acta-osx-x64-Portable.zip Acta-linux-x64.AppImage; do
+            if ! awk '{ print $2 }' "$sums" | grep -qxF "$expected"; then
+              echo "::error::$expected is missing; install.sh and install.ps1 download it by that name"
+              exit 1
+            fi
+          done
+      # SHA256SUMS and the two install scripts, exactly as they will be attached to the
+      # release. The publish job takes them from here and checks out nothing.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-extras
+          path: extras/
+          if-no-files-found: error
+          retention-days: 14
+
+  # The only job whose token can write, and it runs only for a `v*` tag push. It checks
+  # out no code: everything it runs is in this file, vpk and gh. The `release`
+  # environment is restricted to `v*` tags in the repository settings
+  # (docs/releasing.md), which keeps any other ref from reaching this job.
+  publish:
+    name: publish release
+    needs: [check, collect]
+    if: needs.check.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
+    environment: release
     permissions:
       contents: write
       id-token: write
@@ -178,69 +244,56 @@ jobs:
     env:
       VERSION: ${{ needs.check.outputs.version }}
       TAG: v${{ needs.check.outputs.version }}
-      PUBLISH: ${{ needs.check.outputs.publish }}
       PRERELEASE: ${{ needs.check.outputs.prerelease }}
       CHANNELS: win-x64 osx-arm64 osx-x64 linux-x64
       GH_TOKEN: ${{ github.token }}
+      # gh has no checkout to read the repository from.
+      GH_REPO: ${{ github.repository }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: acta-*
           path: artifacts
-      - name: Lay out one directory per channel
-        run: |
-          mkdir -p releases
-          for channel in $CHANNELS; do
-            if [ ! -f "artifacts/acta-$channel/assets.$channel.json" ]; then
-              echo "::error::the $channel build produced no assets.$channel.json"
-              exit 1
-            fi
-            mv "artifacts/acta-$channel" "releases/$channel"
-          done
-      - name: Write SHA256SUMS
-        run: |
-          : > SHA256SUMS
-          for channel in $CHANNELS; do
-            jq -r '.[].RelativeFileName' "releases/$channel/assets.$channel.json" | tr -d '\r' |
-              while read -r file; do
-                (cd "releases/$channel" && sha256sum "$file") >> SHA256SUMS
-              done
-          done
-          sha256sum install.sh install.ps1 >> SHA256SUMS
-          cat SHA256SUMS
-          duplicates=$(awk '{ print $2 }' SHA256SUMS | sort | uniq -d)
-          if [ -n "$duplicates" ]; then
-            echo "::error::asset names collide between channels: $duplicates"
-            exit 1
-          fi
-          for expected in Acta-win-x64-Setup.exe Acta-osx-arm64-Portable.zip Acta-osx-x64-Portable.zip Acta-linux-x64.AppImage; do
-            if ! awk '{ print $2 }' SHA256SUMS | grep -qxF "$expected"; then
-              echo "::error::$expected is missing; install.sh and install.ps1 download it by that name"
-              exit 1
-            fi
-          done
-      - name: Keep SHA256SUMS of a dry run
-        if: env.PUBLISH != 'true'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: SHA256SUMS
-          path: SHA256SUMS
-          retention-days: 14
+          name: release-extras
+          path: extras
+      - name: Lay out one directory per channel and verify the checksums
+        run: |
+          mkdir releases
+          dirs=extras
+          for channel in $CHANNELS; do
+            mv "artifacts/acta-$channel" "releases/$channel"
+            dirs="$dirs releases/$channel"
+          done
+          # Every file SHA256SUMS lists must be here and be what the collect job hashed.
+          while read -r hash name; do
+            found=
+            for dir in $dirs; do
+              if [ -f "$dir/$name" ]; then found=$dir/$name; break; fi
+            done
+            if [ -z "$found" ]; then
+              echo "::error::$name is listed in SHA256SUMS but is not among the artifacts"
+              exit 1
+            fi
+            actual=$(sha256sum "$found" | cut -d ' ' -f 1)
+            if [ "$actual" != "$hash" ]; then
+              echo "::error::checksum mismatch for $found"
+              exit 1
+            fi
+          done < extras/SHA256SUMS
+          echo "$(wc -l < extras/SHA256SUMS) files match SHA256SUMS"
       - name: Attest build provenance
-        if: env.PUBLISH == 'true'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-checksums: SHA256SUMS
+          subject-checksums: extras/SHA256SUMS
       - name: Install vpk
-        if: env.PUBLISH == 'true'
         shell: pwsh
         run: |
           dotnet tool install --global vpk --version $env:VPK_VERSION
           if ($LASTEXITCODE -ne 0) { exit 1 }
           Join-Path $HOME '.dotnet/tools' | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
       - name: Upload every channel to one draft release
-        if: env.PUBLISH == 'true'
         env:
           VPK_TOKEN: ${{ github.token }}
         run: |
@@ -262,13 +315,12 @@ jobs:
               --outputDir "releases/$channel" --merge --tag "$TAG" \
               --releaseName "Acta $VERSION" --targetCommitish "$GITHUB_SHA" $pre
           done
-          gh release upload "$TAG" SHA256SUMS install.sh install.ps1
+          gh release upload "$TAG" extras/SHA256SUMS extras/install.sh extras/install.ps1
       - name: Check the draft, then publish it
-        if: env.PUBLISH == 'true'
         run: |
           gh release view "$TAG" --json assets --jq '.assets[].name' | sort > uploaded.txt
           {
-            awk '{ print $2 }' SHA256SUMS
+            awk '{ print $2 }' extras/SHA256SUMS
             echo SHA256SUMS
             for channel in $CHANNELS; do echo "releases.$channel.json"; done
           } | sort > expected.txt
