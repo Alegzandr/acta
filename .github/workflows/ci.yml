@@ -9,7 +9,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.event_name }}-${{ github.head_ref || github.ref }}
+  # Keyed on the pull request number: `head_ref` is chosen by the author of a fork and
+  # two forks can use the same branch name.
+  group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 defaults:
