@@ -22,8 +22,9 @@ pub fn run(layout: &crate::cli_export::Layout) {
 
     use crate::log;
 
-    match crate::user_path::unpublish(layout) {
-        Ok(done) => log::line(&format!("uninstall: {done}")),
+    match crate::user_path::unpublish(layout, &crate::user_path::USER_PATH) {
+        Ok(true) => log::line("uninstall: removed from user PATH"),
+        Ok(false) => log::line("uninstall: was not on user PATH"),
         Err(err) => log::line(&format!("uninstall: PATH not cleaned: {err}")),
     }
 

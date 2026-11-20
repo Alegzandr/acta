@@ -9,42 +9,89 @@ use std::io;
 
 use crate::cli_export::Layout;
 
-/// Put the exported CLI on the user's PATH. Returns what was done, for the log.
-pub fn publish(layout: &Layout) -> io::Result<&'static str> {
+/// What [`publish`] did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Published {
+    /// For the log.
+    pub note: &'static str,
+    /// The user environment changed; running programs should be told with
+    /// [`announce_environment_change`], once everything else is done.
+    pub environment_changed: bool,
+}
+
+/// Put the exported CLI on the user's PATH.
+pub fn publish(layout: &Layout) -> io::Result<Published> {
     #[cfg(windows)]
     {
-        let changed = registry::edit(|current| path_var::with_dir(current, &dir_text(layout)))?;
-        Ok(if changed {
-            "added to user PATH"
-        } else {
-            "already on user PATH"
+        let dir = dir_text(layout)?;
+        let changed = registry::edit(&USER_PATH, |current| path_var::with_dir(current, &dir))?;
+        Ok(Published {
+            note: if changed {
+                "added to user PATH"
+            } else {
+                "already on user PATH"
+            },
+            environment_changed: changed,
         })
     }
     #[cfg(unix)]
     {
-        symlink::ensure(layout)
+        symlink::ensure(layout).map(|note| Published {
+            note,
+            environment_changed: false,
+        })
     }
     #[cfg(not(any(windows, unix)))]
     {
         let _ = layout;
-        Ok("no PATH integration on this platform")
+        Ok(Published {
+            note: "no PATH integration on this platform",
+            environment_changed: false,
+        })
     }
 }
 
-/// Take the export directory off the user's PATH again (uninstall).
+/// A registry value under `HKEY_CURRENT_USER` holding a `;`-separated path
+/// list. Always [`USER_PATH`] outside tests.
 #[cfg(windows)]
-pub fn unpublish(layout: &Layout) -> io::Result<&'static str> {
-    let changed = registry::edit(|current| path_var::without_dir(current, &dir_text(layout)))?;
-    Ok(if changed {
-        "removed from user PATH"
-    } else {
-        "was not on user PATH"
-    })
+#[derive(Clone, Copy, Debug)]
+pub struct PathValue<'a> {
+    pub subkey: &'a str,
+    pub name: &'a str,
+}
+
+/// The user's `Path`: `HKCU\Environment\Path`.
+#[cfg(windows)]
+pub const USER_PATH: PathValue<'static> = PathValue {
+    subkey: "Environment",
+    name: "Path",
+};
+
+/// Take the export directory out of `value` again (uninstall). Returns
+/// whether the value changed.
+#[cfg(windows)]
+pub fn unpublish(layout: &Layout, value: &PathValue) -> io::Result<bool> {
+    let dir = dir_text(layout)?;
+    registry::edit(value, |current| path_var::without_dir(current, &dir))
+}
+
+/// Tell running programs (Explorer, new terminals) that the user environment
+/// changed. Best effort, and the last step of whatever changed it: nothing
+/// may depend on it or wait behind it.
+pub fn announce_environment_change() {
+    #[cfg(windows)]
+    registry::broadcast();
 }
 
 #[cfg(windows)]
-fn dir_text(layout: &Layout) -> String {
-    layout.dir.to_string_lossy().into_owned()
+fn dir_text(layout: &Layout) -> io::Result<String> {
+    // Never write a lossily converted directory into the user's PATH.
+    layout.dir.to_str().map(str::to_owned).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "export directory is not Unicode",
+        )
+    })
 }
 
 /// Editing of a Windows `Path` value: `;`-separated, case-insensitive.
@@ -99,16 +146,29 @@ mod registry {
         HWND_BROADCAST, SMTO_ABORTIFHUNG, SendMessageTimeoutW, WM_SETTINGCHANGE,
     };
 
-    /// The text of a `REG_SZ` / `REG_EXPAND_SZ` value: UTF-16LE, usually
-    /// NUL-terminated (the registry does not guarantee it).
-    pub(super) fn decode(bytes: &[u8]) -> String {
+    use super::PathValue;
+
+    fn invalid(message: &'static str) -> io::Error {
+        io::Error::new(io::ErrorKind::InvalidData, message)
+    }
+
+    /// The text of a `REG_SZ` / `REG_EXPAND_SZ` value: UTF-16LE up to the
+    /// first NUL (the registry guarantees neither the terminator nor that
+    /// nothing follows it). Anything that is not exactly that is an error:
+    /// a value we cannot read faithfully is a value we must not rewrite.
+    pub(super) fn decode(bytes: &[u8]) -> io::Result<String> {
+        if !bytes.len().is_multiple_of(2) {
+            return Err(invalid("registry text has an odd byte length"));
+        }
         let wide: Vec<u16> = bytes
             .chunks_exact(2)
             .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
             .collect();
-        String::from_utf16_lossy(&wide)
-            .trim_end_matches('\0')
-            .to_string()
+        let end = wide
+            .iter()
+            .position(|&unit| unit == 0)
+            .unwrap_or(wide.len());
+        String::from_utf16(&wide[..end]).map_err(|_| invalid("registry text is not valid UTF-16"))
     }
 
     pub(super) fn encode(text: &str) -> Vec<u8> {
@@ -118,13 +178,13 @@ mod registry {
             .collect()
     }
 
-    /// Tell running programs (Explorer, new terminals) that the environment changed.
-    fn broadcast() {
+    /// `WM_SETTINGCHANGE` for "Environment" to every top-level window.
+    pub(super) fn broadcast() {
         let scope: Vec<u16> = "Environment\0".encode_utf16().collect();
         let mut result = 0usize;
         // SAFETY: `scope` is a NUL-terminated UTF-16 string that outlives the
-        // call, and `result` is a valid out pointer. The call is bounded by
-        // its own timeout.
+        // call, and `result` is a valid out pointer. Each window gets at most
+        // the timeout; hung ones are skipped.
         unsafe {
             SendMessageTimeoutW(
                 HWND_BROADCAST,
@@ -132,27 +192,28 @@ mod registry {
                 0,
                 scope.as_ptr() as isize,
                 SMTO_ABORTIFHUNG,
-                2000,
+                250,
                 &mut result,
             );
         }
     }
 
-    /// Apply `change` to `HKCU\Environment\Path`, keeping the value type
+    /// Apply `change` to the path list in `target`, keeping the value type
     /// (`REG_EXPAND_SZ` entries such as `%USERPROFILE%\bin` must stay
     /// expandable). `change` returns `None` when nothing has to be written.
-    pub fn edit(change: impl FnOnce(&str) -> Option<String>) -> io::Result<bool> {
-        let env = RegKey::predef(HKEY_CURRENT_USER)
-            .open_subkey_with_flags("Environment", KEY_READ | KEY_WRITE)?;
-        let (current, vtype) = match env.get_raw_value("Path") {
+    /// Returns whether the value was written. Does not broadcast.
+    pub fn edit(
+        target: &PathValue,
+        change: impl FnOnce(&str) -> Option<String>,
+    ) -> io::Result<bool> {
+        let key = RegKey::predef(HKEY_CURRENT_USER)
+            .open_subkey_with_flags(target.subkey, KEY_READ | KEY_WRITE)?;
+        let (current, vtype) = match key.get_raw_value(target.name) {
             Ok(value) => {
                 if !matches!(value.vtype, RegType::REG_SZ | RegType::REG_EXPAND_SZ) {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "user Path has an unexpected registry type",
-                    ));
+                    return Err(invalid("path value has an unexpected registry type"));
                 }
-                (decode(&value.bytes), value.vtype)
+                (decode(&value.bytes)?, value.vtype)
             }
             Err(err) if err.kind() == io::ErrorKind::NotFound => {
                 (String::new(), RegType::REG_EXPAND_SZ)
@@ -166,8 +227,7 @@ mod registry {
             bytes: encode(&updated),
             vtype,
         };
-        env.set_raw_value("Path", &value)?;
-        broadcast();
+        key.set_raw_value(target.name, &value)?;
         Ok(true)
     }
 }
@@ -319,19 +379,191 @@ mod tests {
     }
 
     #[cfg(windows)]
-    #[test]
-    fn registry_text_round_trips_with_or_without_a_terminator() {
-        use super::registry::{decode, encode};
+    mod registry {
+        use std::io::ErrorKind;
 
-        let value = format!("%USERPROFILE%\\bin;caf\u{e9};{DIR}");
-        let bytes = encode(&value);
-        assert_eq!(bytes.len(), (value.encode_utf16().count() + 1) * 2);
-        assert_eq!(bytes[bytes.len() - 2..], [0, 0]);
-        assert_eq!(decode(&bytes), value);
-        // Values written without the terminator, or empty, read the same.
-        assert_eq!(decode(&bytes[..bytes.len() - 2]), value);
-        assert_eq!(decode(&[]), "");
-        assert_eq!(decode(&encode("")), "");
+        use winreg::enums::{HKEY_CURRENT_USER, RegType};
+        use winreg::{RegKey, RegValue};
+
+        use super::super::PathValue;
+        use super::super::path_var::{with_dir, without_dir};
+        use super::super::registry::{decode, edit, encode};
+        use super::DIR;
+
+        const NAME: &str = "Path";
+
+        /// A key of its own under `HKCU\Software`, deleted when dropped (also
+        /// when the test panics). `HKCU\Environment` is never opened here.
+        struct Scratch {
+            subkey: String,
+        }
+
+        impl Scratch {
+            fn new(tag: &str) -> Self {
+                let subkey = format!(r"Software\ActaTest-{}-{tag}", std::process::id());
+                RegKey::predef(HKEY_CURRENT_USER)
+                    .create_subkey(&subkey)
+                    .unwrap();
+                Self { subkey }
+            }
+
+            fn target(&self) -> PathValue<'_> {
+                PathValue {
+                    subkey: &self.subkey,
+                    name: NAME,
+                }
+            }
+
+            fn set(&self, bytes: Vec<u8>, vtype: RegType) {
+                let (key, _) = RegKey::predef(HKEY_CURRENT_USER)
+                    .create_subkey(&self.subkey)
+                    .unwrap();
+                key.set_raw_value(NAME, &RegValue { bytes, vtype }).unwrap();
+            }
+
+            fn get(&self) -> Option<RegValue> {
+                RegKey::predef(HKEY_CURRENT_USER)
+                    .open_subkey(&self.subkey)
+                    .unwrap()
+                    .get_raw_value(NAME)
+                    .ok()
+            }
+        }
+
+        impl Scratch {
+            /// Last write time of the key, in 100 ns units.
+            fn last_write(&self) -> u64 {
+                let info = RegKey::predef(HKEY_CURRENT_USER)
+                    .open_subkey(&self.subkey)
+                    .unwrap()
+                    .query_info()
+                    .unwrap();
+                let time = info.last_write_time;
+                (u64::from(time.dwHighDateTime) << 32) | u64::from(time.dwLowDateTime)
+            }
+        }
+
+        impl Drop for Scratch {
+            fn drop(&mut self) {
+                let _ = RegKey::predef(HKEY_CURRENT_USER).delete_subkey_all(&self.subkey);
+            }
+        }
+
+        #[test]
+        fn text_round_trips_and_stops_at_the_first_nul() {
+            let value = format!("%USERPROFILE%\\bin;caf\u{e9};{DIR}");
+            let bytes = encode(&value);
+            assert_eq!(bytes.len(), (value.encode_utf16().count() + 1) * 2);
+            assert_eq!(decode(&bytes).unwrap(), value);
+            // Written without the terminator, or empty: the same text.
+            assert_eq!(decode(&bytes[..bytes.len() - 2]).unwrap(), value);
+            assert_eq!(decode(&[]).unwrap(), "");
+            assert_eq!(decode(&encode("")).unwrap(), "");
+            // Bytes after the terminator are not part of the string.
+            let mut padded = encode("C:\\a");
+            padded.extend(encode("junk"));
+            assert_eq!(decode(&padded).unwrap(), "C:\\a");
+        }
+
+        #[test]
+        fn malformed_text_is_an_error_not_a_guess() {
+            let odd = &encode("C:\\a")[..5];
+            assert_eq!(decode(odd).unwrap_err().kind(), ErrorKind::InvalidData);
+            // A lone high surrogate.
+            let lone = [0x41, 0x00, 0x00, 0xD8, 0x42, 0x00];
+            assert_eq!(decode(&lone).unwrap_err().kind(), ErrorKind::InvalidData);
+        }
+
+        #[test]
+        fn a_reg_sz_value_stays_reg_sz() {
+            let scratch = Scratch::new("sz");
+            scratch.set(encode(r"C:\tools"), RegType::REG_SZ);
+
+            assert!(edit(&scratch.target(), |current| with_dir(current, DIR)).unwrap());
+
+            let value = scratch.get().unwrap();
+            assert_eq!(value.vtype, RegType::REG_SZ);
+            assert_eq!(decode(&value.bytes).unwrap(), format!(r"C:\tools;{DIR}"));
+        }
+
+        #[test]
+        fn an_expandable_value_stays_expandable_and_removal_restores_it() {
+            let scratch = Scratch::new("expand");
+            let original = r"%USERPROFILE%\bin;C:\tools";
+            scratch.set(encode(original), RegType::REG_EXPAND_SZ);
+
+            assert!(edit(&scratch.target(), |current| with_dir(current, DIR)).unwrap());
+            assert_eq!(scratch.get().unwrap().vtype, RegType::REG_EXPAND_SZ);
+            assert!(edit(&scratch.target(), |current| without_dir(current, DIR)).unwrap());
+
+            let value = scratch.get().unwrap();
+            assert_eq!(value.vtype, RegType::REG_EXPAND_SZ);
+            assert_eq!(value.bytes, encode(original));
+        }
+
+        #[test]
+        fn a_missing_value_is_created_expandable() {
+            let scratch = Scratch::new("missing");
+            assert!(scratch.get().is_none());
+
+            assert!(edit(&scratch.target(), |current| with_dir(current, DIR)).unwrap());
+
+            let value = scratch.get().unwrap();
+            assert_eq!(value.vtype, RegType::REG_EXPAND_SZ);
+            assert_eq!(decode(&value.bytes).unwrap(), DIR);
+        }
+
+        #[test]
+        fn nothing_is_written_when_nothing_changes() {
+            let scratch = Scratch::new("unchanged");
+            scratch.set(encode(&format!(r"C:\tools;{DIR}")), RegType::REG_SZ);
+            let written = scratch.last_write();
+            std::thread::sleep(std::time::Duration::from_millis(30));
+
+            assert!(!edit(&scratch.target(), |current| with_dir(current, DIR)).unwrap());
+            let absent = r"C:\Users\Alexandre\elsewhere";
+            assert!(!edit(&scratch.target(), |current| without_dir(current, absent)).unwrap());
+
+            assert_eq!(scratch.last_write(), written);
+        }
+
+        #[test]
+        fn a_value_of_another_type_is_refused_and_untouched() {
+            let scratch = Scratch::new("type");
+            let bytes = 7u32.to_le_bytes().to_vec();
+            scratch.set(bytes.clone(), RegType::REG_DWORD);
+
+            let err = edit(&scratch.target(), |current| with_dir(current, DIR)).unwrap_err();
+
+            assert_eq!(err.kind(), ErrorKind::InvalidData);
+            let value = scratch.get().unwrap();
+            assert_eq!((value.vtype, value.bytes), (RegType::REG_DWORD, bytes));
+        }
+
+        #[test]
+        fn a_malformed_value_is_refused_and_untouched() {
+            // A lone high surrogate. (An odd byte length cannot be stored for
+            // a string type: the registry rewrites its last byte. `decode`
+            // refuses it all the same, see above.)
+            let scratch = Scratch::new("surrogate");
+            let bytes = vec![0x41, 0x00, 0x00, 0xD8, 0x42, 0x00];
+            scratch.set(bytes.clone(), RegType::REG_EXPAND_SZ);
+
+            let err = edit(&scratch.target(), |current| with_dir(current, DIR)).unwrap_err();
+
+            assert_eq!(err.kind(), ErrorKind::InvalidData);
+            // Reads come back NUL-terminated; the text itself is untouched.
+            assert_eq!(scratch.get().unwrap().bytes[..bytes.len()], bytes);
+        }
+
+        #[test]
+        fn a_missing_key_is_an_error() {
+            let target = PathValue {
+                subkey: r"Software\ActaTest-no-such-key",
+                name: NAME,
+            };
+            assert!(edit(&target, |current| with_dir(current, DIR)).is_err());
+        }
     }
 
     #[test]

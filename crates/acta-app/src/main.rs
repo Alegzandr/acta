@@ -106,7 +106,13 @@ fn export_cli(when: &str) {
         }
     }
     match user_path::publish(&layout) {
-        Ok(done) => log::line(&format!("export ({when}): {done}")),
+        Ok(published) => {
+            log::line(&format!("export ({when}): {}", published.note));
+            if published.environment_changed {
+                // Last: nothing waits behind the broadcast.
+                user_path::announce_environment_change();
+            }
+        }
         Err(err) => log::line(&format!("export ({when}): PATH not updated: {err}")),
     }
 }
