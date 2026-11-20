@@ -1,6 +1,13 @@
 //! Client-side titlebar, DESIGN.md 4.3: 36 high, `bg.sunken`, bottom border
 //! `border.subtle`, the whole bar a drag region except its controls.
 //!
+//! Left to right: sidebar toggle, back and forward, the breadcrumb, the drag
+//! region, "Search" with the palette shortcut, the chat toggle (Windows and
+//! macOS) and the terminal toggle, then the platform's window controls.
+//! Back, forward, Search and the two tool-window toggles have nothing to act
+//! on yet (no history, palette, terminal or chat): they are drawn and inert,
+//! back and forward disabled.
+//!
 //! gpui-component's `TitleBar` is not used: it is 34 high with 34 wide
 //! controls, a gradient fill and the `danger` colour on the close button,
 //! none of which can be themed to the spec.
@@ -16,12 +23,17 @@
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     Context, Decorations, Hsla, InteractiveElement, IntoElement, MouseButton, MouseMoveEvent,
-    ParentElement, PathBuilder, Pixels, Point, Render, SharedString, Stateful,
-    StatefulInteractiveElement, Styled, Window, WindowControlArea, canvas, div, point, px,
+    ParentElement, PathBuilder, Pixels, Point, SharedString, Stateful, StatefulInteractiveElement,
+    Styled, Window, WindowControlArea, canvas, div, point, px,
 };
 
-use crate::theme::Tokens;
+use crate::i18n::{Key, KeyName, text};
+use crate::icons::{Icon, icon};
+use crate::settings;
+use crate::shell::Shell;
+use crate::theme::{RADIUS_SM, Tokens};
 use crate::type_scale;
+use crate::ui;
 
 pub const HEIGHT: f32 = 36.;
 /// macOS: where the traffic lights sit, and where content starts after them.
@@ -30,21 +42,8 @@ const MACOS_CONTENT_START: f32 = 76.;
 const CONTENT_START: f32 = 12.;
 const GLYPH: f32 = 10.;
 
-pub struct TitleBar {
-    title: SharedString,
-    /// A press on the bar that has not moved yet (macOS and Linux, where the
-    /// app starts the window move itself).
-    should_move: bool,
-}
-
-impl TitleBar {
-    pub fn new(title: impl Into<SharedString>) -> Self {
-        Self {
-            title: title.into(),
-            should_move: false,
-        }
-    }
-}
+/// Size of the titlebar's icon buttons: compact on macOS (DESIGN.md 4.1).
+const BUTTON: f32 = if cfg!(target_os = "macos") { 24. } else { 28. };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Control {
@@ -169,111 +168,181 @@ fn control_button(control: Control, tokens: &Tokens, rest: Hsla) -> Stateful<gpu
         .child(glyph(control))
 }
 
-impl Render for TitleBar {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let tokens = cx.global::<Tokens>().clone();
-        let windows = cfg!(target_os = "windows");
-        let macos = cfg!(target_os = "macos");
+/// The titlebar of `shell`'s window. `breadcrumb` is the active page's
+/// location; for now every page shows its last part only.
+pub fn render(
+    shell: &Shell,
+    breadcrumb: SharedString,
+    window: &mut Window,
+    cx: &mut Context<Shell>,
+) -> impl IntoElement + use<> {
+    let tokens = cx.global::<Tokens>().clone();
+    let locale = settings::locale(cx);
+    let windows = cfg!(target_os = "windows");
+    let macos = cfg!(target_os = "macos");
 
-        // Inactive window: text and icons drop to text.tertiary, nothing else.
-        let active = window.is_window_active();
-        let text = if active {
-            tokens.text_primary
+    // Inactive window: text and icons drop to text.tertiary, nothing else.
+    let active = window.is_window_active();
+    let tertiary_if_inactive = |color: Hsla| if active { color } else { tokens.text_tertiary };
+    let icon_rest = tertiary_if_inactive(tokens.text_secondary);
+
+    let content_start = if macos && !window.is_fullscreen() {
+        MACOS_CONTENT_START
+    } else {
+        CONTENT_START
+    };
+
+    // Which controls this platform wants from us.
+    let client_decorated = matches!(window.window_decorations(), Decorations::Client { .. });
+    let supported = window.window_controls();
+    let controls: Vec<Control> = if macos || !(windows || client_decorated) {
+        Vec::new()
+    } else {
+        let zoom = if window.is_maximized() {
+            Control::Restore
         } else {
-            tokens.text_tertiary
+            Control::Maximize
         };
-        let icon = if active {
-            tokens.text_secondary
-        } else {
-            tokens.text_tertiary
-        };
+        [
+            supported.minimize.then_some(Control::Minimize),
+            supported.maximize.then_some(zoom),
+            Some(Control::Close),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
+    };
 
-        let content_start = if macos && !window.is_fullscreen() {
-            MACOS_CONTENT_START
-        } else {
-            CONTENT_START
-        };
+    let button = |id, glyph, selected, disabled| {
+        ui::ghost_icon_button(id, glyph, BUTTON, selected, disabled, active, &tokens)
+    };
 
-        // Which controls this platform wants from us.
-        let client_decorated = matches!(window.window_decorations(), Decorations::Client { .. });
-        let supported = window.window_controls();
-        let controls: Vec<Control> = if macos || !(windows || client_decorated) {
-            Vec::new()
-        } else {
-            let zoom = if window.is_maximized() {
-                Control::Restore
-            } else {
-                Control::Maximize
-            };
-            [
-                supported.minimize.then_some(Control::Minimize),
-                supported.maximize.then_some(zoom),
-                Some(Control::Close),
-            ]
-            .into_iter()
-            .flatten()
-            .collect()
-        };
-
-        let drag_area = div()
-            .id("titlebar-drag")
-            .flex()
-            .flex_1()
-            .min_w_0()
-            .h_full()
-            .items_center()
-            .pl(px(content_start))
-            .window_control_area(WindowControlArea::Drag)
-            .when(!windows, |this| {
-                // Windows moves and zooms the window itself from the drag
-                // area; elsewhere the app does it.
-                this.on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|bar, _, _, _| bar.should_move = true),
-                )
-                .on_mouse_up(
-                    MouseButton::Left,
-                    cx.listener(|bar, _, _, _| bar.should_move = false),
-                )
-                .on_mouse_down_out(cx.listener(|bar, _, _, _| bar.should_move = false))
-                .on_mouse_move(cx.listener(|bar, event: &MouseMoveEvent, window, _| {
-                    if bar.should_move && event.dragging() {
-                        bar.should_move = false;
-                        window.start_window_move();
-                    }
-                }))
-                .on_click(move |event, window, _| {
-                    if event.click_count() == 2 {
-                        if macos {
-                            window.titlebar_double_click();
-                        } else {
-                            window.zoom_window();
-                        }
-                    }
-                })
-            })
-            .child(
-                type_scale::UI_STRONG
-                    .el()
-                    .text_color(text)
-                    .child(self.title.clone()),
-            );
-
-        div()
-            .id("titlebar")
-            .flex()
-            .flex_row()
-            .flex_shrink_0()
-            .w_full()
-            .h(px(HEIGHT))
-            .bg(tokens.bg_sunken)
-            .border_b_1()
-            .border_color(tokens.border_subtle)
-            .child(drag_area)
-            .children(
-                controls
-                    .into_iter()
-                    .map(|control| control_button(control, &tokens, icon)),
+    let leading = div()
+        .flex()
+        .flex_row()
+        .flex_shrink_0()
+        .items_center()
+        .gap(px(4.))
+        .pl(px(content_start))
+        .child(
+            button(
+                "titlebar-sidebar",
+                Icon::PanelLeft,
+                shell.sidebar_visible(),
+                false,
             )
-    }
+            .on_click(cx.listener(|shell, _, _, cx| shell.toggle_sidebar(cx))),
+        )
+        .child(button("titlebar-back", Icon::ArrowLeft, false, true))
+        .child(button("titlebar-forward", Icon::ArrowRight, false, true));
+
+    let drag_area = div()
+        .id("titlebar-drag")
+        .flex()
+        .flex_1()
+        .min_w_0()
+        .h_full()
+        .items_center()
+        .pl(px(8.))
+        .window_control_area(WindowControlArea::Drag)
+        .when(!windows, |this| {
+            // Windows moves and zooms the window itself from the drag
+            // area; elsewhere the app does it.
+            this.on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|shell, _, _, _| shell.titlebar_should_move = true),
+            )
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|shell, _, _, _| shell.titlebar_should_move = false),
+            )
+            .on_mouse_down_out(cx.listener(|shell, _, _, _| shell.titlebar_should_move = false))
+            .on_mouse_move(cx.listener(|shell, event: &MouseMoveEvent, window, _| {
+                if shell.titlebar_should_move && event.dragging() {
+                    shell.titlebar_should_move = false;
+                    window.start_window_move();
+                }
+            }))
+            .on_click(move |event, window, _| {
+                if event.click_count() == 2 {
+                    if macos {
+                        window.titlebar_double_click();
+                    } else {
+                        window.zoom_window();
+                    }
+                }
+            })
+        })
+        .child(
+            // The last part of the breadcrumb is the page itself.
+            type_scale::SMALL
+                .el()
+                .min_w_0()
+                .truncate()
+                .text_color(tertiary_if_inactive(tokens.text_secondary))
+                .child(breadcrumb),
+        );
+
+    let search_group = "titlebar-search";
+    let hover = tokens.fill_hover;
+    let label_hover = tertiary_if_inactive(tokens.text_primary);
+    let search = div()
+        .id(search_group)
+        .group(search_group)
+        .flex()
+        .flex_row()
+        .flex_shrink_0()
+        .items_center()
+        .gap(px(8.))
+        .h(px(BUTTON))
+        .px(px(8.))
+        .rounded(px(RADIUS_SM))
+        .hover(move |style| style.bg(hover))
+        .child(icon(Icon::Search, 16., icon_rest))
+        .child(
+            type_scale::UI
+                .el()
+                .text_color(icon_rest)
+                .group_hover(search_group, move |style| style.text_color(label_hover))
+                .child(text(locale, Key::CommonSearch)),
+        )
+        .child(ui::kbd(&[KeyName::Mod.label(locale, macos), "K"], &tokens));
+
+    let trailing = div()
+        .flex()
+        .flex_row()
+        .flex_shrink_0()
+        .items_center()
+        .gap(px(4.))
+        .pr(px(8.))
+        .child(search)
+        .when(!cfg!(target_os = "linux"), |this| {
+            this.child(button("titlebar-chat", Icon::MessageCircle, false, false))
+        })
+        .child(button(
+            "titlebar-terminal",
+            Icon::SquareTerminal,
+            false,
+            false,
+        ));
+
+    div()
+        .id("titlebar")
+        .flex()
+        .flex_row()
+        .flex_shrink_0()
+        .items_center()
+        .w_full()
+        .h(px(HEIGHT))
+        .bg(tokens.bg_sunken)
+        .border_b_1()
+        .border_color(tokens.border_subtle)
+        .child(leading)
+        .child(drag_area)
+        .child(trailing)
+        .children(
+            controls
+                .into_iter()
+                .map(|control| control_button(control, &tokens, icon_rest)),
+        )
 }

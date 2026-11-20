@@ -10,6 +10,11 @@
 //! [`Gate`] settles the race between "the wait timed out" and "the download
 //! just finished", so the app can never be restarted under a visible window.
 //!
+//! The wait runs off the UI thread while GPUI is already up: when the main
+//! window is not ready [`UPDATER_WINDOW_DELAY`] after launch, the updater
+//! window (DESIGN.md 5 and 8.16) shows [`LaunchState`] until the decision,
+//! and closes in the frame the main window opens.
+//!
 //! A launch that Velopack's updater itself started (`VELOPACK_RESTART`) never
 //! applies. The updater restarts the app after a successful apply and also
 //! after a failed one, in which case it starts the old version again with the
@@ -17,9 +22,9 @@
 //! that launch would loop forever without a window; this way a failed update
 //! is retried once per launch by the user, never by the app on its own.
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -35,6 +40,83 @@ pub const DOWNLOAD_BUDGET: Duration = Duration::from_secs(5);
 /// How long the launch waits for a worker that claimed the apply. A working
 /// apply exits the process within moments; past this the window opens anyway.
 pub const APPLY_BUDGET: Duration = Duration::from_secs(15);
+
+/// The updater window appears when the main window is not ready this long
+/// after launch (DESIGN.md 6.3).
+pub const UPDATER_WINDOW_DELAY: Duration = Duration::from_millis(300);
+
+/// What the updater window says (DESIGN.md 5, Updater window).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Status {
+    /// "Checking for updates...", no bar.
+    Checking,
+    /// "Downloading update...", the bar at this percentage.
+    Downloading(u8),
+    /// "Restarting...", the bar full.
+    Restarting,
+}
+
+/// Shared between the update worker, the launch wait and the UI.
+#[derive(Debug)]
+pub struct LaunchState {
+    status: Mutex<Status>,
+    ready: AtomicBool,
+}
+
+impl Default for LaunchState {
+    fn default() -> Self {
+        Self {
+            status: Mutex::new(Status::Checking),
+            ready: AtomicBool::new(false),
+        }
+    }
+}
+
+impl LaunchState {
+    pub fn status(&self) -> Status {
+        *self
+            .status
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+    }
+
+    fn set_status(&self, status: Status) {
+        *self
+            .status
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner()) = status;
+    }
+
+    /// The main window may open.
+    pub fn is_ready(&self) -> bool {
+        self.ready.load(Ordering::SeqCst)
+    }
+
+    pub fn set_ready(&self) {
+        self.ready.store(true, Ordering::SeqCst);
+    }
+}
+
+/// What the UI does at a tick of the launch, while it waits for the update
+/// decision.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LaunchStep {
+    Wait,
+    ShowUpdaterWindow,
+    /// Open the main window, and close the updater window if it is shown,
+    /// in the same frame.
+    OpenMainWindow,
+}
+
+pub fn launch_step(since_launch: Duration, ready: bool, updater_shown: bool) -> LaunchStep {
+    if ready {
+        LaunchStep::OpenMainWindow
+    } else if !updater_shown && since_launch >= UPDATER_WINDOW_DELAY {
+        LaunchStep::ShowUpdaterWindow
+    } else {
+        LaunchStep::Wait
+    }
+}
 
 const UNDECIDED: u8 = 0;
 const WINDOW: u8 = 1;
@@ -129,7 +211,12 @@ pub trait Feed {
     type Update;
     /// The newer version and its handle, or `None` when up to date.
     fn check(&self) -> Result<Option<(String, Self::Update)>, String>;
-    fn download(&self, update: &Self::Update) -> Result<(), String>;
+    /// `progress` receives the percentage as data arrives.
+    fn download(
+        &self,
+        update: &Self::Update,
+        progress: Box<dyn Fn(u8) + Send>,
+    ) -> Result<(), String>;
     /// Exits the process on success.
     fn apply(&self, update: &Self::Update) -> Result<(), String>;
 }
@@ -147,9 +234,28 @@ impl Feed for UpdateManager {
         }
     }
 
-    fn download(&self, update: &Self::Update) -> Result<(), String> {
-        self.download_updates(update, None)
-            .map_err(|err| format!("download failed: {}", error_kind(&err)))
+    fn download(
+        &self,
+        update: &Self::Update,
+        progress: Box<dyn Fn(u8) + Send>,
+    ) -> Result<(), String> {
+        let (sender, receiver) = mpsc::channel::<i16>();
+        // Velopack reports on the channel while it downloads; the channel
+        // closes when it returns, which ends this thread.
+        let forward = thread::Builder::new()
+            .name("acta-update-progress".into())
+            .spawn(move || {
+                for percent in receiver {
+                    progress(percent.clamp(0, 100) as u8);
+                }
+            });
+        let result = self
+            .download_updates(update, Some(sender))
+            .map_err(|err| format!("download failed: {}", error_kind(&err)));
+        if let Ok(forward) = forward {
+            let _ = forward.join();
+        }
+        result
     }
 
     fn apply(&self, update: &Self::Update) -> Result<(), String> {
@@ -159,7 +265,12 @@ impl Feed for UpdateManager {
 }
 
 /// Check, download and (if still allowed) apply. Runs on the worker thread.
-fn work<F: Feed>(feed: &F, gate: &Gate, progress: &Sender<Progress>) -> Result<(), String> {
+fn work<F: Feed>(
+    feed: &F,
+    gate: &Gate,
+    progress: &Sender<Progress>,
+    state: &Arc<LaunchState>,
+) -> Result<(), String> {
     let started = Instant::now();
     let Some((version, update)) = feed.check()? else {
         log::line(&format!(
@@ -170,8 +281,13 @@ fn work<F: Feed>(feed: &F, gate: &Gate, progress: &Sender<Progress>) -> Result<(
     };
     log::line(&format!("update: {version} available, downloading"));
     let _ = progress.send(Progress::Downloading);
+    state.set_status(Status::Downloading(0));
 
-    feed.download(&update)?;
+    let reporting = Arc::clone(state);
+    feed.download(
+        &update,
+        Box::new(move |percent| reporting.set_status(Status::Downloading(percent))),
+    )?;
     log::line(&format!(
         "update: {version} downloaded ({} ms)",
         started.elapsed().as_millis()
@@ -181,6 +297,7 @@ fn work<F: Feed>(feed: &F, gate: &Gate, progress: &Sender<Progress>) -> Result<(
         log::line("update: not applying in this launch; Velopack applies it at the next one");
         return Ok(());
     }
+    state.set_status(Status::Restarting);
     feed.apply(&update)
 }
 
@@ -195,8 +312,8 @@ fn launch_gate(restarted_by_updater: bool) -> Gate {
 }
 
 /// Start the worker and, unless the updater started this launch, wait for the
-/// launch decision.
-pub fn run_at_launch(manager: UpdateManager, restarted_by_updater: bool) {
+/// launch decision. Blocks; run it off the UI thread.
+pub fn run_at_launch(manager: UpdateManager, restarted_by_updater: bool, state: Arc<LaunchState>) {
     let gate = Arc::new(launch_gate(restarted_by_updater));
     let (sender, receiver) = mpsc::channel();
 
@@ -204,7 +321,7 @@ pub fn run_at_launch(manager: UpdateManager, restarted_by_updater: bool) {
     let spawned = thread::Builder::new()
         .name("acta-update".into())
         .spawn(move || {
-            if let Err(err) = work(&manager, &worker_gate, &sender) {
+            if let Err(err) = work(&manager, &worker_gate, &sender, &state) {
                 log::line(&format!("update: {err}; retrying at next launch"));
             }
             let _ = sender.send(Progress::Finished);
@@ -364,8 +481,9 @@ mod tests {
             }
         }
 
-        fn download(&self, _: &()) -> Result<(), String> {
+        fn download(&self, _: &(), progress: Box<dyn Fn(u8) + Send>) -> Result<(), String> {
             self.downloads.set(self.downloads.get() + 1);
+            progress(42);
             if self.download_fails {
                 Err("download failed: network error".into())
             } else {
@@ -390,12 +508,55 @@ mod tests {
         let gate = launch_gate(false);
         let (sender, receiver) = mpsc::channel();
 
-        let result = work(&feed, &gate, &sender);
+        let result = work(&feed, &gate, &sender, &Arc::default());
 
         assert_eq!((feed.downloads.get(), feed.applies.get()), (1, 1));
         assert_eq!(reports(&receiver), [Progress::Downloading]);
         assert!(result.is_err(), "the fake apply fails and is reported");
         assert!(!gate.claim_window(), "the apply side owns the gate");
+    }
+
+    #[test]
+    fn the_launch_state_follows_the_worker() {
+        let feed = FakeFeed::default();
+        let (sender, _receiver) = mpsc::channel();
+        let state = Arc::new(LaunchState::default());
+        assert_eq!(state.status(), Status::Checking);
+
+        // Claimed by the window: the download is reported, nothing applies.
+        let gate = launch_gate(true);
+        let _ = work(&feed, &gate, &sender, &state);
+        assert_eq!(state.status(), Status::Downloading(42));
+
+        // An ordinary launch: the worker restarts the app after the download.
+        let _ = work(&feed, &launch_gate(false), &sender, &state);
+        assert_eq!(state.status(), Status::Restarting);
+        assert!(!state.is_ready());
+        state.set_ready();
+        assert!(state.is_ready());
+    }
+
+    #[test]
+    fn the_updater_window_shows_only_when_the_main_window_is_late() {
+        let ms = Duration::from_millis;
+        assert_eq!(launch_step(ms(0), false, false), LaunchStep::Wait);
+        assert_eq!(launch_step(ms(299), false, false), LaunchStep::Wait);
+        assert_eq!(
+            launch_step(ms(300), false, false),
+            LaunchStep::ShowUpdaterWindow
+        );
+        // Shown once, then the launch waits with it.
+        assert_eq!(launch_step(ms(900), false, true), LaunchStep::Wait);
+        // Ready before 300 ms: the main window opens, no updater window ever.
+        assert_eq!(
+            launch_step(ms(120), true, false),
+            LaunchStep::OpenMainWindow
+        );
+        // Ready later: the main window opens and the updater window closes.
+        assert_eq!(
+            launch_step(ms(4000), true, true),
+            LaunchStep::OpenMainWindow
+        );
     }
 
     #[test]
@@ -406,7 +567,7 @@ mod tests {
         let gate = launch_gate(true);
         let (sender, receiver) = mpsc::channel();
 
-        let result = work(&feed, &gate, &sender);
+        let result = work(&feed, &gate, &sender, &Arc::default());
 
         assert_eq!(result, Ok(()));
         assert_eq!((feed.downloads.get(), feed.applies.get()), (1, 0));
@@ -420,7 +581,7 @@ mod tests {
         assert!(gate.claim_window());
         let (sender, _receiver) = mpsc::channel();
 
-        assert_eq!(work(&feed, &gate, &sender), Ok(()));
+        assert_eq!(work(&feed, &gate, &sender, &Arc::default()), Ok(()));
         assert_eq!((feed.downloads.get(), feed.applies.get()), (1, 0));
     }
 
@@ -432,7 +593,10 @@ mod tests {
             up_to_date: true,
             ..FakeFeed::default()
         };
-        assert_eq!(work(&feed, &launch_gate(false), &sender), Ok(()));
+        assert_eq!(
+            work(&feed, &launch_gate(false), &sender, &Arc::default()),
+            Ok(())
+        );
         assert_eq!((feed.downloads.get(), feed.applies.get()), (0, 0));
         assert_eq!(reports(&receiver), []);
 
@@ -440,14 +604,14 @@ mod tests {
             check_fails: true,
             ..FakeFeed::default()
         };
-        assert!(work(&feed, &launch_gate(false), &sender).is_err());
+        assert!(work(&feed, &launch_gate(false), &sender, &Arc::default()).is_err());
         assert_eq!((feed.downloads.get(), feed.applies.get()), (0, 0));
 
         let feed = FakeFeed {
             download_fails: true,
             ..FakeFeed::default()
         };
-        assert!(work(&feed, &launch_gate(false), &sender).is_err());
+        assert!(work(&feed, &launch_gate(false), &sender, &Arc::default()).is_err());
         assert_eq!((feed.downloads.get(), feed.applies.get()), (1, 0));
     }
 }

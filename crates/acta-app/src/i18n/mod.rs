@@ -190,6 +190,14 @@ pub fn number(locale: Locale, n: u64) -> String {
     out
 }
 
+/// A percentage: "68%", or "68 %" with U+202F in French (DESIGN.md 10.2).
+pub fn percent(locale: Locale, n: u64) -> String {
+    match locale {
+        Locale::En => format!("{n}%"),
+        Locale::Fr => format!("{n}\u{202f}%"),
+    }
+}
+
 /// A count where space is short (tree, tabs): "99+" above 99 (DESIGN.md 7).
 pub fn short_count(n: u64) -> String {
     if n > 99 { "99+".into() } else { n.to_string() }
@@ -374,6 +382,8 @@ mod tests {
         assert_eq!(number(Locale::En, 1000), "1,000");
         assert_eq!(number(Locale::En, 1234567), "1,234,567");
         assert_eq!(number(Locale::Fr, 1000), "1\u{202f}000");
+        assert_eq!(percent(Locale::En, 68), "68%");
+        assert_eq!(percent(Locale::Fr, 68), "68\u{202f}%");
         assert_eq!(short_count(99), "99");
         assert_eq!(short_count(100), "99+");
     }
