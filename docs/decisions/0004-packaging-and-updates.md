@@ -84,6 +84,10 @@ Read in the vpk 1.2.161 source and observed with a local Windows pack; the macOS
 - `release.yml` also runs as a dry run (no release, no attestation) on pushes to `main` and on `workflow_dispatch`; this is where a broken release build of any channel, including `osx-x64`, is caught before a tag, and it fills the cargo cache that tag builds read.
 - Yanking: `GithubSource` is created with `prerelease = false` and skips pre-releases and drafts, so marking a release as pre-release hides it from clients. See `docs/releasing.md`.
 
+## Amendments from the review of the M1 pipeline (2026-11-20)
+These replace the corresponding lines of the Decision above.
+- Actions are pinned to full commit SHAs, not to majors, with the release in a trailing comment: a tag of an action can be moved to other code, a commit cannot, and these actions run with the release token. SHAs resolved with `gh api repos/<owner>/<repo>/commits/<tag>` on 2026-11-20: `actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1` (v7.0.1), `Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0` (v2.9.3), `actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9` (v7.0.2), `actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333` (v8.0.2), `actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8` (v4.2.2). Bumping one means resolving the new tag the same way and changing the SHA and the comment together; nothing updates them automatically.
+
 ## Evidence
 Spike: `spikes/updater` (Windows 11 26300, rustc 1.97.1 MSVC, velopack 1.2.161, vpk 1.2.161, .NET SDK 10.0.302). `pack.ps1 <version>` builds and packages; the feed was the `releases/` folder served on `http://127.0.0.1:8765/` through `HttpSource`. Observed on Windows only:
 - `vpk pack` took under 1 s and produced `ActaSpike-0.0.1-win-x64-full.nupkg`, `ActaSpike-win-x64-Setup.exe` (11.6 MB for a 3.4 MB app), `ActaSpike-win-x64-Portable.zip`, `releases.win-x64.json`; packing 0.0.2 in the same folder added a 2.9 kB delta. Without `--runtime` vpk assumes x86.
