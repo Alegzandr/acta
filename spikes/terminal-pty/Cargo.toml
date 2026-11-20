@@ -1,0 +1,12 @@
+[package]
+name = "terminal-pty-spike"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Standalone throwaway spike for ADR 0002; deliberately not a workspace member.
+[workspace]
+
+[dependencies]
+alacritty_terminal = "=0.26.0"
+portable-pty = "=0.9.0"

@@ -14,7 +14,7 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 
 ## M0 - Research and spikes
 - [x] ADR 0001: UI stack - gpui-kit 0.10.0 (GPUI snapshot gpui-pre 0.3.12), proven on Windows; macOS/Linux to prove in M1 CI
-- [ ] ADR 0002: Terminal embedding
+- [x] ADR 0002: Terminal embedding - alacritty_terminal 0.26.0 for emulation and PTY, own GPUI element; headless spike proven on Windows with Claude Code
 - [ ] ADR 0003: Encrypted storage and key management
 - [ ] ADR 0004: Packaging, silent install, auto-update
 - [ ] ADR 0005: Claude Code integration (MCP, CLI, hooks, skill, setup)
