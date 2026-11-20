@@ -23,6 +23,9 @@ pub struct Layout {
     pub source: PathBuf,
     /// Stable directory the CLI is exported to.
     pub dir: PathBuf,
+    /// The directory that exists for the export alone and contains `dir`.
+    /// Uninstall deletes it whole; it never holds anything else.
+    pub removable_root: PathBuf,
     /// File name of the exported CLI (`acta` or `acta.exe`).
     pub exe_name: &'static str,
     /// Directory of the `acta` symlink; `None` on Windows.
@@ -41,6 +44,7 @@ impl Layout {
         Some(Self {
             source: gui_exe.parent()?.join(paths::packaged_cli_name(os)),
             dir: paths::cli_export_dir(os, base)?,
+            removable_root: paths::cli_root(os, base)?,
             exe_name: paths::exported_cli_name(os),
             link_dir: paths::cli_link_dir(os, base),
         })
@@ -154,6 +158,7 @@ mod tests {
         Layout {
             source: package.join("acta-cli"),
             dir: root.join("export").join("bin"),
+            removable_root: root.join("export"),
             exe_name: "acta",
             link_dir: None,
         }
@@ -189,6 +194,7 @@ mod tests {
         let base = BaseDirs {
             home: Some(PathBuf::from("home").join("alexandre")),
             local_app_data: Some(PathBuf::from("local")),
+            ..BaseDirs::default()
         };
         let exe = PathBuf::from("root").join("current").join("Acta.exe");
         let layout = Layout::resolve(&exe, Os::Windows, &base).unwrap();
@@ -203,12 +209,35 @@ mod tests {
                 .join("bin")
                 .join("acta.exe")
         );
+        assert_eq!(
+            layout.removable_root,
+            PathBuf::from("local").join("ActaCli")
+        );
         assert_eq!(layout.link_dir, None);
 
         let layout = Layout::resolve(&exe, Os::Linux, &base).unwrap();
         assert_eq!(layout.exe_name, "acta");
         assert!(layout.link_dir.is_some());
         assert_eq!(Layout::resolve(&exe, Os::Linux, &BaseDirs::default()), None);
+    }
+
+    #[test]
+    fn the_root_uninstall_deletes_holds_the_export_and_never_the_data() {
+        let base = BaseDirs {
+            home: Some(PathBuf::from("home").join("alexandre")),
+            local_app_data: Some(PathBuf::from("local")),
+            ..BaseDirs::default()
+        };
+        let exe = PathBuf::from("root").join("current").join("Acta");
+        for os in [Os::Windows, Os::MacOs, Os::Linux] {
+            let layout = Layout::resolve(&exe, os, &base).unwrap();
+            let data = paths::data_dir(os, &base).unwrap();
+            assert!(layout.dir.starts_with(&layout.removable_root), "{os:?}");
+            assert_ne!(layout.dir, layout.removable_root, "{os:?}");
+            assert_ne!(layout.removable_root, data, "{os:?}");
+            assert!(!data.starts_with(&layout.removable_root), "{os:?}");
+            assert!(!layout.source.starts_with(&layout.removable_root), "{os:?}");
+        }
     }
 
     #[test]

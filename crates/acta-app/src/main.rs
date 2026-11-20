@@ -81,7 +81,12 @@ fn velopack_bootstrap() {
         .on_after_install_fast_callback(|_| export_cli("after-install"))
         .on_after_update_fast_callback(|_| export_cli("after-update"))
         .on_before_uninstall_fast_callback(|_| match Layout::locate() {
-            Some(layout) => uninstall::run(&layout),
+            Some(layout) => {
+                if uninstall::run(&layout, &user_path::USER_PATH) {
+                    // Last: PATH, processes and files are already dealt with.
+                    user_path::announce_environment_change();
+                }
+            }
             None => log::line("uninstall: user directories not found; nothing removed"),
         });
     let mut app = app;

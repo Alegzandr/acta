@@ -302,7 +302,7 @@ mod symlink {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::path::{Path, PathBuf};
 
     use super::link_rule::{Action, Existing, decide};
@@ -379,7 +379,7 @@ mod tests {
     }
 
     #[cfg(windows)]
-    mod registry {
+    pub(crate) mod registry {
         use std::io::ErrorKind;
 
         use winreg::enums::{HKEY_CURRENT_USER, RegType};
@@ -394,12 +394,12 @@ mod tests {
 
         /// A key of its own under `HKCU\Software`, deleted when dropped (also
         /// when the test panics). `HKCU\Environment` is never opened here.
-        struct Scratch {
+        pub(crate) struct Scratch {
             subkey: String,
         }
 
         impl Scratch {
-            fn new(tag: &str) -> Self {
+            pub(crate) fn new(tag: &str) -> Self {
                 let subkey = format!(r"Software\ActaTest-{}-{tag}", std::process::id());
                 RegKey::predef(HKEY_CURRENT_USER)
                     .create_subkey(&subkey)
@@ -407,21 +407,21 @@ mod tests {
                 Self { subkey }
             }
 
-            fn target(&self) -> PathValue<'_> {
+            pub(crate) fn target(&self) -> PathValue<'_> {
                 PathValue {
                     subkey: &self.subkey,
                     name: NAME,
                 }
             }
 
-            fn set(&self, bytes: Vec<u8>, vtype: RegType) {
+            pub(crate) fn set(&self, bytes: Vec<u8>, vtype: RegType) {
                 let (key, _) = RegKey::predef(HKEY_CURRENT_USER)
                     .create_subkey(&self.subkey)
                     .unwrap();
                 key.set_raw_value(NAME, &RegValue { bytes, vtype }).unwrap();
             }
 
-            fn get(&self) -> Option<RegValue> {
+            pub(crate) fn get(&self) -> Option<RegValue> {
                 RegKey::predef(HKEY_CURRENT_USER)
                     .open_subkey(&self.subkey)
                     .unwrap()
