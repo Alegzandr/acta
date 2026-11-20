@@ -20,6 +20,8 @@ sqlcipher-src = { version = "=420.0.0", optional = true }
 default = ["openssl"]
 # The stock rusqlite path: OpenSSL built from source (needs Perl on Windows).
 openssl = ["rusqlite/bundled-sqlcipher-vendored-openssl"]
+# macOS only: bundled SQLCipher on CommonCrypto, no OpenSSL (the path ADR 0003 picks there).
+commoncrypto = ["rusqlite/bundled-sqlcipher"]
 # Same SQLCipher, libtomcrypt provider compiled by build.rs (needs only a C compiler).
 ltc = ["rusqlite/sqlcipher", "rusqlite/modern_sqlite", "dep:cc", "dep:sqlcipher-src"]
 

@@ -36,7 +36,7 @@ jobs:
       - name: cargo fmt
         run: cargo fmt --all --check
       - name: shellcheck
-        run: shellcheck install.sh scripts/package.sh scripts/ci/*.sh
+        run: shellcheck install.sh scripts/package.sh scripts/ci/*.sh spikes/storage/platform-checks.sh
       - name: PSScriptAnalyzer
         shell: pwsh
         run: |

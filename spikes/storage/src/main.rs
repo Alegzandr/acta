@@ -321,6 +321,38 @@ fn check(name: &str, ok: bool) {
 }
 static FAILED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+// ---------- key-store probes ----------
+
+/// Changes the executable without changing its behaviour: `ACTA_SPIKE_BUILD_ID=B cargo build`
+/// yields a build with another code hash, as an update would.
+const BUILD_ID: &str = match option_env!("ACTA_SPIKE_BUILD_ID") {
+    Some(id) => id,
+    None => "default",
+};
+
+/// Prints the outcome and the platform error (with its OSStatus on macOS); never the secret.
+fn key_probe(op: &str, service: &str) -> Res<()> {
+    if service.is_empty() {
+        return Err("a service name is required".into());
+    }
+    println!("build {BUILD_ID}: {op} on service {service}");
+    let entry = keyring::Entry::new(service, USER)?;
+    let res = match op {
+        "key-set" => entry.set_password(&hex(&random_key())),
+        "key-get" => entry
+            .get_password()
+            .map(|text| println!("read {} characters", text.len())),
+        _ => entry.delete_credential(),
+    };
+    match res {
+        Ok(()) => {
+            println!("{op}: ok");
+            Ok(())
+        }
+        Err(e) => Err(format!("{op} failed: {e} | {e:?}").into()),
+    }
+}
+
 // ---------- the run ----------
 
 fn run() -> Res<()> {
@@ -732,7 +764,10 @@ fn main() {
                 Path::new(arg(2)).parent().ok_or("no parent")?,
             )?)
         })(),
-        _ => Err("usage: acta-storage-spike run".into()),
+        // Key-store probes for the platform checks (ADR 0003): one operation on a named
+        // service, so that differently signed builds can be tried against the same item.
+        "key-set" | "key-get" | "key-del" => key_probe(arg(1), arg(2)),
+        _ => Err("usage: acta-storage-spike run | key-set|key-get|key-del <service>".into()),
     };
     if let Err(e) = res {
         eprintln!("error: {e}");

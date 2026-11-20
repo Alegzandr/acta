@@ -1,0 +1,53 @@
+name: Platform checks
+
+# Manual only. Answers the questions ADR 0003 left open, on real runners: the Linux
+# vendored-OpenSSL and macOS CommonCrypto builds of the storage spike, the Secret
+# Service present and absent, and whether differently signed ad-hoc builds can read
+# one macOS keychain item without a prompt. Each job ends with a summary table, also
+# shown on the run's summary page. Windows was proven locally.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  storage:
+    name: storage spike (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - name: Secret Service packages (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends gnome-keyring dbus-daemon
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: spikes/storage
+      - name: Run the checks
+        env:
+          SHOTS_DIR: ${{ runner.temp }}/screenshots
+        run: bash spikes/storage/platform-checks.sh
+      # A screenshot is taken whenever a step hangs: it shows the prompt, if there is one.
+      - name: Keep screenshots of hung steps
+        if: always() && runner.os == 'macOS'
+        uses: actions/upload-artifact@v7
+        with:
+          name: keychain-screenshots
+          path: ${{ runner.temp }}/screenshots/
+          if-no-files-found: ignore
+          retention-days: 14
