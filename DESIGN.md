@@ -181,7 +181,7 @@ Static files only (no variable fonts), two weights of the sans: 400 and 600. The
 | `type.small` | Sans | 12 / 16 | 400 | Timestamps, counts, breadcrumb, tooltips, hints, status bar, kbd hints |
 | `type.label` | Sans | 12 / 16 | 600 | Section labels ("Current state", "Timeline"), epic rows, table and tool window headers |
 | `type.code` | Mono | 13 / 20 | 400 | Inline code, code blocks, paths, ids, "Claude Code" author name |
-| `type.terminal` | Mono | 13 / 17 | 400 / 700 | Terminal grid (cell 7.8 x 17); size adjustable 11 to 18 with `Mod+Shift+=` / `Mod+Shift+-` |
+| `type.terminal` | Mono | 13 / 17 | 400 / 700 | Terminal grid (cell 7.8 x 17); size adjustable 11 to 18 with `Ctrl+Alt+=` / `Ctrl+Alt+-` (`Cmd+Shift+=` / `Cmd+Shift+-` on macOS) and from the palette |
 
 Sentence case everywhere, in both languages. No uppercase, no italics for UI (italics are for Markdown emphasis only). Minimum text size is 12px; nothing smaller.
 
@@ -357,7 +357,7 @@ Destructive actions outside a dialog are ghost buttons or menu items with `dange
 
 **Document editor**: the reading view switches in place, without moving the scroll position. Title becomes an inline title edit; summary becomes a text input with the placeholder "One line: what this is and when to read it" and a `tnum` counter in `type.small` `text.tertiary` ("64 / 140"); the body becomes a borderless raw-Markdown editor in `type.document` filling the column (no box: the page is the editor). A 44 bar is pinned to the bottom of the page area (`bg.base`, top border `border.subtle`): left, "Editing" plus the draft state in `type.small` `text.tertiary`; right, Cancel (ghost, `Esc`) and Save (primary, `Mod+Enter`). Save is disabled with the hint "A document needs a title and a summary." until both exist. Every save keeps the previous version, so there is no confirmation on save and none on cancel (the draft is kept). Markdown editing aids: `Enter` continues lists, `Tab` / `Shift+Tab` indent, `Mod+B` / `Mod+I` wrap the selection in `**` / `*` (inside an editor these win over the global shortcuts); nothing else, no toolbar.
 
-**History** (documents and memories alike; for a memory, `H` opens it in the reading view first): `H` replaces the body with the history, same view, same header. A list of revisions, newest first (rows of 32: author mark, "Claude Code" or name, what changed in `text.secondary` ("Replaced section Storage", "Edited", "Created from file"), lines added and removed with `tnum`, time); at most 6 rows visible, then scroll. Below the list, the selected revision rendered read-only, headed by a notice "Version from Tue 14:05 by Claude Code" with a segmented control (Text / Changes) and a secondary button "Restore this version". Changes shows the raw Markdown with a 16 gutter: `+` in `success` for added lines, `-` in `danger` for removed lines whose text is `text.secondary`; no background tints. Restoring writes the old text as a new revision on top, so it is undoable, needs no dialog, and shows the toast "Restored the version from Tue 14:05. Undo". `Esc` or `H` returns to reading.
+**History** (documents and memories alike; for a memory, `H` opens it in the reading view first): `H` replaces the body with the history, same view, same header. A list of revisions, newest first (rows of 32: author mark, "Claude Code" or name, what changed in `text.secondary` ("Replaced section Storage", "Edited", "Created from file"), lines added and removed with `tnum`, time); at most 6 rows visible, then scroll. Below the list, the selected revision rendered read-only, headed by a notice "Version from 17 Nov 2026, 14:05 by Claude Code" with a segmented control (Text / Changes) and a secondary button "Restore this version". Changes shows the raw Markdown with a 16 gutter: `+` in `success` for added lines, `-` in `danger` for removed lines whose text is `text.secondary`; no background tints. Restoring writes the old text as a new revision on top, so it is undoable, needs no dialog, and shows the toast "Restored the version from 17 Nov 2026, 14:05. Undo". `Esc` or `H` returns to reading.
 
 **Working folders** (project, epic and topic pages; ADR 0008; wireframes in 8.11). The folders Claude Code works in: the first is the **primary** folder, where a session starts; the others are **additional** folders it may also read and edit. Each level has its own ordered list. The **effective** folders of a page are its own if it has any, otherwise those of the nearest level above that has some. The surface is one row at rest, because folders are set once and read rarely; it unfolds in place into the list, like a memory.
 - **Folder row** (height 28, `radius.sm`, gap 8; it is the value of the Folders row in the properties block of a topic, epic or project page, and when unfolded its list opens under that row, pushing the properties below it down): disclosure chevron 16 (`chevron-right` / `chevron-down`), `folder-open` 16 in `text.secondary`, the primary effective path in `type.code` `text.primary`, then with a gap of 12 the count of additional folders ("+2", `type.small` `text.tertiary`, `tnum`, absent at zero), then with a gap of 12 the origin label in `type.small` `text.tertiary`: "from epic Terminal" or "from project Acta", the name a link in the breadcrumb style to that page. No label means the folders are this page's own. The order of elements is fixed: chevron, icon, path, count, origin label, then state (the not-found words and their button), so the origin is shown in every state. Only the path truncates; the name in the label truncates at 24 characters. When the column is under 520, whatever follows the path (label, or the not-found words and their button) moves to a second line under it and the row is 52, as a knowledge row does; the same holds for list rows. Hover `fill.hover`; keyboard focus ring; a click, `Enter` or `Right` unfolds; the unfolded state is remembered per view.
@@ -394,7 +394,7 @@ There are no user-defined properties, no dates to fill in and no empty rows to h
 - Under 520 of column width the Entries column is dropped. Empty: the existing empty states ("No topics yet. ..." with "New topic").
 - It is a table and only a table. A board was considered and left out (Direction).
 
-**Slash menu** (in every multi-line editor). Typing `/` at the start of a line or right after whitespace opens a menu at the caret: the context menu component, at most 8 rows, filtered as typing continues ("/co" leaves Code block), `Enter` inserts, `Esc` closes and leaves the typed text alone. It must never get in the way of text that merely contains a slash, so: it does not open inside a code fence or inline code; it closes, leaving the text as typed, the moment what follows the `/` contains a second `/`, a `.`, a `\` or a space, or matches no item (so " /src/main.rs", " /usr" and " /etc" are just text); and once it has closed for a given `/` it does not reopen for it. With the menu closed, `Enter` and `Space` do what they always do. Every item inserts Markdown and nothing else: Heading 1, Heading 2, Heading 3, Bulleted list, Numbered list, Task list, Quote, Code block, Table (a 3 x 2 skeleton), Divider. In the timeline composer a first group sets the entry type instead: Progress, Decision, Discussion. The stored text is plain Markdown; there are no blocks, so what the menu writes is exactly what Claude Code would have written.
+**Slash menu** (in every multi-line editor). Typing `/` at the start of a line or right after whitespace opens a menu at the caret: the context menu component, 8 rows visible and scrolling beyond that, filtered as typing continues by prefix of the item's name, never fuzzily ("/co" leaves Code block), `Enter` inserts, `Esc` closes and leaves the typed text alone. It must never get in the way of text that merely contains a slash, so: it does not open inside a code fence or inline code; it closes, leaving the text as typed, the moment what follows the `/` contains a second `/`, a `.`, a `\` or a space, or matches no item (so " /src/main.rs", " /usr" and " /etc" are just text); and once it has closed for a given `/` it does not reopen for it. With the menu closed, `Enter` and `Space` do what they always do. Every item inserts Markdown and nothing else: Heading 1, Heading 2, Heading 3, Bulleted list, Numbered list, Task list, Quote, Code block, Table (a 3 x 2 skeleton), Divider. In the timeline composer a first group sets the entry type instead: Progress, Decision, Discussion. The stored text is plain Markdown; there are no blocks, so what the menu writes is exactly what Claude Code would have written.
 
 **Chat panel** (a tool window; ADR 0009; Windows and macOS). It shows claude.ai, the website, in the system web view. Acta never reads from the page, writes to it or styles it, so the page keeps claude.ai's own theme whatever Acta's is.
 - **Header** (4.5): name "Chat", context "claude.ai" (plain text; no logo of Anthropic or Claude anywhere). Buttons: Open in browser (`external-link`), Reload (`rotate-cw`), `ellipsis` (Sign-in help, Move to bottom / Move to right, Sign out and clear chat data...), hide. Tooltips of these buttons always open upward, away from the web view, which would cover them.
@@ -416,7 +416,7 @@ There are no user-defined properties, no dates to fill in and no empty rows to h
 
 | Section | Rows |
 |---|---|
-| **Appearance** | Theme: segmented control System / Light / Dark; description "System follows your computer's setting." Language: dropdown English / Français; description "Changes Acta's own text. What you and Claude Code write is never translated." Applies at once, without a restart. Terminal text size: a stepper 11 to 18 (`Mod+Shift+=` / `Mod+Shift+-`; not `Ctrl+-`, which is undo in Claude Code). |
+| **Appearance** | Theme: segmented control System / Light / Dark; description "System follows your computer's setting." Language: dropdown English / Français; description "Changes Acta's own text. What you and Claude Code write is never translated." Applies at once, without a restart. Terminal text size: a stepper 11 to 18. Also "Increase terminal text size" and "Decrease terminal text size" in the palette, and `Ctrl+Alt+=` / `Ctrl+Alt+-` on Windows and Linux, `Cmd+Shift+=` / `Cmd+Shift+-` on macOS. Never `Ctrl+-` or `Ctrl+Shift+-`: both reach Claude Code as its undo. Nothing else in 6.1 uses `Ctrl+Alt`; on a layout where AltGr with one of these keys types a character, the character wins and the palette is the way. |
 | **Working folders** | "Turn off Claude Code's own memory in attached folders": checkbox, on by default; description "When a folder is attached, Acta writes autoMemoryEnabled: false to its .claude/settings.local.json, so that what Claude Code learns is kept in Acta, where you can read it." "Folders not found": present only when some exist; the count, then one folder list row per folder (path, owning page as a link, "Locate..."), at most 6 with "Show all 14". This is the one place that lists them across projects. |
 | **Claude Code** | The four checks of `acta setup --check`, one row each, a glyph 14 and words: "Claude Code found", "Plugin files written", "Plugin installed", "Permission rule added"; `check` in `success` and "Done", or `circle-dashed` in `text.tertiary` and "Missing". Then "Set up Claude Code" (primary while anything is missing; afterwards a secondary "Run setup again") and a ghost "Remove from Claude Code". Description: "Setup installs Acta's plugin in Claude Code and adds one permission line to ~/.claude/settings.json. Remove undoes both." The path of the `acta` command in `type.code`, with "Copy path". |
 | **Data** | "Export...", with "Last export: 12 days ago" or "Never exported". "Import...". "Restore from snapshot...", with "11 snapshots kept; the newest is from today, 09:12". "Open trash", with "23 items". "Database": its path in `type.code`, with "Show in Explorer". |
@@ -459,7 +459,7 @@ There are no user-defined properties, no dates to fill in and no empty rows to h
 
 **Updater window** (ADR 0004). An update is normally applied at launch, before the main window: a feed check of up to 2 s, a download of up to 5 s, then a relaunch. So that the user never stares at nothing, if the main window is not ready 300 ms after launch a small window appears at once and closes in the frame the main window opens. 360 x 132, centred on the primary display, not resizable, no caption buttons, draggable anywhere, `bg.base` with a 1px `border.default` outline (`radius.lg` where the platform allows a shaped window), padding 24, in the theme and language of the preferences file. Top to bottom, left-aligned: the app mark 24 and "Acta" in `type.ui-strong`, gap 8; 16; one status line in `type.ui` `text.primary`; 12; a progress bar (full width, 4 high, `radius.sm`, track `fill.selected`, fill `text.secondary`) with the percentage in `type.small` `text.tertiary` `tnum` right-aligned under it. The status line reads, in order, "Checking for updates..." (no bar: nothing is measurable yet, and an indeterminate bar would be animation for its own sake), "Downloading update..." (bar and percentage, updated as data arrives, never eased), "Restarting..." (bar full). There is no button and nothing to cancel: every step is bounded by ADR 0004, and when a step fails or runs out of time the window closes and Acta opens as it is, with no message. It is the one place the app mark is shown.
 
-**Update indicator** (a status bar item, at the right, before the version). Hidden when up to date and while a download runs. It exists for the one path the updater window does not cover: the check or download was too slow at launch, the app opened, and the download finished in the background. **Ready**: 6 dot in `accent` plus "Update ready - restart to apply" in `type.small` `text.secondary`; activating it (or the palette command "Restart to update") restarts into the new version and restores the window, tabs and terminal sessions; left alone, the update applies at the next launch. **Just updated** (first launch on a new version): "Updated to 0.4.1" in `type.small` `text.tertiary` for that session, opening the release notes; no dot. **Failed** three launches in a row: `triangle-alert` 14 in `warning` plus "Update failed"; click shows the reason and a "Download manually" link. Never a dialog, never a toast, never a badge on anything else.
+**Update indicator** (a status bar item, at the right, before the version). Hidden when up to date and while a download runs. It exists for the one path the updater window does not cover: the check or download was too slow at launch, the app opened, and the download finished in the background. **Ready**: 6 dot in `accent` plus "Update ready – restart to apply" in `type.small` `text.secondary`; activating it (or the palette command "Restart to update") restarts into the new version and restores the window, tabs and terminal sessions; left alone, the update applies at the next launch. **Just updated** (first launch on a new version): "Updated to 0.4.1" in `type.small` `text.tertiary` for that session, opening the release notes; no dot. **Failed** three launches in a row: `triangle-alert` 14 in `warning` plus "Update failed"; click shows the reason and a "Download manually" link. Never a dialog, never a toast, never a badge on anything else.
 
 ## 6. Interaction
 
@@ -501,12 +501,12 @@ In the working folders list (the folder row is one of the blocks `Up` / `Down` s
 
 | Focus | Platform | Acta keeps | Goes through |
 |---|---|---|---|
-| Terminal | Windows, Linux | `Ctrl+Shift+K` (palette); ``Ctrl+` `` and `Ctrl+Shift+J` (terminal); `Ctrl+Shift+H` (chat); `Ctrl+1` to `Ctrl+4`; `Ctrl+Tab`, `Ctrl+Shift+Tab`; `F6`, `Shift+F6`; `Ctrl+Shift+Enter`; `Ctrl+Shift+C`, `Ctrl+Shift+V` (copy, paste); `Ctrl+Shift+=`, `Ctrl+Shift+-` (text size) | Every `Ctrl+letter` (`Ctrl+K`, `Ctrl+P`, `Ctrl+N`, `Ctrl+E`, `Ctrl+B`, `Ctrl+W` are readline keys), `Ctrl+-` (undo in Claude Code), `Ctrl+Enter`, `Ctrl+,`, `Ctrl+/`, `Alt` combinations, function keys other than `F6` |
-| Terminal | macOS | Every `Cmd` shortcut of the table above, `Cmd+C` and `Cmd+V`, `Cmd+Shift+=` and `Cmd+Shift+-`; and from the `Ctrl` side only ``Ctrl+` ``, `Ctrl+Tab`, `Ctrl+Shift+Tab`; `F6`, `Shift+F6` | Every other `Ctrl` and `Option` combination |
+| Terminal | Windows, Linux | `Ctrl+Shift+K` (palette); ``Ctrl+` `` and `Ctrl+Shift+J` (terminal); `Ctrl+Shift+H` (chat); `Ctrl+1` to `Ctrl+4`; `Ctrl+Tab`, `Ctrl+Shift+Tab`; `F6`, `Shift+F6`; `Ctrl+Shift+Enter`; `Ctrl+Shift+C`, `Ctrl+Shift+V` (copy, paste); `Ctrl+Alt+=`, `Ctrl+Alt+-` (text size) | `Ctrl+-` and `Ctrl+Shift+-` (both reach Claude Code as its undo), every `Ctrl+letter` (`Ctrl+K`, `Ctrl+P`, `Ctrl+N`, `Ctrl+E`, `Ctrl+B`, `Ctrl+W` are readline keys), `Ctrl+Enter`, `Ctrl+,`, `Ctrl+/`, `Alt` combinations, function keys other than `F6` |
+| Terminal | macOS | Every `Cmd` shortcut of the table above except undo and redo, `Cmd+C` and `Cmd+V`, `Cmd+Shift+=` and `Cmd+Shift+-`; and from the `Ctrl` side only ``Ctrl+` ``, `Ctrl+Tab`, `Ctrl+Shift+Tab`; `F6`, `Shift+F6` | `Cmd+Z` and `Cmd+Shift+Z` (as `Ctrl+Z` does on Windows and Linux: Acta's undo never fires from inside the terminal), every other `Ctrl` and `Option` combination |
 | Chat web view | Windows | `Ctrl+Shift+K`; `Ctrl+Shift+H`; ``Ctrl+` `` and `Ctrl+Shift+J`; `Ctrl+1` to `Ctrl+4`; `Ctrl+Tab`, `Ctrl+Shift+Tab`; `F6`, `Shift+F6`; `Ctrl+Shift+Enter` | Everything else, `Ctrl+K`, `Ctrl+W`, `Ctrl+N`, `Ctrl+Enter` and plain typing included |
 | Chat web view | macOS | `Cmd+Shift+K`; `Cmd+Shift+H`; ``Ctrl+` `` and `Cmd+Shift+J`; `Cmd+1` to `Cmd+4`; `Ctrl+Tab`, `Ctrl+Shift+Tab`; `F6`, `Shift+F6`; `Cmd+Shift+Enter`; the system's own `Cmd+Q`, `Cmd+H`, `Cmd+M` | Everything else, `Cmd+K`, `Cmd+W`, `Cmd+N`, `Cmd+,` included |
 
-On Linux there is no chat web view: `Mod+Shift+H` opens claude.ai in the browser and `Mod+4` is not bound. The web view does not forward keys by itself; the kept keys are routed from it (ADR 0009), and that route working is a condition of shipping the panel.
+On macOS the app must have a standard Edit menu whose items go to the first responder; without it `Cmd+C`, `Cmd+V`, `Cmd+X`, `Cmd+A` and `Cmd+Z` do nothing inside the web view. On Linux there is no chat web view: `Mod+Shift+H` opens claude.ai in the browser and `Mod+4` is not bound. The web view does not forward keys by itself; the kept keys are routed from it (ADR 0009), and that route working is a condition of shipping the panel.
 
 **Keyboard layouts.** Shortcuts on letters match the character the layout produces. Shortcuts on digits and on the backtick match the physical key (the US position), because on a French AZERTY keyboard the digit row yields symbols and the backtick needs AltGr; `Ctrl+Shift+J` exists so that the terminal toggle never depends on that key. If the pinned GPUI cannot match by position, the digit shortcuts are dropped on those layouts rather than made unreliable: `F6` and the palette cover them.
 
@@ -569,7 +569,7 @@ Typing into an overlay that is still fading in works from the first frame. With 
 - **Optimistic, always.** The UI updates in the same frame as the input and persists in the background. A failed write restores the previous value in place and shows an error toast with "Retry"; the user's text is never lost (it goes back into the editor).
 - **Autosave** on commit (`Mod+Enter`, `Enter` for single-line fields, or focus leaving the field). There is no Save button for whole pages and no dirty indicator. Drafts of uncommitted editors survive navigation and restarts; they are stored in the encrypted database (11), never in the preferences file.
 - **Undo** (`Mod+Z`) covers, per project and across navigation, the last 100 of: create, edit, delete, move, reorder, status change, note filing, and every working-folder change (set, add, remove, reorder, locate, include inherited). Deleting a project, epic, topic, note, entry, document or memory removes it immediately and shows a toast "Topic deleted" with Undo; deleted things stay in the trash page for 30 days. Saving, moving or restoring a document or memory is undoable too, since every save keeps the previous version. Undo applies to the human's own actions only; it never reverts something Claude Code wrote (those are edited or deleted explicitly).
-- **Confirmation dialogs** exist only for what `Mod+Z` cannot take back: closing or restarting a terminal, or quitting, while a process is running in it, signing out of the chat panel (its profile is deleted), importing (the preview is the confirmation), and restoring a snapshot. Deleting a project is not one of them: it goes to the trash like everything else. Export is a dialog because it has options and a warning, not because it is dangerous. The dialog names the object and the consequence, and its confirming button repeats the verb ("Delete project").
+- **Confirmation dialogs** exist only for what `Mod+Z` cannot take back: closing or restarting a terminal, or quitting, while a process is running in it, signing out of the chat panel (its profile is deleted), importing (the preview is the confirmation), and restoring a snapshot. Deleting a project is not one of them: it goes to the trash like everything else. Export is a dialog because it has options and a warning, not because it is dangerous. The dialog names the object and the consequence, and its confirming button repeats the verb ("Restore and restart").
 
 ### 6.5 Changes written by Claude Code (or any other process)
 
@@ -877,7 +877,7 @@ Annotations: the tree keeps the owning topic selected. Edit turns this same page
   column 680 centred, left-aligned; no sidebar, no icon, no red; keychain name per platform
 ```
 
-Annotations: the keychain is named as the platform names it (Windows Credential Manager, macOS Keychain, the Secret Service keyring). "Import an export..." leads to the normal import preview, where every row is Created. The sentence about what cannot be done is stated once, plainly, and is not softened.
+Annotations: the keychain is named as the platform names it (Windows Credential Manager, macOS Keychain, the Secret Service keyring; the `keychain.*` strings, whose French values carry their article). "Import an export..." leads to the normal import preview, where every row is Created. The sentence about what cannot be done is stated once, plainly, and is not softened.
 
 ### 8.10 Knowledge base (project)
 
@@ -1174,7 +1174,7 @@ The interface exists in English (the default on a new install) and in French. Th
 ### 10.1 French conventions
 
 - Sentence case as in English: a capital on the first word and on proper names only ("Nouveau sujet", never "Nouveau Sujet").
-- The user is addressed as "vous". Commands and buttons are infinitives ("Supprimer le sujet", "Choisir un dossier..."); states are past participles ("Sujet supprimé").
+- The user is addressed as "vous". Commands and buttons are infinitives ("Supprimer le sujet", "Choisir un dossier..."); states are past participles ("Sujet supprimé"). The one deliberate exception is navigation, "Précédent" and "Suivant" for Back and Forward, as every French browser has it. A key is never written into a sentence: strings take `{keys}` and the hint is rendered with the platform's and the language's key names.
 - A narrow no-break space (U+202F) before `;` `:` `!` `?` and `»` and after `«`; in the catalogue below an ordinary space is typed there and stands for U+202F. Quotation marks are « ». The apostrophe is the typographic one (’) in both languages; the table types `'` for legibility.
 - Numbers: U+202F as thousands separator ("1 000"), a comma for decimals, U+202F before `%` and before units ("68 %", "400 Mo").
 - A trailing ellipsis is the single character U+2026 in both languages, with no space before it; the table types three dots.
@@ -1212,7 +1212,7 @@ Both languages use the 24-hour clock and day-month-year order; neither follows t
 | Percent, sizes | 68%, 400 MB | 68 %, 400 Mo |
 | Counts over 99 | 99+ | 99+ |
 
-File names Acta proposes (`acta-2026-11-20.acta.json`) are not localised.
+The first of the month is "1er" in French, in the long and the compact forms ("le 1er nov. 2026", "1er nov."); English has no such form. File names Acta proposes (`acta-2026-11-20.acta.json`) are not localised.
 
 ### 10.3 Layout under longer text
 
@@ -1287,7 +1287,7 @@ The authoritative text of every string this file defines. Sections 4 to 8 quote 
 | `status.blocked` | Blocked | Bloqué |
 | `status.done` | Done | Terminé |
 | `status.dropped` | Dropped | Abandonné |
-| `event.status` | {author} set status to {status} | {author} a changé le statut en {status} |
+| `event.status` | {author} set status to {status} | {author} a passé le statut à « {status} » |
 | `prop.status` | Status | Statut |
 | `prop.epic` | Epic | Epic |
 | `prop.folders` | Folders | Dossiers |
@@ -1358,7 +1358,7 @@ The authoritative text of every string this file defines. Sections 4 to 8 quote 
 | `kb.edited.memory` | edited by {author} {when} | modifiée par {author} {when} |
 | `kb.from_epic` | From epic {name} | De l'epic {name} |
 | `kb.from_project` | From project {name} | Du projet {name} |
-| `kb.more_inherited` | {n} more from epic and project | {n} autre de l'epic et du projet · {n} autres de l'epic et du projet |
+| `kb.more_inherited` | {n} more from epic and project | {n} autre hérité de l'epic et du projet · {n} autres hérités de l'epic et du projet |
 | `kb.more_epic` | {n} more in the topics of this epic | {n} de plus dans les sujets de cet epic |
 | `kb.more_project` | {n} more in this project's epics and topics | {n} de plus dans les epics et sujets de ce projet |
 | `kb.empty` | Nothing here yet. Documents and memories for this topic appear here. | Rien ici pour l'instant. Les documents et mémoires de ce sujet apparaîtront ici. |
@@ -1446,13 +1446,13 @@ The authoritative text of every string this file defines. Sections 4 to 8 quote 
 | `terminal.on_epic` | on epic {name} | sur l'epic {name} |
 | `terminal.on_project` | on project {name} | sur le projet {name} |
 | `terminal.restart_here` | Restart here | Redémarrer ici |
-| `terminal.ended` | Session ended. Enter to restart. | Session terminée. Entrée pour relancer. |
+| `terminal.ended` | Session ended. {keys} to restart. | Session terminée. {keys} pour relancer. |
 | `terminal.ask.title` | Where should Claude Code start? | Où Claude Code doit-il démarrer ? |
 | `terminal.ask.topic` | {name} has no working folder, and neither has its epic or its project. | {name} n'a pas de dossier de travail, son epic et son projet non plus. |
 | `terminal.ask.epic` | {name} has no working folder, and neither has its project. | {name} n'a pas de dossier de travail, son projet non plus. |
 | `terminal.ask.project` | {name} has no working folder yet. | {name} n'a pas encore de dossier de travail. |
 | `terminal.ask.save` | Save as the working folder of project {name} | Enregistrer comme dossier de travail du projet {name} |
-| `terminal.ask.unsaved` | If not saved, it is used until Acta quits. | Sinon, il sert jusqu'à la fermeture d'Acta. |
+| `terminal.ask.unsaved` | If not saved, it is used until Acta quits. | S'il n'est pas enregistré, il est utilisé jusqu'à la fermeture d'Acta. |
 | `terminal.ask.choose` | Choose a folder... | Choisir un dossier... |
 | `terminal.missing.title` | The working folder was not found | Le dossier de travail est introuvable |
 | `terminal.missing.body` | Claude Code was not started. This is the primary folder of epic {name}, and it is not on this computer: | Claude Code n'a pas été lancé. C'est le dossier principal de l'epic {name}, et il n'est pas sur cet ordinateur : |
@@ -1498,10 +1498,10 @@ The authoritative text of every string this file defines. Sections 4 to 8 quote 
 | `palette.topics` | Topics | Sujets |
 | `palette.commands` | Commands | Commandes |
 | `palette.projects` | Projects | Projets |
-| `palette.hint.open` | Enter open | Entrée ouvrir |
+| `palette.hint.open` | {keys} open | {keys} ouvrir |
 | `palette.hint.tab` | {keys} open in new tab | {keys} ouvrir dans un nouvel onglet |
-| `palette.hint.close` | Esc close | Échap fermer |
-| `palette.none` | Nothing matches "{query}". Enter creates a topic with this title. | Aucun résultat pour « {query} ». Entrée crée un sujet avec ce titre. |
+| `palette.hint.close` | {keys} close | {keys} fermer |
+| `palette.none` | Nothing matches "{query}". {keys} creates a topic with this title. | Aucun résultat pour « {query} ». {keys} crée un sujet avec ce titre. |
 | `cmd.go_topic` | Go to topic... | Aller au sujet... |
 | `cmd.capture` | Capture a note | Saisir une note |
 | `cmd.new_topic` | New topic | Nouveau sujet |
@@ -1542,8 +1542,8 @@ The authoritative text of every string this file defines. Sections 4 to 8 quote 
 | `cmd.kb_search` | Search knowledge... | Rechercher dans les connaissances... |
 | `cmd.kb_review` | Review memories written by Claude Code | Revoir les mémoires écrites par Claude Code |
 | `cmd.kb_from_file` | New document from file... | Nouveau document depuis un fichier... |
-| `cmd.kb_to_memory` | Change kind to memory | Changer la nature en mémoire |
-| `cmd.kb_to_document` | Change kind to document | Changer la nature en document |
+| `cmd.kb_to_memory` | Change kind to memory | Convertir en mémoire |
+| `cmd.kb_to_document` | Change kind to document | Convertir en document |
 | `cmd.go_heading` | Go to heading... | Aller au titre... |
 | `cmd.save_file` | Save as file... | Enregistrer comme fichier... |
 | `cmd.export` | Export... | Exporter... |
@@ -1617,7 +1617,7 @@ The authoritative text of every string this file defines. Sections 4 to 8 quote 
 | `statusbar.ready` | Claude Code: ready | Claude Code : prêt |
 | `statusbar.last_wrote` | Last wrote {when} in {topic} | Dernière écriture {when} dans {topic} |
 | `statusbar.version` | Acta {version} | Acta {version} |
-| `update.ready` | Update ready - restart to apply | Mise à jour prête - redémarrer pour l'appliquer |
+| `update.ready` | Update ready – restart to apply | Mise à jour prête – redémarrer pour l'appliquer (no-break space before the dash) |
 | `update.done` | Updated to {version} | Mise à jour {version} installée |
 | `update.failed` | Update failed | Échec de la mise à jour |
 | `update.manual` | Download manually | Télécharger manuellement |
@@ -1633,7 +1633,7 @@ The authoritative text of every string this file defines. Sections 4 to 8 quote 
 | `export.choose` | Choose location... | Choisir l'emplacement... |
 | `export.done` | Exported {n} project to {file}. · Exported {n} projects to {file}. | {n} projet exporté vers {file}. · {n} projets exportés vers {file}. |
 | `export.show` | Show in folder | Afficher dans le dossier |
-| `export.suggest` | Everything is stored on this computer only. An export is your copy if the system keychain is ever lost. | Tout est stocké sur cet ordinateur uniquement. Un export est votre copie si le trousseau du système venait à être perdu. |
+| `export.suggest` | Everything is stored on this computer only. An export is your copy if the system keychain is ever lost. | Tout est stocké sur cet ordinateur uniquement. Un export vous sert de copie si le trousseau du système venait à être perdu. |
 | `import.title` | Import "{file}" | Importer « {file} » |
 | `import.meta` | Exported {date} · format {n} · {projects} (`count.projects`) | Exporté le {date} · format {n} · {projects} |
 | `import.created` | Created | Créés |
@@ -1665,18 +1665,21 @@ The authoritative text of every string this file defines. Sections 4 to 8 quote 
 | `snapshot.daily` | Daily | Quotidien |
 | `snapshot.weekly` | Weekly | Hebdomadaire |
 | `snapshot.before_update` | Before update to {version} | Avant la mise à jour vers {version} |
-| `snapshot.before_import` | Before import | Avant import |
-| `snapshot.before_restore` | Before restore | Avant restauration |
+| `snapshot.before_import` | Before import | Avant l'import |
+| `snapshot.before_restore` | Before restore | Avant la restauration |
 | `snapshot.confirm` | Restore and restart | Restaurer et redémarrer |
 | `snapshot.title` | Restore the snapshot from {date}? | Restaurer l'instantané du {date} ? |
-| `snapshot.body` | Acta will restart with its data as of {datetime}. Everything as it is now is saved as a snapshot first, so you can come back. | Acta redémarrera avec ses données du {datetime}. Tout l'état actuel est d'abord enregistré dans un instantané, vous pourrez donc y revenir. |
+| `snapshot.body` | Acta will restart with its data as of {datetime}. Everything as it is now is saved as a snapshot first, so you can come back. | Acta redémarrera avec ses données du {datetime}. La situation actuelle est d'abord enregistrée dans un instantané : vous pourrez y revenir. |
 | `snapshot.restored` | Restored the snapshot from {datetime}. | Instantané du {datetime} restauré. |
-| `snapshot.migration` | The update to {version} could not convert the database. Acta put back the snapshot from just before; nothing was lost. | La mise à jour vers {version} n'a pas pu convertir la base de données. Acta a remis l'instantané pris juste avant ; rien n'a été perdu. |
+| `snapshot.migration` | The update to {version} could not convert the database. Acta put back the snapshot from just before; nothing was lost. | La mise à jour vers {version} n'a pas pu convertir la base de données. Acta a restauré l'instantané pris juste avant ; rien n'a été perdu. |
 | `keyloss.title` | Acta cannot open its database | Acta ne peut pas ouvrir sa base de données |
-| `keyloss.body` | The database is on this computer and intact, but its key is missing from {keychain}. This usually follows a system reinstall, a new user profile or a move to another machine. | La base de données est sur cet ordinateur et intacte, mais sa clé est absente de {keychain}. Cela arrive généralement après une réinstallation du système, la création d'un nouveau profil utilisateur ou un changement de machine. |
+| `keyloss.body` | The database is on this computer and intact, but its key is missing from {keychain}. (`keychain.*`) This usually follows a system reinstall, a new user profile or a move to another machine. | La base de données est sur cet ordinateur et intacte, mais sa clé est absente {keychain}. Cela arrive généralement après une réinstallation du système, la création d'un nouveau profil utilisateur ou un changement de machine. |
+| `keychain.w` | Windows Credential Manager | du Gestionnaire d'identification Windows |
+| `keychain.m` | the macOS Keychain | du trousseau macOS |
+| `keychain.l` | the Secret Service keyring | du service Secret Service |
 | `keyloss.untouched` | Acta has not changed the file: | Acta n'a pas modifié le fichier : |
 | `keyloss.import` | Import an export... | Importer un export... |
-| `keyloss.limit` | Without the key or an export, the content cannot be read. You can start empty; the file is kept as {file}. | Sans la clé ni un export, le contenu ne peut pas être lu. Vous pouvez repartir de zéro ; le fichier est conservé sous le nom {file}. |
+| `keyloss.limit` | Without the key or an export, the content cannot be read. You can start empty; the file is kept as {file}. | Sans la clé ni export, le contenu ne peut pas être lu. Vous pouvez repartir de zéro ; le fichier est conservé sous le nom {file}. |
 | `keyloss.start_empty` | Start empty | Repartir de zéro |
 | `firstrun.title` | Start with a project | Commencez par un projet |
 | `firstrun.body` | A project is a folder you work on with Claude Code. Acta keeps its topics, decisions and notes next to the work. | Un projet est un dossier sur lequel vous travaillez avec Claude Code. Acta garde ses sujets, ses décisions et ses notes à côté du travail. |
