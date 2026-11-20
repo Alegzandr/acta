@@ -4,14 +4,12 @@
 //!
 //! It shows how GPUI renders the bundled faces: every sans role of DESIGN.md
 //! 3.2 on the four surfaces, the text levels, the mono roles and the colour
-//! tokens. Source Sans 3 was confirmed on Windows with it.
-
-use std::sync::Arc;
+//! tokens.
 
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    Context, Div, FontFeatures, FontWeight, Hsla, InteractiveElement, IntoElement, ParentElement,
-    Render, StatefulInteractiveElement, Styled, Window, div, px,
+    Context, Div, FontWeight, Hsla, InteractiveElement, IntoElement, ParentElement, Render,
+    StatefulInteractiveElement, Styled, Window, div, px,
 };
 
 use crate::theme::{FONT_MONO, FONT_SANS, RADIUS_MD, RADIUS_SM, Tokens};
@@ -25,6 +23,7 @@ pub struct Specimen;
 fn sample(role: &TypeRole) -> &'static str {
     match role.name {
         "type.title" => "Embed the terminal",
+        "type.subtitle" => "Appearance",
         "type.heading" => "Start with a project",
         "type.reading" => "Resize now reflows the grid.",
         "type.document" => "Read for minutes, not glanced at.",
@@ -107,7 +106,7 @@ fn surface(name: &'static str, background: Hsla, floating: bool, tokens: &Tokens
 /// Body text in the three text levels, italics and tabular figures.
 fn text_levels(tokens: &Tokens) -> Div {
     let reading = type_scale::READING;
-    let tabular = FontFeatures(Arc::new(vec![("tnum".into(), 1), ("lnum".into(), 1)]));
+    let tabular = type_scale::tabular();
     div()
         .flex_1()
         .min_w_0()

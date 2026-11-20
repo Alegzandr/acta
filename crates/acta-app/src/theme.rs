@@ -13,7 +13,7 @@
 use gpui_kit::component::{Theme, ThemeMode};
 use gpui_kit::{App, BoxShadow, Global, Hsla, WindowAppearance, point, px, rgb};
 
-pub const FONT_SANS: &str = "Source Sans 3";
+pub const FONT_SANS: &str = "Inter";
 pub const FONT_MONO: &str = "JetBrains Mono NL";
 
 pub const RADIUS_SM: f32 = 4.;
