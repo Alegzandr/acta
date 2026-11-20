@@ -35,8 +35,41 @@ sha256_of() {
 }
 
 tmp=
+app=
+# macOS reinstall: where the installed app waits while the new one is moved in.
+previous=
 cleanup() {
+    # Whatever stopped the reinstall (a failed move, Ctrl-C), Acta must still be there.
+    if [ -n "$previous" ] && [ -e "$previous" ] && [ ! -e "$app" ]; then
+        if mv "$previous" "$app"; then
+            echo "The previous Acta was put back in $app." >&2
+        else
+            echo "error: could not put the previous Acta back; it is in $previous" >&2
+            return 0
+        fi
+    fi
     if [ -n "$tmp" ]; then rm -rf "$tmp"; fi
+}
+
+# Processes of this user running the GUI of the installed bundle. The command line and
+# MCP server never run from the bundle (ADR 0004).
+acta_pids() {
+    pgrep -u "$(id -u)" -f "^$app/Contents/MacOS/Acta( |\$)" 2>/dev/null
+}
+
+# Ask a running Acta to terminate and wait for it; fails if it is still there.
+quit_acta() {
+    pids=$(acta_pids) || return 0
+    echo "Acta is running: closing it to replace it..."
+    # shellcheck disable=SC2086 # one argument per process id
+    kill $pids 2>/dev/null || true
+    waited=0
+    while acta_pids >/dev/null; do
+        [ "$waited" -lt 10 ] || return 1
+        sleep 1
+        waited=$((waited + 1))
+    done
+    was_running=1
 }
 
 main() {
@@ -108,13 +141,25 @@ main() {
             [ -d "$tmp/unpacked/Acta.app" ] || die "$asset does not contain Acta.app"
             # curl sets no quarantine attribute; clear it anyway in case this shell does.
             xattr -dr com.apple.quarantine "$tmp/unpacked/Acta.app" 2>/dev/null || true
+            was_running=0
             if [ -e "$app" ]; then
-                mv "$app" "$tmp/previous.app"
+                quit_acta ||
+                    die "Acta is still running; quit it and run this installer again (nothing was changed)"
+                mv "$app" "$tmp/previous.app" ||
+                    die "could not move the installed $app aside; nothing was changed"
+                previous=$tmp/previous.app
             fi
-            mv "$tmp/unpacked/Acta.app" "$app"
+            # On failure the EXIT trap puts the previous app back.
+            mv "$tmp/unpacked/Acta.app" "$app" || die "could not move Acta.app into $dest_dir"
+            previous=
             echo "Acta $version is installed in $app."
-            if [ "${ACTA_NO_LAUNCH:-}" != 1 ]; then
-                open "$app" || die "installed, but could not open $app"
+            if [ "${ACTA_NO_LAUNCH:-}" = 1 ]; then
+                if [ "$was_running" = 1 ]; then
+                    echo "Acta was closed for the update and ACTA_NO_LAUNCH is set: start it again yourself."
+                fi
+            elif ! open "$app"; then
+                # No graphical session (ssh), for instance: the install itself is done.
+                echo "warning: Acta is installed but could not be opened from here; open $app yourself" >&2
             fi
             ;;
         *)
