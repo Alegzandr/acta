@@ -1,0 +1,20 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+repository = "https://github.com/Alegzandr/acta"
+publish = false
+
+[workspace.dependencies]
+acta-core = { path = "crates/acta-core" }
+
+# Thin LTO and stripped symbols (ADR 0001 measured this profile). Everything
+# else is the release default.
+[profile.release]
+lto = "thin"
+strip = true
+# panic stays "unwind" (the default) on purpose: export and update work runs on
+# background threads, and a panic there must end that thread, not the app.
