@@ -19,6 +19,7 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 - [ ] ADR 0004: Packaging, silent install, auto-update
 - [ ] ADR 0005: Claude Code integration (MCP, CLI, hooks, skill, setup)
 - [x] ADR 0006: Import, export and backups
+- [x] ADR 0007: Documents on projects, epics and topics
 - [ ] DESIGN.md
 
 ## M1 - Pipeline
@@ -33,6 +34,7 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 - [ ] Domain: Project > Epic > Topic, timeline entries, statuses, current-state summary
 - [ ] App shell: sidebar, topic view, timeline, command palette, keyboard navigation
 - [ ] Create, edit, reorder, change status; live refresh when another process writes
+- [ ] Documents (ADR 0007): Markdown documents on projects, epics and topics, with summaries, revisions, inheritance, reading view and editor
 - [ ] No data loss (ADR 0006): stable UUIDs, soft delete with trash, automatic snapshots before migrations and daily, self-restore on failed migration
 - [ ] Export and import of the open `.acta.json` format from the command palette, with the lossless round-trip test in CI
 - [ ] Key-loss recovery path: never overwrite an unreadable database, offer import
@@ -40,6 +42,7 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 ## M3 - MCP, CLI, Claude Code setup
 - [ ] `acta mcp` (stdio) and `acta <command>` CLI sharing the domain layer
 - [ ] Compact responses with enforced size budgets
+- [ ] Document tools: list with summaries, outline, read by section, search, section-level writes
 - [ ] `acta export`, `acta import`, `acta snapshot restore` in the CLI (not exposed over MCP)
 - [ ] Hooks, skill, slash commands; `acta setup` one-step install
 - [ ] Dogfooding: this project is tracked in Acta from here on
