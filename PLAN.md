@@ -68,5 +68,22 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 - [ ] Performance pass, empty and error states, onboarding
 - [ ] Documentation
 
+## Paused - where to resume
+`main` was pushed to GitHub once, at commit 1009910 (not by the lead; a local pre-push hook now refuses pushes without `ACTA_LEAD_PUSH=1`). Everything after it is local. All agents are stopped; their work is on disk under `../acta-wt/`.
+- `gpui-engineer/m1-app` (worktree `m1-app`): draft workspace, crates and assets, untracked, uncommitted, unverified. Resume a gpui-engineer on it: read critically, finish, verify, commit.
+- `gpui-engineer/adr-0009-chat-panel` (worktree `adr-0009`): draft spike in `spikes/chat-panel`, untracked; research not written down. Resume or restart.
+- `release-engineer/m1-pipeline` (worktree `m1-pipeline`): complete, reviewed, verdict "request changes". `main` is merged in; none of the fixes below are committed yet.
+  1. High: `ci.yml` passes two files to `Invoke-ScriptAnalyzer -Path` (single string); lint would fail every run. Analyze one file at a time.
+  2. Security: split `release.yml` publish into `collect` (read-only) and `publish` (write permissions, job-level `if`, `environment: release`).
+  3. Security: pin every action to a full commit SHA in all workflows; amend ADR 0004.
+  4. Security: no rust-cache restore on tag builds; `check` must verify the tagged commit is an ancestor of `origin/main`; document a `v*` tag ruleset and immutable releases in `docs/releasing.md`.
+  5. `platform-checks.sh` echoes the test secret (`-w "$value"`) to the log; never print it.
+  6. `install.sh` macOS reinstall: restore the previous app if the move fails; handle a running app; warn instead of failing when `open` fails.
+  7. README states unverified behaviour as fact; say what is verified. Install scripts print "open a new terminal to use acta" unconditionally.
+  8. `ci.yml` concurrency group: use the PR number, not `head_ref`.
+  9. `platform-checks.sh`: dismiss SecurityAgent after a timeout and mark results that followed one.
+  10. Keep the "to confirm on the first run" list in `docs/releasing.md`.
+- Order: merge m1-app first, then the pipeline, then push; iterate CI and the release dry run to green; run `platform-checks.yml`; apply the tag ruleset and the `release` environment in repo settings; tag v0.1.0, install, tag v0.1.1, prove self-update.
+
 ## Settled with the user
 - 2026-11-20: no spending at all. No code-signing certificate, no Apple Developer membership, no paid runners or services. Builds are unsigned; only free tooling.
