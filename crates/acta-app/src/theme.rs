@@ -74,9 +74,9 @@ struct Palette {
 impl Tokens {
     pub fn dark() -> Self {
         Self::from_palette(&Palette {
-            bg: [0x141210, 0x1A1816, 0x211E1B, 0x292622],
-            border: [0x2B2824, 0x38342F, 0x7A7468],
-            text: [0xE9E3D8, 0xB5AD9F, 0x9A9285, 0x625C52],
+            bg: [0x1B1B1A, 0x212120, 0x292928, 0x30302E],
+            border: [0x353533, 0x424240, 0x85847E],
+            text: [0xE4E3DF, 0xB2B1AB, 0x9C9B94, 0x62615C],
             accent: [0x72B5A2, 0x86C4B2, 0x5E9F8D],
             text_on_accent: 0x10201C,
             danger: 0xDE7B70,
@@ -89,16 +89,16 @@ impl Tokens {
 
     pub fn light() -> Self {
         Self::from_palette(&Palette {
-            bg: [0xECE7DD, 0xF6F2EA, 0xFCFAF5, 0xFFFDF9],
-            border: [0xE6E0D5, 0xD6CFC2, 0x8A8273],
-            text: [0x26221D, 0x575045, 0x6A6357, 0xA69F92],
+            bg: [0xF4F3F0, 0xFBFAF8, 0xFFFFFF, 0xFFFFFF],
+            border: [0xE8E6E1, 0xD9D7D1, 0x8A8881],
+            text: [0x24231F, 0x56544E, 0x66645E, 0xA7A59F],
             accent: [0x2B6F61, 0x235E52, 0x1C4E44],
-            text_on_accent: 0xFBF8F2,
+            text_on_accent: 0xFBFAF8,
             danger: 0xAD4337,
             warning: 0x85590A,
             success: 0x4C6A24,
-            scrim: (0x26221D, 0.25),
-            shadow: (0x26221D, 0.14),
+            scrim: (0x24231F, 0.25),
+            shadow: (0x24231F, 0.14),
         })
     }
 
@@ -254,95 +254,337 @@ pub fn install(tokens: Tokens, cx: &mut App) {
 
 #[cfg(test)]
 mod tests {
+    //! The values are pinned to DESIGN.md itself: the token table of 2.1 is
+    //! read from the file and every row must match [`Tokens`], and the
+    //! contrast table of 2.2 is reproduced from the values. Changing a colour
+    //! in either place without the other fails here.
+
     use super::*;
     use gpui_kit::Rgba;
 
-    /// WCAG 2.x relative luminance of an opaque colour.
-    fn luminance(color: Hsla) -> f32 {
+    const DESIGN_MD: &str = include_str!("../../../DESIGN.md");
+
+    /// 8-bit sRGB channels of a colour, alpha ignored, as the renderer stores them.
+    fn rgb8(color: Hsla) -> [u8; 3] {
         let Rgba { r, g, b, .. } = color.to_rgb();
-        let lin = |c: f32| {
+        [r, g, b].map(|c| (c * 255.).round() as u8)
+    }
+
+    /// `over` with its alpha composited on the opaque `under`. DESIGN.md 2.2
+    /// measures its table on the exact blend; `rounded` gives the 8-bit
+    /// value the renderer stores, which its rule about `text.tertiary` uses.
+    fn blend(over: Hsla, under: Hsla) -> [f64; 3] {
+        let a = over.a as f64;
+        let (o, u) = (rgb8(over), rgb8(under));
+        [0, 1, 2].map(|i| o[i] as f64 * a + u[i] as f64 * (1. - a))
+    }
+
+    fn rounded(c: [f64; 3]) -> [f64; 3] {
+        c.map(f64::round)
+    }
+
+    fn opaque(c: [u8; 3]) -> [f64; 3] {
+        c.map(f64::from)
+    }
+
+    fn luminance(c: [f64; 3]) -> f64 {
+        let lin = |c: f64| {
+            let c = c / 255.;
             if c <= 0.03928 {
                 c / 12.92
             } else {
                 ((c + 0.055) / 1.055).powf(2.4)
             }
         };
-        0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
+        0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2])
     }
 
-    fn contrast(a: Hsla, b: Hsla) -> f32 {
-        let (hi, lo) = {
-            let (la, lb) = (luminance(a), luminance(b));
-            if la > lb { (la, lb) } else { (lb, la) }
-        };
+    fn ratio(a: [u8; 3], b: [f64; 3]) -> f64 {
+        let a = opaque(a);
+        let (la, lb) = (luminance(a), luminance(b));
+        let (hi, lo) = if la > lb { (la, lb) } else { (lb, la) };
         (hi + 0.05) / (lo + 0.05)
     }
 
-    fn assert_ratio(actual: f32, documented: f32) {
+    fn check(what: &str, actual: f64, documented: f64) {
         assert!(
-            (actual - documented).abs() < 0.06,
-            "measured {actual:.2}, DESIGN.md says {documented:.2}"
+            (actual - documented).abs() <= 0.006,
+            "{what}: measured {actual:.3}, DESIGN.md says {documented:.2}"
         );
     }
 
-    #[test]
-    fn dark_values_reproduce_the_contrast_table_of_design_md() {
-        let t = Tokens::dark();
-        assert_ratio(contrast(t.text_primary, t.bg_sunken), 14.63);
-        assert_ratio(contrast(t.text_primary, t.bg_base), 13.86);
-        assert_ratio(contrast(t.text_secondary, t.bg_base), 7.96);
-        assert_ratio(contrast(t.text_tertiary, t.bg_overlay), 4.89);
-        assert_ratio(contrast(t.accent, t.bg_base), 7.46);
-        assert_ratio(contrast(t.danger, t.bg_base), 6.05);
-        assert_ratio(contrast(t.text_on_accent, t.accent), 7.10);
-        assert_ratio(contrast(t.border_strong, t.bg_base), 3.82);
-        assert_ratio(contrast(t.caption_close_glyph, t.caption_close_hover), 5.66);
+    fn hex_of(text: &str) -> Option<u32> {
+        let at = text.find('#')?;
+        u32::from_str_radix(text.get(at + 1..at + 7)?, 16).ok()
     }
 
-    #[test]
-    fn light_values_reproduce_the_contrast_table_of_design_md() {
-        let t = Tokens::light();
-        assert_ratio(contrast(t.text_primary, t.bg_sunken), 12.82);
-        assert_ratio(contrast(t.text_primary, t.bg_base), 14.15);
-        assert_ratio(contrast(t.text_secondary, t.bg_base), 7.13);
-        assert_ratio(contrast(t.text_tertiary, t.bg_sunken), 4.82);
-        assert_ratio(contrast(t.accent, t.bg_base), 5.30);
-        assert_ratio(contrast(t.danger, t.bg_sunken), 4.69);
-        assert_ratio(contrast(t.text_on_accent, t.accent), 5.58);
-        assert_ratio(contrast(t.border_strong, t.bg_sunken), 3.09);
+    fn percent_of(text: &str) -> Option<f32> {
+        let at = text.find("@ ")?;
+        let digits: String = text[at + 2..]
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect();
+        Some(digits.parse::<f32>().ok()? / 100.)
     }
 
-    #[test]
-    fn alpha_tokens_follow_their_rules() {
-        for t in [Tokens::dark(), Tokens::light()] {
-            let close = |a: f32, b: f32| (a - b).abs() < 1e-4;
-            assert!(close(t.fill_hover.a, 0.06));
-            assert!(close(t.fill_selected.a, 0.09));
-            assert!(close(t.fill_pressed.a, 0.10));
-            assert!(close(t.accent_subtle.a, 0.16));
-            assert!(close(t.selection.a, 0.30));
-            assert_eq!(t.focus_ring, t.accent);
-            assert_eq!(t.fill_hover.opacity(0.), t.text_primary.opacity(0.));
+    /// The rows of the table under "### 2.1 Tokens": (token, dark, light).
+    fn design_token_rows() -> Vec<(String, String, String)> {
+        let section = DESIGN_MD
+            .split("### 2.1 Tokens")
+            .nth(1)
+            .and_then(|rest| rest.split("###").next())
+            .expect("DESIGN.md has section 2.1");
+        section
+            .lines()
+            .filter(|line| line.starts_with("| `"))
+            .map(|line| {
+                let cells: Vec<&str> = line.split('|').map(str::trim).collect();
+                (
+                    cells[1].trim_matches('`').to_string(),
+                    cells[2].to_string(),
+                    cells[3].to_string(),
+                )
+            })
+            .collect()
+    }
+
+    fn lookup(theme: &Tokens, name: &str) -> Hsla {
+        theme
+            .named()
+            .into_iter()
+            .find(|(n, _)| *n == name)
+            .unwrap_or_else(|| panic!("DESIGN.md token {name} is not in Tokens"))
+            .1
+    }
+
+    /// Check one cell of the 2.1 table against the token value.
+    fn check_cell(theme: &Tokens, token: &str, cell: &str, dark_cell: &str) {
+        let value = lookup(theme, token);
+        // "same rule" repeats the dark column's rule.
+        let cell = if cell == "same rule" { dark_cell } else { cell };
+        if let Some(rest) = cell.strip_prefix("= `") {
+            let reference = rest.trim_end_matches('`');
+            assert_eq!(value, lookup(theme, reference), "{token}");
+        } else if let Some(value_hex) = hex_of(cell) {
+            assert_eq!(rgb8(value), rgb8(hex(value_hex)), "{token}");
+            let alpha = percent_of(cell).unwrap_or(1.);
+            assert!((value.a - alpha).abs() < 1e-4, "{token} alpha");
+        } else if let Some(rest) = cell.strip_prefix('`') {
+            let reference = &rest[..rest.find('`').expect("closing backtick")];
+            let alpha = percent_of(cell).expect("an alpha rule");
+            assert_eq!(rgb8(value), rgb8(lookup(theme, reference)), "{token}");
+            assert!((value.a - alpha).abs() < 1e-4, "{token} alpha");
+        } else {
+            panic!("{token}: cannot read {cell:?}");
         }
-        assert!((Tokens::dark().scrim.a - 0.45).abs() < 1e-4);
-        assert!((Tokens::light().scrim.a - 0.25).abs() < 1e-4);
+    }
+
+    #[test]
+    fn every_token_matches_the_table_in_design_md() {
+        let rows = design_token_rows();
+        assert!(rows.len() >= 27, "found {} rows", rows.len());
+        let (dark, light) = (Tokens::dark(), Tokens::light());
+        for (token, dark_cell, light_cell) in &rows {
+            check_cell(&dark, token, dark_cell, dark_cell);
+            check_cell(&light, token, light_cell, dark_cell);
+        }
+        // Every token Acta has is documented (the glyph is a note of 2.1).
+        for (name, _) in dark.named() {
+            assert!(
+                name == "caption.close glyph" || rows.iter().any(|(t, _, _)| t == name),
+                "{name} is not in DESIGN.md 2.1"
+            );
+        }
+    }
+
+    type Four = [f64; 4];
+    type Three = [f64; 3];
+
+    /// DESIGN.md 2.2, every row, dark then light.
+    #[test]
+    fn contrast_reproduces_the_table_in_design_md() {
+        for (t, dark) in [(Tokens::dark(), true), (Tokens::light(), false)] {
+            let pick = |d: &[f64], l: &[f64], i: usize| if dark { d[i] } else { l[i] };
+            let four = [t.bg_sunken, t.bg_base, t.bg_raised, t.bg_overlay].map(rgb8);
+            let rows: [(&str, Hsla, Four, Four); 7] = [
+                (
+                    "text.primary",
+                    t.text_primary,
+                    [13.42, 12.55, 11.34, 10.30],
+                    [14.17, 15.08, 15.73, 15.73],
+                ),
+                (
+                    "text.secondary",
+                    t.text_secondary,
+                    [8.02, 7.50, 6.77, 6.15],
+                    [6.82, 7.26, 7.57, 7.57],
+                ),
+                (
+                    "text.tertiary",
+                    t.text_tertiary,
+                    [6.18, 5.78, 5.22, 4.74],
+                    [5.33, 5.67, 5.92, 5.92],
+                ),
+                (
+                    "accent",
+                    t.accent,
+                    [7.26, 6.79, 6.13, 5.57],
+                    [5.33, 5.67, 5.92, 5.92],
+                ),
+                (
+                    "danger",
+                    t.danger,
+                    [5.89, 5.50, 4.97, 4.52],
+                    [5.21, 5.54, 5.78, 5.78],
+                ),
+                (
+                    "warning",
+                    t.warning,
+                    [7.45, 6.96, 6.29, 5.71],
+                    [5.52, 5.87, 6.12, 6.12],
+                ),
+                (
+                    "success",
+                    t.success,
+                    [7.37, 6.89, 6.22, 5.65],
+                    [5.58, 5.93, 6.19, 6.19],
+                ),
+            ];
+            for (name, fg, d, l) in rows {
+                for (i, surface) in four.iter().enumerate() {
+                    check(name, ratio(rgb8(fg), opaque(*surface)), pick(&d, &l, i));
+                }
+            }
+
+            let on = rgb8(t.text_on_accent);
+            let fills = [t.accent, t.accent_hover, t.accent_pressed];
+            let (d, l) = ([7.10, 8.47, 5.48], [5.67, 7.20, 9.06]);
+            for (i, fill) in fills.iter().enumerate() {
+                check(
+                    "text.on-accent",
+                    ratio(on, opaque(rgb8(*fill))),
+                    pick(&d, &l, i),
+                );
+            }
+            let documented = if dark { 5.76 } else { 5.54 };
+            check("on danger", ratio(on, opaque(rgb8(t.danger))), documented);
+
+            // Text on a translucent fill over sunken / base / overlay.
+            let three = [t.bg_sunken, t.bg_base, t.bg_overlay];
+            let on_fill: [(&str, Hsla, Hsla, Three, Three); 4] = [
+                (
+                    "primary on selected",
+                    t.text_primary,
+                    t.fill_selected,
+                    [10.73, 9.93, 8.08],
+                    [11.94, 12.68, 13.22],
+                ),
+                (
+                    "secondary on selected",
+                    t.text_secondary,
+                    t.fill_selected,
+                    [6.41, 5.93, 4.83],
+                    [5.75, 6.11, 6.36],
+                ),
+                (
+                    "secondary on hover",
+                    t.text_secondary,
+                    t.fill_hover,
+                    [6.96, 6.45, 5.24],
+                    [6.09, 6.48, 6.75],
+                ),
+                (
+                    "primary on accent.subtle",
+                    t.text_primary,
+                    t.accent_subtle,
+                    [10.09, 9.37, 7.73],
+                    [11.41, 12.07, 12.55],
+                ),
+            ];
+            for (name, fg, fill, d, l) in on_fill {
+                for (i, surface) in three.iter().enumerate() {
+                    let measured = ratio(rgb8(fg), blend(fill, *surface));
+                    check(name, measured, pick(&d, &l, i));
+                }
+            }
+            let (d, l) = ([5.36, 4.97], [4.76, 5.06]);
+            for (i, surface) in [t.bg_sunken, t.bg_base].iter().enumerate() {
+                let measured = ratio(rgb8(t.text_tertiary), blend(t.fill_hover, *surface));
+                check("tertiary on hover", measured, pick(&d, &l, i));
+            }
+            let measured = ratio(rgb8(t.warning), blend(t.fill_hover, t.bg_base));
+            check("warning on hover", measured, if dark { 5.99 } else { 5.24 });
+            let measured = ratio(rgb8(t.accent), blend(t.fill_selected, t.bg_sunken));
+            check(
+                "accent on selected",
+                measured,
+                if dark { 5.81 } else { 4.49 },
+            );
+            let measured = ratio(rgb8(t.text_primary), blend(t.selection, t.bg_base));
+            check(
+                "primary on selection",
+                measured,
+                if dark { 6.99 } else { 9.78 },
+            );
+
+            let (d, l) = ([4.60, 4.30, 3.88, 3.53], [3.20, 3.40, 3.55, 3.55]);
+            for (i, surface) in four.iter().enumerate() {
+                let measured = ratio(rgb8(t.border_strong), opaque(*surface));
+                check("border.strong", measured, pick(&d, &l, i));
+            }
+            let (d, l) = ([7.26, 6.79, 5.57], [5.33, 5.67, 5.92]);
+            for (i, surface) in three.iter().enumerate() {
+                let measured = ratio(rgb8(t.focus_ring), opaque(rgb8(*surface)));
+                check("focus.ring", measured, pick(&d, &l, i));
+            }
+            let measured = ratio(
+                rgb8(t.caption_close_glyph),
+                opaque(rgb8(t.caption_close_hover)),
+            );
+            check("caption close", measured, 5.66);
+        }
+    }
+
+    #[test]
+    fn tertiary_text_fails_on_a_selected_row_as_documented() {
+        // DESIGN.md 2.2: 3.73 over overlay in dark, 4.48 over sunken in light.
+        let t = Tokens::dark();
+        let measured = ratio(
+            rgb8(t.text_tertiary),
+            rounded(blend(t.fill_selected, t.bg_overlay)),
+        );
+        check("dark", measured, 3.73);
+        let t = Tokens::light();
+        let measured = ratio(
+            rgb8(t.text_tertiary),
+            rounded(blend(t.fill_selected, t.bg_sunken)),
+        );
+        check("light", measured, 4.48);
     }
 
     #[test]
     fn elevation_gets_lighter_towards_the_overlay() {
         for t in [Tokens::dark(), Tokens::light()] {
-            let steps = [t.bg_sunken, t.bg_base, t.bg_raised, t.bg_overlay].map(luminance);
-            assert!(steps.windows(2).all(|pair| pair[0] < pair[1]), "{steps:?}");
+            let steps = [t.bg_sunken, t.bg_base, t.bg_raised, t.bg_overlay]
+                .map(|c| luminance(opaque(rgb8(c))));
+            assert!(
+                steps[0] < steps[1] && steps[1] < steps[2] && steps[2] <= steps[3],
+                "{steps:?}"
+            );
         }
     }
 
     #[test]
-    fn no_surface_or_text_is_pure_black_or_white() {
-        for t in [Tokens::dark(), Tokens::light()] {
+    fn no_pure_black_anywhere_and_no_white_in_dark_or_as_text() {
+        for (dark, t) in [(true, Tokens::dark()), (false, Tokens::light())] {
             for (name, color) in t.named() {
-                let opaque_ui = !matches!(name, "scrim" | "shadow.overlay" | "caption.close glyph");
-                if opaque_ui {
-                    assert!(color.l > 0.0 && color.l < 1.0, "{name}");
+                if matches!(name, "scrim" | "shadow.overlay" | "caption.close glyph") {
+                    continue;
+                }
+                let c = rgb8(color);
+                assert_ne!(c, [0, 0, 0], "{name}");
+                if dark || name.starts_with("text.") {
+                    assert_ne!(c, [255, 255, 255], "{name}");
                 }
             }
         }
