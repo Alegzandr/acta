@@ -19,4 +19,5 @@ Local-first desktop app that complements Claude Code: a project tracker for the 
 - Agent-facing output (MCP, CLI, hooks) is compact by design: summaries first, pagination, no dumps.
 - No plaintext user data or key material on disk, in logs or in process arguments.
 - Zero budget: the user pays for nothing. No code signing, no paid services or runners. Builds are unsigned by decision.
+- Headless Claude Code runs (`claude -p`) are allowed for testing the integration: they draw on the user's subscription quota, not money. Use Haiku unless the test needs more, keep runs few, and state the count in your report. Never set or use an API key.
 - Nothing that cannot be undone without asking the user.
