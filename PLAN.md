@@ -9,8 +9,9 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 | M2 | Data model and core UI | v0.2.0 | todo |
 | M3 | MCP server, CLI, Claude Code setup; Acta tracks itself | v0.3.0 | todo |
 | M4 | Integrated terminal running Claude Code | v0.4.0 | todo |
-| M5 | Notes inbox and notes-to-topics flow | v0.5.0 | todo |
-| M6 | Polish | v1.0.0 | todo |
+| M5 | Claude chat panel beside the work (if the ADR 0009 spike holds) | v0.5.0 | todo |
+| M6 | Notes inbox and notes-to-topics flow | v0.6.0 | todo |
+| M7 | Polish | v1.0.0 | todo |
 
 ## M0 - Research and spikes
 - [x] ADR 0001: UI stack - gpui-kit 0.10.0 (GPUI snapshot gpui-pre 0.3.12), proven on Windows; macOS/Linux to prove in M1 CI
@@ -35,6 +36,7 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 - [ ] Domain: Project > Epic > Topic, timeline entries, statuses, current-state summary
 - [ ] App shell: sidebar, topic view, timeline, command palette, keyboard navigation
 - [ ] Create, edit, reorder, change status; live refresh when another process writes
+- [ ] Working folders on projects, epics and topics with inheritance (ADR 0008)
 - [ ] Knowledge base (ADR 0007): documents and agent memories on projects, epics and topics, with summaries, revisions, inheritance, roll-up browsing, reading view and editor
 - [ ] No data loss (ADR 0006): stable UUIDs, soft delete with trash, automatic snapshots before migrations and daily, self-restore on failed migration
 - [ ] Export and import of the open `.acta.json` format from the command palette, with the lossless round-trip test in CI
@@ -46,17 +48,22 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 - [ ] Knowledge tools: list with summaries, outline, read by section, search, section-level writes; the skill routes durable memory to Acta
 - [ ] `acta export`, `acta import`, `acta snapshot restore` in the CLI (not exposed over MCP)
 - [ ] Hooks, skill, slash commands; `acta setup` one-step install
+- [ ] `acta link` at any level; sessions started outside Acta resolve their topic from the folder (ADR 0008)
 - [ ] Dogfooding: this project is tracked in Acta from here on
 
 ## M4 - Terminal
-- [ ] Embedded terminal bound to the active project's directory, launching Claude Code
+- [ ] Embedded terminal launching Claude Code in the effective working folder of the topic, epic or project it was opened from (ADR 0008)
 - [ ] Rendering, input, resize, scrollback, copy/paste, links
 
-## M5 - Notes
+## M5 - Claude chat panel
+- [ ] ADR 0009: embedded web view for claude.ai (spike in progress; the milestone exists only if the spike holds)
+- [ ] Side panel with a persistent session, toggled from the keyboard
+
+## M6 - Notes
 - [ ] Per-project inbox, quick capture
 - [ ] Claude Code turns notes into topics and epics; human refines in the UI
 
-## M6 - Polish
+## M7 - Polish
 - [ ] Design review of every screen against DESIGN.md
 - [ ] Performance pass, empty and error states, onboarding
 - [ ] Documentation

@@ -8,6 +8,7 @@ Local-first desktop app that complements Claude Code: a project tracker for the 
 - `docs/decisions/` - ADRs. One short file per decision; read the relevant ones before changing architecture.
 - `.claude/agents/` - the team: product-designer, gpui-engineer, integration-engineer, release-engineer, reviewer.
 - `spikes/` - throwaway experiments backing the ADRs. Not part of the workspace, never depended upon.
+- Building the encrypted storage on Windows needs a native Perl for vendored OpenSSL (ADR 0003). Git's Perl does not work. On the lead's machine a portable Strawberry Perl lives at `F:/dev/acta-tools/strawberry-perl`; set `OPENSSL_SRC_PERL` to its `perl/bin/perl.exe` in the shell that runs cargo. CI runners already have Perl.
 
 ## Conventions
 - Everything in English: code, docs, commits.
@@ -19,4 +20,5 @@ Local-first desktop app that complements Claude Code: a project tracker for the 
 - Agent-facing output (MCP, CLI, hooks) is compact by design: summaries first, pagination, no dumps.
 - No plaintext user data or key material on disk, in logs or in process arguments.
 - Zero budget: the user pays for nothing. No code signing, no paid services or runners. Builds are unsigned by decision.
+- Headless Claude Code runs (`claude -p`) are allowed for testing the integration: they draw on the user's subscription quota, not money. Use Haiku unless the test needs more, keep runs few, and state the count in your report. Never set or use an API key.
 - Nothing that cannot be undone without asking the user.
