@@ -129,3 +129,75 @@ one. Clients that already updated stay on the bad version, because Acta never
 downgrades: fix forward and release the next patch version as soon as possible. Its
 delta is built against the latest visible release, and clients on the yanked version
 take the full package.
+
+## To confirm on the first run
+
+No workflow of this repository has run on GitHub yet and no release exists. Everything
+below is written from documentation, from the vpk 1.2.161 source and from a local
+Windows pack, and has to be observed once. Tick an item only after seeing it; when one
+turns out wrong, fix it and record the finding in ADR 0004. Keep this list until every
+item is ticked.
+
+First push (`ci.yml`):
+
+- [ ] `shellcheck` and the `PSScriptAnalyzer` module are present on `ubuntu-24.04`, and
+      the lint job passes.
+- [ ] clippy, tests and the build pass on the three systems; the Linux package list in
+      `scripts/ci/linux-deps.sh` is complete.
+- [ ] The GUI stays up for 10 seconds under Xvfb with lavapipe (the step is not
+      blocking until it has).
+- [ ] Only `main` saves the cargo cache, and branches restore it.
+
+First dry run (`release.yml` on `main`):
+
+- [ ] The .NET SDK is preinstalled on the Windows, macOS and Ubuntu runners and
+      `dotnet tool install vpk` works on each.
+- [ ] `x86_64-apple-darwin` cross-compiles on the Apple silicon runner (otherwise
+      `macos-26-intel`).
+- [ ] `vpk pack --signAppIdentity -` works with no certificate, and the bundle inside
+      the portable zip passes `codesign --verify` (the script fails otherwise).
+- [ ] vpk builds the AppImage with `mksquashfs`, and it stays up for 15 seconds under
+      Xvfb without FUSE.
+- [ ] Asset names on macOS and Linux are the ones the install scripts download:
+      `Acta-osx-arm64-Portable.zip`, `Acta-osx-x64-Portable.zip`,
+      `Acta-linux-x64.AppImage`; `assets.<channel>.json` lists `RelativeFileName` on
+      every system.
+- [ ] `vpk download github` with no published release fails softly and the build
+      continues without a delta.
+- [ ] `collect` produces `SHA256SUMS` with no name collision between channels.
+- [ ] A release build with no cache fits in the 60 minute job timeout on every runner
+      (a tag build is always uncached; a dry run on a new cache key shows the time).
+
+First tag (`v0.1.0`):
+
+- [ ] The ancestor check finds `origin/main` after the `fetch-depth: 0` checkout of a
+      tag.
+- [ ] The `release` environment restricted to `v*` lets the tag run through.
+- [ ] `actions/attest-build-provenance` accepts `subject-checksums` with every asset,
+      and `gh attestation verify` succeeds on a downloaded one.
+- [ ] `vpk upload github --merge` called four times from one job, with no checkout,
+      fills a single draft; `--targetCommitish` is accepted for an existing tag.
+- [ ] The draft holds exactly the expected assets (the check step prints the
+      difference otherwise). In particular: vpk uploads `Acta-win-x64-Portable.zip`
+      and neither `assets.*.json` nor `RELEASES-*`.
+- [ ] The tag ruleset does not stop vpk from creating the draft for the existing tag,
+      and immutability does not stop the draft from being published.
+- [ ] `releases/latest/download/install.sh` and `install.ps1` resolve.
+- [ ] `install.ps1` on a clean Windows: no prompt, no elevation, Acta starts, `acta`
+      is on the user PATH and the script says so only then.
+- [ ] `install.sh` on macOS arm64 and x64: no Gatekeeper warning, Acta opens. Run it a
+      second time with Acta open: the app quits, is replaced and reopens.
+- [ ] `install.sh` on Linux: the AppImage starts, the desktop entry and icon appear.
+- [ ] A `Setup.exe` downloaded with a browser shows SmartScreen as the README says; a
+      zip downloaded with a browser on macOS is blocked as the README says.
+
+Second tag (`v0.1.1`):
+
+- [ ] `vpk download github` finds 0.1.0 with the read-only token and a delta package is
+      built for every channel.
+- [ ] An installed 0.1.0 becomes 0.1.1 at launch on Windows, macOS arm64, macOS x64
+      and Linux, from `GithubSource` with no token.
+- [ ] On macOS the updated bundle, with its new ad-hoc signature, starts with no
+      warning (keychain behaviour across updates is what `platform-checks.yml` answers).
+- [ ] Marking 0.1.1 as a pre-release hides it from a 0.1.0 client and from the install
+      scripts, with immutable releases enabled.
