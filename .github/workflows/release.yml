@@ -44,6 +44,23 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # Full history: the next step needs origin/main and the path down to the tag.
+          fetch-depth: 0
+      # Before anything from the commit is executed. A release is only ever cut from a
+      # commit that is on main, where CI and the dry run have already built it; a tag
+      # put on a side branch stops here.
+      - name: The tagged commit is on main
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        run: |
+          if ! git rev-parse --verify --quiet origin/main >/dev/null; then
+            echo "::error::origin/main was not fetched; cannot check where the tag is"
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_REF_NAME ($GITHUB_SHA) is not an ancestor of origin/main; tag a commit of main"
+            exit 1
+          fi
+          echo "$GITHUB_REF_NAME is on main"
       - name: Rust toolchain
         run: scripts/ci/setup-rust.sh
       - name: Workspace version, tag and vpk pin
@@ -121,11 +138,13 @@ jobs:
         run: scripts/ci/linux-deps.sh --package --headless
       - name: Rust toolchain
         run: scripts/ci/setup-rust.sh "$TARGET"
+      # Dry runs only. What a tag build ships is compiled from scratch: nothing restored
+      # from a cache, which any earlier run on main could have written, ends up in a
+      # release. Only main saves the cache.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        if: needs.check.outputs.publish != 'true'
         with:
           key: ${{ matrix.channel }}
-          # Tag runs read the cache written by the dry runs on main; a cache saved
-          # from a tag could not be read by any other ref.
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: cargo build --release
         run: cargo build --release --locked --target "$TARGET"
