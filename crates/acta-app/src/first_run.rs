@@ -9,6 +9,8 @@ use gpui_kit::{
     Styled, Window, div, px,
 };
 
+use crate::i18n::{Key, text};
+use crate::settings;
 use crate::theme::Tokens;
 use crate::type_scale;
 
@@ -20,6 +22,7 @@ pub struct FirstRun;
 impl Render for FirstRun {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let tokens = cx.global::<Tokens>();
+        let locale = settings::locale(cx);
         div()
             .id("first-run")
             .size_full()
@@ -42,17 +45,14 @@ impl Render for FirstRun {
                         type_scale::TITLE
                             .el()
                             .text_color(tokens.text_primary)
-                            .child("Start with a project"),
+                            .child(text(locale, Key::FirstrunTitle)),
                     )
                     .child(
                         type_scale::READING
                             .el()
                             .max_w(px(480.))
                             .text_color(tokens.text_secondary)
-                            .child(
-                                "A project is a folder you work on with Claude Code. \
-                                 Acta keeps its topics, decisions and notes next to the work.",
-                            ),
+                            .child(text(locale, Key::FirstrunBody)),
                     ),
             )
     }

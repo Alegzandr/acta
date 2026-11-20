@@ -15,6 +15,8 @@ path = "src/main.rs"
 acta-core.workspace = true
 # Exact pins: ADR 0001 (UI stack) and ADR 0004 (must match the vpk tool version).
 gpui-kit = "=0.10.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 velopack = "=1.2.161"
 
 [target.'cfg(windows)'.dependencies]

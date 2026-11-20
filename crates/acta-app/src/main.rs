@@ -7,26 +7,72 @@ mod cli_export;
 mod desktop_entry;
 mod first_run;
 mod fonts;
+mod i18n;
+mod icons;
 mod log;
+mod preferences;
+mod settings;
+mod settings_page;
 mod shell;
 mod specimen;
 mod theme;
 mod titlebar;
 mod type_scale;
+mod ui;
 #[cfg(any(windows, test))]
 mod uninstall;
 mod update;
+mod updater_window;
 mod user_path;
 
-use gpui_kit::{App, AppContext, Render};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use gpui_kit::{AnyWindowHandle, App, AppContext};
 use velopack::sources::GithubSource;
 use velopack::{UpdateManager, VelopackApp};
 
 use acta_core::paths::Os;
 use cli_export::Layout;
-use shell::Shell;
+use shell::{Page, Shell, Start};
+use update::{LaunchState, LaunchStep};
+use updater_window::UpdaterWindow;
+
+/// How this run was asked to start. Everything but the defaults is a
+/// development or test aid, not a user-facing option.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Options {
+    /// `--specimen` or `ACTA_SPECIMEN=1`: the type specimen window.
+    specimen: bool,
+    /// `--open=settings`: the window starts on the Settings page.
+    /// `--sidebar`: the window starts with the sidebar shown.
+    start: Start,
+    /// `--no-focus`: windows open without taking the foreground, for
+    /// captures on a machine someone is using.
+    no_focus: bool,
+}
+
+impl Options {
+    fn parse(args: impl IntoIterator<Item = String>, specimen_env: bool) -> Self {
+        let mut options = Options {
+            specimen: specimen_env,
+            ..Options::default()
+        };
+        for arg in args {
+            match arg.as_str() {
+                "--specimen" => options.specimen = true,
+                "--open=settings" => options.start.page = Page::Settings,
+                "--sidebar" => options.start.sidebar = true,
+                "--no-focus" => options.no_focus = true,
+                _ => {}
+            }
+        }
+        options
+    }
+}
 
 fn main() {
+    let launched = Instant::now();
     log::rotate();
     let restarted_by_updater = velopack_bootstrap();
 
@@ -38,9 +84,11 @@ fn main() {
         log::line("not a Velopack install; no export, no updates");
     }
 
-    // Development aid: `Acta --specimen`, or `ACTA_SPECIMEN=1`.
-    let specimen = std::env::args().skip(1).any(|arg| arg == "--specimen")
-        || std::env::var_os("ACTA_SPECIMEN").is_some_and(|value| value == "1");
+    let options = Options::parse(
+        std::env::args().skip(1),
+        std::env::var_os("ACTA_SPECIMEN").is_some_and(|value| value == "1"),
+    );
+    let mut pending = None;
 
     if let Some(manager) = installed {
         // Repairs the export if a hook was missed; cheap when up to date.
@@ -57,13 +105,30 @@ fn main() {
                 err.kind()
             ));
         }
-        if !specimen {
-            // Returns when the window may open; exits instead if it applies.
-            update::run_at_launch(manager, restarted_by_updater);
+        if !options.specimen {
+            // The wait for the update decision runs beside the UI, so the
+            // updater window can show while it lasts. An apply is handed
+            // to the UI thread, which ends the process with it.
+            let state = Arc::new(LaunchState::default());
+            let waiting = Arc::clone(&state);
+            let spawned = std::thread::Builder::new()
+                .name("acta-launch".into())
+                .spawn(move || {
+                    // Ready however this ends, a panic included.
+                    let _ready = update::ReadyOnDrop(Arc::clone(&waiting));
+                    update::run_at_launch(manager, restarted_by_updater, waiting);
+                });
+            match spawned {
+                Ok(_) => pending = Some(state),
+                Err(err) => log::line(&format!(
+                    "update: could not start the launch wait: {:?}",
+                    err.kind()
+                )),
+            }
         }
     }
 
-    run_app(specimen);
+    run_app(options, pending, launched);
 }
 
 /// The update manager of this install, or `None` when the executable was not
@@ -197,40 +262,170 @@ fn integrate_with_desktop() {
     }
 }
 
-fn run_app(specimen: bool) {
-    gpui_kit::application().run(move |cx| {
-        gpui_kit::init(cx);
-        fonts::register(cx);
-        theme::install(theme::Tokens::dark(), cx);
+fn run_app(options: Options, pending: Option<Arc<LaunchState>>, launched: Instant) {
+    gpui_kit::application()
+        .with_assets(icons::Assets)
+        .run(move |cx| {
+            gpui_kit::init(cx);
+            fonts::register(cx);
+            settings::init(cx);
+            shell::bind_keys(cx);
 
-        if specimen {
-            open(specimen::WINDOW_SIZE, cx, |_| specimen::Specimen);
-        } else {
-            open(shell::DEFAULT_SIZE, cx, |_| first_run::FirstRun);
-        }
+            cx.on_window_closed(|cx, _| {
+                if cx.windows().is_empty() {
+                    cx.quit();
+                }
+            })
+            .detach();
 
-        cx.on_window_closed(|cx, _| {
-            if cx.windows().is_empty() {
-                cx.quit();
+            match pending {
+                None => open_main(options, cx),
+                Some(state) => {
+                    cx.spawn(async move |cx| wait_for_launch(options, state, launched, cx).await)
+                        .detach();
+                }
             }
-        })
-        .detach();
-        cx.activate(true);
-    });
+            cx.activate(!options.no_focus);
+        });
 }
 
-/// Open an Acta window around `content`. Without a window there is nothing
-/// to show an error in, so a failure is logged and the app quits.
-fn open<V: Render>(
-    default_size: (f32, f32),
-    cx: &mut App,
-    content: impl FnOnce(&mut gpui_kit::Context<V>) -> V + 'static,
+/// Tick until the update decision; show the updater window if the main
+/// window is late, and close it in the frame the main window opens. A
+/// posted apply runs here, on the UI thread, with every window closed and
+/// the preferences written first.
+async fn wait_for_launch(
+    options: Options,
+    state: Arc<LaunchState>,
+    launched: Instant,
+    cx: &mut gpui_kit::AsyncApp,
 ) {
-    let options = shell::window_options(default_size, cx);
-    let opened = gpui_kit::open_window(options, cx, |_, cx| {
-        let content = cx.new(content);
-        cx.new(|cx| Shell::new(content.into(), cx))
-    });
+    const TICK: Duration = Duration::from_millis(16);
+    let mut updater: Option<AnyWindowHandle> = None;
+    let mut updater_shown = false;
+    let mut shown_status = None;
+    loop {
+        // Ready is read before the apply: a worker posts its apply before
+        // the launch becomes ready, so a ready launch never hides one.
+        let ready = state.is_ready();
+        let apply = state.take_apply();
+        match update::launch_step(launched.elapsed(), ready, apply.is_some(), updater_shown) {
+            LaunchStep::Wait => {
+                let status = state.status();
+                if let Some(handle) = updater
+                    && shown_status != Some(status)
+                {
+                    // Repaint only when the status line or the bar change.
+                    shown_status = Some(status);
+                    let _ = handle.update(cx, |_, window, _| window.refresh());
+                }
+            }
+            LaunchStep::Apply => {
+                let Some(apply) = apply else { continue };
+                cx.update(|cx| {
+                    apply_at_launch(
+                        apply,
+                        &mut GpuiLaunch {
+                            options,
+                            updater,
+                            cx,
+                        },
+                    );
+                });
+                return;
+            }
+            LaunchStep::ShowUpdaterWindow => {
+                updater_shown = true;
+                let state = Arc::clone(&state);
+                updater = cx.update(|cx| {
+                    let window_options = updater_window::window_options(!options.no_focus, cx);
+                    let opened = cx.open_window(window_options, |window, cx| {
+                        cx.new(|cx| UpdaterWindow::new(state, window, cx))
+                    });
+                    match opened {
+                        Ok(handle) => Some(handle.into()),
+                        Err(err) => {
+                            // Keep waiting without it; never try again.
+                            log::line(&format!("could not open the updater window: {err}"));
+                            None
+                        }
+                    }
+                });
+            }
+            LaunchStep::OpenMainWindow => {
+                cx.update(|cx| {
+                    open_main(options, cx);
+                    if let Some(handle) = updater {
+                        let _ = handle.update(cx, |_, window, _| window.remove_window());
+                    }
+                });
+                return;
+            }
+        }
+        cx.background_executor().timer(TICK).await;
+    }
+}
+
+/// What [`apply_at_launch`] does to the app, so its order can be tested
+/// without a display.
+trait Launch {
+    fn flush_preferences(&mut self);
+    fn open_main_window(&mut self);
+    fn close_updater_window(&mut self);
+}
+
+struct GpuiLaunch<'a> {
+    options: Options,
+    updater: Option<AnyWindowHandle>,
+    cx: &'a mut App,
+}
+
+impl Launch for GpuiLaunch<'_> {
+    fn flush_preferences(&mut self) {
+        settings::flush(self.cx);
+    }
+
+    fn open_main_window(&mut self) {
+        open_main(self.options, self.cx);
+    }
+
+    fn close_updater_window(&mut self) {
+        if let Some(handle) = self.updater.take() {
+            let _ = handle.update(self.cx, |_, window, _| window.remove_window());
+        }
+    }
+}
+
+/// Run a posted apply on the UI thread: write the preferences, then apply,
+/// which ends the process on success. No window is closed first: closing
+/// the last one queues GPUI's quit, which a failed apply could not take
+/// back. On failure (Velopack applies the package at the next launch) the
+/// main window opens first and the updater window closes after it, as when
+/// no update is applied, so the app is never without a window.
+fn apply_at_launch(apply: update::Apply, launch: &mut impl Launch) {
+    launch.flush_preferences();
+    if let Err(err) = apply() {
+        log::line(&format!("update: {err}; opening without it"));
+        launch.open_main_window();
+        launch.close_updater_window();
+    }
+}
+
+/// Open the main window (or the specimen). Without a window there is
+/// nothing to show an error in, so a failure is logged and the app quits.
+fn open_main(options: Options, cx: &mut App) {
+    let focus = !options.no_focus;
+    let opened = if options.specimen {
+        let window = shell::window_options(specimen::WINDOW_SIZE, focus, cx);
+        gpui_kit::open_window(window, cx, |window, cx| {
+            let view = cx.new(|_| specimen::Specimen);
+            cx.new(|cx| Shell::specimen(view.into(), window, cx))
+        })
+    } else {
+        let window = shell::window_options(shell::DEFAULT_SIZE, focus, cx);
+        gpui_kit::open_window(window, cx, |window, cx| {
+            cx.new(|cx| Shell::workbench(options.start, window, cx))
+        })
+    };
     if let Err(err) = opened {
         log::line(&format!("could not open the window: {err}"));
         cx.quit();
@@ -240,6 +435,77 @@ fn open<V: Render>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The windows of a launch with the updater window showing, and every
+    /// call in order. The app quits when its last window closes.
+    struct FakeLaunch {
+        windows: usize,
+        quit: bool,
+        calls: Vec<&'static str>,
+    }
+
+    impl Launch for FakeLaunch {
+        fn flush_preferences(&mut self) {
+            self.calls.push("flush");
+        }
+
+        fn open_main_window(&mut self) {
+            self.calls.push("open main");
+            self.windows += 1;
+        }
+
+        fn close_updater_window(&mut self) {
+            self.calls.push("close updater");
+            self.windows -= 1;
+            self.quit |= self.windows == 0;
+        }
+    }
+
+    fn launch_with_updater() -> FakeLaunch {
+        FakeLaunch {
+            windows: 1,
+            quit: false,
+            calls: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_failed_apply_opens_the_main_window_and_never_quits() {
+        let mut launch = launch_with_updater();
+        apply_at_launch(
+            Box::new(|| Err("apply failed: other error".into())),
+            &mut launch,
+        );
+        assert_eq!(launch.calls, ["flush", "open main", "close updater"]);
+        assert_eq!(launch.windows, 1, "the main window is open");
+        assert!(!launch.quit);
+    }
+
+    #[test]
+    fn preferences_are_written_before_the_apply_and_no_window_is_closed() {
+        let mut launch = launch_with_updater();
+        // A real apply exits the process; this one records that it ran.
+        apply_at_launch(Box::new(|| Ok(())), &mut launch);
+        assert_eq!(launch.calls, ["flush"]);
+        assert_eq!(launch.windows, 1);
+        assert!(!launch.quit);
+    }
+
+    #[test]
+    fn options_default_to_the_product_and_read_the_aids() {
+        let parse =
+            |args: &[&str], env| Options::parse(args.iter().map(|arg| arg.to_string()), env);
+        assert_eq!(parse(&[], false), Options::default());
+        assert_eq!(Options::default().start.page, Page::FirstRun);
+        assert!(!Options::default().start.sidebar);
+        assert!(parse(&[], true).specimen);
+        let all = parse(
+            &["--open=settings", "--sidebar", "--no-focus", "--x"],
+            false,
+        );
+        assert_eq!(all.start.page, Page::Settings);
+        assert!(all.start.sidebar && all.no_focus && !all.specimen);
+    }
 
     #[test]
     fn only_a_portable_windows_install_skips_the_export() {

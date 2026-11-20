@@ -14,7 +14,8 @@
 #                          Fails if a font directory has none.
 #   *                      the files of scripts/licenses/third-party: notices for things
 #                          that are neither a crate of their own nor an asset directory
-#                          (the Lucide icons, which come inside a crate).
+#                          (the Lucide icons in assets/icons/lucide, copied from the
+#                          gpui-kit-assets crate; their directory has no licence file).
 #
 # Requires cargo-about 0.9.3: `cargo install cargo-about --locked --version 0.9.3`, or
 # scripts/ci/install-cargo-about.sh on Linux x86_64. Downloads the crates of every

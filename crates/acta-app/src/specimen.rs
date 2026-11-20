@@ -2,16 +2,14 @@
 //! `ACTA_SPECIMEN=1`. Not part
 //! of the product and not reachable from the UI.
 //!
-//! It shows how GPUI renders the bundled faces: every sans role of DESIGN.md
-//! 3.2 on the four surfaces, the text levels, the mono roles and the colour
-//! tokens. Source Sans 3 was confirmed on Windows with it.
-
-use std::sync::Arc;
+//! It shows how GPUI renders the bundled faces, dark and light side by
+//! side: every sans role of DESIGN.md 3.2 on the four surfaces, the text
+//! levels, the mono roles and the colour tokens.
 
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    Context, Div, FontFeatures, FontWeight, Hsla, InteractiveElement, IntoElement, ParentElement,
-    Render, StatefulInteractiveElement, Styled, Window, div, px,
+    Context, Div, FontWeight, Hsla, InteractiveElement, IntoElement, ParentElement, Render,
+    StatefulInteractiveElement, Styled, Window, div, px,
 };
 
 use crate::theme::{FONT_MONO, FONT_SANS, RADIUS_MD, RADIUS_SM, Tokens};
@@ -25,6 +23,7 @@ pub struct Specimen;
 fn sample(role: &TypeRole) -> &'static str {
     match role.name {
         "type.title" => "Embed the terminal",
+        "type.subtitle" => "Appearance",
         "type.heading" => "Start with a project",
         "type.reading" => "Resize now reflows the grid.",
         "type.document" => "Read for minutes, not glanced at.",
@@ -107,7 +106,7 @@ fn surface(name: &'static str, background: Hsla, floating: bool, tokens: &Tokens
 /// Body text in the three text levels, italics and tabular figures.
 fn text_levels(tokens: &Tokens) -> Div {
     let reading = type_scale::READING;
-    let tabular = FontFeatures(Arc::new(vec![("tnum".into(), 1), ("lnum".into(), 1)]));
+    let tabular = type_scale::tabular();
     div()
         .flex_1()
         .min_w_0()
@@ -187,7 +186,7 @@ fn mono_samples(tokens: &Tokens) -> Div {
             .child(
                 role.el()
                     .text_color(tokens.text_primary)
-                    .child("fn main() { acta setup --check }  0O 1lI |[]{} -> != <= ~/.local/bin"),
+                    .child("acta setup --check  0O 1lI |[]{} -> != ~/.local/bin"),
             )
     });
     let terminal = type_scale::TERMINAL;
@@ -223,7 +222,7 @@ fn mono_samples(tokens: &Tokens) -> Div {
                         .el()
                         .italic()
                         .text_color(tokens.text_primary)
-                        .child("Resize now reflows the grid; the last row is still cut."),
+                        .child("Resize now reflows the grid."),
                 ),
         )
         .child(
@@ -247,8 +246,8 @@ fn mono_samples(tokens: &Tokens) -> Div {
         );
     div()
         .flex()
-        .flex_row()
-        .gap(px(24.))
+        .flex_col()
+        .gap(px(12.))
         .p(px(16.))
         .bg(tokens.bg_sunken)
         .border_1()
@@ -307,53 +306,66 @@ fn swatches(name: &'static str, theme: &Tokens, tokens: &Tokens) -> Div {
         )
 }
 
+/// One theme's column: every role on its four surfaces, the text levels,
+/// the mono roles and its colour tokens, all on that theme's `bg.base`.
+fn theme_column(name: &'static str, t: &Tokens) -> Div {
+    let pair = |a: Div, b: Div| div().flex().flex_row().gap(px(12.)).child(a).child(b);
+    div()
+        .flex_1()
+        .min_w_0()
+        .flex()
+        .flex_col()
+        .gap(px(12.))
+        .p(px(16.))
+        .bg(t.bg_base)
+        .text_color(t.text_primary)
+        .child(
+            type_scale::HEADING
+                .el()
+                .text_color(t.text_primary)
+                .child(name),
+        )
+        .child(pair(
+            surface("bg.sunken", t.bg_sunken, false, t),
+            surface("bg.base", t.bg_base, false, t),
+        ))
+        .child(pair(
+            surface("bg.raised", t.bg_raised, false, t),
+            surface("bg.overlay", t.bg_overlay, true, t),
+        ))
+        .child(text_levels(t))
+        .child(mono_samples(t))
+        .child(swatches("Colour tokens", t, t))
+}
+
 impl Render for Specimen {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let tokens = cx.global::<Tokens>().clone();
-        let t = &tokens;
-        let pair = |a: Div, b: Div| div().flex().flex_row().gap(px(16.)).child(a).child(b);
-
+        let t = cx.global::<Tokens>().clone();
         div()
             .id("specimen")
             .size_full()
             .overflow_y_scroll()
             .flex()
             .flex_col()
-            .gap(px(16.))
-            .p(px(24.))
+            .child(
+                caption(
+                    format!(
+                        "Acta {}. Every role of DESIGN.md 3.2 at its size / line height and \
+                         weight, in {FONT_SANS} and {FONT_MONO}, in both themes whatever the \
+                         Appearance setting.",
+                        acta_core::VERSION
+                    ),
+                    t.text_tertiary,
+                )
+                .px(px(16.))
+                .py(px(8.)),
+            )
             .child(
                 div()
                     .flex()
-                    .flex_col()
-                    .gap(px(4.))
-                    .child(
-                        type_scale::HEADING
-                            .el()
-                            .text_color(t.text_primary)
-                            .child("Type specimen"),
-                    )
-                    .child(caption(
-                        format!(
-                            "Acta {}. Every role of DESIGN.md 3.2 at its size / line height \
-                             and weight, in {FONT_SANS} and {FONT_MONO}.",
-                            acta_core::VERSION
-                        ),
-                        t.text_tertiary,
-                    )),
+                    .flex_row()
+                    .child(theme_column("Dark", &Tokens::dark()))
+                    .child(theme_column("Light", &Tokens::light())),
             )
-            .child(pair(
-                surface("bg.sunken", t.bg_sunken, false, t),
-                surface("bg.base", t.bg_base, false, t),
-            ))
-            .child(pair(
-                surface("bg.raised", t.bg_raised, false, t),
-                surface("bg.overlay", t.bg_overlay, true, t),
-            ))
-            .child(text_levels(t))
-            .child(mono_samples(t))
-            .child(pair(
-                swatches("Colour tokens, dark (active)", t, t),
-                swatches("Colour tokens, light", &Tokens::light(), t),
-            ))
     }
 }

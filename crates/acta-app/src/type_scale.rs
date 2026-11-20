@@ -1,9 +1,9 @@
 //! DESIGN.md section 3.2: the type roles. Text is always set through a role.
-//!
-//! Not applied: the tracking column (`type.title` -0.2px, `type.label`
-//! +0.1px). The pinned GPUI has no letter-spacing in its text style.
+//! No role asks for letter-spacing (the pinned GPUI has none).
 
-use gpui_kit::{Div, FontWeight, Styled, div, px};
+use std::sync::Arc;
+
+use gpui_kit::{Div, FontFeatures, FontWeight, Styled, div, px};
 
 use crate::theme::{FONT_MONO, FONT_SANS};
 
@@ -37,21 +37,28 @@ const fn mono(name: &'static str, size: f32, line: f32) -> TypeRole {
     }
 }
 
-pub const TITLE: TypeRole = sans("type.title", 22., 28., FontWeight::SEMIBOLD);
-pub const HEADING: TypeRole = sans("type.heading", 17., 24., FontWeight::SEMIBOLD);
+pub const TITLE: TypeRole = sans("type.title", 24., 30., FontWeight::SEMIBOLD);
+pub const SUBTITLE: TypeRole = sans("type.subtitle", 20., 28., FontWeight::SEMIBOLD);
+pub const HEADING: TypeRole = sans("type.heading", 16., 24., FontWeight::SEMIBOLD);
 pub const READING: TypeRole = sans("type.reading", 15., 24., FontWeight::NORMAL);
 pub const DOCUMENT: TypeRole = sans("type.document", 16., 26., FontWeight::NORMAL);
-pub const UI: TypeRole = sans("type.ui", 14., 20., FontWeight::NORMAL);
-pub const UI_STRONG: TypeRole = sans("type.ui-strong", 14., 20., FontWeight::SEMIBOLD);
-pub const SMALL: TypeRole = sans("type.small", 13., 18., FontWeight::NORMAL);
-pub const LABEL: TypeRole = sans("type.label", 13., 18., FontWeight::SEMIBOLD);
+pub const UI: TypeRole = sans("type.ui", 13., 20., FontWeight::NORMAL);
+pub const UI_STRONG: TypeRole = sans("type.ui-strong", 13., 20., FontWeight::SEMIBOLD);
+pub const SMALL: TypeRole = sans("type.small", 12., 16., FontWeight::NORMAL);
+pub const LABEL: TypeRole = sans("type.label", 12., 16., FontWeight::SEMIBOLD);
 pub const CODE: TypeRole = mono("type.code", 13., 20.);
 pub const TERMINAL: TypeRole = mono("type.terminal", 13., 17.);
 
 /// The sans roles, in table order.
-pub const SANS_ROLES: [TypeRole; 8] = [
-    TITLE, HEADING, READING, DOCUMENT, UI, UI_STRONG, SMALL, LABEL,
+pub const SANS_ROLES: [TypeRole; 9] = [
+    TITLE, SUBTITLE, HEADING, READING, DOCUMENT, UI, UI_STRONG, SMALL, LABEL,
 ];
+
+/// Tabular figures (`tnum`), for digits that align or tick: timestamps,
+/// counts, ids, versions, shortcut hints (DESIGN.md 3.1).
+pub fn tabular() -> FontFeatures {
+    FontFeatures(Arc::new(vec![("tnum".into(), 1)]))
+}
 /// The mono roles, in table order.
 pub const MONO_ROLES: [TypeRole; 2] = [CODE, TERMINAL];
 
@@ -99,14 +106,15 @@ mod tests {
     #[test]
     fn scale_matches_design_md() {
         let table = [
-            (TITLE, 22., 28.),
-            (HEADING, 17., 24.),
+            (TITLE, 24., 30.),
+            (SUBTITLE, 20., 28.),
+            (HEADING, 16., 24.),
             (READING, 15., 24.),
             (DOCUMENT, 16., 26.),
-            (UI, 14., 20.),
-            (UI_STRONG, 14., 20.),
-            (SMALL, 13., 18.),
-            (LABEL, 13., 18.),
+            (UI, 13., 20.),
+            (UI_STRONG, 13., 20.),
+            (SMALL, 12., 16.),
+            (LABEL, 12., 16.),
             (CODE, 13., 20.),
             (TERMINAL, 13., 17.),
         ];

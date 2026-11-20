@@ -15,10 +15,10 @@ macro_rules! font {
 /// font takes over: the window must open regardless.
 pub fn register(cx: &App) {
     let fonts = vec![
-        font!("source-sans-3/SourceSans3-Regular.ttf"),
-        font!("source-sans-3/SourceSans3-It.ttf"),
-        font!("source-sans-3/SourceSans3-Semibold.ttf"),
-        font!("source-sans-3/SourceSans3-SemiboldIt.ttf"),
+        font!("inter/Inter-Regular.ttf"),
+        font!("inter/Inter-Italic.ttf"),
+        font!("inter/Inter-SemiBold.ttf"),
+        font!("inter/Inter-SemiBoldItalic.ttf"),
         font!("jetbrains-mono-nl/JetBrainsMonoNL-Regular.ttf"),
         font!("jetbrains-mono-nl/JetBrainsMonoNL-Italic.ttf"),
         font!("jetbrains-mono-nl/JetBrainsMonoNL-Bold.ttf"),
