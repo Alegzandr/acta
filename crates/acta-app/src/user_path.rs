@@ -240,6 +240,7 @@ mod link_rule {
     #[derive(Debug, PartialEq, Eq)]
     pub enum Existing {
         Missing,
+        /// A symlink and the target stored in it, whether or not it resolves.
         SymlinkTo(PathBuf),
         /// A regular file or directory the user (or another tool) put there.
         Other,
@@ -248,18 +249,22 @@ mod link_rule {
     #[derive(Debug, PartialEq, Eq)]
     pub enum Action {
         Create,
+        /// Ours, pointing at an older export: repoint it.
         Replace,
         Keep,
-        /// Never overwrite something that is not our symlink.
+        /// Not ours: `~/.local/bin` is shared, and another `acta` there
+        /// belongs to whoever put it.
         LeaveAlone,
     }
 
-    pub fn decide(existing: &Existing, target: &Path) -> Action {
+    /// A symlink is ours only when it points into Acta's own export root
+    /// (also when that target no longer exists). Anything else is left alone.
+    pub fn decide(existing: &Existing, target: &Path, export_root: &Path) -> Action {
         match existing {
             Existing::Missing => Action::Create,
             Existing::SymlinkTo(current) if current == target => Action::Keep,
-            Existing::SymlinkTo(_) => Action::Replace,
-            Existing::Other => Action::LeaveAlone,
+            Existing::SymlinkTo(current) if current.starts_with(export_root) => Action::Replace,
+            Existing::SymlinkTo(_) | Existing::Other => Action::LeaveAlone,
         }
     }
 }
@@ -268,9 +273,12 @@ mod link_rule {
 mod symlink {
     use std::fs;
     use std::io;
+    use std::os::unix::fs::symlink;
 
     use super::link_rule::{Action, Existing, decide};
     use crate::cli_export::Layout;
+
+    pub const LEFT_ALONE: &str = "another acta is at the link path and is not ours; left untouched";
 
     pub fn ensure(layout: &Layout) -> io::Result<&'static str> {
         let Some(link_dir) = &layout.link_dir else {
@@ -284,17 +292,26 @@ mod symlink {
             Ok(meta) if meta.file_type().is_symlink() => Existing::SymlinkTo(fs::read_link(&link)?),
             Ok(_) => Existing::Other,
         };
-        match decide(&existing, &target) {
+        match decide(&existing, &target, &layout.removable_root) {
             Action::Keep => Ok("symlink already in place"),
-            Action::LeaveAlone => Ok("a different file is at the link path; left untouched"),
+            Action::LeaveAlone => Ok(LEFT_ALONE),
             Action::Create => {
                 fs::create_dir_all(link_dir)?;
-                std::os::unix::fs::symlink(&target, &link)?;
+                // Fails if something appeared there meanwhile: never clobber.
+                symlink(&target, &link)?;
                 Ok("symlink created")
             }
             Action::Replace => {
-                fs::remove_file(&link)?;
-                std::os::unix::fs::symlink(&target, &link)?;
+                // A new link under a temporary name, renamed over the old
+                // one: at no point is `acta` missing from the directory.
+                let incoming =
+                    link_dir.join(format!(".{}.new-{}", layout.exe_name, std::process::id()));
+                let _ = fs::remove_file(&incoming);
+                symlink(&target, &incoming)?;
+                if let Err(err) = fs::rename(&incoming, &link) {
+                    let _ = fs::remove_file(&incoming);
+                    return Err(err);
+                }
                 Ok("symlink updated")
             }
         }
@@ -568,19 +585,163 @@ pub(crate) mod tests {
 
     #[test]
     fn symlink_rule() {
-        let target = Path::new("/home/alexandre/.local/share/acta/bin/acta");
-        assert_eq!(decide(&Existing::Missing, target), Action::Create);
+        let root = Path::new("/home/alexandre/.local/share/acta-cli");
+        let target = root.join("bin").join("acta");
+        let decide = |existing: &Existing| decide(existing, &target, root);
+
+        assert_eq!(decide(&Existing::Missing), Action::Create);
+        assert_eq!(decide(&Existing::SymlinkTo(target.clone())), Action::Keep);
+        // Ours from an earlier layout of the export root, even if dangling.
         assert_eq!(
-            decide(&Existing::SymlinkTo(target.to_path_buf()), target),
-            Action::Keep
-        );
-        assert_eq!(
-            decide(
-                &Existing::SymlinkTo(PathBuf::from("/elsewhere/acta")),
-                target
-            ),
+            decide(&Existing::SymlinkTo(root.join("old").join("acta"))),
             Action::Replace
         );
-        assert_eq!(decide(&Existing::Other, target), Action::LeaveAlone);
+        // Someone else's: an unrelated program, a sibling directory with the
+        // same prefix, a relative link.
+        for foreign in [
+            "/opt/other/bin/acta",
+            "/home/alexandre/.local/share/acta-cli-fork/bin/acta",
+            "../share/acta-cli/bin/acta",
+        ] {
+            assert_eq!(
+                decide(&Existing::SymlinkTo(PathBuf::from(foreign))),
+                Action::LeaveAlone,
+                "{foreign}"
+            );
+        }
+        assert_eq!(decide(&Existing::Other), Action::LeaveAlone);
+    }
+
+    /// The real thing, in a temporary home. Unix only: these run for the
+    /// first time on the macOS and Linux CI runners.
+    #[cfg(unix)]
+    mod symlinks {
+        use std::fs;
+        use std::os::unix::fs::symlink;
+        use std::path::{Path, PathBuf};
+
+        use super::super::publish;
+        use super::super::symlink::LEFT_ALONE;
+        use crate::cli_export::Layout;
+
+        fn layout(home: &Path) -> Layout {
+            let removable_root = home.join(".local").join("share").join("acta-cli");
+            let layout = Layout {
+                source: home.join("package").join("acta-cli"),
+                dir: removable_root.join("bin"),
+                removable_root,
+                exe_name: "acta",
+                link_dir: Some(home.join(".local").join("bin")),
+            };
+            fs::create_dir_all(&layout.dir).unwrap();
+            fs::write(layout.exported_exe(), b"cli").unwrap();
+            layout
+        }
+
+        fn link(layout: &Layout) -> PathBuf {
+            layout.link_dir.as_ref().unwrap().join("acta")
+        }
+
+        fn entries(dir: &Path) -> Vec<String> {
+            let mut names: Vec<String> = fs::read_dir(dir)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                .collect();
+            names.sort();
+            names
+        }
+
+        #[test]
+        fn creates_the_link_and_its_directory() {
+            let home = tempfile::tempdir().unwrap();
+            let layout = layout(home.path());
+
+            let published = publish(&layout).unwrap();
+
+            assert_eq!(published.note, "symlink created");
+            assert!(!published.environment_changed);
+            assert_eq!(fs::read_link(link(&layout)).unwrap(), layout.exported_exe());
+            assert_eq!(fs::read(link(&layout)).unwrap(), b"cli");
+        }
+
+        #[test]
+        fn keeps_a_link_that_is_already_right() {
+            let home = tempfile::tempdir().unwrap();
+            let layout = layout(home.path());
+            publish(&layout).unwrap();
+
+            let published = publish(&layout).unwrap();
+
+            assert_eq!(published.note, "symlink already in place");
+            assert_eq!(fs::read_link(link(&layout)).unwrap(), layout.exported_exe());
+        }
+
+        #[test]
+        fn repoints_its_own_dangling_link_and_leaves_no_temporary_file() {
+            let home = tempfile::tempdir().unwrap();
+            let layout = layout(home.path());
+            let link_dir = layout.link_dir.clone().unwrap();
+            fs::create_dir_all(&link_dir).unwrap();
+            // Ours (inside the export root), but the target is gone.
+            let stale = layout.removable_root.join("old").join("acta");
+            symlink(&stale, link(&layout)).unwrap();
+            assert!(!stale.exists());
+
+            let published = publish(&layout).unwrap();
+
+            assert_eq!(published.note, "symlink updated");
+            assert_eq!(fs::read_link(link(&layout)).unwrap(), layout.exported_exe());
+            assert_eq!(entries(&link_dir), ["acta"]);
+        }
+
+        #[test]
+        fn leaves_a_foreign_symlink_alone() {
+            let home = tempfile::tempdir().unwrap();
+            let layout = layout(home.path());
+            let link_dir = layout.link_dir.clone().unwrap();
+            fs::create_dir_all(&link_dir).unwrap();
+            let other = home.path().join("opt").join("acta");
+            fs::create_dir_all(other.parent().unwrap()).unwrap();
+            fs::write(&other, b"another program").unwrap();
+            symlink(&other, link(&layout)).unwrap();
+
+            let published = publish(&layout).unwrap();
+
+            assert_eq!(published.note, LEFT_ALONE);
+            assert_eq!(fs::read_link(link(&layout)).unwrap(), other);
+            assert_eq!(fs::read(link(&layout)).unwrap(), b"another program");
+            assert_eq!(entries(&link_dir), ["acta"]);
+        }
+
+        #[test]
+        fn leaves_a_foreign_dangling_symlink_alone() {
+            let home = tempfile::tempdir().unwrap();
+            let layout = layout(home.path());
+            let link_dir = layout.link_dir.clone().unwrap();
+            fs::create_dir_all(&link_dir).unwrap();
+            let gone = home.path().join("opt").join("removed").join("acta");
+            symlink(&gone, link(&layout)).unwrap();
+
+            let published = publish(&layout).unwrap();
+
+            assert_eq!(published.note, LEFT_ALONE);
+            assert_eq!(fs::read_link(link(&layout)).unwrap(), gone);
+        }
+
+        #[test]
+        fn leaves_a_regular_file_alone() {
+            let home = tempfile::tempdir().unwrap();
+            let layout = layout(home.path());
+            let link_dir = layout.link_dir.clone().unwrap();
+            fs::create_dir_all(&link_dir).unwrap();
+            fs::write(link(&layout), b"#!/bin/sh\n").unwrap();
+
+            let published = publish(&layout).unwrap();
+
+            assert_eq!(published.note, LEFT_ALONE);
+            let meta = fs::symlink_metadata(link(&layout)).unwrap();
+            assert!(meta.file_type().is_file());
+            assert_eq!(fs::read(link(&layout)).unwrap(), b"#!/bin/sh\n");
+        }
     }
 }
