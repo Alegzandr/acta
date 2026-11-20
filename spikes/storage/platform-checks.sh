@@ -5,7 +5,9 @@
 #
 # Every step runs under a time limit: a keychain password prompt on a runner shows up
 # as a hang, which is recorded as TIMEOUT (with a screenshot on macOS) instead of
-# blocking the job. Only a failed build makes the script fail; everything else is a result.
+# blocking the job. After a timeout the prompt is dismissed and every later result is
+# marked "(after timeout)", because it was not obtained from a clean state. Only a failed
+# build makes the script fail; everything else is a result.
 set -u
 
 cd "$(dirname "$0")" || exit 1
@@ -16,10 +18,32 @@ mkdir -p "$logs" "$shots"
 summary=$work/summary.tsv
 : >"$summary"
 step_no=0
+timeouts=0
 
 # record <step> <result> <detail>
 record() {
-    printf '%s\t%s\t%s\n' "$1" "$2" "$3" >>"$summary"
+    local result=$2
+    if [ "$timeouts" -gt 0 ]; then result="$result (after timeout)"; fi
+    printf '%s\t%s\t%s\n' "$1" "$result" "$3" >>"$summary"
+}
+
+# A keychain prompt is drawn by SecurityAgent, not by the step that caused it: killing
+# the step leaves the dialog on screen, where it would hold up the following steps too.
+# Prints what it found, for the detail column.
+dismiss_prompt() {
+    if [ "$(uname -s)" != Darwin ]; then
+        echo "nothing to dismiss on this system"
+    elif ! pgrep -x SecurityAgent >/dev/null 2>&1; then
+        echo "no SecurityAgent process, so no keychain prompt was up"
+    else
+        pkill -x SecurityAgent 2>/dev/null || sudo -n pkill -x SecurityAgent 2>/dev/null
+        sleep 2
+        if pgrep -x SecurityAgent >/dev/null 2>&1; then
+            echo "SecurityAgent could not be stopped, its prompt may still be up"
+        else
+            echo "SecurityAgent prompt dismissed"
+        fi
+    fi
 }
 
 # run_step <limit seconds> <step name> <command...>
@@ -39,7 +63,7 @@ run_step() {
         sleep 1
         waited=$((waited + 1))
     done
-    local result detail
+    local result detail timed_out=0
     if kill -0 "$pid" 2>/dev/null; then
         if command -v screencapture >/dev/null 2>&1; then
             screencapture -x "$shots/step-$step_no.png" 2>/dev/null || true
@@ -47,7 +71,8 @@ run_step() {
         kill -9 "$pid" 2>/dev/null
         wait "$pid" 2>/dev/null
         result=TIMEOUT
-        detail="no answer after ${limit}s (a prompt is waiting?)"
+        timed_out=1
+        detail="no answer after ${limit}s; $(dismiss_prompt)"
     else
         wait "$pid"
         local rc=$?
@@ -62,12 +87,22 @@ run_step() {
     sed 's/^/    | /' "$log" | tail -n 60
     echo "    => $result  $detail"
     record "$name" "$result" "$detail"
+    # Counted after recording: the mark is for the steps that follow, not for this one.
+    timeouts=$((timeouts + timed_out))
 }
 
 print_summary() {
+    local note=
+    if [ "$timeouts" -gt 0 ]; then
+        note="$timeouts step(s) timed out. A result marked \"(after timeout)\" was obtained after a hung step was killed and its prompt dismissed, not from a clean state: read it as an indication only."
+    fi
     echo
     echo "================ SUMMARY ($(uname -s) $(uname -m)) ================"
-    awk -F '\t' '{ printf "%-58s %-8s %s\n", $1, $2, $3 }' "$summary"
+    awk -F '\t' '{ printf "%-58s %-23s %s\n", $1, $2, $3 }' "$summary"
+    if [ -n "$note" ]; then
+        echo
+        echo "$note"
+    fi
     if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
         {
             echo "### ADR 0003 platform checks: $(uname -s) $(uname -m)"
@@ -75,6 +110,10 @@ print_summary() {
             echo "| Step | Result | Error code / detail |"
             echo "|---|---|---|"
             awk -F '\t' '{ gsub(/\|/, "\\|", $3); printf "| %s | %s | %s |\n", $1, $2, $3 }' "$summary"
+            if [ -n "$note" ]; then
+                echo
+                echo "$note"
+            fi
         } >>"$GITHUB_STEP_SUMMARY"
     fi
 }
