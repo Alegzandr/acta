@@ -14,7 +14,8 @@
 #                   vpk also emits a delta package (set VPK_TOKEN to avoid the anonymous
 #                   GitHub API rate limit)
 #
-# Requires: the binaries already built (`cargo build --release --locked`), .NET SDK >= 8
+# Requires: the binaries already built (`cargo build --release --locked`), the licence
+# notices collected in dist\licenses (`sh scripts/licenses.sh` from Git Bash), .NET SDK >= 8
 # and vpk 1.2.161 (`dotnet tool install -g vpk --version 1.2.161`).
 # Works in Windows PowerShell 5.1 and PowerShell 7.
 [CmdletBinding()]
@@ -53,6 +54,11 @@ foreach ($bin in 'Acta.exe', 'acta-cli.exe') {
 }
 $icon = 'assets\icons\acta.ico'
 if (-not (Test-Path $icon -PathType Leaf)) { throw "$icon is missing" }
+# Every package carries the third-party notices; a package without them must not exist.
+$licenses = 'dist\licenses'
+if (-not (Test-Path (Join-Path $licenses 'THIRD-PARTY-RUST.txt') -PathType Leaf)) {
+    throw "$licenses is missing or incomplete; run scripts/licenses.sh first (Git Bash)"
+}
 if (-not (Get-Command vpk -ErrorAction SilentlyContinue)) {
     throw 'vpk not found; run: dotnet tool install -g vpk --version 1.2.161'
 }
@@ -63,6 +69,7 @@ $stage = "dist\stage\$Channel"
 if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
 New-Item -ItemType Directory -Force $stage, $OutputDir | Out-Null
 Copy-Item (Join-Path $BinDir 'Acta.exe'), (Join-Path $BinDir 'acta-cli.exe') $stage
+Copy-Item $licenses (Join-Path $stage 'licenses') -Recurse
 
 if ($FetchPrevious) {
     # Fails when the channel has no published release yet: then there is simply no delta.

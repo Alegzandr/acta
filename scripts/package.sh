@@ -17,7 +17,8 @@
 #                     that vpk also emits a delta package (set VPK_TOKEN to avoid the
 #                     anonymous GitHub API rate limit)
 #
-# Requires: the binaries already built (`cargo build --release --locked`), .NET SDK >= 8
+# Requires: the binaries already built (`cargo build --release --locked`), the licence
+# notices collected in dist/licenses (`scripts/licenses.sh`), .NET SDK >= 8
 # and vpk 1.2.161 (`dotnet tool install -g vpk --version 1.2.161`). macOS packages can
 # only be built on macOS (codesign, ditto). Linux needs mksquashfs (squashfs-tools).
 set -eu
@@ -82,6 +83,9 @@ fi
 for bin in Acta acta-cli; do
     [ -f "$bin_dir/$bin" ] || die "$bin_dir/$bin not found; run cargo build --release --locked first"
 done
+# Every package carries the third-party notices; a package without them must not exist.
+licenses=dist/licenses
+[ -s "$licenses/THIRD-PARTY-RUST.txt" ] || die "$licenses is missing or incomplete; run scripts/licenses.sh first"
 command -v vpk >/dev/null 2>&1 || die "vpk not found; run: dotnet tool install -g vpk --version 1.2.161"
 
 echo "Packaging $PACK_ID $version for $channel from $bin_dir into $out"
@@ -114,6 +118,7 @@ if [ "$want_os" = Darwin ]; then
     mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
     cp "$bin_dir/Acta" "$bin_dir/acta-cli" "$app/Contents/MacOS/"
     chmod 755 "$app/Contents/MacOS/Acta" "$app/Contents/MacOS/acta-cli"
+    cp -R "$licenses" "$app/Contents/Resources/licenses"
 
     icns=$app/Contents/Resources/Acta.icns
     if [ -f assets/icons/acta.icns ]; then
@@ -206,6 +211,7 @@ else
     [ -f assets/icons/acta.png ] || die "assets/icons/acta.png is missing"
     cp "$bin_dir/Acta" "$bin_dir/acta-cli" "$stage/"
     chmod 755 "$stage/Acta" "$stage/acta-cli"
+    cp -R "$licenses" "$stage/licenses"
 
     vpk pack --packId "$PACK_ID" --packTitle Acta --packVersion "$version" \
         --packDir "$stage" --mainExe Acta --icon assets/icons/acta.png \
