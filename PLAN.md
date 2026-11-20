@@ -25,7 +25,7 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 
 ## M1 - Pipeline
 - [ ] Cargo workspace, empty GPUI window
-- [ ] Project Ledger foundations: tokens for both themes, fonts, Light / Dark / System, en/fr string table, persisted preferences
+- [ ] Design foundations: tokens for both themes, fonts, Light / Dark / System, en/fr string table, persisted preferences
 - [ ] CI: fmt, clippy, tests on every push, all three OSes
 - [ ] Release workflow on `v*` tags: build all platforms, publish installers and updater artifacts
 - [ ] Silent per-user install verified on Windows; macOS and Linux verified as far as CI allows
@@ -88,5 +88,5 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 - Order: merge m1-app first, then the pipeline, then push; iterate CI and the release dry run to green; run `platform-checks.yml`; apply the tag ruleset and the `release` environment in repo settings; tag v0.1.0, install, tag v0.1.1, prove self-update.
 
 ## Settled with the user
-- 2026-11-20: new art direction, "Project Ledger" (parchment, ink and burgundy, editorial serif headings, engraved illustrations, light theme as the primary reference, dark as its night-time equivalent). It replaces the M0 identity; the reference image is the source of truth. Light / Dark / System setting. UI in English (default) and French, every string in a central table. Sidebar: Projects, Memories, Activity, Settings. DESIGN.md is being rewritten on `product-designer/project-ledger`; implementation follows on the app branch (tokens, three font families, runtime theme switch, string table), then every M2+ screen is built to it.
+- 2026-11-20: design direction is inspired by Obsidian, Notion and JetBrains IDEs: a workbench (tree, document-like pages, tool windows for the terminal and the chat panel, search everywhere). A "Project Ledger" direction (parchment, serif, engravings) was briefed and withdrawn by the user the same day; do not revive it. Kept from that brief as functional requirements: Light / Dark / System setting, UI in English (default) and French from a central string table. DESIGN.md is being revised on `product-designer/workbench`.
 - 2026-11-20: no spending at all. No code-signing certificate, no Apple Developer membership, no paid runners or services. Builds are unsigned; only free tooling.
