@@ -40,5 +40,11 @@ If nothing is attached anywhere up the chain, the terminal asks for a folder onc
 - DESIGN.md needs the folder row, the inherited-from label, the unresolved state and the picker flow before the M2 screens are built.
 - Folder settings arrive with M2 (data and UI), CLI and hook resolution with M3, terminal launch with M4.
 
+## Rulings after the design pass (2026-11-20)
+- **Terminal session scope.** One terminal session per project stays (DESIGN.md 4.2); sessions are not multiplied per topic. Navigation never restarts or moves a running session. When the session was started from a different topic, epic or folder than the view now shown, the terminal pane says which one it is on, and a palette command "Restart terminal here" restarts it with the current view's folders and focus. Exact surface is designed with M4.
+- **Include inherited stays off by default.** A topic in its own git worktree must not also get the main checkout. The list shows which inherited folders are not used.
+- **Bulk repair.** After one unresolved folder is located, Acta offers to apply the same root replacement to the other unresolved folders that share the old root. Built with import in M2.
+- **Missing additional folder** does not block a launch: it is left out and reported, as the design specifies. Only a missing primary stops it.
+
 ## Evidence
 None yet. Design decision. `--add-dir` exists in the Claude Code CLI as of the lead's knowledge; to be confirmed against the installed version when M4 is built.
