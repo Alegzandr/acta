@@ -1,0 +1,6 @@
+target/
+*.pdb
+.DS_Store
+/dist/
+/releases/
+.claude/settings.local.json
