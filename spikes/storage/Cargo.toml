@@ -1,0 +1,27 @@
+[package]
+name = "acta-storage-spike"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+rusqlite = { version = "0.43.0", default-features = false, features = ["backup"] }
+keyring = "4.2.0"
+directories = "6.0.0"
+getrandom = "0.4"
+
+[build-dependencies]
+cc = { version = "1.2", features = ["parallel"], optional = true }
+sqlcipher-src = { version = "=420.0.0", optional = true }
+
+[features]
+default = ["openssl"]
+# The stock rusqlite path: OpenSSL built from source (needs Perl on Windows).
+openssl = ["rusqlite/bundled-sqlcipher-vendored-openssl"]
+# Same SQLCipher, libtomcrypt provider compiled by build.rs (needs only a C compiler).
+ltc = ["rusqlite/sqlcipher", "rusqlite/modern_sqlite", "dep:cc", "dep:sqlcipher-src"]
+
+[profile.release]
+debug = false
