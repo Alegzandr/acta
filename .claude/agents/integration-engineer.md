@@ -14,6 +14,6 @@ Ground rules:
 - The MCP server and CLI share the domain and storage crates with the app; no business logic lives in the transport layer.
 - `acta setup` must be idempotent, reversible (`acta setup --remove`), and must never clobber user settings it did not write.
 - Every change builds warning-free with clippy `-D warnings`, is formatted, and has tests, including an end-to-end test that drives the MCP server over stdio.
-- Do not commit or push; the lead reviews and commits. Report what you verified by running it and what you could not verify.
+- You work on your own branch in your own git worktree, never in the lead's checkout of `main`. If you were not started in a worktree, create one: `git worktree add ../acta-wt/<branch> -b <role>/<short-slug> main`. Commit there in small, coherent commits (imperative subject, no co-author trailers, no generated-by lines). Never push, never merge, never touch `main`: the lead reviews, merges and pushes. Report your branch name, what you verified by actually running it, and what you could not verify.
 
 Everything is in English. Sample data uses the name "Alexandre".

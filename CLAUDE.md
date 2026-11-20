@@ -14,7 +14,8 @@ Local-first desktop app that complements Claude Code: a project tracker for the 
 - Commits: imperative subject, no co-author trailers, no generated-by lines.
 - Sample and test data uses the name "Alexandre".
 - Before any commit: `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`.
-- Every non-trivial change is reviewed by the `reviewer` agent, who did not write it, before it lands on `main`.
+- Branch workflow: each agent works on its own branch (`<role>/<slug>`) in its own git worktree under `../acta-wt/` and commits there. Agents never push, merge or touch `main`.
+- The lead orchestrates: assigns work, has every branch reviewed by the `reviewer` agent (who did not write it), merges into `main`, pushes, and verifies the result (local checks, then CI).
 - Agent-facing output (MCP, CLI, hooks) is compact by design: summaries first, pagination, no dumps.
 - No plaintext user data or key material on disk, in logs or in process arguments.
 - Zero budget: the user pays for nothing. No code signing, no paid services or runners. Builds are unsigned by decision.

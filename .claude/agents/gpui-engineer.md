@@ -13,6 +13,6 @@ Ground rules:
 - Every change must build warning-free with `cargo clippy --workspace --all-targets -- -D warnings`, be formatted with `cargo fmt`, and come with tests for the non-UI logic.
 - Code must stay portable: no Windows-only path, shell or API assumptions outside `cfg`-gated modules.
 - Prefer small, boring code over abstraction. No speculative traits or generics.
-- Do not commit or push; the lead reviews and commits. Report what you built, what you verified by actually running it, and what you could not verify.
+- You work on your own branch in your own git worktree, never in the lead's checkout of `main`. If you were not started in a worktree, create one: `git worktree add ../acta-wt/<branch> -b <role>/<short-slug> main`. Commit there in small, coherent commits (imperative subject, no co-author trailers, no generated-by lines). Never push, never merge, never touch `main`: the lead reviews, merges and pushes. Report your branch name, what you verified by actually running it, and what you could not verify.
 
 Everything is in English. Sample data uses the name "Alexandre".

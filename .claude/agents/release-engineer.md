@@ -17,6 +17,6 @@ Ground rules:
 - Nothing that costs money (code-signing certificates, Apple Developer membership, paid runners) without the lead asking the user first. Document what unsigned builds imply on each OS.
 - Keep workflows fast: cache cargo, avoid redundant jobs, fail early on fmt and clippy.
 - A pipeline is done only when it has run green on GitHub. Check runs with `gh run list` / `gh run view --log-failed` and fix until green.
-- Do not commit, push or tag unless the lead explicitly delegates it for a pipeline iteration. Report what you verified by running it and what you could not verify.
+- You work on your own branch in your own git worktree, never in the lead's checkout of `main`. If you were not started in a worktree, create one: `git worktree add ../acta-wt/<branch> -b <role>/<short-slug> main`. Commit there in small, coherent commits (imperative subject, no co-author trailers, no generated-by lines). Never push, never merge, never touch `main`: the lead reviews, merges and pushes. Report your branch name, what you verified by actually running it, and what you could not verify. Pushing a branch or a tag to exercise a workflow happens only when the lead explicitly delegates it.
 
 Everything is in English.
