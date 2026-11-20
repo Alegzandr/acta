@@ -147,7 +147,8 @@ just before it. Each job, through `scripts/ci/update-e2e.sh` (macOS, Linux) or
 `scripts/ci/update-e2e.ps1` (Windows):
 
 1. Installs `from` with the `install.sh` or `install.ps1` of that release, pinned to
-   its version, with `ACTA_NO_LAUNCH=1`. On Windows the script runs `Setup.exe --silent`.
+   its version, with `ACTA_NO_LAUNCH=1`. On Windows the script runs `Setup.exe --silent`
+   and the Start menu shortcut must exist (checked again after the update).
 2. macOS and Linux only: a first start with `--specimen`, which exports the CLI and
    creates `~/.local/bin/acta` (and the Linux desktop entry) without checking for
    updates, so the old version can be observed. On Windows the install hook already
@@ -168,9 +169,12 @@ just before it. Each job, through `scripts/ci/update-e2e.sh` (macOS, Linux) or
 5. Runs the checks of step 3 for `to`; on macOS also `codesign --verify` of the
    updated bundle.
 6. Windows: runs the uninstall entry's `QuietUninstallString` with Acta still open and
-   checks that `%LOCALAPPDATA%\ActaCli`, the PATH entry, the uninstall entry and the
-   install root are gone, no Acta process is left, and `%LOCALAPPDATA%\ActaData` is
-   kept.
+   waits up to 60 seconds for `%LOCALAPPDATA%\ActaCli`, the uninstall entry and the
+   whole install root `%LOCALAPPDATA%\Acta` to be gone; then checks that the PATH
+   entry and the Start menu shortcut are gone, no process runs from either directory,
+   and `%LOCALAPPDATA%\ActaData` and its log are kept.
+7. Always, last: stops any Acta process still running (the updated app is left open
+   by step 4).
 
 On failure the app log, Velopack's log and a listing of the install are uploaded as
 the `update-e2e-logs-<os>` artifact. The job summary gives the time each update took
@@ -179,6 +183,24 @@ runner; `macos-26-intel` (free) can be added the day it matters. A green run ans
 the "Second tag" items below for Windows, macOS arm64 and Linux, and the install,
 link, desktop entry, log and uninstall items of "First tag"; tick each one only from
 what the run showed.
+
+Two known sources of failure that are not necessarily a bug in Acta:
+
+- **macOS relaunch without `VELOPACK_RESTART`.** If `UpdateMac` relaunches the app
+  through LaunchServices (`open`), the environment variable may not reach the new
+  process. The update itself then works (the bundle is `to`, the exported CLI prints
+  `acta <to>`), but the restarted app never logs "update: started by the updater":
+  the step fails with "Acta did not restart as `<to>` within 180 s", and the log shows
+  lines of `[<to> pid N]` with "update: up to date" instead. That would mean the
+  updater-restart guard of `update.rs` does not work on macOS; record it in ADR 0004
+  rather than loosening the test.
+- **GitHub API rate limit.** `GithubSource` calls the API without a token: 60
+  requests per hour per IP, shared with whatever else ran on that runner's address.
+  A refused check logs "update: check failed: <kind>; retrying at next
+  launch"; the test starts the app again twice, then fails with "did not restart as
+  `<to>`" and only "check failed" lines in the log. Re-run the failed job; if it
+  keeps happening, the rate limit is biting real users too (ADR 0004 revisit
+  condition).
 
 ## Yank a bad release
 

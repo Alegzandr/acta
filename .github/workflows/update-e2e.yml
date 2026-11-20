@@ -174,3 +174,11 @@ jobs:
           path: ${{ runner.temp }}/update-e2e-logs/
           if-no-files-found: warn
           retention-days: 14
+      # Whatever happened, no Acta outlives the job (an updated app is left running).
+      - name: Stop Acta (Windows)
+        if: always() && runner.os == 'Windows'
+        shell: powershell
+        run: ./scripts/ci/update-e2e.ps1 -Phase cleanup
+      - name: Stop Acta (macOS, Linux)
+        if: always() && runner.os != 'Windows'
+        run: scripts/ci/update-e2e.sh cleanup

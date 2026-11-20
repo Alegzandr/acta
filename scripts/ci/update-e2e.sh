@@ -1,14 +1,17 @@
 #!/bin/sh
 # End-to-end test of install and self-update on macOS and Linux, run by
 # .github/workflows/update-e2e.yml on a disposable runner. It installs Acta for the
-# current user from the published GitHub releases, starts it, kills it and leaves it
-# installed: never run it on a machine that is in use.
+# current user from the published GitHub releases and starts it several times; the
+# instances it observes are killed, the updated one is left running (the cleanup
+# phase stops it) and nothing is uninstalled. Never run it on a machine in use: it
+# opens windows and leaves Acta installed.
 #
 # Usage: scripts/ci/update-e2e.sh install <version>   install.sh of that release
 #        scripts/ci/update-e2e.sh first-start <version>
 #        scripts/ci/update-e2e.sh verify <version>    installed package, CLI, PATH link
 #        scripts/ci/update-e2e.sh update <from> <to>  normal launch until it runs as <to>
 #        scripts/ci/update-e2e.sh collect <dir>       copy the logs for an artifact
+#        scripts/ci/update-e2e.sh cleanup             stop every Acta process left
 #
 # Versions are given without the leading v. Paths are the ones of ADR 0004.
 set -eu
@@ -314,7 +317,18 @@ cmd_collect() {
     } >"$dir/state.txt"
 }
 
-[ "$#" -ge 1 ] || fail "usage: $0 install|first-start|verify|update|collect ..."
+cmd_cleanup() {
+    # Every process started from the installed app (macOS: the bundle; Linux: an
+    # AppImage whose APPIMAGE is the installed one). Leaves anything else alone.
+    for pid in $(ps -x -o pid=); do
+        if is_installed_app "$pid"; then
+            echo "Stopping $pid"
+            kill -9 "$pid" 2>/dev/null || true
+        fi
+    done
+}
+
+[ "$#" -ge 1 ] || fail "usage: $0 install|first-start|verify|update|collect|cleanup ..."
 phase=$1
 shift
 case "$phase" in
@@ -323,5 +337,6 @@ case "$phase" in
     verify) cmd_verify "$1" ;;
     update) cmd_update "$1" "$2" ;;
     collect) cmd_collect "$1" ;;
+    cleanup) cmd_cleanup ;;
     *) fail "unknown phase $phase" ;;
 esac
