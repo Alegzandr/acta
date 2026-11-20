@@ -145,6 +145,15 @@ cleanup_items() {
     return 0
 }
 
+# The test value has to reach `security` as an argument: the tool offers no other way
+# in. It must not reach the log, and run_step prints the command it is given, so it is
+# given this function instead of the arguments. `exec`, so that the process run_step
+# kills on a timeout is `security` itself and not a shell waiting for it.
+open_item_value=
+add_open_item() {
+    exec security add-generic-password -A -s "$svc_open" -a "$account" -w "$open_item_value"
+}
+
 macos_checks() {
     local app=$work/app/Acta cli=$work/app/acta-cli
     trap cleanup_items EXIT
@@ -191,10 +200,9 @@ macos_checks() {
     echo
     echo "=== keychain test: item created by 'security add-generic-password -A'"
     # A throwaway value; the real key would have to transit through this tool the same way.
-    local value
-    value=$(openssl rand -hex 32)
-    run_step 30 "security add-generic-password -A creates the item" \
-        security add-generic-password -A -s "$svc_open" -a "$account" -w "$value"
+    open_item_value=$(openssl rand -hex 32)
+    run_step 30 "security add-generic-password -A creates the item" add_open_item
+    open_item_value=
     run_step 30 "B reads the -A item" "$app" key-get "$svc_open"
     run_step 30 "second executable (acta-cli) reads the -A item" "$cli" key-get "$svc_open"
     build_variant D "$app" io.github.alegzandr.acta
