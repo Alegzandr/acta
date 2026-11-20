@@ -24,12 +24,13 @@ Three mechanisms, each answering one scenario.
 - Available from the command palette and from the CLI (`acta export`, `acta import`). Not exposed as MCP tools: an agent has no reason to dump or bulk-load the database, and a dump is the opposite of context economy.
 
 **2. Automatic snapshots (answers 2).**
-- A consistent copy of the encrypted database is taken before every schema migration and once per day of use, with rolling retention (7 daily, 4 weekly, plus the last pre-migration one).
+- A consistent copy of the encrypted database is taken before every schema migration, before every import, before every snapshot restore, and once per day of use, with rolling retention (7 daily, 4 weekly, plus the last one of each other kind).
 - Snapshots stay encrypted with the same key and live next to the database. Restoring one is a command-palette action and a CLI command.
 - If a migration fails, the app restores the pre-migration snapshot by itself and reports it.
 
 **3. Soft delete (answers 3).**
 - Deleting a project, epic, topic, entry or note marks it deleted. It can be restored from a trash view for 30 days, then it is purged. Exports include trashed records, flagged.
+- There is no "empty trash" or "delete now" in v1: no key press destroys data. Known limit: something sensitive pasted by mistake stays in the encrypted database and its snapshots until retention expires. Revisit if users ask for immediate erasure.
 
 **Key-loss recovery.** If the database exists but its key does not, the app does not create a fresh database over it. It keeps the unreadable file aside, says exactly what happened, and offers to import an export. The first export is suggested once real data exists; the app then shows the age of the last export in settings, without nagging.
 

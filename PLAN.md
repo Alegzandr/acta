@@ -20,7 +20,7 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 - [x] ADR 0005: Claude Code integration - rmcp 3.11.0, 9 tools, 4 hooks, local plugin installed by `acta setup`
 - [x] ADR 0006: Import, export and backups
 - [x] ADR 0007: Knowledge base (documents and agent memory) on projects, epics and topics
-- [ ] DESIGN.md
+- [x] DESIGN.md - accepted; Source Sans 3 conditional on a GPUI rendering check on Windows in M1
 
 ## M1 - Pipeline
 - [ ] Cargo workspace, empty GPUI window
