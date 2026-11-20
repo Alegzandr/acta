@@ -1,0 +1,304 @@
+name: Release
+
+# A `v*` tag builds every channel and publishes the GitHub release.
+# A push to main or a manual run is a dry run: same build and packaging, artifacts
+# only, no release. See docs/releasing.md.
+on:
+  push:
+    tags: ['v*']
+    branches: [main]
+    paths-ignore: ['**.md', 'docs/**', 'spikes/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  # Never cancel a tag build half-way through publishing.
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  DOTNET_NOLOGO: 1
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+  # Must equal the `velopack` crate version in Cargo.lock; the check job enforces it.
+  VPK_VERSION: 1.2.161
+  REPO_URL: https://github.com/${{ github.repository }}
+
+jobs:
+  check:
+    name: version check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      publish: ${{ steps.version.outputs.publish }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Rust toolchain
+        run: scripts/ci/setup-rust.sh
+      - name: Workspace version, tag and vpk pin
+        id: version
+        env:
+          IS_TAG_PUSH: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+        run: |
+          version=$(cargo metadata --no-deps --locked --format-version 1 |
+            jq -r '.packages[] | select(.name == "acta-app") | .version')
+          if [ -z "$version" ] || [ "$version" = null ]; then
+            echo "::error::could not read the acta-app version from cargo metadata"
+            exit 1
+          fi
+
+          locked=$(awk '/^name = "velopack"$/ { getline; gsub(/version = |"/, ""); print; exit }' Cargo.lock)
+          if [ "$locked" != "$VPK_VERSION" ]; then
+            echo "::error::Cargo.lock has velopack '$locked' but the workflow installs vpk $VPK_VERSION; they must match"
+            exit 1
+          fi
+
+          if [ "$IS_TAG_PUSH" = true ]; then
+            if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+              echo "::error::tag $GITHUB_REF_NAME does not match the workspace version $version (expected v$version)"
+              exit 1
+            fi
+            echo "Releasing Acta $version"
+          else
+            echo "Dry run of Acta $version: packages are built, nothing is published"
+          fi
+
+          case "$version" in
+            *-*) prerelease=true ;;
+            *) prerelease=false ;;
+          esac
+          {
+            echo "version=$version"
+            echo "publish=$IS_TAG_PUSH"
+            echo "prerelease=$prerelease"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    name: build ${{ matrix.channel }}
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - channel: win-x64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - channel: osx-arm64
+            os: macos-latest
+            target: aarch64-apple-darwin
+          # Cross-compiled on the Apple silicon runner. If that ever fails, the free
+          # Intel runner is `macos-26-intel`.
+          - channel: osx-x64
+            os: macos-latest
+            target: x86_64-apple-darwin
+          # Oldest available Ubuntu, for the oldest glibc baseline (2.35).
+          - channel: linux-x64
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+      CHANNEL: ${{ matrix.channel }}
+      TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Linux system packages
+        if: runner.os == 'Linux'
+        run: scripts/ci/linux-deps.sh --package --headless
+      - name: Rust toolchain
+        run: scripts/ci/setup-rust.sh "$TARGET"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.channel }}
+          # Tag runs read the cache written by the dry runs on main; a cache saved
+          # from a tag could not be read by any other ref.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: cargo build --release
+        run: cargo build --release --locked --target "$TARGET"
+      - name: Install vpk
+        shell: pwsh
+        run: |
+          dotnet tool install --global vpk --version $env:VPK_VERSION
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Join-Path $HOME '.dotnet/tools' | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          VPK_TOKEN: ${{ github.token }}
+        run: ./scripts/package.ps1 -Version $env:VERSION -Target $env:TARGET -FetchPrevious
+      - name: Package (macOS, Linux)
+        if: runner.os != 'Windows'
+        env:
+          VPK_TOKEN: ${{ github.token }}
+        run: scripts/package.sh --channel "$CHANNEL" --target "$TARGET" --version "$VERSION" --fetch-previous
+      # Runs a copy of the packaged AppImage without FUSE. The window has to stay up
+      # for 15 seconds (timeout exits with 124). Not blocking until proven reliable.
+      - name: Smoke run of the AppImage under Xvfb (Linux)
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        run: |
+          cp "releases/$CHANNEL/Acta-$CHANNEL.AppImage" "$RUNNER_TEMP/Acta.AppImage"
+          chmod +x "$RUNNER_TEMP/Acta.AppImage"
+          status=0
+          xvfb-run -a timeout 15 "$RUNNER_TEMP/Acta.AppImage" --appimage-extract-and-run || status=$?
+          echo "exit status: $status"
+          if [ "$status" -ne 124 ]; then
+            echo "::warning::the AppImage did not stay up for 15 seconds under Xvfb (exit status $status)"
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v7
+        with:
+          name: acta-${{ matrix.channel }}
+          path: releases/${{ matrix.channel }}/
+          if-no-files-found: error
+          # Installers and packages are already compressed.
+          compression-level: 0
+          retention-days: 14
+
+  publish:
+    name: ${{ needs.check.outputs.publish == 'true' && 'publish release' || 'collect (dry run)' }}
+    needs: [check, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+      TAG: v${{ needs.check.outputs.version }}
+      PUBLISH: ${{ needs.check.outputs.publish }}
+      PRERELEASE: ${{ needs.check.outputs.prerelease }}
+      CHANNELS: win-x64 osx-arm64 osx-x64 linux-x64
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: acta-*
+          path: artifacts
+      - name: Lay out one directory per channel
+        run: |
+          mkdir -p releases
+          for channel in $CHANNELS; do
+            if [ ! -f "artifacts/acta-$channel/assets.$channel.json" ]; then
+              echo "::error::the $channel build produced no assets.$channel.json"
+              exit 1
+            fi
+            mv "artifacts/acta-$channel" "releases/$channel"
+          done
+      - name: Write SHA256SUMS
+        run: |
+          : > SHA256SUMS
+          for channel in $CHANNELS; do
+            jq -r '.[].RelativeFileName' "releases/$channel/assets.$channel.json" | tr -d '\r' |
+              while read -r file; do
+                (cd "releases/$channel" && sha256sum "$file") >> SHA256SUMS
+              done
+          done
+          sha256sum install.sh install.ps1 >> SHA256SUMS
+          cat SHA256SUMS
+          duplicates=$(awk '{ print $2 }' SHA256SUMS | sort | uniq -d)
+          if [ -n "$duplicates" ]; then
+            echo "::error::asset names collide between channels: $duplicates"
+            exit 1
+          fi
+          for expected in Acta-win-x64-Setup.exe Acta-osx-arm64-Portable.zip Acta-osx-x64-Portable.zip Acta-linux-x64.AppImage; do
+            if ! awk '{ print $2 }' SHA256SUMS | grep -qxF "$expected"; then
+              echo "::error::$expected is missing; install.sh and install.ps1 download it by that name"
+              exit 1
+            fi
+          done
+      - name: Keep SHA256SUMS of a dry run
+        if: env.PUBLISH != 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: SHA256SUMS
+          path: SHA256SUMS
+          retention-days: 14
+      - name: Attest build provenance
+        if: env.PUBLISH == 'true'
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-checksums: SHA256SUMS
+      - name: Install vpk
+        if: env.PUBLISH == 'true'
+        shell: pwsh
+        run: |
+          dotnet tool install --global vpk --version $env:VPK_VERSION
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Join-Path $HOME '.dotnet/tools' | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+      - name: Upload every channel to one draft release
+        if: env.PUBLISH == 'true'
+        env:
+          VPK_TOKEN: ${{ github.token }}
+        run: |
+          # A draft left by a failed earlier attempt would make vpk refuse to upload.
+          # A published release with this tag is never touched.
+          state=$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null || echo none)
+          if [ "$state" = true ]; then
+            echo "Deleting the draft left by a previous attempt"
+            gh release delete "$TAG" --yes
+          elif [ "$state" = false ]; then
+            echo "::error::release $TAG is already published; bump the version instead of re-releasing"
+            exit 1
+          fi
+
+          pre=
+          if [ "$PRERELEASE" = true ]; then pre=--pre; fi
+          for channel in $CHANNELS; do
+            vpk upload github --repoUrl "$REPO_URL" --channel "$channel" \
+              --outputDir "releases/$channel" --merge --tag "$TAG" \
+              --releaseName "Acta $VERSION" --targetCommitish "$GITHUB_SHA" $pre
+          done
+          gh release upload "$TAG" SHA256SUMS install.sh install.ps1
+      - name: Check the draft, then publish it
+        if: env.PUBLISH == 'true'
+        run: |
+          gh release view "$TAG" --json assets --jq '.assets[].name' | sort > uploaded.txt
+          {
+            awk '{ print $2 }' SHA256SUMS
+            echo SHA256SUMS
+            for channel in $CHANNELS; do echo "releases.$channel.json"; done
+          } | sort > expected.txt
+          if ! diff expected.txt uploaded.txt; then
+            echo "::error::the draft release does not hold exactly the expected assets (see the diff above); it stays a draft"
+            exit 1
+          fi
+
+          {
+            echo "Install or update on Windows (PowerShell):"
+            echo
+            echo '```'
+            echo "irm $REPO_URL/releases/latest/download/install.ps1 | iex"
+            echo '```'
+            echo
+            echo "On macOS and Linux:"
+            echo
+            echo '```'
+            echo "curl -fsSL $REPO_URL/releases/latest/download/install.sh | sh"
+            echo '```'
+            echo
+            echo "An installed Acta updates itself at its next launch. Builds are unsigned: see the README."
+            echo
+            gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" -f tag_name="$TAG" --jq .body ||
+              echo "::warning::could not generate the change list" >&2
+          } > notes.md
+
+          if [ "$PRERELEASE" = true ]; then
+            gh release edit "$TAG" --notes-file notes.md --draft=false --prerelease
+          else
+            gh release edit "$TAG" --notes-file notes.md --draft=false --latest
+          fi
+          echo "Published $REPO_URL/releases/tag/$TAG" >> "$GITHUB_STEP_SUMMARY"
