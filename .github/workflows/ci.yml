@@ -41,8 +41,10 @@ jobs:
         shell: pwsh
         run: |
           # Write-Host is intended in install.ps1: it talks to the person running it.
-          $issues = Invoke-ScriptAnalyzer -Path install.ps1, scripts/package.ps1 `
-            -Severity Warning, Error -ExcludeRule PSAvoidUsingWriteHost
+          # -Path takes a single string, so each file is analyzed on its own.
+          $issues = foreach ($file in 'install.ps1', 'scripts/package.ps1') {
+            Invoke-ScriptAnalyzer -Path $file -Severity Warning, Error -ExcludeRule PSAvoidUsingWriteHost
+          }
           $issues | Format-Table -AutoSize ScriptName, Line, RuleName, Message
           if ($issues) { exit 1 }
 
