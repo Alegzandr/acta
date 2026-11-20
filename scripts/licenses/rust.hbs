@@ -1,0 +1,23 @@
+Acta - third-party Rust crates
+
+Acta is built from the open-source crates listed below. Each licence text is followed
+by the crates distributed under it. The Velopack updater binaries that ship with Acta
+are covered by the licence of the `velopack` crate.
+
+Overview
+{{#each overview}}
+  {{{name}}} ({{{id}}}): {{count}}
+{{/each}}
+
+{{#each licenses}}
+================================================================================
+{{{name}}} ({{{id}}})
+
+Used by:
+{{#each used_by}}
+  {{{crate.name}}} {{{crate.version}}}{{#if crate.repository}} - {{{crate.repository}}}{{/if}}
+{{/each}}
+
+{{{text}}}
+
+{{/each}}

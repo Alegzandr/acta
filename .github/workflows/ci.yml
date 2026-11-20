@@ -1,0 +1,109 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Keyed on the pull request number: `head_ref` is chosen by the author of a fork and
+  # two forks can use the same branch name.
+  group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  # Debug info is the bulk of a dev build's size and link time; CI never debugs.
+  CARGO_PROFILE_DEV_DEBUG: 0
+
+jobs:
+  lint:
+    name: fmt and script lints
+    # A pull request from a branch of this repository is already covered by its push run.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Rust toolchain
+        run: scripts/ci/setup-rust.sh
+      - name: cargo fmt
+        run: cargo fmt --all --check
+      - name: shellcheck
+        run: shellcheck install.sh scripts/package.sh scripts/licenses.sh scripts/ci/*.sh spikes/storage/platform-checks.sh
+      - name: PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          # Write-Host is intended in install.ps1: it talks to the person running it.
+          # -Path takes a single string, so each file is analyzed on its own.
+          # ParseError is a severity of its own: without it a script that does not even
+          # parse is only reported on the error stream and the loop collects nothing.
+          $issues = foreach ($file in 'install.ps1', 'scripts/package.ps1') {
+            Invoke-ScriptAnalyzer -Path $file -Severity ParseError, Error, Warning -ExcludeRule PSAvoidUsingWriteHost
+          }
+          $issues | Format-Table -AutoSize ScriptName, Line, RuleName, Message
+          if ($issues) { exit 1 }
+
+  test:
+    name: clippy, test, build (${{ matrix.os }})
+    needs: lint
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Linux system packages
+        if: runner.os == 'Linux'
+        run: scripts/ci/linux-deps.sh --headless
+      - name: Rust toolchain
+        run: scripts/ci/setup-rust.sh
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          # Only main writes the cache: branch caches cannot be read by other branches
+          # and would push main's entries out of the 10 GB quota.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: cargo test
+        run: cargo test --workspace --locked
+      # Links the real executables. The dependencies are already compiled by the test
+      # step, so this costs seconds. The optimized build of every channel runs in
+      # release.yml, which also runs as a dry run on main.
+      - name: cargo build
+        run: cargo build --workspace --locked
+      # Fails when a dependency has a licence about.toml does not accept or a font has
+      # no licence file, long before a release would.
+      - name: Third-party notices (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          scripts/ci/install-cargo-about.sh
+          scripts/licenses.sh
+      # No GPU on the runner: Xvfb as the display and Mesa lavapipe as the Vulkan driver.
+      # The window has to stay up for 10 seconds (timeout exits with 124).
+      # Not blocking until it has proven reliable on real runs.
+      - name: Smoke run of the GUI under Xvfb (Linux)
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        run: |
+          status=0
+          xvfb-run -a timeout 10 ./target/debug/Acta || status=$?
+          echo "exit status: $status"
+          if [ "$status" -ne 124 ]; then
+            echo "::warning::Acta did not stay up for 10 seconds under Xvfb (exit status $status)"
+            exit 1
+          fi

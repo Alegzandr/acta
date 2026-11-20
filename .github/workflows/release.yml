@@ -1,0 +1,430 @@
+name: Release
+
+# A `v*` tag builds every channel and publishes the GitHub release.
+# A push to main or a manual run is a dry run: same build and packaging, artifacts
+# only, no release. See docs/releasing.md.
+on:
+  push:
+    tags: ['v*']
+    branches: [main]
+    paths-ignore: ['**.md', 'docs/**', 'spikes/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  # Never cancel a tag build half-way through publishing.
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  DOTNET_NOLOGO: 1
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+  # Must equal the `velopack` crate version in Cargo.lock; the check job enforces it.
+  VPK_VERSION: 1.2.161
+  REPO_URL: https://github.com/${{ github.repository }}
+
+jobs:
+  check:
+    name: version check and notices
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      publish: ${{ steps.version.outputs.publish }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Full history: the next step needs origin/main and the path down to the tag.
+          fetch-depth: 0
+      # Before anything from the commit is executed. A release is only ever cut from a
+      # commit that is on main, where CI and the dry run have already built it; a tag
+      # put on a side branch stops here.
+      - name: The tagged commit is on main
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        run: |
+          if ! git rev-parse --verify --quiet origin/main >/dev/null; then
+            echo "::error::origin/main was not fetched; cannot check where the tag is"
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_REF_NAME ($GITHUB_SHA) is not an ancestor of origin/main; tag a commit of main"
+            exit 1
+          fi
+          echo "$GITHUB_REF_NAME is on main"
+      - name: Rust toolchain
+        run: scripts/ci/setup-rust.sh
+      - name: Workspace version, tag and vpk pin
+        id: version
+        env:
+          IS_TAG_PUSH: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+        run: |
+          version=$(cargo metadata --no-deps --locked --format-version 1 |
+            jq -r '.packages[] | select(.name == "acta-app") | .version')
+          if [ -z "$version" ] || [ "$version" = null ]; then
+            echo "::error::could not read the acta-app version from cargo metadata"
+            exit 1
+          fi
+
+          locked=$(awk '/^name = "velopack"$/ { getline; gsub(/version = |"/, ""); print; exit }' Cargo.lock)
+          if [ "$locked" != "$VPK_VERSION" ]; then
+            echo "::error::Cargo.lock has velopack '$locked' but the workflow installs vpk $VPK_VERSION; they must match"
+            exit 1
+          fi
+
+          if [ "$IS_TAG_PUSH" = true ]; then
+            if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+              echo "::error::tag $GITHUB_REF_NAME does not match the workspace version $version (expected v$version)"
+              exit 1
+            fi
+            echo "Releasing Acta $version"
+          else
+            echo "Dry run of Acta $version: packages are built, nothing is published"
+          fi
+
+          case "$version" in
+            *-*) prerelease=true ;;
+            *) prerelease=false ;;
+          esac
+          {
+            echo "version=$version"
+            echo "publish=$IS_TAG_PUSH"
+            echo "prerelease=$prerelease"
+          } >> "$GITHUB_OUTPUT"
+      # Once for all channels: the notices cover the crates of every target. Fails when
+      # a dependency has a licence about.toml does not accept.
+      - name: Third-party notices
+        run: |
+          scripts/ci/install-cargo-about.sh
+          scripts/licenses.sh
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: licenses
+          path: dist/licenses/
+          if-no-files-found: error
+          retention-days: 14
+
+  build:
+    name: build ${{ matrix.channel }}
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - channel: win-x64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - channel: osx-arm64
+            os: macos-latest
+            target: aarch64-apple-darwin
+          # Cross-compiled on the Apple silicon runner. If that ever fails, the free
+          # Intel runner is `macos-26-intel`.
+          - channel: osx-x64
+            os: macos-latest
+            target: x86_64-apple-darwin
+          # Oldest available Ubuntu, for the oldest glibc baseline (2.35).
+          - channel: linux-x64
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+      CHANNEL: ${{ matrix.channel }}
+      TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Linux system packages
+        if: runner.os == 'Linux'
+        run: scripts/ci/linux-deps.sh --package --headless
+      - name: Rust toolchain
+        run: scripts/ci/setup-rust.sh "$TARGET"
+      # Dry runs only. What a tag build ships is compiled from scratch: nothing restored
+      # from a cache, which any earlier run on main could have written, ends up in a
+      # release. Only main saves the cache.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        if: needs.check.outputs.publish != 'true'
+        with:
+          key: ${{ matrix.channel }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: cargo build --release
+        run: cargo build --release --locked --target "$TARGET"
+      # The packaging scripts put this directory into every package.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: licenses
+          path: dist/licenses
+      - name: Install vpk
+        shell: pwsh
+        run: |
+          dotnet tool install --global vpk --version $env:VPK_VERSION
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Join-Path $HOME '.dotnet/tools' | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          VPK_TOKEN: ${{ github.token }}
+        run: ./scripts/package.ps1 -Version $env:VERSION -Target $env:TARGET -FetchPrevious
+      - name: Package (macOS, Linux)
+        if: runner.os != 'Windows'
+        env:
+          VPK_TOKEN: ${{ github.token }}
+        run: scripts/package.sh --channel "$CHANNEL" --target "$TARGET" --version "$VERSION" --fetch-previous
+      # Runs a copy of the packaged AppImage without FUSE. The window has to stay up
+      # for 15 seconds (timeout exits with 124). Not blocking until proven reliable.
+      - name: Smoke run of the AppImage under Xvfb (Linux)
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        run: |
+          cp "releases/$CHANNEL/Acta-$CHANNEL.AppImage" "$RUNNER_TEMP/Acta.AppImage"
+          chmod +x "$RUNNER_TEMP/Acta.AppImage"
+          status=0
+          xvfb-run -a timeout 15 "$RUNNER_TEMP/Acta.AppImage" --appimage-extract-and-run || status=$?
+          echo "exit status: $status"
+          if [ "$status" -ne 124 ]; then
+            echo "::warning::the AppImage did not stay up for 15 seconds under Xvfb (exit status $status)"
+            exit 1
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: acta-${{ matrix.channel }}
+          path: releases/${{ matrix.channel }}/
+          if-no-files-found: error
+          # Installers and packages are already compressed.
+          compression-level: 0
+          retention-days: 14
+
+  # Read-only half of what used to be one job: it only reads the build artifacts and
+  # writes checksums, so it never holds a token that can write to the repository.
+  collect:
+    name: collect and checksum
+    needs: [check, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      # Handed to publish as a job output, not as a file: publish refuses a SHA256SUMS
+      # artifact that is not the one written here.
+      sums-sha256: ${{ steps.sums.outputs.sha256 }}
+    env:
+      CHANNELS: win-x64 osx-arm64 osx-x64 linux-x64
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: acta-*
+          path: artifacts
+      - name: Write SHA256SUMS
+        id: sums
+        run: |
+          mkdir extras
+          cp install.sh install.ps1 extras/
+          sums=$PWD/extras/SHA256SUMS
+          : > "$sums"
+          for channel in $CHANNELS; do
+            dir=artifacts/acta-$channel
+            if [ ! -f "$dir/assets.$channel.json" ]; then
+              echo "::error::the $channel build produced no assets.$channel.json"
+              exit 1
+            fi
+            jq -r '.[].RelativeFileName' "$dir/assets.$channel.json" | tr -d '\r' |
+              while read -r file; do
+                (cd "$dir" && sha256sum "$file") >> "$sums"
+              done
+            # The update feed of the channel is a release asset too.
+            feed=releases.$channel.json
+            if [ ! -f "$dir/$feed" ]; then
+              echo "::error::the $channel build produced no $feed"
+              exit 1
+            fi
+            if ! awk '{ print $2 }' "$sums" | grep -qxF "$feed"; then
+              (cd "$dir" && sha256sum "$feed") >> "$sums"
+            fi
+          done
+          (cd extras && sha256sum install.sh install.ps1) >> "$sums"
+          cat "$sums"
+          duplicates=$(awk '{ print $2 }' "$sums" | sort | uniq -d)
+          if [ -n "$duplicates" ]; then
+            echo "::error::asset names collide between channels: $duplicates"
+            exit 1
+          fi
+          for expected in Acta-win-x64-Setup.exe Acta-osx-arm64-Portable.zip Acta-osx-x64-Portable.zip Acta-linux-x64.AppImage; do
+            if ! awk '{ print $2 }' "$sums" | grep -qxF "$expected"; then
+              echo "::error::$expected is missing; install.sh and install.ps1 download it by that name"
+              exit 1
+            fi
+          done
+          echo "sha256=$(sha256sum "$sums" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+      # SHA256SUMS and the two install scripts, exactly as they will be attached to the
+      # release. The publish job takes them from here and checks out nothing.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-extras
+          path: extras/
+          if-no-files-found: error
+          retention-days: 14
+
+  # The only job whose token can write, and it runs only for a `v*` tag push. It checks
+  # out no code: everything it runs is in this file, vpk and gh. The `release`
+  # environment is restricted to `v*` tags in the repository settings
+  # (docs/releasing.md), which keeps any other ref from reaching this job.
+  # What the split protects is the token, not the bytes: this job publishes whatever
+  # the build jobs produced and collect hashed, and trusts them for the content. Its
+  # checks only establish that what it uploads is what collect saw.
+  publish:
+    name: publish release
+    needs: [check, collect]
+    if: needs.check.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: release
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+      TAG: v${{ needs.check.outputs.version }}
+      PRERELEASE: ${{ needs.check.outputs.prerelease }}
+      SUMS_SHA256: ${{ needs.collect.outputs.sums-sha256 }}
+      CHANNELS: win-x64 osx-arm64 osx-x64 linux-x64
+      GH_TOKEN: ${{ github.token }}
+      # gh has no checkout to read the repository from.
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: acta-*
+          path: artifacts
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-extras
+          path: extras
+      - name: SHA256SUMS is the one the collect job wrote
+        run: |
+          actual=$(sha256sum extras/SHA256SUMS | cut -d ' ' -f 1)
+          if [ -z "$SUMS_SHA256" ] || [ "$actual" != "$SUMS_SHA256" ]; then
+            echo "::error::SHA256SUMS has digest $actual, the collect job reported '$SUMS_SHA256'"
+            exit 1
+          fi
+      - name: Lay out one directory per channel and verify the checksums
+        run: |
+          mkdir releases
+          dirs=extras
+          for channel in $CHANNELS; do
+            mv "artifacts/acta-$channel" "releases/$channel"
+            dirs="$dirs releases/$channel"
+          done
+          # Every file SHA256SUMS lists must be here with the digest collect computed.
+          # This catches an artifact that changed between the two jobs, nothing more.
+          while read -r hash name; do
+            found=
+            for dir in $dirs; do
+              if [ -f "$dir/$name" ]; then found=$dir/$name; break; fi
+            done
+            if [ -z "$found" ]; then
+              echo "::error::$name is listed in SHA256SUMS but is not among the artifacts"
+              exit 1
+            fi
+            actual=$(sha256sum "$found" | cut -d ' ' -f 1)
+            if [ "$actual" != "$hash" ]; then
+              echo "::error::checksum mismatch for $found"
+              exit 1
+            fi
+          done < extras/SHA256SUMS
+          echo "$(wc -l < extras/SHA256SUMS) files match SHA256SUMS"
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: extras/SHA256SUMS
+      - name: Install vpk
+        shell: pwsh
+        run: |
+          dotnet tool install --global vpk --version $env:VPK_VERSION
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Join-Path $HOME '.dotnet/tools' | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+      - name: Upload every channel to one draft release
+        env:
+          VPK_TOKEN: ${{ github.token }}
+        run: |
+          # A draft left by a failed earlier attempt would make vpk refuse to upload.
+          # A published release with this tag is never touched.
+          state=$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null || echo none)
+          if [ "$state" = true ]; then
+            echo "Deleting the draft left by a previous attempt"
+            gh release delete "$TAG" --yes
+          elif [ "$state" = false ]; then
+            echo "::error::release $TAG is already published; bump the version instead of re-releasing"
+            exit 1
+          fi
+
+          pre=
+          if [ "$PRERELEASE" = true ]; then pre=--pre; fi
+          for channel in $CHANNELS; do
+            vpk upload github --repoUrl "$REPO_URL" --channel "$channel" \
+              --outputDir "releases/$channel" --merge --tag "$TAG" \
+              --releaseName "Acta $VERSION" --targetCommitish "$GITHUB_SHA" $pre
+          done
+          gh release upload "$TAG" extras/SHA256SUMS extras/install.sh extras/install.ps1
+      - name: Check the draft, then publish it
+        run: |
+          gh release view "$TAG" --json assets --jq '.assets[].name' | sort > uploaded.txt
+          {
+            awk '{ print $2 }' extras/SHA256SUMS
+            echo SHA256SUMS
+          } | sort > expected.txt
+          if ! diff expected.txt uploaded.txt; then
+            echo "::error::the draft release does not hold exactly the expected assets (see the diff above); it stays a draft"
+            exit 1
+          fi
+          # vpk uploads the feeds itself: make sure it uploaded the files that were
+          # hashed and attested, not rewritten ones.
+          gh release download "$TAG" --pattern 'releases.*.json' --dir uploaded-feeds
+          for channel in $CHANNELS; do
+            feed=releases.$channel.json
+            listed=$(awk -v name="$feed" '$2 == name { print $1 }' extras/SHA256SUMS)
+            actual=$(sha256sum "uploaded-feeds/$feed" | cut -d ' ' -f 1)
+            if [ "$actual" != "$listed" ]; then
+              echo "::error::$feed in the draft differs from the one in SHA256SUMS; it stays a draft"
+              exit 1
+            fi
+          done
+
+          {
+            echo "Install or update on Windows (PowerShell):"
+            echo
+            echo '```'
+            echo "irm $REPO_URL/releases/latest/download/install.ps1 | iex"
+            echo '```'
+            echo
+            echo "On macOS and Linux:"
+            echo
+            echo '```'
+            echo "curl -fsSL $REPO_URL/releases/latest/download/install.sh | sh"
+            echo '```'
+            echo
+            echo "An installed Acta updates itself at its next launch. Builds are unsigned: see the README."
+            echo
+            gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" -f tag_name="$TAG" --jq .body ||
+              echo "::warning::could not generate the change list" >&2
+          } > notes.md
+
+          if [ "$PRERELEASE" = true ]; then
+            gh release edit "$TAG" --notes-file notes.md --draft=false --prerelease
+          else
+            gh release edit "$TAG" --notes-file notes.md --draft=false --latest
+          fi
+          echo "Published $REPO_URL/releases/tag/$TAG" >> "$GITHUB_STEP_SUMMARY"

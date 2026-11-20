@@ -36,7 +36,11 @@ Hard constraint: Rust + GPUI on Windows, macOS, Linux. Facts checked on 2026-11-
 ## Decision
 1. Depend on **`gpui-kit = "=0.10.0"`** from crates.io, default features, and nothing else for UI. It brings
    `gpui-pre =0.3.12`. Import GPUI as `gpui_kit::*`. Commit `Cargo.lock`; build with `--locked`.
-2. Pin the toolchain in `rust-toolchain.toml` (1.97.1 today, the version the spike built with).
+2. Pin the toolchain in `rust-toolchain.toml` to the current stable release (1.100.0 since 2026-11-20).
+   The spike built with 1.97.1 on Windows; the first CI run showed that cannot build on macOS:
+   `gpui-pre`'s macOS backend calls `map_or_default`, stable only since Rust 1.98.0 (RELEASES.md,
+   1.98.0 "Stabilized APIs"). Bump the pin when a dependency needs it, and fix new clippy lints
+   rather than allowing them.
 3. Use gpui-component's behavior-heavy pieces (inputs, textarea/editor, virtual list, popover, command,
    resizable) and **own the look**: `DESIGN.md` tokens are written into `Theme` at startup from one module.
    Where a styled component cannot be made to match, build ours on `gpui-base` primitives or plain `div`s;
@@ -60,7 +64,8 @@ Hard constraint: Rust + GPUI on Windows, macOS, Linux. Facts checked on 2026-11-
   lockfile, `cargo vendor` before 1.0 if this worries us. Exit path: `gpui-base`-only, or a zed git rev.
 - 0.x everywhere and weekly releases: expect API breaks on each bump. The `Theme` struct still carries a
   "legacy tokens" surface, so theming code may need rework on upgrade.
-- Zed already requires Rust 1.98; a future snapshot may raise our minimum toolchain.
+- Zed already requires Rust 1.98 and `gpui-pre` 0.3.12 does too on macOS; a future snapshot may raise our
+  minimum toolchain again.
 - Cost measured on Windows (Ryzen 7 9850X3D, 16 threads): clean `--release` build 1m47s, 460 crates,
   exe 25.4 MB (thin LTO, stripped), 74 MB private memory idle, `target/` 2.5 GB. Hosted CI runners will be
   several times slower: cache with `Swatinem/rust-cache`, set `CARGO_PROFILE_DEV_DEBUG=0`, keep one feature
@@ -84,7 +89,7 @@ spike-gpui-window:
       working-directory: spikes/gpui-window
   steps:
     - uses: actions/checkout@v4
-    - uses: dtolnay/rust-toolchain@1.97.1
+    - uses: dtolnay/rust-toolchain@1.100.0
     - uses: Swatinem/rust-cache@v2
       with:
         workspaces: spikes/gpui-window
