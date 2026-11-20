@@ -46,7 +46,7 @@ All values are sRGB hex. Alpha tokens are composited by the renderer (GPUI `hsla
 | `accent.subtle` | `accent` @ 16% | same rule | Remote-change highlight, palette scope chip, matched-drop target |
 | `text.on-accent` | `#10201C` | `#FBF8F2` | Text and icons on `accent` and on `danger` fills |
 | `danger` | `#DE7B70` | `#AD4337` | Destructive button, error text and icon, invalid input outline |
-| `warning` | `#D4A24C` | `#85590A` | Blocked glyph, edit-conflict and update-failed icon |
+| `warning` | `#D4A24C` | `#85590A` | Blocked glyph, edit-conflict and update-failed icon, folder-not-found icon |
 | `success` | `#9BB26B` | `#4C6A24` | Done glyph, confirmation toast icon |
 | `selection` | `accent` @ 30% | same rule | Text selection in editors, rendered Markdown and terminal |
 | `focus.ring` | = `accent` | = `accent` | 2px keyboard focus ring |
@@ -73,6 +73,8 @@ Why verdigris: the semantic colours (red, amber, green) are all warm, so a warm 
 | `text.on-accent` on `danger` | 5.76 | 5.45 | 4.5 |
 | `text.primary` on `fill.selected` over `sunken` / `base` / `overlay` | 11.98 / 11.15 / 9.26 | 10.84 / 11.92 / 13.07 | 4.5 |
 | `text.secondary` on `fill.hover` over `sunken` / `base` / `overlay` | 7.42 / 6.94 / 5.79 | 5.78 / 6.37 / 6.99 | 4.5 |
+| `text.tertiary` on `fill.hover` over `base` (folder row label) | 5.01 | 4.75 | 4.5 |
+| `warning` glyph on `fill.hover` over `base` (folder not found) | 6.66 | 4.90 | 3.0 (glyph) |
 | `text.primary` on `accent.subtle` over `sunken` / `base` / `overlay` | 11.24 / 10.48 / 8.80 | 10.42 / 11.39 / 12.42 | 4.5 |
 | `text.primary` on `selection` over `base` | 7.73 | 9.29 | 4.5 |
 | `border.strong` vs `sunken` / `base` / `raised` / `overlay` | 4.03 / 3.82 / 3.57 / 3.25 | 3.09 / 3.41 / 3.65 / 3.74 | 3.0 (control boundary) |
@@ -200,8 +202,8 @@ Measure: the content column is at most **680px** (about 78 characters of Source 
 
 - **No status bar.** Everything that would live there (update, terminal toggle) is in the titlebar; a second chrome strip costs 24px of every reading session.
 - **Sidebar**: project switcher row (36), Inbox row with count, Knowledge row (`library` icon, count of entries in the project, unread dot when Claude Code has added some), then the epic/topic tree, each epic collapsible; topics outside any epic are listed first under no heading. Width 260, resizable 200 to 400, hidden with `Mod+B`. Padding 8, rows inset 8, tree indent 16 per level.
-- **Main**: one view at a time: topic, epic (title, description, knowledge, topic list), project (title, description, knowledge, epics), inbox, knowledge base, document, trash, settings. Section order in a topic is fixed: title and status, current state, description, knowledge, timeline; the timeline is last because it is the only unbounded section. The content column is centred with at least 32 of side padding and 32 above the title. No tabs; switching is so cheap (`Mod+P`, `Alt+Left`) that tabs would only add state to manage.
-- **Terminal**: docked right by default, because Claude Code is a tall conversation and a topic is a narrow column; they sit side by side like a page and its margin. Default width fits exactly 80 columns (80 x 7.8 + 2 x 12 padding = 648). Can be moved to the bottom (palette: "Move terminal to bottom"; default height 320, range 160 to 70% of the window) and zoomed to fill the main area (`Mod+Shift+Enter`). One terminal per project; switching project switches the session and leaves the other running. Hidden terminals keep running.
+- **Main**: one view at a time: topic, epic (title, description, knowledge, topic list), project (title, description, knowledge, epics), inbox, knowledge base, document, trash, settings. Section order in a topic is fixed: title and status, working folders (one row), current state, description, knowledge, timeline; in an epic or project view the folder row sits directly under the title; the timeline is last because it is the only unbounded section. The content column is centred with at least 32 of side padding and 32 above the title. No tabs; switching is so cheap (`Mod+P`, `Alt+Left`) that tabs would only add state to manage.
+- **Terminal**: docked right by default, because Claude Code is a tall conversation and a topic is a narrow column; they sit side by side like a page and its margin. Default width fits exactly 80 columns (80 x 7.8 + 2 x 12 padding = 648). Can be moved to the bottom (palette: "Move terminal to bottom"; default height 320, range 160 to 70% of the window) and zoomed to fill the main area (`Mod+Shift+Enter`). One terminal per project; switching project switches the session and leaves the other running. A session starts in the working folders of the view it was opened from (see Working folders in 5) and is never restarted or moved by navigating. Hidden terminals keep running.
 - **Window**: default 1440 x 900, minimum **880 x 560**. Widths and visibility of panes are remembered per project.
 - **Narrow behaviour**: panes give way in a fixed order, sidebar first, then main, never the terminal's 400 minimum. If sidebar + 420 + terminal no longer fit, the sidebar auto-hides (it returns when space returns; `Mod+B` still shows it as an overlay on top of main, 260 wide, with `shadow.overlay`, dismissed by `Esc` or by opening something). At 880 with the terminal open the split is main 420 / terminal 460. Nothing ever scrolls horizontally except code blocks.
 
@@ -277,13 +279,28 @@ Destructive actions outside a dialog are ghost buttons or menu items with `dange
 
 **History** (documents and memories alike; for a memory, `H` opens it in the reading view first): `H` replaces the body with the history, same view, same header. A list of revisions, newest first (rows of 32: author mark, "Claude Code" or name, what changed in `text.secondary` ("Replaced section Storage", "Edited", "Created from file"), lines added and removed with `tnum`, time); at most 6 rows visible, then scroll. Below the list, the selected revision rendered read-only, headed by a notice "Version from Tue 14:05 by Claude Code" with a segmented control (Text / Changes) and a secondary button "Restore this version". Changes shows the raw Markdown with a 16 gutter: `+` in `success` for added lines, `-` in `danger` for removed lines whose text is `text.secondary`; no background tints. Restoring writes the old text as a new revision on top, so it is undoable, needs no dialog, and shows the toast "Restored the version from Tue 14:05. Undo". `Esc` or `H` returns to reading.
 
+**Working folders** (project, epic and topic views; ADR 0008; wireframes in 8.11). The folders Claude Code works in: the first is the **primary** folder, where a session starts; the others are **additional** folders it may also read and edit. Each level has its own ordered list. The **effective** folders of a view are its own if it has any, otherwise those of the nearest level above that has some. The surface is one row at rest, because folders are set once and read rarely; it unfolds in place into the list, like a memory.
+- **Folder row** (height 28, padding 0 x 8, `radius.sm`, gap 8; 8 under the status row of a topic or under the title of an epic or project, 24 above the next section): disclosure chevron 16 (`chevron-right` / `chevron-down`), `folder-open` 16 in `text.secondary`, the primary effective path in `type.code` `text.primary`, then with a gap of 12 the count of additional folders ("+2", `type.small` `text.tertiary`, `tnum`, absent at zero), then with a gap of 12 the origin label in `type.small` `text.tertiary`: "from epic Terminal" or "from project Acta", the name a link in the breadcrumb style to that view. No label means the folders are this view's own. Only the path truncates; the name in the label truncates at 24 characters. When the column is under 520, whatever follows the path (label, or the not-found words and their button) moves to a second line under it and the row is 52, as a knowledge row does; the same holds for list rows. Hover `fill.hover`; keyboard focus ring; a click, `Enter` or `Right` unfolds; the unfolded state is remembered per view.
+- **Unfolded**: the row becomes a header ("Working folders" in `type.label` `text.secondary`, the count of effective folders in `type.small` `text.tertiary`), and the list follows, inset 24 so its icons sit under the header's. In order: the view's own folders; the checkbox "Also include inherited folders" (only when the view has own folders and a level above has some); the inherited folders under a group line "From epic Terminal" (`type.small` `text.tertiary`, as in the knowledge section); a ghost button with `plus` 16, "Add folder..."; and one line in `type.small` `text.tertiary`: "Claude Code starts in the primary folder and may also read and edit the others."
+- **Folder list row** (height 28, padding 0 x 8, `radius.sm`, gap 8): `folder-open` 16, the path in `type.code` (`text.primary` for the primary folder, `text.secondary` for additional ones), and in the trailing slot the word "Primary" in `type.small` `text.tertiary` on the first effective row only. Order is the whole meaning: first is primary, the rest are passed in list order. Hover `fill.hover` and a ghost `ellipsis` button (24); keyboard focus ring; dragging as a tree row (2px `accent` insertion line), within the own folders only. Keys are in 6.1. Row menu: Show in Explorer (Reveal in Finder / Show in file manager), Copy path, Make primary, Move up, Move down, Choose another folder..., then after a separator "Remove from this topic" (or epic, or project). Remove is not styled as destructive: it detaches the folder, changes nothing on disk, and shows the toast "embed-terminal removed from this topic. Undo" (toasts name a folder by its last segment, never the full path).
+- **Inheritance, shown not explained.** A view without own folders unfolds to the group line and the inherited rows, which are read-only here (menu: Show in Explorer, Copy path, "Edit in epic Terminal"), then the ghost button "Set folder for this topic..." and the line "This topic uses the folders of epic Terminal. A folder set here replaces them for this topic only." Once the view has an own folder, the inherited ones stop applying and the checkbox appears, off: under it one line, "Not used here: 2 folders from epic Terminal." Checked, the line is replaced by the group and its rows, appended after the own folders as additional folders in their own order (the level above's primary is additional here); a folder present in both lists is shown once, in its own position. "Inherited" always means the effective folders of the level directly above, so an epic that itself includes its project's passes both on. The checkbox saves on toggle.
+- **Nothing attached anywhere up the chain**: the row has no chevron and reads, in `type.ui` `text.tertiary` after the icon, "No working folder. The terminal will ask where to start.", with a ghost button "Set working folder..." at the right. `Enter` on the row opens the picker.
+- **Folder not found** (the path is not a folder on this computer: deleted, moved, an unplugged drive, or imported from another machine per ADR 0006). The icon becomes `folder-x` in `warning`, the path drops to `text.secondary`, and the trailing slot reads "Not found on this computer" in `type.small` `text.secondary` followed by the one repair action, a ghost button "Locate..." that is always visible, not hover-only. Locate opens the picker and replaces the path in place, keeping position, owner and primary rank; because it repairs the folder itself, it is offered wherever the folder appears, inherited rows included. On the folded row, a missing primary shows the same icon, words and button; a missing additional folder turns the count into "+2, 1 not found" with the `folder-x` icon. Icon shape and words carry the state; `warning` is never the only signal. Nothing else is blocked: the topic, its knowledge and its timeline work as before, and the only other consequence is at terminal launch (below). Existence is checked off the UI thread when the view opens and when the window regains focus; until the answer arrives the row renders as found, so nothing flickers.
+- **Same folder on two topics** (allowed; also two epics). Under the folder's row, inset to the path, one line in `type.small` `text.secondary` with `info` 14: "Also attached to topic Scrollback. A session started in this folder outside Acta opens on epic Terminal and is told about both topics." The other topic's name is a link; with three or more, "Also attached to topics Scrollback, Links and 2 more." The level named is the nearest one the candidates share (their epic, otherwise the project). It is a line, not a Notice, and not a warning: sessions opened from Acta's terminal are unaffected, since the view they are opened from names the topic.
+- **Choosing a folder.** Every "..." action above opens the platform's native folder picker (single selection, titled "Choose a working folder"), starting in the parent of the current primary effective folder, or the home folder. Cancelling changes nothing. "Add folder..." appends to the own list (the first own folder is primary); "Set working folder..." and "Set folder for this topic..." set the primary of the open view, replacing its current own primary and keeping its additional folders. Choosing a folder already in the own list adds nothing and moves the keyboard cursor to its row. There is no typed-path field and no confirmation; every change is undoable (6.4) and appears in place, unfolding the row if it was folded. Changes made by another process (`acta link`) follow 6.5.
+- **Path display.** Paths are `type.code`: they are the machine's strings, and mono keeps `l`, `I`, `1`, `\` and `/` unambiguous. Shown exactly as stored, with the separators of the platform that wrote them (`\` on Windows, `/` on macOS and Linux, UNC prefixes kept) and no trailing separator; a path imported from another platform keeps its foreign separators, which is part of why it reads as not found. The home folder is shortened to `~` on all three platforms (`~\dev\acta`, `~/dev/acta`). A path that does not fit is truncated in the middle with a single `…` (U+2026, never three dots, which read as a parent folder), by whole segments: the root (`~`, `C:`, `/`, `\\server\share`) and the last segment always stay, and as many trailing segments as fit are kept, since the end of a path is what tells two worktrees apart: `~\…\acta-wt\embed-terminal`. If that does not fit, the root goes (`…\embed-terminal`); if the last segment alone does not fit, it is cut at its end. The path slot is never narrower than 160. The full absolute path, without `~`, is the row's accessible name, what "Copy path" copies, and the tooltip (in `type.code` 12 / 16) shown only when the row displays a shortened or truncated form. Paths in rows are not selectable text.
+- **Terminal launch.** Opening the terminal from a view starts Claude Code in that view's primary effective folder with the additional folders passed along. Two cases replace the terminal grid with a message set as an empty state at the top left of the pane (padding 12, sans, on the terminal's surface), focused, with ordinary keys since no shell exists yet:
+  - *No folder anywhere up the chain.* Heading "Where should Claude Code start?"; sentence "Embed the terminal has no working folder, and neither has its epic or its project." (an epic: "and neither has its project"; a project: "Acta has no working folder yet."); a checkbox, checked, "Save as the working folder of project Acta"; under it in `type.small` `text.tertiary`, "If not saved, it is used until Acta quits."; then the primary button "Choose a folder...". The picker's result starts the session at once. This is asked once: saved, the project has a folder from then on; not saved, the choice holds for this project's terminal until Acta quits.
+  - *The primary folder was not found.* Heading "The working folder was not found"; sentence "Claude Code was not started. This is the primary folder of epic Terminal, and it is not on this computer:"; the full path in `type.code`, selectable, wrapping at separators; then "Locate folder..." (primary; the same repair as in the list, then the session starts) and "Try again" (secondary; for a drive that was reconnected). Acta never starts the session in another folder on its own.
+  - A missing *additional* folder does not stop the launch: it is left out, and a toast with `triangle-alert` in `warning` says "acta-docs was not found and was left out of this session. Locate".
+
 **Notice** (the one inline message component; used for edit conflicts, deleted-while-open, version headers, plaintext warnings, migration reports): full column width, `bg.raised`, 1px `border.subtle`, `radius.md`, padding 8 x 12, optional icon 16 (`info` in `text.secondary`, `triangle-alert` in `warning` or `danger`), message in `type.ui` `text.primary`, ghost actions right-aligned. Never a coloured fill, never dismisses itself, never more than one per view.
 
-**Checkbox** (export options only): 16 box, `radius.sm`, 1px `border.strong`, label `type.ui` 8 to its right; checked: fill `accent`, `check` 12 in `text.on-accent`; hover `fill.hover` inside the box; focus ring; disabled `border.default` and `text.disabled`.
+**Checkbox** (export options, the inherited-folders option and the terminal's save-folder option): 16 box, `radius.sm`, 1px `border.strong`, label `type.ui` 8 to its right; checked: fill `accent`, `check` 12 in `text.on-accent`; hover `fill.hover` inside the box; focus ring; disabled `border.default` and `text.disabled`.
 
 **Export dialog** (palette: "Export...", also in settings). Dialog of 440. Title "Export". Scope: segmented control (Everything / This project). Then a notice with `triangle-alert` in `warning`: "The file is not encrypted. Anyone who can open it can read these projects. That is what lets you read it without Acta or its key." Then a checkbox "Protect with a passphrase"; when checked, two inputs (passphrase, repeat) and the line "Acta cannot recover a lost passphrase." in `type.small` `text.secondary`. Buttons: Cancel, "Choose location..." (primary; opens the system save dialog, default name `acta-2026-11-20.acta.json`). Result: toast "Exported 4 projects to acta-2026-11-20.acta.json. Show in folder". The same one-line warning appears on "Save document as file". Settings shows "Last export: 12 days ago" in `type.small`; once, after the tenth topic exists, a notice at the top of the main view suggests a first export ("Everything is stored on this computer only. An export is your copy if the system keychain is ever lost.", actions Export..., Dismiss) and never returns.
 
-**Import** (palette: "Import..."): system open dialog, then, if the file is protected, a passphrase input; then the **import preview**, a dialog of 520. Title: Import "acta-2026-11-20.acta.json". Meta line in `type.small` `text.tertiary`: "Exported 20 Nov 2026 · format 1 · 4 projects". A table (see 8.8): one row per kind (Projects, Epics, Topics, Entries, Notes, Documents, Memories), three `tnum` columns Created / Updated / Skipped, zeros in `text.tertiary`. Below: "Nothing here will be deleted. Skipped records are the same as, or older than, what Acta already has." and, when Updated is not zero, a ghost "Show what changes" expanding the titles of updated records (max 240 high, scrolls). Buttons: Cancel (focused), Import. Nothing is written before Import; Acta takes a snapshot first, so the result line reads "Imported: 12 created, 3 updated. A snapshot from before the import is kept." Refusals replace the table with one notice and a single Close button: "This file was made by a newer Acta (format 3). Update Acta, then import it." / "This is not an Acta export." / "Wrong passphrase."
+**Import** (palette: "Import..."): system open dialog, then, if the file is protected, a passphrase input; then the **import preview**, a dialog of 520. Title: Import "acta-2026-11-20.acta.json". Meta line in `type.small` `text.tertiary`: "Exported 20 Nov 2026 · format 1 · 4 projects". A table (see 8.8): one row per kind (Projects, Epics, Topics, Entries, Notes, Documents, Memories), three `tnum` columns Created / Updated / Skipped, zeros in `text.tertiary`. Below: "Nothing here will be deleted. Skipped records are the same as, or older than, what Acta already has." and, when Updated is not zero, a ghost "Show what changes" expanding the titles of updated records (max 240 high, scrolls). Buttons: Cancel (focused), Import. Nothing is written before Import; Acta takes a snapshot first, so the result line reads "Imported: 12 created, 3 updated. A snapshot from before the import is kept." Working folders in the file belong to the computer that exported it; those that do not exist here are kept and add one sentence to the result: "3 working folders were not found on this computer. Locate each one from its project, epic or topic." Refusals replace the table with one notice and a single Close button: "This file was made by a newer Acta (format 3). Update Acta, then import it." / "This is not an Acta export." / "Wrong passphrase."
 
 **Trash view** (palette: "Open trash"; a main view). Title "Trash", line "Deleted things stay here for 30 days." in `type.small` `text.tertiary`. Rows of 32 grouped by day of deletion (group headers `type.small` `text.tertiary`): kind icon 16 (`folder`, `layers`, status glyph, `message-square`, `sticky-note`, `file-text`, `pin`), title `type.ui`, original place in `type.small` `text.tertiary`, "by Claude Code" or the name, days left ("28 days left", `tnum`). `Enter` or `R` restores to the original place and shows "Topic restored. Undo"; if its epic is also in the trash, both come back and the toast says so. A project row counts its content ("31 topics, 12 notes"). No "empty trash" and no "delete now" in v1: the trash exists so that nothing is ever lost by a key press, and a purge button is exactly such a key press. Empty: "Trash is empty."
 
@@ -341,11 +358,15 @@ Destructive actions outside a dialog are ghost buttons or menu items with `dange
 
 Inside lists and the tree (no modifier, only when a text field is not focused): `Up` / `Down` or `K` / `J` move; `Home` / `End`; `Left` / `Right` collapse / expand or go to parent / first child; `Enter` open; `E` or `F2` rename or edit; `S` set status, then `1` to `6`; `Alt+Up` / `Alt+Down` reorder; `M` move to epic; `Delete` (or `Cmd+Backspace`) delete with undo; `Shift+F10` or the menu key opens the context menu. In the topic view, `Up` / `Down` step through blocks (title, current state, description, composer, each entry) and `Enter` edits the focused block. Type-ahead in the tree jumps to a title.
 
+In the working folders list (the folder row is one of the blocks `Up` / `Down` step through): `Enter` or `Right` on the row unfolds it and moves to the first folder, `Left` or `Esc` folds it; on a folder, `Alt+Up` / `Alt+Down` reorder (the folder that reaches the top becomes primary), `P` makes it primary, `Delete` removes it from this level with undo, `Enter` shows it in the file manager (on a folder that was not found, `Enter` is Locate), `Mod+C` copies its full path, `Space` toggles the inherited-folders checkbox. Adding has no key of its own: the "Add folder..." button is the last stop of the list, and "Set working folder..." is in the palette. Folders are set once per piece of work, so they take no global shortcut.
+
 **The terminal owns the keyboard when focused.** On Windows and Linux every `Ctrl+letter` goes to the shell (`Ctrl+K`, `Ctrl+P`, `Ctrl+N`, `Ctrl+E`, `Ctrl+B` are readline keys). Reserved for the app even there: `Ctrl+Shift+K` (palette), ``Ctrl+` ``, `Ctrl+1/2/3`, `F6`, `Ctrl+Shift+Enter`, plus `Ctrl+Shift+C` / `Ctrl+Shift+V` for copy and paste. That is why `Ctrl+Shift+K` exists everywhere: one palette key that always works. On macOS all `Cmd` shortcuts keep working and `Ctrl` goes to the shell.
 
 **The palette is the universal entry point.** Every command above, every topic, epic and project, every status change ("Set status: Blocked"), layout command and setting is reachable from `Mod+K`. Each row shows its direct shortcut, so the palette teaches the keyboard. With a topic open, typing a status name or "entry" ranks actions on that topic first.
 
 Palette commands for knowledge and data (exact labels): "Open document or memory...", "Go to knowledge base", "Search knowledge...", "Review memories written by Claude Code", "New document", "New memory", "New document from file...", "Edit", "Show history", "Restore this version", "Go to heading...", "Save as file...", "Move to...", "Change kind to memory" / "Change kind to document", "Export...", "Import...", "Open trash", "Restore from snapshot...". A trailing ellipsis means the command asks for something before acting.
+
+Palette commands for working folders (exact labels): "Set working folder...", "Add working folder...", "Show working folders", and, with a folder focused, "Make primary folder", "Move folder up", "Move folder down", "Choose another folder...", "Locate folder...", "Copy folder path", "Show folder in Explorer" (macOS: "Reveal folder in Finder"; Linux: "Show folder in file manager"), "Remove folder from this topic" (or epic, or project), "Include inherited folders" / "Stop including inherited folders". They act on the open project, epic or topic, and on the project when another view is open; the row's path names the target ("Topic Embed the terminal"), so the level is never a guess.
 
 **Quick capture** (`Mod+N`): a palette-sized overlay (640 wide, same position and surface) containing one multi-line editor with the placeholder "Note for Acta" and the project name as a chip. `Mod+Enter` saves to that project's inbox and closes, with no toast (the inbox count increments, which is feedback enough); `Esc` closes and keeps the draft. Works while the terminal is focused via the palette. Capture never navigates away from what the user was reading.
 
@@ -393,7 +414,7 @@ Typing into an overlay that is still fading in works from the first frame. With 
 
 - **Optimistic, always.** The UI updates in the same frame as the input and persists in the background. A failed write restores the previous value in place and shows an error toast with "Retry"; the user's text is never lost (it goes back into the editor).
 - **Autosave** on commit (`Mod+Enter`, `Enter` for single-line fields, or focus leaving the field). There is no Save button for whole views and no dirty indicator. Drafts of uncommitted editors survive navigation and restarts.
-- **Undo** (`Mod+Z`) covers, per project and across navigation, the last 100 of: create, edit, delete, move, reorder, status change, note filing. Deleting a project, epic, topic, note, entry, document or memory removes it immediately and shows a toast "Topic deleted" with Undo; deleted things stay in the trash view for 30 days. Saving, moving or restoring a document or memory is undoable too, since every save keeps the previous version. Undo applies to the human's own actions only; it never reverts something Claude Code wrote (those are edited or deleted explicitly).
+- **Undo** (`Mod+Z`) covers, per project and across navigation, the last 100 of: create, edit, delete, move, reorder, status change, note filing, and every working-folder change (set, add, remove, reorder, locate, include inherited). Deleting a project, epic, topic, note, entry, document or memory removes it immediately and shows a toast "Topic deleted" with Undo; deleted things stay in the trash view for 30 days. Saving, moving or restoring a document or memory is undoable too, since every save keeps the previous version. Undo applies to the human's own actions only; it never reverts something Claude Code wrote (those are edited or deleted explicitly).
 - **Confirmation dialogs** exist only for what `Mod+Z` cannot take back: closing a terminal or quitting while a process is running in it, importing (the preview is the confirmation), and restoring a snapshot. Deleting a project is not one of them: it goes to the trash like everything else. Export is a dialog because it has options and a warning, not because it is dangerous. The dialog names the object and the consequence, and its confirming button repeats the verb ("Delete project").
 
 ### 6.5 Changes written by Claude Code (or any other process)
@@ -434,6 +455,8 @@ Plain, specific, short. Acta talks like a careful colleague's notes: it names th
 | Export warning | WARNING: unencrypted export! | The file is not encrypted. Anyone who can open it can read these projects. |
 | Key loss | Fatal error: decryption failed | Acta cannot open its database. The file is intact, but its key is missing from the system keychain. |
 | Import result | Import completed with 9 conflicts | Imported: 12 created, 3 updated. 9 skipped because Acta already has the same or a newer version. |
+| Missing folder | Error: invalid path | Not found on this computer. Locate... |
+| No folder | No directory configured! | No working folder. The terminal will ask where to start. |
 | Attribution | Updated by AI 2 hours ago | Updated 2 h ago by Claude Code |
 | Placeholder | Enter description here... | What is this topic about, and what does done look like? |
 
@@ -452,6 +475,7 @@ Widths are for the default 1440 x 900 window. `( )` is a status glyph, `[ ]` a c
 |                   12 |        Embed the terminal bound to the project   <- type.title 22/28    |
 |  (o) Naming          |    12                                                                   |
 |                    8 |        [(.) Active v]  Updated 2 h ago  <- status button 28, type.small |
+|                      |     8  > [f] ~\dev\acta-wt\embed-terminal  +1    <- folder row 28       |
 |  v Core UI           |    24                                                                   |
 |    (v) App shell     |        +--------------------------------------------------------+       |
 |    (.) Sidebar tree  |        | Current state                Updated 2 h ago by Claude Code |  |
@@ -488,7 +512,7 @@ Widths are for the default 1440 x 900 window. `( )` is a status glyph, `[ ]` a c
   rows 28, indent 16            [..] around a tree row = fill.selected; * = unread dot (accent, 6)
 ```
 
-Annotations: the sidebar has no header label and no "Projects" title; the project switcher in the titlebar is the header. Tree glyphs here: `(o)` Draft, `( )` Planned, `(.)` Active, `(=)` Blocked, `(v)` Done, `(-)` Dropped. The composer is one line (28 + padding) until focused, then becomes the multi-line editor. Scrolling: the title block scrolls with the content; nothing is sticky except the "new entries" button.
+Annotations: the sidebar has no header label and no "Projects" title; the project switcher in the titlebar is the header. Tree glyphs here: `(o)` Draft, `( )` Planned, `(.)` Active, `(=)` Blocked, `(v)` Done, `(-)` Dropped. `> [f]` is the folded working-folders row (5, 8.11): this topic has its own primary folder and one additional folder. The composer is one line (28 + padding) until focused, then becomes the multi-line editor. Scrolling: the title block scrolls with the content; nothing is sticky except the "new entries" button.
 
 ### 8.2 Notes inbox
 
@@ -563,7 +587,7 @@ Annotations: empty query shows "Recent" (the last 5 topics) then the 5 most rele
                          it with 32 side padding              padding 12, no header, no tabs
 ```
 
-Annotations: the terminal pane has no title strip, tab bar or toolbar: the titlebar toggle shows its state (icon in `text.primary` with `fill.selected` when open) and everything else is in the palette. The divider is a resize handle. The terminal session is bound to the active project's directory; when the session ends, the pane shows one line, "Session ended. Enter to restart.", in `text.tertiary`. The current-state update written by Claude Code appears in the topic view with the highlight while focus stays in the terminal.
+Annotations: the terminal pane has no title strip, tab bar or toolbar: the titlebar toggle shows its state (icon in `text.primary` with `fill.selected` when open) and everything else is in the palette. The divider is a resize handle. The terminal session starts in the primary working folder of the view it was opened from, with the additional folders passed along (8.11 shows what the pane says when there is no folder or the folder is gone); when the session ends, the pane shows one line, "Session ended. Enter to restart.", in `text.tertiary`, and restarting uses the folders of the view open at that moment. The current-state update written by Claude Code appears in the topic view with the highlight while focus stays in the terminal.
 
 ### 8.5 First run
 
@@ -586,7 +610,7 @@ Annotations: the terminal pane has no title strip, tab bar or toolbar: the title
   content column 680 centred; everything left-aligned inside it; no logo, no illustration
 ```
 
-Annotations: the three steps are plain text rows in `text.secondary` (not a checklist to tick, not a wizard); they become available as soon as the project exists and disappear for good once the project has one topic. Choosing a folder creates the project named after the folder and opens its inbox with the capture editor focused. Other empty states follow the same pattern at the top of their column: empty project ("No topics yet. Capture notes and let Claude Code file them, or start one yourself." [New topic]), empty epic, empty timeline, no search results.
+Annotations: the three steps are plain text rows in `text.secondary` (not a checklist to tick, not a wizard); they become available as soon as the project exists and disappear for good once the project has one topic. Choosing a folder creates the project named after the folder, attaches the folder as the project's primary working folder, and opens its inbox with the capture editor focused. Other empty states follow the same pattern at the top of their column: empty project ("No topics yet. Capture notes and let Claude Code file them, or start one yourself." [New topic]), empty epic, empty timeline, no search results.
 
 ### 8.6 Topic view, knowledge section expanded
 
@@ -719,6 +743,77 @@ Annotations: the keychain is named as the platform names it (Windows Credential 
 
 Annotations: the view with two filters set (kind and author). Set filters show their value in `text.primary` weight 600. Group names link to the project, epic or topic. A memory unfolds in place, so the human can read, correct, move or delete what the agent recorded without leaving the list; a document row opens 8.7.
 
+### 8.11 Working folders
+
+The folder row at rest, one line under the status row (topic) or the title (epic, project). Four cases:
+
+```
+        [(.) Active v]  Updated 2 h ago
+     8  > [f] ~\dev\acta-wt\embed-terminal  +1                               28  own folders: no label
+    24
+
+        > [f] ~\dev\acta  +1  from epic Terminal                             28  inherited: label, name is a link
+
+        > [x] D:\work\acta  Not found on this computer  [Locate...]          28  primary missing: folder-x, warning
+
+          [f] No working folder. The terminal will ask where to start.   [Set working folder...]
+        |chev|icon|<- path, type.code, middle-truncated, min 160 ->|12|count|12|<- label, type.small ->|
+```
+
+Unfolded on a topic that has its own folders and includes its epic's:
+
+```
+        v Working folders  4                                                 28  type.label + count
+            [f] ~\dev\acta-wt\embed-terminal                        Primary  28  type.code, text.primary
+            [f] ~\dev\acta-docs                                              28  additional: text.secondary
+                (i) Also attached to topic Scrollback. A session started in this folder
+                    outside Acta opens on epic Terminal and is told about both topics.
+            [x] D:\work\design-assets    Not found on this computer  [Locate...]
+            [v] Also include inherited folders                               28  checkbox, checked
+         8  From epic Terminal                                 <- type.small, tertiary
+            [f] ~\dev\acta                                                   28  read-only here
+            [+ Add folder...]                                                28  ghost
+         8  Claude Code starts in the primary folder and may also read and edit the others.
+    24
+        +--------------------------------------------------------+
+        | Current state                                          |
+```
+
+Unfolded on a topic with nothing of its own:
+
+```
+        v Working folders  2
+         8  From epic Terminal
+            [f] ~\dev\acta                                          Primary
+            [f] ~\…\clients\alexandre\acta-design-assets
+            [Set folder for this topic...]
+         8  This topic uses the folders of epic Terminal. A folder set here replaces them
+            for this topic only.
+```
+
+The terminal pane when there is nothing to start in, and when the primary folder is gone:
+
+```
++-----------------------------------+      +-----------------------------------+
+| 12                                |      | 12                                |
+|  Where should Claude Code start?  |      |  The working folder was not found |  type.heading
+|  8                                |      |  8                                |
+|  Embed the terminal has no        |      |  Claude Code was not started.     |  type.reading,
+|  working folder, and neither has  |      |  This is the primary folder of    |  text.secondary
+|  its epic or its project.         |      |  epic Terminal, and it is not on  |
+| 16                                |      |  this computer:                   |
+|  [v] Save as the working folder   |      |  8                                |
+|      of project Acta              |      |  C:\Users\Alexandre\dev\          |  type.code,
+|  4   If not saved, it is used     |      |  acta-wt\embed-terminal           |  selectable
+|      until Acta quits.            |      | 24                                |
+| 24                                |      |  [Locate folder...]  [Try again]  |  primary, secondary
+|  [Choose a folder...]             |      |                                   |
++-----------------------------------+      +-----------------------------------+
+  terminal surface (bg.sunken dark, bg.raised light), padding 12, text max 480, focus on the primary button
+```
+
+Annotations: `[f]` is `folder-open`, `[x]` is `folder-x` in `warning`, `(i)` is `info` 14, `[v]` a checked checkbox. In the first block the four rows are alternatives, not a list. The folded row always shows the primary effective folder, so "where will Claude Code start" is answered without unfolding. Inherited rows are never editable from below; their menu leads to the level that owns them. The terminal messages are the empty-state pattern on the terminal's surface, not dialogs: nothing was lost and nothing needs confirming, and the main pane stays usable beside them.
+
 ## 9. Review checklist
 
 Run against every screen, in both themes when light ships. One failed line blocks the change.
@@ -755,6 +850,7 @@ Run against every screen, in both themes when light ships. One failed line block
 - [ ] Every destructive action is undoable, or is one of the confirmed cases in 6.4. No path deletes for good, overwrites a document without a revision, or writes plaintext to disk without the warning.
 - [ ] Data-safety screens (export, import, trash, snapshots, key loss) state facts and the next step: no red fills, no alarm words, no blame, exact counts and dates.
 - [ ] Knowledge: kind icon, summary and author mark visible wherever an entry is listed; inherited and rolled-up entries labelled with their level; every memory written by Claude Code can be read, edited, moved and deleted by the human from the list; document body uses `type.document`, short surfaces use `type.reading`.
+- [ ] Working folders: the row shows the primary effective folder and, when it is inherited, where it comes from; paths are `type.code`, middle-truncated, with native separators; a folder that was not found is marked by icon and words (not colour alone), offers Locate, and blocks nothing; removing a folder never touches the disk and is undoable; the terminal never starts anywhere but the primary folder.
 - [ ] A write from another process during reading, scrolling and editing moves neither focus nor viewport, and never overwrites a field in edit.
 
 **Copy**
