@@ -1,7 +1,10 @@
 //! The icons DESIGN.md lists (Lucide, ISC), embedded as SVG with
 //! `stroke-width="1.5"` so strokes land at 1px at 16 (DESIGN.md 4.1), and
-//! the app mark. Files are in `assets/icons`; the Lucide licence is next to
-//! them.
+//! the app mark. The SVGs in `assets/icons/lucide` are copies of the Lucide
+//! files bundled in `gpui-kit-assets` 0.10.0 with only the stroke width
+//! changed; their licence ships from `scripts/licenses/third-party`.
+//! DESIGN.md's `trash-2` is Lucide's `trash` today (Lucide renamed it); the
+//! file keeps DESIGN.md's name.
 
 use std::borrow::Cow;
 

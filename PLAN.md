@@ -26,6 +26,7 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 ## M1 - Pipeline
 - [x] Cargo workspace, empty GPUI window (built and run on Windows; macOS and Linux to be proven by CI)
 - [x] Design foundations: tokens for both themes, fonts (Inter replaces Source Sans 3), Light / Dark / System, en/fr string table, persisted preferences, shell skeleton, updater window, Settings (Appearance) (built and captured on Windows only)
+  - Temporary deviations from DESIGN.md until the data exists: both status bar items open the top of Settings (not Settings at Claude Code or at About), and Settings shows only the Appearance section (Theme, Language).
 - [ ] CI: fmt, clippy, tests on every push, all three OSes
 - [ ] Release workflow on `v*` tags: build all platforms, publish installers and updater artifacts
 - [ ] Silent per-user install verified on Windows; macOS and Linux verified as far as CI allows
