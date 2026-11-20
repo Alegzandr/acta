@@ -84,7 +84,7 @@ dependencies = [
 
 [[package]]
 name = "acta-app"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "acta-core",
  "gpui-kit",
@@ -97,7 +97,7 @@ dependencies = [
 
 [[package]]
 name = "acta-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "acta-core",
  "clap",
@@ -105,7 +105,7 @@ dependencies = [
 
 [[package]]
 name = "acta-core"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "addr2line"
