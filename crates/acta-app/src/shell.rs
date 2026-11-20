@@ -43,6 +43,10 @@ actions!(
         ToggleSidebar,
         /// `Mod+,`, palette "Open settings".
         OpenSettings,
+        /// `Tab`: the next control.
+        FocusNext,
+        /// `Shift+Tab`: the previous control.
+        FocusPrevious,
     ]
 );
 
@@ -51,7 +55,7 @@ pub fn bind_keys(cx: &mut App) {
     cx.bind_keys(key_bindings());
 }
 
-fn key_bindings() -> [KeyBinding; 2] {
+fn key_bindings() -> [KeyBinding; 4] {
     // `Mod` is Cmd on macOS and Ctrl elsewhere. The pinned GPUI only reads
     // "secondary" when the binding names its OS, so it is spelled out.
     let (toggle_sidebar, open_settings) = if cfg!(target_os = "macos") {
@@ -62,6 +66,8 @@ fn key_bindings() -> [KeyBinding; 2] {
     [
         KeyBinding::new(toggle_sidebar, ToggleSidebar, None),
         KeyBinding::new(open_settings, OpenSettings, None),
+        KeyBinding::new("tab", FocusNext, None),
+        KeyBinding::new("shift-tab", FocusPrevious, None),
     ]
 }
 
@@ -248,7 +254,15 @@ impl Shell {
             .child(
                 // No project item: there is no project (DESIGN.md 4.6).
                 ui::bar_item("status-claude", &tokens)
-                    .child(icon(Icon::CircleDashed, 14., tokens.text_tertiary))
+                    .child(
+                        icon(Icon::CircleDashed, 14., tokens.text_tertiary).group_hover(
+                            "status-claude",
+                            {
+                                let hover = tokens.text_secondary;
+                                move |style| style.text_color(hover)
+                            },
+                        ),
+                    )
                     .child(
                         type_scale::SMALL
                             .el()
@@ -354,6 +368,8 @@ impl Render for Shell {
             .track_focus(&self.focus)
             .on_action(cx.listener(|shell, _: &ToggleSidebar, _, cx| shell.toggle_sidebar(cx)))
             .on_action(cx.listener(|shell, _: &OpenSettings, _, cx| shell.open(Page::Settings, cx)))
+            .on_action(|_: &FocusNext, window, cx| window.focus_next(cx))
+            .on_action(|_: &FocusPrevious, window, cx| window.focus_prev(cx))
             .size_full()
             .flex()
             .flex_col()
@@ -407,6 +423,6 @@ mod tests {
     #[test]
     fn the_key_bindings_parse() {
         // `KeyBinding::new` panics on a keystroke the pinned GPUI rejects.
-        assert_eq!(key_bindings().len(), 2);
+        assert_eq!(key_bindings().len(), 4);
     }
 }

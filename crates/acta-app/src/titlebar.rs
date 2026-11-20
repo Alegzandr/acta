@@ -5,8 +5,8 @@
 //! region, "Search" with the palette shortcut, the chat toggle (Windows and
 //! macOS) and the terminal toggle, then the platform's window controls.
 //! Back, forward, Search and the two tool-window toggles have nothing to act
-//! on yet (no history, palette, terminal or chat): they are drawn and inert,
-//! back and forward disabled.
+//! on yet (no history, palette, terminal or chat): Search is drawn and
+//! inert; back, forward and the two toggles are drawn disabled.
 //!
 //! gpui-component's `TitleBar` is not used: it is 34 high with 34 wide
 //! controls, a gradient fill and the `danger` colour on the close button,
@@ -317,13 +317,13 @@ pub fn render(
         .pr(px(8.))
         .child(search)
         .when(!cfg!(target_os = "linux"), |this| {
-            this.child(button("titlebar-chat", Icon::MessageCircle, false, false))
+            this.child(button("titlebar-chat", Icon::MessageCircle, false, true))
         })
         .child(button(
             "titlebar-terminal",
             Icon::SquareTerminal,
             false,
-            false,
+            true,
         ));
 
     div()

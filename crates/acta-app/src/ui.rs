@@ -2,8 +2,7 @@
 
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    Div, ElementId, InteractiveElement, ParentElement, Stateful, StatefulInteractiveElement,
-    Styled, div, px,
+    Div, InteractiveElement, ParentElement, Stateful, StatefulInteractiveElement, Styled, div, px,
 };
 
 use crate::icons::{Icon, icon};
@@ -79,10 +78,12 @@ pub fn ghost_icon_button(
 }
 
 /// A ghost control as tall as its bar, padding 0 x 8 (status bar items).
-pub fn bar_item(id: impl Into<ElementId>, tokens: &Tokens) -> Stateful<Div> {
+/// `id` is also the hover group, for an icon that follows the label.
+pub fn bar_item(id: &'static str, tokens: &Tokens) -> Stateful<Div> {
     let (hover, text) = (tokens.fill_hover, tokens.text_secondary);
     div()
         .id(id)
+        .group(id)
         .flex()
         .flex_row()
         .items_center()
