@@ -9,7 +9,7 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 | M2 | Data model and core UI | v0.2.0 | todo |
 | M3 | MCP server, CLI, Claude Code setup; Acta tracks itself | v0.3.0 | todo |
 | M4 | Integrated terminal running Claude Code | v0.4.0 | todo |
-| M5 | Claude chat panel beside the work (if the ADR 0009 spike holds) | v0.5.0 | todo |
+| M5 | Claude chat panel beside the work (Windows and macOS; link on Linux; ADR 0009) | v0.5.0 | todo |
 | M6 | Notes inbox and notes-to-topics flow | v0.6.0 | todo |
 | M7 | Polish | v1.0.0 | todo |
 
@@ -73,7 +73,6 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 ## Paused - where to resume
 `main` was pushed to GitHub once, at commit 1009910 (not by the lead; a local pre-push hook now refuses pushes without `ACTA_LEAD_PUSH=1`). Everything after it is local. All agents are stopped; their work is on disk under `../acta-wt/`.
 - `gpui-engineer/m1-app` (worktree `m1-app`): draft workspace, crates and assets, untracked, uncommitted, unverified. Resume a gpui-engineer on it: read critically, finish, verify, commit.
-- `gpui-engineer/adr-0009-chat-panel` (worktree `adr-0009`): draft spike in `spikes/chat-panel`, untracked; research not written down. Resume or restart.
 - `release-engineer/m1-pipeline` (worktree `m1-pipeline`): complete, reviewed, verdict "request changes". `main` is merged in; none of the fixes below are committed yet.
   1. High: `ci.yml` passes two files to `Invoke-ScriptAnalyzer -Path` (single string); lint would fail every run. Analyze one file at a time.
   2. Security: split `release.yml` publish into `collect` (read-only) and `publish` (write permissions, job-level `if`, `environment: release`).

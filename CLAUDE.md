@@ -22,3 +22,5 @@ Local-first desktop app that complements Claude Code: a project tracker for the 
 - Zero budget: the user pays for nothing. No code signing, no paid services or runners. Builds are unsigned by decision.
 - Headless Claude Code runs (`claude -p`) are allowed for testing the integration: they draw on the user's subscription quota, not money. Use Haiku unless the test needs more, keep runs few, and state the count in your report. Never set or use an API key.
 - Nothing that cannot be undone without asking the user.
+- The lead's machine is in use while agents work. Never send synthetic keyboard or mouse input, never bring a test window to the foreground or take focus. Test windows are driven by window messages or the app's own test hooks, and captured with PrintWindow. What needs real input is left unverified and reported.
+- The web view profile of the chat panel (ADR 0009) is the one accepted exception to the plaintext rule: its cookies are managed by the system web view, in Acta's data directory.

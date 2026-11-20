@@ -1,6 +1,6 @@
 # 0009 - Claude chat panel (embedded claude.ai)
 
-Status: proposed
+Status: accepted with conditions (M5 opens with the keyboard handoff check, a sign-in by the user and a macOS build; a failed keyboard check stops the milestone)
 Date: 2026-11-20
 
 ## Context
