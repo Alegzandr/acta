@@ -63,10 +63,18 @@ pub enum Decision {
     Export,
 }
 
-/// The whole idempotence rule: export unless the file is there and the marker
-/// names exactly this version.
-pub fn decide(marker: Option<&str>, exported_exists: bool, version: &str) -> Decision {
-    if exported_exists && marker.map(str::trim) == Some(version) {
+/// The whole idempotence rule: export unless the exported file is there, the
+/// marker names exactly this version and the file is as long as the packaged
+/// one. The length catches a copy that was cut short (power loss, full disk)
+/// after its marker had been written by an earlier, complete export.
+pub fn decide(
+    marker: Option<&str>,
+    exported_len: Option<u64>,
+    source_len: Option<u64>,
+    version: &str,
+) -> Decision {
+    let same_version = marker.map(str::trim) == Some(version);
+    if same_version && exported_len.is_some() && exported_len == source_len {
         Decision::UpToDate
     } else {
         Decision::Export
@@ -75,8 +83,30 @@ pub fn decide(marker: Option<&str>, exported_exists: bool, version: &str) -> Dec
 
 /// Files this module leaves behind on purpose: a previous CLI that was renamed
 /// aside while running, or a copy interrupted before its final rename.
-pub fn is_leftover(file_name: &str) -> bool {
+#[cfg(test)]
+fn is_leftover(file_name: &str) -> bool {
     file_name.contains(ASIDE_TAG) || file_name.contains(INCOMING_TAG)
+}
+
+/// How long an incoming copy is left alone: another Acta process (an install
+/// hook next to a starting app) may still be writing it.
+const INCOMING_GRACE_MS: u128 = 60_000;
+
+/// Whether a leftover may be deleted at `now_ms`. Files renamed aside always
+/// (deleting fails by itself while they run); incoming copies only once they
+/// are older than the grace period, going by the stamp in their name.
+pub fn is_removable(file_name: &str, now_ms: u128) -> bool {
+    if file_name.contains(ASIDE_TAG) {
+        return true;
+    }
+    match file_name.rsplit_once(INCOMING_TAG) {
+        Some((_, stamp)) => match stamp.parse::<u128>() {
+            Ok(created) => now_ms.saturating_sub(created) > INCOMING_GRACE_MS,
+            // Not a name this module produces: nobody is writing it.
+            Err(_) => true,
+        },
+        None => false,
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -86,16 +116,32 @@ pub struct Outcome {
     pub still_locked: usize,
 }
 
-/// Bring the exported CLI to `version`. `stamp` only has to differ between
-/// calls; it keeps the temporary names unique.
-pub fn export(layout: &Layout, version: &str, stamp: u128) -> io::Result<Outcome> {
+fn len(path: &Path) -> Option<u64> {
+    fs::metadata(path).ok().map(|meta| meta.len())
+}
+
+/// Write `bytes` to `path` and have them reach the disk.
+fn write_synced(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let mut file = fs::File::create(path)?;
+    io::Write::write_all(&mut file, bytes)?;
+    file.sync_all()
+}
+
+/// Bring the exported CLI to `version`. `now_ms` is the current time in
+/// milliseconds; it also keeps the temporary names unique.
+pub fn export(layout: &Layout, version: &str, now_ms: u128) -> io::Result<Outcome> {
     fs::create_dir_all(&layout.dir)?;
-    let still_locked = remove_leftovers(&layout.dir);
+    let still_locked = remove_leftovers(&layout.dir, now_ms);
 
     let target = layout.exported_exe();
     let marker_path = layout.dir.join(MARKER);
     let marker = fs::read_to_string(&marker_path).ok();
-    let decision = decide(marker.as_deref(), target.exists(), version);
+    let decision = decide(
+        marker.as_deref(),
+        len(&target),
+        len(&layout.source),
+        version,
+    );
     if decision == Decision::UpToDate {
         return Ok(Outcome {
             decision,
@@ -103,17 +149,25 @@ pub fn export(layout: &Layout, version: &str, stamp: u128) -> io::Result<Outcome
         });
     }
 
-    // Copy first, so a failed copy leaves the working CLI untouched.
+    // Copy first, so a failed copy leaves the working CLI untouched, and
+    // flush it: the marker written below must never describe a file whose
+    // bytes are still only in a cache.
     let incoming = layout
         .dir
-        .join(format!("{}{INCOMING_TAG}{stamp}", layout.exe_name));
-    fs::copy(&layout.source, &incoming)?;
+        .join(format!("{}{INCOMING_TAG}{now_ms}", layout.exe_name));
+    let copied = fs::copy(&layout.source, &incoming)
+        .and_then(|_| fs::OpenOptions::new().write(true).open(&incoming))
+        .and_then(|file| file.sync_all());
+    if let Err(err) = copied {
+        let _ = fs::remove_file(&incoming);
+        return Err(err);
+    }
 
     // A running executable cannot be overwritten on Windows, but it can be
     // renamed: move it aside, then put the new one in its place.
     let aside = layout
         .dir
-        .join(format!("{}{ASIDE_TAG}{stamp}", layout.exe_name));
+        .join(format!("{}{ASIDE_TAG}{now_ms}", layout.exe_name));
     let had_previous = target.exists();
     if had_previous && let Err(err) = fs::rename(&target, &aside) {
         let _ = fs::remove_file(&incoming);
@@ -126,30 +180,31 @@ pub fn export(layout: &Layout, version: &str, stamp: u128) -> io::Result<Outcome
         let _ = fs::remove_file(&incoming);
         return Err(err);
     }
-    fs::write(&marker_path, version)?;
+    write_synced(&marker_path, version.as_bytes())?;
 
     // The file moved aside is deleted now if nothing runs it, else at a later start.
-    let still_locked = remove_leftovers(&layout.dir);
+    let still_locked = remove_leftovers(&layout.dir, now_ms);
     Ok(Outcome {
         decision,
         still_locked,
     })
 }
 
-/// Delete leftovers; returns how many are still in use.
-fn remove_leftovers(dir: &Path) -> usize {
+/// Delete the leftovers that may be deleted; returns how many of those are
+/// still in use.
+fn remove_leftovers(dir: &Path, now_ms: u128) -> usize {
     let Ok(entries) = fs::read_dir(dir) else {
         return 0;
     };
     entries
         .flatten()
-        .filter(|entry| is_leftover(&entry.file_name().to_string_lossy()))
+        .filter(|entry| is_removable(&entry.file_name().to_string_lossy(), now_ms))
         .filter(|entry| fs::remove_file(entry.path()).is_err())
         .count()
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     fn layout(root: &Path) -> Layout {
@@ -166,18 +221,42 @@ mod tests {
 
     #[test]
     fn decide_exports_when_missing_or_other_version() {
-        assert_eq!(decide(None, false, "0.1.0"), Decision::Export);
-        assert_eq!(decide(None, true, "0.1.0"), Decision::Export);
-        assert_eq!(decide(Some("0.1.0"), false, "0.1.0"), Decision::Export);
-        assert_eq!(decide(Some("0.0.9"), true, "0.1.0"), Decision::Export);
+        let len = Some(9);
+        assert_eq!(decide(None, None, len, "0.1.0"), Decision::Export);
+        assert_eq!(decide(None, len, len, "0.1.0"), Decision::Export);
+        assert_eq!(decide(Some("0.1.0"), None, len, "0.1.0"), Decision::Export);
+        assert_eq!(decide(Some("0.0.9"), len, len, "0.1.0"), Decision::Export);
         // A downgrade re-exports too: the CLI always matches the GUI.
-        assert_eq!(decide(Some("0.2.0"), true, "0.1.0"), Decision::Export);
+        assert_eq!(decide(Some("0.2.0"), len, len, "0.1.0"), Decision::Export);
     }
 
     #[test]
-    fn decide_skips_only_on_exact_version_with_file_present() {
-        assert_eq!(decide(Some("0.1.0"), true, "0.1.0"), Decision::UpToDate);
-        assert_eq!(decide(Some("0.1.0\n"), true, "0.1.0"), Decision::UpToDate);
+    fn decide_exports_when_the_exported_file_is_not_the_packaged_length() {
+        // Truncated copy under a marker from an earlier complete export.
+        assert_eq!(
+            decide(Some("0.1.0"), Some(4), Some(9), "0.1.0"),
+            Decision::Export
+        );
+        assert_eq!(
+            decide(Some("0.1.0"), Some(0), Some(9), "0.1.0"),
+            Decision::Export
+        );
+        // Packaged CLI missing: not provably up to date (the copy then fails
+        // and is logged, the exported CLI stays as it is).
+        assert_eq!(
+            decide(Some("0.1.0"), Some(9), None, "0.1.0"),
+            Decision::Export
+        );
+    }
+
+    #[test]
+    fn decide_skips_only_on_exact_version_and_equal_length() {
+        let len = Some(9);
+        assert_eq!(decide(Some("0.1.0"), len, len, "0.1.0"), Decision::UpToDate);
+        assert_eq!(
+            decide(Some("0.1.0\n"), len, len, "0.1.0"),
+            Decision::UpToDate
+        );
     }
 
     #[test]
@@ -187,6 +266,22 @@ mod tests {
         assert!(!is_leftover("acta.exe"));
         assert!(!is_leftover("acta"));
         assert!(!is_leftover(MARKER));
+    }
+
+    #[test]
+    fn incoming_copies_are_only_removable_after_the_grace_period() {
+        let now = 1_763_644_800_000u128;
+        assert!(!is_removable(&format!("acta.new-{now}"), now));
+        assert!(!is_removable(&format!("acta.new-{}", now - 59_000), now));
+        assert!(is_removable(&format!("acta.new-{}", now - 61_000), now));
+        // A clock that went backwards does not make a fresh copy removable.
+        assert!(!is_removable(&format!("acta.new-{}", now + 5_000), now));
+        // Renamed-aside files are always tried; so are malformed names.
+        assert!(is_removable(&format!("acta.exe.old-{now}"), now));
+        assert!(is_removable("acta.new-garbage", now));
+        // And nothing else is ever touched.
+        assert!(!is_removable("acta.exe", now));
+        assert!(!is_removable(MARKER, now));
     }
 
     #[test]
@@ -257,17 +352,31 @@ mod tests {
     }
 
     #[test]
-    fn same_version_is_a_no_op() {
+    fn same_version_and_length_is_a_no_op() {
         let tmp = tempfile::tempdir().unwrap();
         let layout = layout(tmp.path());
         fs::write(&layout.source, b"cli 0.1.0").unwrap();
         export(&layout, "0.1.0", 1).unwrap();
 
-        // Even if the packaged file changed, the marker decides.
-        fs::write(&layout.source, b"something else").unwrap();
+        // Same length, other bytes: marker and length decide, not content.
+        fs::write(&layout.source, b"CLI 0.1.0").unwrap();
         let outcome = export(&layout, "0.1.0", 2).unwrap();
 
         assert_eq!(outcome.decision, Decision::UpToDate);
+        assert_eq!(fs::read(layout.exported_exe()).unwrap(), b"cli 0.1.0");
+    }
+
+    #[test]
+    fn a_truncated_export_is_repaired_even_under_a_matching_marker() {
+        let tmp = tempfile::tempdir().unwrap();
+        let layout = layout(tmp.path());
+        fs::write(&layout.source, b"cli 0.1.0").unwrap();
+        export(&layout, "0.1.0", 1).unwrap();
+        fs::write(layout.exported_exe(), b"cli").unwrap();
+
+        let outcome = export(&layout, "0.1.0", 2).unwrap();
+
+        assert_eq!(outcome.decision, Decision::Export);
         assert_eq!(fs::read(layout.exported_exe()).unwrap(), b"cli 0.1.0");
     }
 
@@ -314,16 +423,110 @@ mod tests {
     }
 
     #[test]
-    fn stale_leftovers_are_removed_on_the_next_call() {
+    fn stale_leftovers_are_removed_and_a_fresh_incoming_copy_is_not() {
         let tmp = tempfile::tempdir().unwrap();
         let layout = layout(tmp.path());
         fs::write(&layout.source, b"cli 0.1.0").unwrap();
-        export(&layout, "0.1.0", 1).unwrap();
-        let stale = layout.dir.join("acta.old-7");
-        fs::write(&stale, b"old").unwrap();
+        let now = 1_763_644_800_000u128;
+        export(&layout, "0.1.0", now).unwrap();
+        let aside = layout.dir.join("acta.old-7");
+        let abandoned = layout.dir.join(format!("acta.new-{}", now - 120_000));
+        let in_progress = layout.dir.join(format!("acta.new-{}", now - 1_000));
+        for file in [&aside, &abandoned, &in_progress] {
+            fs::write(file, b"x").unwrap();
+        }
 
-        export(&layout, "0.1.0", 2).unwrap();
+        export(&layout, "0.1.0", now).unwrap();
 
-        assert!(!stale.exists());
+        assert!(!aside.exists());
+        assert!(!abandoned.exists());
+        assert!(in_progress.exists(), "another process may be writing it");
+    }
+
+    /// A long-lived process whose image is the exported CLI (Windows): a copy
+    /// of the command interpreter waiting on a pipe that stays open.
+    #[cfg(windows)]
+    pub(crate) mod running {
+        use std::fs;
+        use std::process::{Child, Command, Stdio};
+
+        use super::super::Layout;
+
+        /// Kills the process when dropped, also when a test fails.
+        pub(crate) struct Running(pub(crate) Child);
+
+        impl Drop for Running {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+
+        pub(crate) fn run_exported_cli(layout: &Layout) -> Running {
+            let comspec = std::env::var_os("ComSpec").expect("ComSpec is set on Windows");
+            fs::create_dir_all(&layout.dir).unwrap();
+            fs::copy(comspec, layout.exported_exe()).unwrap();
+            let child = Command::new(layout.exported_exe())
+                .args(["/d", "/c", "pause"])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap();
+            Running(child)
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_running_cli_is_renamed_aside_and_cleaned_up_once_it_exits() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut layout = layout(tmp.path());
+        layout.exe_name = "acta.exe";
+        let leftovers = |layout: &Layout| -> Vec<String> {
+            fs::read_dir(&layout.dir)
+                .unwrap()
+                .flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .filter(|name| is_leftover(name))
+                .collect()
+        };
+        // "0.1.0" is running from the export directory.
+        let mut cli = running::run_exported_cli(&layout);
+        fs::write(layout.dir.join(MARKER), "0.1.0").unwrap();
+        assert!(cli.0.try_wait().unwrap().is_none(), "the CLI is running");
+        assert!(
+            fs::write(layout.exported_exe(), b"x").is_err(),
+            "a running image cannot be overwritten, hence the rename"
+        );
+
+        fs::write(&layout.source, b"cli 0.1.1").unwrap();
+        let outcome = export(&layout, "0.1.1", 1_000).unwrap();
+
+        assert_eq!(outcome.decision, Decision::Export);
+        assert_eq!(fs::read(layout.exported_exe()).unwrap(), b"cli 0.1.1");
+        assert_eq!(
+            fs::read_to_string(layout.dir.join(MARKER)).unwrap(),
+            "0.1.1"
+        );
+        assert_eq!(outcome.still_locked, 1, "the old image is still running");
+        assert_eq!(leftovers(&layout), ["acta.exe.old-1000"]);
+        assert!(cli.0.try_wait().unwrap().is_none(), "and was not disturbed");
+
+        // Once the old CLI exits, the next start removes its file.
+        cli.0.kill().unwrap();
+        cli.0.wait().unwrap();
+        let mut outcome = export(&layout, "0.1.1", 2_000).unwrap();
+        for _ in 0..20 {
+            if outcome.still_locked == 0 {
+                break;
+            }
+            // The image is released a moment after the process ends.
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            outcome = export(&layout, "0.1.1", 2_000).unwrap();
+        }
+        assert_eq!(outcome.decision, Decision::UpToDate);
+        assert_eq!(outcome.still_locked, 0);
+        assert!(leftovers(&layout).is_empty());
     }
 }

@@ -180,11 +180,11 @@ mod tests {
     mod run {
         use std::fs;
         use std::path::Path;
-        use std::process::{Child, Command, Stdio};
 
         use winreg::enums::RegType;
 
         use crate::cli_export::Layout;
+        use crate::cli_export::tests::running::run_exported_cli;
         use crate::user_path::tests::registry::Scratch;
 
         fn layout(root: &Path) -> Layout {
@@ -213,32 +213,6 @@ mod tests {
                 .take_while(|&unit| unit != 0)
                 .collect();
             String::from_utf16(&wide).unwrap()
-        }
-
-        /// Kills the child if the test fails before uninstall stopped it.
-        struct Running(Child);
-
-        impl Drop for Running {
-            fn drop(&mut self) {
-                let _ = self.0.kill();
-                let _ = self.0.wait();
-            }
-        }
-
-        /// A long-lived process whose image is the exported `acta.exe`: a
-        /// copy of the command interpreter waiting on a pipe that stays open.
-        fn run_exported_cli(layout: &Layout) -> Running {
-            let comspec = std::env::var_os("ComSpec").expect("ComSpec is set on Windows");
-            fs::create_dir_all(&layout.dir).unwrap();
-            fs::copy(comspec, layout.exported_exe()).unwrap();
-            let child = Command::new(layout.exported_exe())
-                .args(["/d", "/c", "pause"])
-                .stdin(Stdio::piped())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn()
-                .unwrap();
-            Running(child)
         }
 
         #[test]
