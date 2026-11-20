@@ -56,7 +56,9 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 - [ ] Rendering, input, resize, scrollback, copy/paste, links
 
 ## M5 - Claude chat panel
-- [ ] ADR 0009: embedded web view for claude.ai (spike in progress; the milestone exists only if the spike holds)
+- [ ] ADR 0009 (proposed): claude.ai in the system web view, go with limits - Windows proven by the spike, macOS unproven, Linux gets a link
+- [ ] First: keyboard handoff while the page has focus, a real sign-in by the user, a macOS build (the three things the spike could not check)
+- [ ] DESIGN.md: specify the chat panel (placement, toggle, placeholder under overlays, failure and sign-in help states)
 - [ ] Side panel with a persistent session, toggled from the keyboard
 
 ## M6 - Notes
