@@ -68,5 +68,13 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 - [ ] Performance pass, empty and error states, onboarding
 - [ ] Documentation
 
+## Paused on 2026-11-20 - where to resume
+Nothing has been pushed to GitHub yet. All agents were stopped mid-task; their work is on disk in the worktrees under `../acta-wt/`.
+- `release-engineer/m1-pipeline` (7 commits, complete): needs the reviewer pass that was interrupted, then a merge of `main` into it.
+- `gpui-engineer/m1-app` (worktree `m1-app`, nothing committed yet): workspace, crates and assets exist as untracked files, unfinished and unverified. Resume the gpui-engineer on it.
+- `gpui-engineer/adr-0009-chat-panel` (worktree `adr-0009`, nothing committed): research was done, the spike had just started. Resume or restart.
+- Then: review both M1 branches, merge, first push, iterate CI and the release dry run to green, run `platform-checks.yml`, tag v0.1.0, install, tag v0.1.1, prove self-update.
+- Before M2: put a portable Strawberry Perl in a durable folder outside the repo (the scratchpad copy can vanish) and point `OPENSSL_SRC_PERL` at it.
+
 ## Settled with the user
 - 2026-11-20: no spending at all. No code-signing certificate, no Apple Developer membership, no paid runners or services. Builds are unsigned; only free tooling.
