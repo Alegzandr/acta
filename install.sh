@@ -176,7 +176,15 @@ main() {
             fi
             ;;
     esac
-    echo "Open a new terminal to use the acta command."
+
+    # This script never touches PATH or a shell profile, so it has no "open a new
+    # terminal" to announce. It only reports a link that is there and cannot be found.
+    if [ -e "$HOME/.local/bin/acta" ]; then
+        case ":${PATH:-}:" in
+            *":$HOME/.local/bin:"*) ;;
+            *) echo "The acta command is in $HOME/.local/bin, which is not on your PATH." ;;
+        esac
+    fi
 }
 
 main "$@"

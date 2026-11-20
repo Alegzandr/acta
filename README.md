@@ -10,6 +10,11 @@ Early. The 0.1.x releases are an empty window whose only job is to prove that th
 installs silently and updates itself on all three systems. The tracker, the MCP server
 and the CLI come next; see [PLAN.md](PLAN.md).
 
+**No release has been published yet.** The commands below work from the first release
+on. Until then this page describes how installing and updating are designed to behave;
+[what has been verified](#what-has-been-verified) says how much of it has been seen
+working.
+
 ## Install
 
 Per user, no wizard, no administrator rights. Acta starts when the install finishes.
@@ -36,13 +41,39 @@ A specific version: set `ACTA_VERSION=0.1.0` before running either script. Set
 `ACTA_NO_LAUNCH=1` to install without starting the app.
 
 On Linux the AppImage uses the system's fontconfig, xkbcommon, X11 or Wayland libraries
-and a Vulkan driver; desktop distributions have them.
+and a Vulkan driver, which desktop distributions normally provide. It is built on
+Ubuntu 22.04 and so needs glibc 2.35 or later.
+
+### What has been verified
+
+Verified, on Windows 11 only, with a throwaway test app packaged the same way and an
+update feed served from the same machine (details in
+[ADR 0004](docs/decisions/0004-packaging-and-updates.md), "Evidence"):
+
+- The installer runs silently with no elevation and installs per user.
+- An installed version updates itself at launch, from a delta package, in about a second.
+- Uninstalling removes the app, its shortcuts and its PATH entry.
+
+Not verified yet, because it needs a first real release and machines we have not run it
+on:
+
+- Everything on macOS and Linux: packaging, the ad-hoc signature, `install.sh`, first
+  launch, self-update.
+- Both install scripts against a real GitHub release, and updates fetched from GitHub
+  Releases rather than from a local feed.
+- What the operating systems show for browser downloads (SmartScreen, Smart App
+  Control, Gatekeeper). The next section describes it from Microsoft's and Apple's
+  documented behaviour and third-party reports, not from our own tests.
+
+This list shrinks as the first releases confirm each point; the working checklist is in
+[docs/releasing.md](docs/releasing.md).
 
 ## Unsigned builds
 
 Acta has no budget, so nothing is signed with a paid certificate: no Windows code-signing
-certificate, no Apple Developer ID, no notarization. The install scripts above avoid most
-of the consequences. If you download the files with a browser instead, expect this:
+certificate, no Apple Developer ID, no notarization. The install scripts above are meant
+to avoid most of the consequences. If you download the files with a browser instead,
+this is what we expect (see [what has been verified](#what-has-been-verified)):
 
 - **Windows.** `Acta-win-x64-Setup.exe` triggers SmartScreen ("Windows protected your
   PC"): click **More info**, then **Run anyway**. If Smart App Control is on, it blocks
@@ -56,20 +87,24 @@ of the consequences. If you download the files with a browser instead, expect th
   `xattr -dr com.apple.quarantine ~/Applications/Acta.app`.
   `install.sh` downloads with curl, which sets no quarantine attribute, so no warning is
   expected.
-- **Linux.** No warning. A manually downloaded AppImage needs `chmod +x`.
+- **Linux.** No warning expected. A manually downloaded AppImage needs `chmod +x`.
 
 What this means for trust: the integrity of an install or an update rests on HTTPS to
 GitHub and on the checksums published with each release, not on a publisher signature.
 
 ## Updates
 
-Acta checks GitHub Releases each time it starts. If a newer version exists it downloads
-it (only the difference when possible), applies it and restarts before the window opens,
-without asking. If the check is slow or fails, Acta opens normally and the update is
-applied at the next start. Updating uses [Velopack](https://velopack.io) and needs no
-administrator rights.
+By design, Acta checks GitHub Releases each time it starts. If a newer version exists it
+downloads it (only the difference when possible), applies it and restarts before the
+window opens, without asking. If the check is slow or fails, Acta opens normally and the
+update is applied at the next start. Updating uses [Velopack](https://velopack.io) and
+needs no administrator rights. This has been seen working on Windows against a local
+feed; macOS, Linux and GitHub as the source are still to be confirmed.
 
 ## Uninstall
+
+The Windows path was verified with the test app. The macOS and Linux lists are the
+locations Acta is designed to use; they have not been checked on a real install yet.
 
 - **Windows.** Settings > Apps > Installed apps > Acta > Uninstall, or
   `& "$env:LOCALAPPDATA\Acta\Update.exe" --uninstall --silent`.

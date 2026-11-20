@@ -81,6 +81,9 @@ function Install-Acta {
         }
 
         Write-Host 'Installing...'
+        # This script changes no PATH itself; Acta's install hook may. Compare the user
+        # PATH around the install so that a new terminal is only suggested when needed.
+        $pathBefore = [Environment]::GetEnvironmentVariable('Path', 'User')
         $process = Start-Process -FilePath $setup -ArgumentList '--silent' -Wait -PassThru
         if ($process.ExitCode -ne 0) {
             throw "the installer exited with code $($process.ExitCode); see $env:LOCALAPPDATA\velopack\velopack_Acta.log"
@@ -95,7 +98,10 @@ function Install-Acta {
     if ($env:ACTA_NO_LAUNCH -ne '1') {
         Start-Process -FilePath $exe
     }
-    Write-Host 'Open a new terminal to use the acta command.'
+    $pathAfter = [Environment]::GetEnvironmentVariable('Path', 'User')
+    if ($pathAfter -cne $pathBefore) {
+        Write-Host 'Your user PATH was updated: open a new terminal to use the acta command.'
+    }
 }
 
 Install-Acta
