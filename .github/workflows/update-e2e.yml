@@ -1,0 +1,176 @@
+name: Update end to end
+
+# Installs the `from` release the way a user does, starts it, and checks that it
+# updates itself to `to` at launch from the real GitHub releases; on Windows it then
+# uninstalls. Manual only, after a release is published. Nothing here can write: it
+# only reads public releases. See docs/releasing.md.
+on:
+  workflow_dispatch:
+    inputs:
+      from:
+        description: Release tag to install first (empty for the release before the latest)
+        required: false
+        default: ''
+      to:
+        description: Release tag it must update to, which must be the latest (empty for the latest)
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: update-e2e
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  resolve:
+    name: resolve releases
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      from: ${{ steps.resolve.outputs.from }}
+      to: ${{ steps.resolve.outputs.to }}
+    steps:
+      - name: Resolve and check the two releases
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          FROM_INPUT: ${{ inputs.from }}
+          TO_INPUT: ${{ inputs.to }}
+        run: |
+          # What installed apps see: published releases, no drafts, no pre-releases.
+          gh release list --exclude-drafts --exclude-pre-releases --limit 50 \
+            --json tagName,isLatest > releases.json
+          versions=$(jq -r '.[].tagName' releases.json | sed -n 's/^v\([0-9]*\.[0-9]*\.[0-9]*\)$/\1/p' | sort -V)
+          latest=$(jq -r '.[] | select(.isLatest) | .tagName' releases.json | sed 's/^v//')
+          echo "Published releases: $(echo "$versions" | tr '\n' ' ')(latest: ${latest:-none})"
+
+          to=${TO_INPUT#v}
+          to=${to:-$latest}
+          if [ -z "$to" ] || ! echo "$versions" | grep -qxF -- "$to"; then
+            echo "::error::'${to:-latest}' is not a published, non-pre-release Acta release"
+            exit 1
+          fi
+          # GithubSource updates to the highest visible version, whatever was asked here.
+          if [ "$to" != "$latest" ]; then
+            echo "::error::installed apps update to the latest release ($latest), so 'to' must be $latest, not $to"
+            exit 1
+          fi
+
+          from=${FROM_INPUT#v}
+          if [ -z "$from" ]; then
+            from=$(echo "$versions" | awk -v to="$to" '$0 == to { print prev; exit } { prev = $0 }')
+          fi
+          if [ -z "$from" ] || ! echo "$versions" | grep -qxF -- "$from"; then
+            echo "::error::no published release to install before $to ('${from}' is not one)"
+            exit 1
+          fi
+          if [ "$from" = "$to" ] || [ "$(printf '%s\n%s\n' "$from" "$to" | sort -V | head -n 1)" != "$from" ]; then
+            echo "::error::'from' ($from) must be older than 'to' ($to)"
+            exit 1
+          fi
+
+          echo "Acta $from must update itself to $to" | tee -a "$GITHUB_STEP_SUMMARY"
+          {
+            echo "from=$from"
+            echo "to=$to"
+          } >> "$GITHUB_OUTPUT"
+
+  e2e:
+    name: ${{ matrix.os }}
+    needs: resolve
+    strategy:
+      fail-fast: false
+      matrix:
+        # macos-latest is Apple silicon (osx-arm64); osx-x64 is not covered here.
+        os: [windows-latest, macos-latest, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    env:
+      FROM: ${{ needs.resolve.outputs.from }}
+      TO: ${{ needs.resolve.outputs.to }}
+    steps:
+      # The test scripts only. What is installed and updated comes from the releases.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Linux display, Vulkan and FUSE
+        if: runner.os == 'Linux'
+        run: |
+          scripts/ci/linux-deps.sh --headless
+          # The AppImage mounts itself with fusermount3, as on a desktop.
+          sudo apt-get install -y -q --no-install-recommends fuse3
+          ls -l /dev/fuse
+          # One display for every step: the app outlives the step that starts it.
+          Xvfb :99 -screen 0 1280x800x24 >/dev/null 2>&1 &
+          for _ in $(seq 1 20); do
+            [ -S /tmp/.X11-unix/X99 ] && break
+            sleep 0.5
+          done
+          [ -S /tmp/.X11-unix/X99 ] || { echo "::error::Xvfb did not start"; exit 1; }
+          echo "DISPLAY=:99" >> "$GITHUB_ENV"
+
+      - name: Install ${{ env.FROM }} (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ./scripts/ci/update-e2e.ps1 -Phase install -Version $env:FROM
+      - name: Install ${{ env.FROM }} (macOS, Linux)
+        if: runner.os != 'Windows'
+        run: scripts/ci/update-e2e.sh install "$FROM"
+      - name: First start without update check (macOS, Linux)
+        if: runner.os != 'Windows'
+        timeout-minutes: 3
+        run: scripts/ci/update-e2e.sh first-start "$FROM"
+
+      - name: Verify ${{ env.FROM }} (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ./scripts/ci/update-e2e.ps1 -Phase verify -Version $env:FROM
+      - name: Verify ${{ env.FROM }} (macOS, Linux)
+        if: runner.os != 'Windows'
+        run: scripts/ci/update-e2e.sh verify "$FROM"
+
+      - name: Launch and update to ${{ env.TO }} (Windows)
+        if: runner.os == 'Windows'
+        timeout-minutes: 6
+        shell: powershell
+        run: ./scripts/ci/update-e2e.ps1 -Phase update -From $env:FROM -To $env:TO
+      - name: Launch and update to ${{ env.TO }} (macOS, Linux)
+        if: runner.os != 'Windows'
+        timeout-minutes: 6
+        run: scripts/ci/update-e2e.sh update "$FROM" "$TO"
+
+      - name: Verify ${{ env.TO }} (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ./scripts/ci/update-e2e.ps1 -Phase verify -Version $env:TO
+      - name: Verify ${{ env.TO }} (macOS, Linux)
+        if: runner.os != 'Windows'
+        run: scripts/ci/update-e2e.sh verify "$TO"
+
+      - name: Uninstall (Windows)
+        if: runner.os == 'Windows'
+        timeout-minutes: 3
+        shell: powershell
+        run: ./scripts/ci/update-e2e.ps1 -Phase uninstall
+
+      - name: Collect logs (Windows)
+        if: failure() && runner.os == 'Windows'
+        shell: powershell
+        run: ./scripts/ci/update-e2e.ps1 -Phase collect -Dir "$env:RUNNER_TEMP\update-e2e-logs"
+      - name: Collect logs (macOS, Linux)
+        if: failure() && runner.os != 'Windows'
+        run: scripts/ci/update-e2e.sh collect "$RUNNER_TEMP/update-e2e-logs"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: update-e2e-logs-${{ matrix.os }}
+          path: ${{ runner.temp }}/update-e2e-logs/
+          if-no-files-found: warn
+          retention-days: 14

@@ -126,7 +126,59 @@ gh attestation verify Acta-win-x64-Setup.exe --repo Alegzandr/acta
 Then on a machine with the previous version installed: start Acta, it restarts as the
 new version within a few seconds (an ordinary start may wait up to about 7 seconds for
 the window: 2 for the check, 5 for the download). On a clean machine: run the install one-liner from the
-README.
+README. Both are what the update end-to-end workflow below does on GitHub's runners.
+
+## Update end to end
+
+`.github/workflows/update-e2e.yml` proves self-update on real releases, on disposable
+runners: windows-latest, macos-latest (Apple silicon, `osx-arm64`) and ubuntu-24.04
+(Xvfb, lavapipe, `fuse3`). It never runs on its own and needs no write permission.
+Run it once a release is published:
+
+```sh
+gh workflow run update-e2e.yml --ref main                   # previous release -> latest
+gh workflow run update-e2e.yml --ref main -f from=v0.1.0 -f to=v0.1.1
+gh run watch
+```
+
+`to` must be the latest release: installed apps update to the highest published,
+non-pre-release version, whatever the test asks for. `from` defaults to the release
+just before it. Each job, through `scripts/ci/update-e2e.sh` (macOS, Linux) or
+`scripts/ci/update-e2e.ps1` (Windows):
+
+1. Installs `from` with the `install.sh` or `install.ps1` of that release, pinned to
+   its version, with `ACTA_NO_LAUNCH=1`. On Windows the script runs `Setup.exe --silent`.
+2. macOS and Linux only: a first start with `--specimen`, which exports the CLI and
+   creates `~/.local/bin/acta` (and the Linux desktop entry) without checking for
+   updates, so the old version can be observed. On Windows the install hook already
+   exported the CLI.
+3. Checks that `from` is installed: the version in Velopack's `sq.version`, the
+   uninstall entry (Windows) or `CFBundleShortVersionString` (macOS), the packaged
+   `acta-cli --version`, the exported CLI and its marker, and that `acta` resolves to
+   the exported CLI from the user PATH (Windows) or through `~/.local/bin` (macOS,
+   Linux).
+4. Starts Acta the way a user does (Start menu shortcut, `open Acta.app`, the AppImage)
+   with the update feed on the real GitHub releases, and waits at most 3 minutes for
+   a process of version `to` that logs "started by the updater". If a launch opened
+   its window first (the download outran the launch budget, or the check failed), the
+   app is closed and started again, at most twice, as a user would. It then checks
+   the order of the update lines in the app log (`from` finds and downloads `to`; on
+   Windows the after-update hook of `to` exports the CLI; `to` is restarted by the
+   updater) and that `to` is still running 10 seconds later.
+5. Runs the checks of step 3 for `to`; on macOS also `codesign --verify` of the
+   updated bundle.
+6. Windows: runs the uninstall entry's `QuietUninstallString` with Acta still open and
+   checks that `%LOCALAPPDATA%\ActaCli`, the PATH entry, the uninstall entry and the
+   install root are gone, no Acta process is left, and `%LOCALAPPDATA%\ActaData` is
+   kept.
+
+On failure the app log, Velopack's log and a listing of the install are uploaded as
+the `update-e2e-logs-<os>` artifact. The job summary gives the time each update took
+and how many launches it needed. `osx-x64` is not covered: the matrix has no Intel
+runner; `macos-26-intel` (free) can be added the day it matters. A green run answers
+the "Second tag" items below for Windows, macOS arm64 and Linux, and the install,
+link, desktop entry, log and uninstall items of "First tag"; tick each one only from
+what the run showed.
 
 ## Yank a bad release
 
@@ -243,3 +295,8 @@ Second tag (`v0.1.1`):
       warning (keychain behaviour across updates is what `platform-checks.yml` answers).
 - [ ] Marking 0.1.1 as a pre-release hides it from a 0.1.0 client and from the install
       scripts, with immutable releases enabled.
+- [ ] `update-e2e.yml` with `from=v0.1.0`, `to=v0.1.1` passes on the three runners:
+      install, update at launch, and on Windows uninstall with Acta open (the run
+      summary says how many launches each update needed).
+- [ ] The Windows runner opens Acta's window (GPUI on DirectX with no GPU): the
+      restarted 0.1.1 is still running 10 seconds later.
