@@ -1,0 +1,10 @@
+{
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [ { "type": "command", "command": "python", "args": ["${CLAUDE_PLUGIN_ROOT}/hook.py", "session-start"], "timeout": 10 } ] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [ { "type": "mcp_tool", "server": "plugin:acta-spike:acta", "tool": "hook", "input": { "event": "UserPromptSubmit", "session": "${session_id}", "cwd": "${cwd}" } } ] }
+    ]
+  }
+}

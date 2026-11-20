@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "acta": {
+      "command": "python",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/server.py"],
+      "env": { "ACTA_SPIKE_OUT": "${CLAUDE_PLUGIN_ROOT}/../out" }
+    }
+  }
+}

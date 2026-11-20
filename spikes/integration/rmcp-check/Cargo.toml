@@ -1,0 +1,12 @@
+[package]
+name = "rmcp-check"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+rmcp = { version = "3.11.0", default-features = false, features = ["server", "macros", "schemars", "transport-io"] }
+tokio = { version = "1", features = ["rt", "macros", "io-std"] }
+serde = { version = "1", features = ["derive"] }

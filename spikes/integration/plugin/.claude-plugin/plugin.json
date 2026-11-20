@@ -1,0 +1,5 @@
+{
+  "name": "acta-spike",
+  "description": "Throwaway spike: what Claude Code passes to plugin hooks and a plugin stdio MCP server",
+  "author": { "name": "Alexandre" }
+}

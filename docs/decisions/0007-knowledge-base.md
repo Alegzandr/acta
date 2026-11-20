@@ -69,7 +69,7 @@ The session briefing injected at start mentions only that documents exist and ho
 
 ## Consequences
 - Schema: `kb_entries` (with `kind`) and `kb_revisions` tables, bodies in the full-text index.
-- MCP tool surface grows; ADR 0005 must absorb it while staying small, likely as two or three tools (`docs` list/search, `doc_read`, `doc_write`) rather than one per verb.
+- MCP tool surface grows; ADR 0005 must absorb it while staying small, as three tools (`kb`, `kb_read`, `kb_write`) rather than one per verb.
 - Revisions grow the database. Text is small; revisit with a retention rule only if measurements say so.
 - Heading-based section addressing needs a precise rule for duplicate headings and for documents without headings (fall back to ranges).
 - Milestones: schema, list, reading view and editor in M2; MCP and CLI access in M3, before dogfooding, so this project's own specs live in Acta.
