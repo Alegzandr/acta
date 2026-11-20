@@ -1,0 +1,21 @@
+[package]
+name = "acta-spike-chat-panel"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Standalone throwaway spike for ADR 0009; deliberately not a workspace member.
+[workspace]
+
+[dependencies]
+gpui-kit = "=0.10.0"
+gpui-webview = "=0.10.0"
+# gpui-webview does not re-export wry; it builds on Longbridge's republished fork.
+wry = { version = "=0.53.3", package = "lb-wry" }
+url = "2"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 16
+strip = true
