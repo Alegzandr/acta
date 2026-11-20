@@ -25,6 +25,9 @@ use shell::Shell;
 
 fn main() {
     log::rotate();
+    // Set by Velopack's updater when it starts the app after applying, or
+    // after failing to apply. `VelopackApp::run` removes it, so read it first.
+    let restarted_by_updater = std::env::var_os("VELOPACK_RESTART").is_some();
     velopack_bootstrap();
 
     // `Some` only when this executable was installed by Velopack. From a
@@ -59,7 +62,7 @@ fn main() {
         }
         if !specimen {
             // Returns when the window may open; exits instead if it applies.
-            update::run_at_launch(manager);
+            update::run_at_launch(manager, restarted_by_updater);
         }
     }
 

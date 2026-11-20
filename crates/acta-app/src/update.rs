@@ -9,6 +9,13 @@
 //!
 //! [`Gate`] settles the race between "the wait timed out" and "the download
 //! just finished", so the app can never be restarted under a visible window.
+//!
+//! A launch that Velopack's updater itself started (`VELOPACK_RESTART`) never
+//! applies. The updater restarts the app after a successful apply and also
+//! after a failed one, in which case it starts the old version again with the
+//! package still on disk (`apply.rs` in Velopack 1.2.161). Applying again in
+//! that launch would loop forever without a window; this way a failed update
+//! is retried once per launch by the user, never by the app on its own.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -16,7 +23,7 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use velopack::{UpdateCheck, UpdateManager};
+use velopack::{UpdateCheck, UpdateInfo, UpdateManager};
 
 use crate::log;
 
@@ -25,6 +32,9 @@ pub const CHECK_BUDGET: Duration = Duration::from_secs(2);
 /// How long the launch then waits for the download. The ADR only says "slow";
 /// this is long enough for a delta on an ordinary connection.
 pub const DOWNLOAD_BUDGET: Duration = Duration::from_secs(5);
+/// How long the launch waits for a worker that claimed the apply. A working
+/// apply exits the process within moments; past this the window opens anyway.
+pub const APPLY_BUDGET: Duration = Duration::from_secs(15);
 
 const UNDECIDED: u8 = 0;
 const WINDOW: u8 = 1;
@@ -69,6 +79,7 @@ pub fn wait_for_launch_decision(
     gate: &Gate,
     check_budget: Duration,
     download_budget: Duration,
+    apply_budget: Duration,
 ) {
     let mut deadline = Instant::now() + check_budget;
     loop {
@@ -82,8 +93,10 @@ pub fn wait_for_launch_decision(
                     return;
                 }
                 // The worker claimed first and is applying: the process is
-                // about to exit. Only a failed apply gets past this line.
-                let _ = progress.recv();
+                // about to exit. Only a failed or stuck apply gets past this.
+                if progress.recv_timeout(apply_budget) == Err(RecvTimeoutError::Timeout) {
+                    log::line("update: apply did not finish in time, opening");
+                }
                 return;
             }
         }
@@ -110,47 +123,81 @@ pub fn error_kind(err: &velopack::Error) -> String {
     }
 }
 
-/// Check, download and (if still allowed) apply. Runs on the worker thread.
-fn work(manager: &UpdateManager, gate: &Gate, progress: &Sender<Progress>) -> Result<(), String> {
-    let started = Instant::now();
-    let check = manager
-        .check_for_updates()
-        .map_err(|err| format!("check failed: {}", error_kind(&err)))?;
-    let info = match check {
-        UpdateCheck::UpdateAvailable(info) => info,
-        UpdateCheck::NoUpdateAvailable | UpdateCheck::RemoteIsEmpty => {
-            log::line(&format!(
-                "update: up to date ({} ms)",
-                started.elapsed().as_millis()
-            ));
-            return Ok(());
+/// What the worker needs from Velopack. A trait only so that the decisions
+/// in [`work`] can be tested without an installed app and a feed.
+pub trait Feed {
+    type Update;
+    /// The newer version and its handle, or `None` when up to date.
+    fn check(&self) -> Result<Option<(String, Self::Update)>, String>;
+    fn download(&self, update: &Self::Update) -> Result<(), String>;
+    /// Exits the process on success.
+    fn apply(&self, update: &Self::Update) -> Result<(), String>;
+}
+
+impl Feed for UpdateManager {
+    type Update = Box<UpdateInfo>;
+
+    fn check(&self) -> Result<Option<(String, Self::Update)>, String> {
+        match self.check_for_updates() {
+            Ok(UpdateCheck::UpdateAvailable(info)) => {
+                Ok(Some((info.TargetFullRelease.Version.clone(), info)))
+            }
+            Ok(UpdateCheck::NoUpdateAvailable | UpdateCheck::RemoteIsEmpty) => Ok(None),
+            Err(err) => Err(format!("check failed: {}", error_kind(&err))),
         }
+    }
+
+    fn download(&self, update: &Self::Update) -> Result<(), String> {
+        self.download_updates(update, None)
+            .map_err(|err| format!("download failed: {}", error_kind(&err)))
+    }
+
+    fn apply(&self, update: &Self::Update) -> Result<(), String> {
+        self.apply_updates_and_restart(&**update)
+            .map_err(|err| format!("apply failed: {}", error_kind(&err)))
+    }
+}
+
+/// Check, download and (if still allowed) apply. Runs on the worker thread.
+fn work<F: Feed>(feed: &F, gate: &Gate, progress: &Sender<Progress>) -> Result<(), String> {
+    let started = Instant::now();
+    let Some((version, update)) = feed.check()? else {
+        log::line(&format!(
+            "update: up to date ({} ms)",
+            started.elapsed().as_millis()
+        ));
+        return Ok(());
     };
-    let version = info.TargetFullRelease.Version.clone();
     log::line(&format!("update: {version} available, downloading"));
     let _ = progress.send(Progress::Downloading);
 
-    manager
-        .download_updates(&info, None)
-        .map_err(|err| format!("download failed: {}", error_kind(&err)))?;
+    feed.download(&update)?;
     log::line(&format!(
         "update: {version} downloaded ({} ms)",
         started.elapsed().as_millis()
     ));
 
     if !gate.claim_apply() {
-        log::line("update: window already open, it will be applied at next launch");
+        log::line("update: not applying in this launch; Velopack applies it at the next one");
         return Ok(());
     }
-    // Exits the process on success.
-    manager
-        .apply_updates_and_restart(&*info)
-        .map_err(|err| format!("apply failed: {}", error_kind(&err)))
+    feed.apply(&update)
 }
 
-/// Start the worker and wait for the launch decision.
-pub fn run_at_launch(manager: UpdateManager) {
-    let gate = Arc::new(Gate::default());
+/// The gate a launch starts with. A launch started by the updater has already
+/// decided: the window opens, nothing is applied (see the module comment).
+fn launch_gate(restarted_by_updater: bool) -> Gate {
+    let gate = Gate::default();
+    if restarted_by_updater {
+        gate.claim_window();
+    }
+    gate
+}
+
+/// Start the worker and, unless the updater started this launch, wait for the
+/// launch decision.
+pub fn run_at_launch(manager: UpdateManager, restarted_by_updater: bool) {
+    let gate = Arc::new(launch_gate(restarted_by_updater));
     let (sender, receiver) = mpsc::channel();
 
     let worker_gate = Arc::clone(&gate);
@@ -166,11 +213,23 @@ pub fn run_at_launch(manager: UpdateManager) {
         log::line(&format!("update: could not start the worker: {err}"));
         return;
     }
-    wait_for_launch_decision(&receiver, &gate, CHECK_BUDGET, DOWNLOAD_BUDGET);
+    if restarted_by_updater {
+        log::line("update: started by the updater, opening without applying");
+        return;
+    }
+    wait_for_launch_decision(
+        &receiver,
+        &gate,
+        CHECK_BUDGET,
+        DOWNLOAD_BUDGET,
+        APPLY_BUDGET,
+    );
 }
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+
     use super::*;
 
     const SHORT: Duration = Duration::from_millis(40);
@@ -206,7 +265,7 @@ mod tests {
         sender.send(Progress::Finished).unwrap();
 
         let started = Instant::now();
-        wait_for_launch_decision(&receiver, &gate, LONG, LONG);
+        wait_for_launch_decision(&receiver, &gate, LONG, LONG, LONG);
 
         assert!(started.elapsed() < Duration::from_secs(1));
         // Nothing was claimed: a late download could not exist anyway.
@@ -218,7 +277,7 @@ mod tests {
         let (sender, receiver) = mpsc::channel::<Progress>();
         drop(sender);
         let started = Instant::now();
-        wait_for_launch_decision(&receiver, &Gate::default(), LONG, LONG);
+        wait_for_launch_decision(&receiver, &Gate::default(), LONG, LONG, LONG);
         assert!(started.elapsed() < Duration::from_secs(1));
     }
 
@@ -228,7 +287,7 @@ mod tests {
         let gate = Gate::default();
 
         let started = Instant::now();
-        wait_for_launch_decision(&receiver, &gate, SHORT, LONG);
+        wait_for_launch_decision(&receiver, &gate, SHORT, LONG, LONG);
 
         assert!(started.elapsed() >= SHORT);
         assert!(started.elapsed() < Duration::from_secs(1));
@@ -242,7 +301,7 @@ mod tests {
         sender.send(Progress::Downloading).unwrap();
 
         let started = Instant::now();
-        wait_for_launch_decision(&receiver, &gate, LONG, SHORT);
+        wait_for_launch_decision(&receiver, &gate, LONG, SHORT, LONG);
 
         assert!(started.elapsed() >= SHORT);
         assert!(started.elapsed() < Duration::from_secs(1));
@@ -263,9 +322,132 @@ mod tests {
         });
 
         let started = Instant::now();
-        wait_for_launch_decision(&receiver, &gate, SHORT, SHORT);
+        wait_for_launch_decision(&receiver, &gate, SHORT, SHORT, LONG);
 
         assert!(started.elapsed() >= SHORT * 3);
         worker.join().unwrap();
+    }
+
+    #[test]
+    fn launch_stops_waiting_for_an_apply_that_never_finishes() {
+        let (_sender, receiver) = mpsc::channel::<Progress>();
+        let gate = Gate::default();
+        assert!(gate.claim_apply());
+
+        let started = Instant::now();
+        wait_for_launch_decision(&receiver, &gate, SHORT, SHORT, SHORT * 2);
+
+        assert!(started.elapsed() >= SHORT * 3);
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    /// A feed with one newer version, counting what the worker asks of it.
+    #[derive(Default)]
+    struct FakeFeed {
+        up_to_date: bool,
+        check_fails: bool,
+        download_fails: bool,
+        downloads: Cell<u32>,
+        applies: Cell<u32>,
+    }
+
+    impl Feed for FakeFeed {
+        type Update = ();
+
+        fn check(&self) -> Result<Option<(String, ())>, String> {
+            if self.check_fails {
+                Err("check failed: network error".into())
+            } else if self.up_to_date {
+                Ok(None)
+            } else {
+                Ok(Some(("0.1.1".into(), ())))
+            }
+        }
+
+        fn download(&self, _: &()) -> Result<(), String> {
+            self.downloads.set(self.downloads.get() + 1);
+            if self.download_fails {
+                Err("download failed: network error".into())
+            } else {
+                Ok(())
+            }
+        }
+
+        fn apply(&self, _: &()) -> Result<(), String> {
+            self.applies.set(self.applies.get() + 1);
+            // The real one exits the process; a return is a failed apply.
+            Err("apply failed: other error".into())
+        }
+    }
+
+    fn reports(receiver: &Receiver<Progress>) -> Vec<Progress> {
+        receiver.try_iter().collect()
+    }
+
+    #[test]
+    fn worker_downloads_then_applies_on_an_ordinary_launch() {
+        let feed = FakeFeed::default();
+        let gate = launch_gate(false);
+        let (sender, receiver) = mpsc::channel();
+
+        let result = work(&feed, &gate, &sender);
+
+        assert_eq!((feed.downloads.get(), feed.applies.get()), (1, 1));
+        assert_eq!(reports(&receiver), [Progress::Downloading]);
+        assert!(result.is_err(), "the fake apply fails and is reported");
+        assert!(!gate.claim_window(), "the apply side owns the gate");
+    }
+
+    #[test]
+    fn worker_never_applies_in_a_launch_started_by_the_updater() {
+        // The loop this prevents: apply fails, the updater restarts the old
+        // version, which finds the same package and applies again.
+        let feed = FakeFeed::default();
+        let gate = launch_gate(true);
+        let (sender, receiver) = mpsc::channel();
+
+        let result = work(&feed, &gate, &sender);
+
+        assert_eq!(result, Ok(()));
+        assert_eq!((feed.downloads.get(), feed.applies.get()), (1, 0));
+        assert_eq!(reports(&receiver), [Progress::Downloading]);
+    }
+
+    #[test]
+    fn worker_does_not_apply_once_the_window_is_opening() {
+        let feed = FakeFeed::default();
+        let gate = launch_gate(false);
+        assert!(gate.claim_window());
+        let (sender, _receiver) = mpsc::channel();
+
+        assert_eq!(work(&feed, &gate, &sender), Ok(()));
+        assert_eq!((feed.downloads.get(), feed.applies.get()), (1, 0));
+    }
+
+    #[test]
+    fn worker_stops_when_up_to_date_or_when_a_step_fails() {
+        let (sender, receiver) = mpsc::channel();
+
+        let feed = FakeFeed {
+            up_to_date: true,
+            ..FakeFeed::default()
+        };
+        assert_eq!(work(&feed, &launch_gate(false), &sender), Ok(()));
+        assert_eq!((feed.downloads.get(), feed.applies.get()), (0, 0));
+        assert_eq!(reports(&receiver), []);
+
+        let feed = FakeFeed {
+            check_fails: true,
+            ..FakeFeed::default()
+        };
+        assert!(work(&feed, &launch_gate(false), &sender).is_err());
+        assert_eq!((feed.downloads.get(), feed.applies.get()), (0, 0));
+
+        let feed = FakeFeed {
+            download_fails: true,
+            ..FakeFeed::default()
+        };
+        assert!(work(&feed, &launch_gate(false), &sender).is_err());
+        assert_eq!((feed.downloads.get(), feed.applies.get()), (1, 0));
     }
 }
