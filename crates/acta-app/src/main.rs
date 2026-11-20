@@ -3,6 +3,8 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod cli_export;
+#[cfg(any(target_os = "linux", test))]
+mod desktop_entry;
 mod first_run;
 mod fonts;
 mod log;
@@ -20,6 +22,7 @@ use gpui_kit::{App, AppContext, Render};
 use velopack::sources::GithubSource;
 use velopack::{UpdateManager, VelopackApp};
 
+use acta_core::paths::Os;
 use cli_export::Layout;
 use shell::Shell;
 
@@ -33,20 +36,10 @@ fn main() {
     // `Some` only when this executable was installed by Velopack. From a
     // build directory (cargo run, CI) nothing below exports, edits the PATH
     // or looks for updates.
-    let installed = match UpdateManager::new(
-        GithubSource::new(acta_core::REPO_URL, None, false),
-        None,
-        None,
-    ) {
-        Ok(manager) => Some(manager),
-        Err(err) => {
-            log::line(&format!(
-                "not a Velopack install ({}); no export, no updates",
-                update::error_kind(&err)
-            ));
-            None
-        }
-    };
+    let installed = velopack_manager();
+    if installed.is_none() {
+        log::line("not a Velopack install; no export, no updates");
+    }
 
     // Development aid: `Acta --specimen`, or `ACTA_SPECIMEN=1`.
     let specimen = std::env::args().skip(1).any(|arg| arg == "--specimen")
@@ -54,9 +47,13 @@ fn main() {
 
     if let Some(manager) = installed {
         // Repairs the export if a hook was missed; cheap when up to date.
+        let portable = manager.get_is_portable();
         let spawned = std::thread::Builder::new()
-            .name("acta-cli-export".into())
-            .spawn(|| export_cli("start"));
+            .name("acta-integration".into())
+            .spawn(move || {
+                export_cli("start", portable);
+                integrate_with_desktop();
+            });
         if let Err(err) = spawned {
             log::line(&format!("export: could not start the thread: {err}"));
         }
@@ -69,6 +66,28 @@ fn main() {
     run_app(specimen);
 }
 
+/// The update manager of this install, or `None` when the executable was not
+/// installed by Velopack. Creating it reads local files only.
+fn velopack_manager() -> Option<UpdateManager> {
+    UpdateManager::new(
+        GithubSource::new(acta_core::REPO_URL, None, false),
+        None,
+        None,
+    )
+    .ok()
+}
+
+/// Whether this install exports the CLI and edits the PATH.
+///
+/// A portable Windows install (an unpacked `Portable.zip`) does not: it has
+/// no uninstaller, so nothing would ever take the export and the PATH entry
+/// away again. Velopack reports every macOS and Linux install as portable
+/// (`UpdateManager::get_is_portable`); there the export is the only way the
+/// CLI reaches the user, so the flag is ignored.
+fn exports_cli(os: Os, portable: bool) -> bool {
+    !(os == Os::Windows && portable)
+}
+
 /// Must run before anything else: Velopack starts this executable with hook
 /// arguments at install, update and uninstall, and expects it to exit fast.
 /// It also applies an update that a previous run downloaded.
@@ -78,8 +97,8 @@ fn velopack_bootstrap() {
     // by the check at every start, and there is no uninstall step to hook.
     #[cfg(windows)]
     let app = app
-        .on_after_install_fast_callback(|_| export_cli("after-install"))
-        .on_after_update_fast_callback(|_| export_cli("after-update"))
+        .on_after_install_fast_callback(|_| export_cli_from_hook("after-install"))
+        .on_after_update_fast_callback(|_| export_cli_from_hook("after-update"))
         .on_before_uninstall_fast_callback(|_| match Layout::locate() {
             Some(layout) => {
                 if uninstall::run(&layout, &user_path::USER_PATH) {
@@ -93,9 +112,24 @@ fn velopack_bootstrap() {
     app.run();
 }
 
+/// The export as run from a Velopack hook, which has no manager at hand.
+#[cfg(windows)]
+fn export_cli_from_hook(when: &str) {
+    match velopack_manager() {
+        Some(manager) => export_cli(when, manager.get_is_portable()),
+        None => log::line(&format!("export ({when}): not a Velopack install")),
+    }
+}
+
 /// Export the CLI and put it on the PATH. Every failure is logged and
 /// swallowed: none of this may keep the window from opening.
-fn export_cli(when: &str) {
+fn export_cli(when: &str, portable: bool) {
+    if !exports_cli(Os::CURRENT, portable) {
+        log::line(&format!(
+            "export ({when}): portable install; CLI not exported, PATH not edited"
+        ));
+        return;
+    }
     let Some(layout) = Layout::locate() else {
         log::line(&format!("export ({when}): user directories not found"));
         return;
@@ -106,7 +140,7 @@ fn export_cli(when: &str) {
             outcome.decision, outcome.still_locked
         )),
         Err(err) => {
-            log::line(&format!("export ({when}): failed: {err}"));
+            log::line(&format!("export ({when}): failed: {:?}", err.kind()));
             return;
         }
     }
@@ -118,7 +152,34 @@ fn export_cli(when: &str) {
                 user_path::announce_environment_change();
             }
         }
-        Err(err) => log::line(&format!("export ({when}): PATH not updated: {err}")),
+        Err(err) => log::line(&format!(
+            "export ({when}): PATH not updated: {:?}",
+            err.kind()
+        )),
+    }
+}
+
+/// Linux: give the AppImage its launcher entry and icon (ADR 0004). Only an
+/// installed build gets here, and only one started as an AppImage has a
+/// stable file to point the entry at.
+fn integrate_with_desktop() {
+    #[cfg(target_os = "linux")]
+    {
+        use std::path::PathBuf;
+
+        let appimage = std::env::var_os("APPIMAGE")
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute());
+        let data_home = acta_core::paths::xdg_data_home(&acta_core::paths::BaseDirs::from_env());
+        let (Some(appimage), Some(data_home)) = (appimage, data_home) else {
+            log::line("desktop entry: not an AppImage, or no data directory; skipped");
+            return;
+        };
+        match desktop_entry::install(&data_home, &appimage) {
+            Ok(true) => log::line("desktop entry: written"),
+            Ok(false) => log::line("desktop entry: already in place"),
+            Err(err) => log::line(&format!("desktop entry: failed: {:?}", err.kind())),
+        }
     }
 }
 
@@ -159,5 +220,19 @@ fn open<V: Render>(
     if let Err(err) = opened {
         log::line(&format!("could not open the window: {err}"));
         cx.quit();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_a_portable_windows_install_skips_the_export() {
+        assert!(exports_cli(Os::Windows, false));
+        assert!(!exports_cli(Os::Windows, true));
+        // Velopack calls every macOS and Linux install portable.
+        assert!(exports_cli(Os::MacOs, true));
+        assert!(exports_cli(Os::Linux, true));
     }
 }

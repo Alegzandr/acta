@@ -100,7 +100,7 @@ pub fn data_dir(os: Os, base: &BaseDirs) -> Option<PathBuf> {
                 .join("Acta")
                 .join("data"),
         ),
-        Os::Linux => Some(linux_data_home(base)?.join("acta").join("data")),
+        Os::Linux => Some(xdg_data_home(base)?.join("acta").join("data")),
     }
 }
 
@@ -110,7 +110,7 @@ pub fn cli_root(os: Os, base: &BaseDirs) -> Option<PathBuf> {
     match os {
         Os::Windows => Some(base.local_app_data.as_ref()?.join("ActaCli")),
         Os::MacOs => Some(mac_app_support(base.home.as_ref()?).join("ActaCli")),
-        Os::Linux => Some(linux_data_home(base)?.join("acta-cli")),
+        Os::Linux => Some(xdg_data_home(base)?.join("acta-cli")),
     }
 }
 
@@ -156,8 +156,8 @@ fn mac_app_support(home: &Path) -> PathBuf {
     home.join("Library").join("Application Support")
 }
 
-/// `$XDG_DATA_HOME`, or its default `~/.local/share`.
-fn linux_data_home(base: &BaseDirs) -> Option<PathBuf> {
+/// `$XDG_DATA_HOME`, or its default `~/.local/share` (Linux).
+pub fn xdg_data_home(base: &BaseDirs) -> Option<PathBuf> {
     match &base.xdg_data_home {
         Some(dir) => Some(dir.clone()),
         None => Some(base.home.as_ref()?.join(".local").join("share")),
