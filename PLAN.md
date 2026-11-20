@@ -4,8 +4,8 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 
 | # | Milestone | Release | Status |
 |---|-----------|---------|--------|
-| M0 | Research, spikes, ADRs, DESIGN.md | - | doing |
-| M1 | Pipeline: empty window that installs silently and updates itself | v0.1.x | todo |
+| M0 | Research, spikes, ADRs, DESIGN.md | - | done |
+| M1 | Pipeline: empty window that installs silently and updates itself | v0.1.x | doing |
 | M2 | Data model and core UI | v0.2.0 | todo |
 | M3 | MCP server, CLI, Claude Code setup; Acta tracks itself | v0.3.0 | todo |
 | M4 | Integrated terminal running Claude Code | v0.4.0 | todo |
@@ -15,7 +15,7 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 ## M0 - Research and spikes
 - [x] ADR 0001: UI stack - gpui-kit 0.10.0 (GPUI snapshot gpui-pre 0.3.12), proven on Windows; macOS/Linux to prove in M1 CI
 - [x] ADR 0002: Terminal embedding - alacritty_terminal 0.26.0 for emulation and PTY, own GPUI element; headless spike proven on Windows with Claude Code
-- [ ] ADR 0003: Encrypted storage and key management
+- [x] ADR 0003: Encrypted storage - SQLCipher via rusqlite 0.43, raw key in the OS keychain, proven on Windows; macOS key store decided by an M1 runner test
 - [x] ADR 0004: Packaging and updates - Velopack 1.2.161, two executables (GUI + CLI/MCP) in one package; install, self-update and uninstall proven on Windows
 - [x] ADR 0005: Claude Code integration - rmcp 3.11.0, 9 tools, 4 hooks, local plugin installed by `acta setup`
 - [x] ADR 0006: Import, export and backups
@@ -28,6 +28,7 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 - [ ] Release workflow on `v*` tags: build all platforms, publish installers and updater artifacts
 - [ ] Silent per-user install verified on Windows; macOS and Linux verified as far as CI allows
 - [ ] Self-update proven end to end: install v0.1.0, publish v0.1.1, app updates at launch
+- [ ] macOS keychain test with ad-hoc signed builds (ADR 0003), and SQLCipher builds on macOS and Linux runners
 
 ## M2 - Data model and core UI
 - [ ] Encrypted database, key in OS keychain, migrations
