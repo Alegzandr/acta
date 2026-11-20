@@ -13,7 +13,7 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 | M6 | Polish | v1.0.0 | todo |
 
 ## M0 - Research and spikes
-- [ ] ADR 0001: UI stack (GPUI version, source, component strategy), verified on Windows locally and on macOS/Linux in CI
+- [x] ADR 0001: UI stack - gpui-kit 0.10.0 (GPUI snapshot gpui-pre 0.3.12), proven on Windows; macOS/Linux to prove in M1 CI
 - [ ] ADR 0002: Terminal embedding
 - [ ] ADR 0003: Encrypted storage and key management
 - [ ] ADR 0004: Packaging, silent install, auto-update
