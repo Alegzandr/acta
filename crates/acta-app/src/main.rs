@@ -111,15 +111,16 @@ fn main() {
         }
         if !options.specimen {
             // The wait for the update decision runs beside the UI, so the
-            // updater window can show while it lasts. The process exits
-            // from the worker instead if the update is applied.
+            // updater window can show while it lasts. An apply is handed
+            // to the UI thread, which ends the process with it.
             let state = Arc::new(LaunchState::default());
             let waiting = Arc::clone(&state);
             let spawned = std::thread::Builder::new()
                 .name("acta-launch".into())
                 .spawn(move || {
-                    update::run_at_launch(manager, restarted_by_updater, Arc::clone(&waiting));
-                    waiting.set_ready();
+                    // Ready however this ends, a panic included.
+                    let _ready = update::ReadyOnDrop(Arc::clone(&waiting));
+                    update::run_at_launch(manager, restarted_by_updater, waiting);
                 });
             match spawned {
                 Ok(_) => pending = Some(state),
@@ -293,7 +294,9 @@ fn run_app(options: Options, pending: Option<Arc<LaunchState>>, launched: Instan
 }
 
 /// Tick until the update decision; show the updater window if the main
-/// window is late, and close it in the frame the main window opens.
+/// window is late, and close it in the frame the main window opens. A
+/// posted apply runs here, on the UI thread, with every window closed and
+/// the preferences written first.
 async fn wait_for_launch(
     options: Options,
     state: Arc<LaunchState>,
@@ -302,45 +305,71 @@ async fn wait_for_launch(
 ) {
     const TICK: Duration = Duration::from_millis(16);
     let mut updater: Option<AnyWindowHandle> = None;
+    let mut updater_shown = false;
+    let mut shown_status = None;
     loop {
-        match update::launch_step(launched.elapsed(), state.is_ready(), updater.is_some()) {
+        // Ready is read before the apply: a worker posts its apply before
+        // the launch becomes ready, so a ready launch never hides one.
+        let ready = state.is_ready();
+        let apply = state.take_apply();
+        match update::launch_step(launched.elapsed(), ready, apply.is_some(), updater_shown) {
             LaunchStep::Wait => {
-                if let Some(handle) = updater {
-                    // The status line and the bar follow the worker.
+                let status = state.status();
+                if let Some(handle) = updater
+                    && shown_status != Some(status)
+                {
+                    // Repaint only when the status line or the bar change.
+                    shown_status = Some(status);
                     let _ = handle.update(cx, |_, window, _| window.refresh());
                 }
             }
+            LaunchStep::Apply => {
+                let Some(apply) = apply else { continue };
+                cx.update(|cx| {
+                    for window in cx.windows() {
+                        let _ = window.update(cx, |_, window, _| window.remove_window());
+                    }
+                    settings::flush(cx);
+                    // Returns only if the apply failed; Velopack applies the
+                    // package at the next launch. Open as the app is, in
+                    // this same update, so the app never sits windowless.
+                    if let Err(err) = apply() {
+                        log::line(&format!("update: {err}; opening without it"));
+                        open_main(options, cx);
+                    }
+                });
+                return;
+            }
             LaunchStep::ShowUpdaterWindow => {
+                updater_shown = true;
                 let state = Arc::clone(&state);
                 updater = cx.update(|cx| {
-                    let window = updater_window::window_options(!options.no_focus, cx);
-                    match cx.open_window(window, |_, cx| cx.new(|_| UpdaterWindow::new(state))) {
+                    let window_options = updater_window::window_options(!options.no_focus, cx);
+                    let opened = cx.open_window(window_options, |window, cx| {
+                        cx.new(|cx| UpdaterWindow::new(state, window, cx))
+                    });
+                    match opened {
                         Ok(handle) => Some(handle.into()),
                         Err(err) => {
-                            log::line(&format!("could not open the updater window: {err}"));
                             // Keep waiting without it; never try again.
+                            log::line(&format!("could not open the updater window: {err}"));
                             None
                         }
                     }
                 });
-                if updater.is_none() {
-                    break;
-                }
             }
-            LaunchStep::OpenMainWindow => break,
+            LaunchStep::OpenMainWindow => {
+                cx.update(|cx| {
+                    open_main(options, cx);
+                    if let Some(handle) = updater {
+                        let _ = handle.update(cx, |_, window, _| window.remove_window());
+                    }
+                });
+                return;
+            }
         }
         cx.background_executor().timer(TICK).await;
     }
-    // Without an updater window (it failed to open) the wait goes on here.
-    while !state.is_ready() {
-        cx.background_executor().timer(TICK).await;
-    }
-    cx.update(|cx| {
-        open_main(options, cx);
-        if let Some(handle) = updater {
-            let _ = handle.update(cx, |_, window, _| window.remove_window());
-        }
-    });
 }
 
 /// Open the main window (or the specimen). Without a window there is

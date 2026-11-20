@@ -128,6 +128,9 @@ impl Shell {
         let appearance = cx.observe_window_appearance(window, |_, window, cx| {
             theme::os_appearance_changed(window.appearance(), cx);
         });
+        // The OS may have answered before this window existed (the Linux
+        // portal replies asynchronously and only notifies open windows).
+        theme::os_appearance_changed(window.appearance(), cx);
         let focus = cx.focus_handle();
         // Focus inside the window, so its keys reach the shell. This does
         // not raise or activate the window.

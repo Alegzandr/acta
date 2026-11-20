@@ -15,6 +15,11 @@
 //! window (DESIGN.md 5 and 8.16) shows [`LaunchState`] until the decision,
 //! and closes in the frame the main window opens.
 //!
+//! The worker never applies itself: Velopack's apply ends the process with
+//! `exit(0)`, which must not happen on a worker thread while GPUI draws.
+//! The worker posts the apply to [`LaunchState`]; the UI thread closes its
+//! windows, writes the preferences and runs it.
+//!
 //! A launch that Velopack's updater itself started (`VELOPACK_RESTART`) never
 //! applies. The updater restarts the app after a successful apply and also
 //! after a failed one, in which case it starts the old version again with the
@@ -56,11 +61,14 @@ pub enum Status {
     Restarting,
 }
 
+/// Applies a downloaded update and restarts; returns only on failure.
+pub type Apply = Box<dyn FnOnce() -> Result<(), String> + Send>;
+
 /// Shared between the update worker, the launch wait and the UI.
-#[derive(Debug)]
 pub struct LaunchState {
     status: Mutex<Status>,
     ready: AtomicBool,
+    apply: Mutex<Option<Apply>>,
 }
 
 impl Default for LaunchState {
@@ -68,7 +76,18 @@ impl Default for LaunchState {
         Self {
             status: Mutex::new(Status::Checking),
             ready: AtomicBool::new(false),
+            apply: Mutex::new(None),
         }
+    }
+}
+
+/// Marks the launch ready when dropped, so the UI never waits forever on a
+/// launch thread that panicked.
+pub struct ReadyOnDrop(pub Arc<LaunchState>);
+
+impl Drop for ReadyOnDrop {
+    fn drop(&mut self) {
+        self.0.set_ready();
     }
 }
 
@@ -95,6 +114,23 @@ impl LaunchState {
     pub fn set_ready(&self) {
         self.ready.store(true, Ordering::SeqCst);
     }
+
+    /// The worker hands the apply to the UI thread. Posted before the
+    /// worker reports, so before the launch is ready.
+    fn post_apply(&self, apply: Apply) {
+        *self
+            .apply
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner()) = Some(apply);
+    }
+
+    /// The apply to run on the UI thread, once.
+    pub fn take_apply(&self) -> Option<Apply> {
+        self.apply
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .take()
+    }
 }
 
 /// What the UI does at a tick of the launch, while it waits for the update
@@ -102,14 +138,25 @@ impl LaunchState {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LaunchStep {
     Wait,
+    /// Close every window, write the preferences, apply and restart.
+    Apply,
     ShowUpdaterWindow,
     /// Open the main window, and close the updater window if it is shown,
     /// in the same frame.
     OpenMainWindow,
 }
 
-pub fn launch_step(since_launch: Duration, ready: bool, updater_shown: bool) -> LaunchStep {
-    if ready {
+/// `apply_posted` wins: the worker only posts an apply it claimed, which
+/// means no main window may open in this launch.
+pub fn launch_step(
+    since_launch: Duration,
+    ready: bool,
+    apply_posted: bool,
+    updater_shown: bool,
+) -> LaunchStep {
+    if apply_posted {
+        LaunchStep::Apply
+    } else if ready {
         LaunchStep::OpenMainWindow
     } else if !updater_shown && since_launch >= UPDATER_WINDOW_DELAY {
         LaunchStep::ShowUpdaterWindow
@@ -264,20 +311,21 @@ impl Feed for UpdateManager {
     }
 }
 
-/// Check, download and (if still allowed) apply. Runs on the worker thread.
+/// Check, download and, if this launch may still apply, return the update
+/// to apply. Runs on the worker thread.
 fn work<F: Feed>(
     feed: &F,
     gate: &Gate,
     progress: &Sender<Progress>,
     state: &Arc<LaunchState>,
-) -> Result<(), String> {
+) -> Result<Option<F::Update>, String> {
     let started = Instant::now();
     let Some((version, update)) = feed.check()? else {
         log::line(&format!(
             "update: up to date ({} ms)",
             started.elapsed().as_millis()
         ));
-        return Ok(());
+        return Ok(None);
     };
     log::line(&format!("update: {version} available, downloading"));
     let _ = progress.send(Progress::Downloading);
@@ -295,10 +343,10 @@ fn work<F: Feed>(
 
     if !gate.claim_apply() {
         log::line("update: not applying in this launch; Velopack applies it at the next one");
-        return Ok(());
+        return Ok(None);
     }
     state.set_status(Status::Restarting);
-    feed.apply(&update)
+    Ok(Some(update))
 }
 
 /// The gate a launch starts with. A launch started by the updater has already
@@ -321,8 +369,10 @@ pub fn run_at_launch(manager: UpdateManager, restarted_by_updater: bool, state: 
     let spawned = thread::Builder::new()
         .name("acta-update".into())
         .spawn(move || {
-            if let Err(err) = work(&manager, &worker_gate, &sender, &state) {
-                log::line(&format!("update: {err}; retrying at next launch"));
+            match work(&manager, &worker_gate, &sender, &state) {
+                Ok(Some(update)) => state.post_apply(Box::new(move || manager.apply(&update))),
+                Ok(None) => {}
+                Err(err) => log::line(&format!("update: {err}; retrying at next launch")),
             }
             let _ = sender.send(Progress::Finished);
         });
@@ -510,9 +560,10 @@ mod tests {
 
         let result = work(&feed, &gate, &sender, &Arc::default());
 
-        assert_eq!((feed.downloads.get(), feed.applies.get()), (1, 1));
+        // The update comes back to be applied on the UI thread.
+        assert_eq!(result, Ok(Some(())));
+        assert_eq!((feed.downloads.get(), feed.applies.get()), (1, 0));
         assert_eq!(reports(&receiver), [Progress::Downloading]);
-        assert!(result.is_err(), "the fake apply fails and is reported");
         assert!(!gate.claim_window(), "the apply side owns the gate");
     }
 
@@ -536,25 +587,60 @@ mod tests {
         assert!(state.is_ready());
     }
 
+    /// `launch_step` with nothing posted.
+    fn launch_step4(since: Duration, ready: bool, shown: bool) -> LaunchStep {
+        launch_step(since, ready, false, shown)
+    }
+
+    #[test]
+    fn a_posted_apply_comes_first_and_runs_once() {
+        let ms = Duration::from_millis;
+        for (since, ready, shown) in [(0, false, false), (900, true, true), (900, false, true)] {
+            assert_eq!(
+                launch_step(ms(since), ready, true, shown),
+                LaunchStep::Apply
+            );
+        }
+        let state = LaunchState::default();
+        assert!(state.take_apply().is_none());
+        state.post_apply(Box::new(|| Err("apply failed: other error".into())));
+        let apply = state.take_apply().expect("posted");
+        assert!(state.take_apply().is_none(), "taken once");
+        assert!(apply().is_err());
+    }
+
+    #[test]
+    fn the_launch_is_ready_even_if_its_thread_panics() {
+        let state = Arc::new(LaunchState::default());
+        let guarded = Arc::clone(&state);
+        let joined = thread::spawn(move || {
+            let _ready = ReadyOnDrop(guarded);
+            panic!("the launch wait failed");
+        })
+        .join();
+        assert!(joined.is_err());
+        assert!(state.is_ready());
+    }
+
     #[test]
     fn the_updater_window_shows_only_when_the_main_window_is_late() {
         let ms = Duration::from_millis;
-        assert_eq!(launch_step(ms(0), false, false), LaunchStep::Wait);
-        assert_eq!(launch_step(ms(299), false, false), LaunchStep::Wait);
+        assert_eq!(launch_step4(ms(0), false, false), LaunchStep::Wait);
+        assert_eq!(launch_step4(ms(299), false, false), LaunchStep::Wait);
         assert_eq!(
-            launch_step(ms(300), false, false),
+            launch_step4(ms(300), false, false),
             LaunchStep::ShowUpdaterWindow
         );
         // Shown once, then the launch waits with it.
-        assert_eq!(launch_step(ms(900), false, true), LaunchStep::Wait);
+        assert_eq!(launch_step4(ms(900), false, true), LaunchStep::Wait);
         // Ready before 300 ms: the main window opens, no updater window ever.
         assert_eq!(
-            launch_step(ms(120), true, false),
+            launch_step4(ms(120), true, false),
             LaunchStep::OpenMainWindow
         );
         // Ready later: the main window opens and the updater window closes.
         assert_eq!(
-            launch_step(ms(4000), true, true),
+            launch_step4(ms(4000), true, true),
             LaunchStep::OpenMainWindow
         );
     }
@@ -569,7 +655,7 @@ mod tests {
 
         let result = work(&feed, &gate, &sender, &Arc::default());
 
-        assert_eq!(result, Ok(()));
+        assert_eq!(result, Ok(None));
         assert_eq!((feed.downloads.get(), feed.applies.get()), (1, 0));
         assert_eq!(reports(&receiver), [Progress::Downloading]);
     }
@@ -581,7 +667,7 @@ mod tests {
         assert!(gate.claim_window());
         let (sender, _receiver) = mpsc::channel();
 
-        assert_eq!(work(&feed, &gate, &sender, &Arc::default()), Ok(()));
+        assert_eq!(work(&feed, &gate, &sender, &Arc::default()), Ok(None));
         assert_eq!((feed.downloads.get(), feed.applies.get()), (1, 0));
     }
 
@@ -595,7 +681,7 @@ mod tests {
         };
         assert_eq!(
             work(&feed, &launch_gate(false), &sender, &Arc::default()),
-            Ok(())
+            Ok(None)
         );
         assert_eq!((feed.downloads.get(), feed.applies.get()), (0, 0));
         assert_eq!(reports(&receiver), []);

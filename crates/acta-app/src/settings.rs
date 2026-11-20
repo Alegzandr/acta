@@ -44,6 +44,23 @@ pub fn init(cx: &mut App) {
     cx.on_action(|_: &ThemeDark, cx| set_theme(ThemeSetting::Dark, cx));
     cx.on_action(|_: &LanguageEnglish, cx| set_language(Locale::En, cx));
     cx.on_action(|_: &LanguageFrench, cx| set_language(Locale::Fr, cx));
+    // GPUI gives quit handlers 200 ms and then ends the process (on macOS
+    // without dropping globals), so the last change is written here, on
+    // this thread; it is a few bytes.
+    cx.on_app_quit(|cx| {
+        flush(cx);
+        async {}
+    })
+    .detach();
+}
+
+/// Write any change not yet on disk, now, on the calling thread. Used at
+/// quit and before an update restarts the app.
+pub fn flush(cx: &mut App) {
+    if let Some(settings) = cx.try_global::<Settings>() {
+        let current = settings.current.clone();
+        cx.global_mut::<Settings>().writer.flush(&current);
+    }
 }
 
 pub fn current(cx: &App) -> &Preferences {

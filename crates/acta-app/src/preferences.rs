@@ -9,13 +9,16 @@
 //! the kind of error, never its text. Writes replace the file atomically
 //! (temporary file in the same directory, then rename) on a writer thread
 //! of their own, so the UI thread never waits on the disk and a later
-//! change is never overwritten by an earlier one.
+//! change is never overwritten by an earlier one. At quit, and before an
+//! update restarts the app, [`Writer::flush`] writes what is pending on the
+//! calling thread, since the process may end before the thread runs.
 
 use std::fs;
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Sender};
-use std::thread::{self, JoinHandle};
+use std::sync::{Arc, Mutex};
+use std::thread;
 
 use serde::{Deserialize, Serialize};
 
@@ -155,14 +158,41 @@ pub fn load_from(path: &Path) -> Result<Preferences, LoadError> {
 
 /// Read this user's preferences, falling back to the defaults. Called once
 /// at launch, before any window exists: the file is a few bytes.
+///
+/// A file this build cannot use (malformed, or written by another schema
+/// version) is left in place and the defaults are used; the next change of
+/// a setting replaces it with a version-1 file. A newer Acta that finds it
+/// then reads version 1, which every later version must accept.
 pub fn load() -> Preferences {
     let Some(path) = path() else {
         return Preferences::default();
     };
+    remove_stale_temporaries(&path);
     load_from(&path).unwrap_or_else(|err| {
-        crate::log::line(&format!("preferences: not used, defaults instead: {err:?}"));
+        crate::log::line(&format!(
+            "preferences: not used, defaults instead (the next change replaces the file): {err:?}"
+        ));
         Preferences::default()
     })
+}
+
+/// Delete `preferences.json.<pid>.tmp` files a crash left between writing
+/// and renaming. Errors are ignored: a leftover costs a few bytes.
+fn remove_stale_temporaries(path: &Path) {
+    let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
+        return;
+    };
+    let prefix = format!("{}.", name.to_string_lossy());
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let file = entry.file_name();
+        let file = file.to_string_lossy();
+        if file.starts_with(&prefix) && file.ends_with(".tmp") {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
 }
 
 /// Replace the file at `path` with `prefs`: write a temporary file next to
@@ -186,65 +216,91 @@ pub fn save_to(path: &Path, prefs: &Preferences) -> io::Result<()> {
     result
 }
 
-/// Hands preferences to a writer thread; the latest one queued wins.
+/// Writes `prefs` as change number `seq` unless a later change is already on
+/// disk. The lock also serializes the writer thread and [`Writer::flush`].
+fn write_if_newer(path: &Path, written: &Mutex<u64>, seq: u64, prefs: &Preferences) {
+    let mut last = written.lock().unwrap_or_else(|poison| poison.into_inner());
+    if seq <= *last {
+        return;
+    }
+    match save_to(path, prefs) {
+        Ok(()) => *last = seq,
+        Err(err) => crate::log::line(&format!("preferences: could not save: {:?}", err.kind())),
+    }
+}
+
+/// Saves preferences off the UI thread. Every change gets a number; the
+/// newest one wins, whether the writer thread or [`Writer::flush`] writes it.
 pub struct Writer {
-    sender: Option<Sender<Preferences>>,
-    thread: Option<JoinHandle<()>>,
+    path: Option<PathBuf>,
+    sender: Option<Sender<(u64, Preferences)>>,
+    seq: u64,
+    written: Arc<Mutex<u64>>,
 }
 
 impl Writer {
     /// A writer for `path`. `None` writes nothing (no data directory).
     pub fn new(path: Option<PathBuf>) -> Self {
-        let Some(path) = path else {
-            return Self::none();
-        };
-        let (sender, receiver) = mpsc::channel::<Preferences>();
-        let spawned = thread::Builder::new()
-            .name("acta-preferences".into())
-            .spawn(move || {
-                while let Ok(mut prefs) = receiver.recv() {
-                    // Only the newest of a burst of changes is written.
-                    while let Ok(newer) = receiver.try_recv() {
-                        prefs = newer;
+        let written = Arc::new(Mutex::new(0));
+        let sender = path.clone().and_then(|path| {
+            let (sender, receiver) = mpsc::channel::<(u64, Preferences)>();
+            let written = Arc::clone(&written);
+            let spawned = thread::Builder::new()
+                .name("acta-preferences".into())
+                .spawn(move || {
+                    while let Ok(mut latest) = receiver.recv() {
+                        // Only the newest of a burst of changes is written.
+                        while let Ok(newer) = receiver.try_recv() {
+                            latest = newer;
+                        }
+                        write_if_newer(&path, &written, latest.0, &latest.1);
                     }
-                    if let Err(err) = save_to(&path, &prefs) {
-                        crate::log::line(&format!("preferences: could not save: {:?}", err.kind()));
-                    }
+                });
+            match spawned {
+                Ok(_) => Some(sender),
+                Err(err) => {
+                    crate::log::line(&format!(
+                        "preferences: no writer thread, saving on quit only: {:?}",
+                        err.kind()
+                    ));
+                    None
                 }
-            });
-        match spawned {
-            Ok(thread) => Self {
-                sender: Some(sender),
-                thread: Some(thread),
-            },
-            Err(err) => {
-                crate::log::line(&format!("preferences: no writer thread: {:?}", err.kind()));
-                Self::none()
             }
-        }
-    }
-
-    fn none() -> Self {
+        });
         Self {
-            sender: None,
-            thread: None,
+            path,
+            sender,
+            seq: 0,
+            written,
         }
     }
 
-    pub fn save(&self, prefs: Preferences) {
+    /// Queue `prefs` for the writer thread.
+    pub fn save(&mut self, prefs: Preferences) {
+        self.seq += 1;
         if let Some(sender) = &self.sender {
-            let _ = sender.send(prefs);
+            let _ = sender.send((self.seq, prefs));
         }
     }
-}
 
-impl Drop for Writer {
-    /// Write what is still queued before the writer goes away.
-    fn drop(&mut self) {
-        self.sender = None;
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
+    /// Write `prefs` now, on the calling thread: at quit, and before an
+    /// update restarts the app, when the writer thread may be killed with
+    /// the process before it runs. Anything still queued is older and is
+    /// then skipped.
+    pub fn flush(&mut self, prefs: &Preferences) {
+        let Some(path) = &self.path else {
+            return;
+        };
+        let on_disk = *self
+            .written
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        if on_disk == self.seq {
+            // Every change is on disk already.
+            return;
         }
+        self.seq += 1;
+        write_if_newer(path, &self.written, self.seq, prefs);
     }
 }
 
@@ -331,17 +387,63 @@ mod tests {
     }
 
     #[test]
-    fn the_writer_keeps_the_last_change() {
+    fn a_flush_writes_the_last_change_now_and_queued_ones_never_overwrite_it() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join(FILE_NAME);
-        let writer = Writer::new(Some(path.clone()));
+        let mut writer = Writer::new(Some(path.clone()));
+        let prefs = |theme| Preferences {
+            theme,
+            ..Preferences::default()
+        };
         for theme in [ThemeSetting::Dark, ThemeSetting::Dark, ThemeSetting::Light] {
-            writer.save(Preferences {
-                theme,
-                ..Preferences::default()
-            });
+            writer.save(prefs(theme));
         }
-        drop(writer);
+        // The quit path: no Drop, no waiting for the thread.
+        writer.flush(&prefs(ThemeSetting::Light));
         assert_eq!(load_from(&path).unwrap().theme, ThemeSetting::Light);
+        // Whatever the thread still had queued is older and is skipped.
+        thread::sleep(std::time::Duration::from_millis(100));
+        assert_eq!(load_from(&path).unwrap().theme, ThemeSetting::Light);
+    }
+
+    #[test]
+    fn a_flush_without_changes_writes_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join(FILE_NAME);
+        let mut writer = Writer::new(Some(path.clone()));
+        writer.flush(&Preferences::default());
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn the_writer_thread_saves_the_newest_change() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join(FILE_NAME);
+        let mut writer = Writer::new(Some(path.clone()));
+        writer.save(Preferences {
+            language: Locale::Fr,
+            ..Preferences::default()
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while load_from(&path).map(|p| p.language) != Ok(Locale::Fr) {
+            assert!(std::time::Instant::now() < deadline, "never written");
+            thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn stale_temporary_files_are_removed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join(FILE_NAME);
+        fs::write(tmp.path().join("preferences.json.4242.tmp"), "{").unwrap();
+        fs::write(tmp.path().join("notes.tmp"), "kept").unwrap();
+        fs::write(&path, "{\"version\": 1}").unwrap();
+        remove_stale_temporaries(&path);
+        let mut names: Vec<_> = fs::read_dir(tmp.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect();
+        names.sort();
+        assert_eq!(names, ["notes.tmp", FILE_NAME]);
     }
 }

@@ -8,14 +8,14 @@ use std::sync::Arc;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     App, Bounds, Context, InteractiveElement, IntoElement, MouseButton, ParentElement, Render,
-    Styled, Window, WindowBounds, WindowControlArea, WindowDecorations, WindowOptions, div, img,
-    px, relative, size,
+    Styled, Subscription, Window, WindowBounds, WindowControlArea, WindowDecorations,
+    WindowOptions, div, img, px, relative, size,
 };
 
 use crate::i18n::{Key, percent, text};
 use crate::icons::APP_MARK;
 use crate::settings;
-use crate::theme::{RADIUS_LG, RADIUS_SM, Tokens};
+use crate::theme::{self, RADIUS_LG, RADIUS_SM, Tokens};
 use crate::type_scale;
 use crate::update::{LaunchState, Status};
 
@@ -23,11 +23,21 @@ pub const SIZE: (f32, f32) = (360., 132.);
 
 pub struct UpdaterWindow {
     state: Arc<LaunchState>,
+    _appearance: Subscription,
 }
 
 impl UpdaterWindow {
-    pub fn new(state: Arc<LaunchState>) -> Self {
-        Self { state }
+    pub fn new(state: Arc<LaunchState>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        // In the theme of the preferences file, System following the OS
+        // (DESIGN.md 5), also when the OS answered before this window.
+        let appearance = cx.observe_window_appearance(window, |_, window, cx| {
+            theme::os_appearance_changed(window.appearance(), cx);
+        });
+        theme::os_appearance_changed(window.appearance(), cx);
+        Self {
+            state,
+            _appearance: appearance,
+        }
     }
 }
 
