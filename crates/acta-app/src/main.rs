@@ -7,10 +7,6 @@ mod cli_export;
 mod desktop_entry;
 mod first_run;
 mod fonts;
-#[allow(
-    dead_code,
-    reason = "the whole catalogue of DESIGN.md 10.4 is loaded now; screens reference keys as they arrive"
-)]
 mod i18n;
 mod icons;
 mod log;

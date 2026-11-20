@@ -8,8 +8,12 @@
 
 use super::{Arg, Key, Locale, tr};
 
-/// A local date and time, to the minute.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+/// A moment: its local date and time (what is shown, and what the day
+/// bands count in) and the instant itself (what the minute and hour bands
+/// count in, so a change of UTC offset, as at a DST switch, does not move
+/// them). A date out of range (month 0 or 13) never panics; it shows
+/// clamped.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LocalTime {
     pub year: i32,
     /// 1 to 12.
@@ -19,18 +23,31 @@ pub struct LocalTime {
     pub hour: u8,
     pub minute: u8,
     pub second: u8,
+    /// Seconds since the Unix epoch.
+    pub unix: i64,
 }
 
 impl LocalTime {
-    pub const fn new(year: i32, month: u8, day: u8, hour: u8, minute: u8) -> Self {
+    /// A moment at UTC+0, to the second.
+    pub const fn at(year: i32, month: u8, day: u8, hour: u8, minute: u8, second: u8) -> Self {
+        let unix = days_from_civil(year, month, day) * 86_400
+            + hour as i64 * 3600
+            + minute as i64 * 60
+            + second as i64;
         Self {
             year,
             month,
             day,
             hour,
             minute,
-            second: 0,
+            second,
+            unix,
         }
+    }
+
+    /// A moment at UTC+0, to the minute.
+    pub const fn new(year: i32, month: u8, day: u8, hour: u8, minute: u8) -> Self {
+        Self::at(year, month, day, hour, minute, 0)
     }
 
     /// From seconds since the Unix epoch and the local offset from UTC.
@@ -46,21 +63,13 @@ impl LocalTime {
             hour: (of_day / 3600) as u8,
             minute: (of_day / 60 % 60) as u8,
             second: (of_day % 60) as u8,
+            unix: seconds,
         }
     }
 
-    /// Days since 1970-01-01 of this date.
+    /// Days since 1970-01-01 of the local date.
     fn day_number(self) -> i64 {
         days_from_civil(self.year, self.month, self.day)
-    }
-
-    /// Seconds since 1970-01-01 00:00 of this wall-clock time, as if it were
-    /// UTC. Only differences between two local times are meaningful.
-    fn wall_seconds(self) -> i64 {
-        self.day_number() * 86_400
-            + self.hour as i64 * 3600
-            + self.minute as i64 * 60
-            + self.second as i64
     }
 
     /// 0 is Monday, 6 is Sunday.
@@ -71,8 +80,8 @@ impl LocalTime {
 }
 
 /// Howard Hinnant's `days_from_civil`.
-fn days_from_civil(year: i32, month: u8, day: u8) -> i64 {
-    let y = year as i64 - i64::from(month <= 2);
+const fn days_from_civil(year: i32, month: u8, day: u8) -> i64 {
+    let y = year as i64 - (month <= 2) as i64;
     let era = y.div_euclid(400);
     let yoe = y - era * 400;
     let m = month as i64;
@@ -168,8 +177,13 @@ fn day_of_month(locale: Locale, day: u8) -> String {
     }
 }
 
+/// 0 to 11, for a month that may be out of range.
+fn month_index(month: u8) -> usize {
+    (month as usize).clamp(1, 12) - 1
+}
+
 fn month_short(locale: Locale, month: u8) -> &'static str {
-    let i = (month as usize).clamp(1, 12) - 1;
+    let i = month_index(month);
     match locale {
         Locale::En => MONTHS_EN[i],
         Locale::Fr => MONTHS_FR[i],
@@ -233,7 +247,7 @@ pub fn full(locale: Locale, at: LocalTime) -> String {
         "{} {} {} {}",
         weekday[at.weekday()],
         day_of_month(locale, at.day),
-        month[at.month as usize - 1],
+        month[month_index(at.month)],
         at.year
     );
     let time = clock(at);
@@ -257,7 +271,7 @@ enum Age {
 }
 
 fn age(then: LocalTime, now: LocalTime) -> Age {
-    let seconds = now.wall_seconds() - then.wall_seconds();
+    let seconds = now.unix - then.unix;
     // A moment in the future (a clock that moved back) reads as now.
     if seconds < 60 {
         return Age::Now;
@@ -356,23 +370,17 @@ mod tests {
             LocalTime::from_unix(1_795_132_800, 0),
             LocalTime::new(2026, 11, 20, 0, 0)
         );
-        // An hour east of UTC moves the wall clock forward.
-        assert_eq!(
-            LocalTime::from_unix(1_795_132_800 - 1, 3600),
-            LocalTime {
-                second: 59,
-                ..LocalTime::new(2026, 11, 20, 0, 59)
-            }
-        );
+        // An hour east of UTC moves the wall clock forward, not the instant.
+        let east = LocalTime::from_unix(1_795_132_800 - 1, 3600);
+        let wall = (east.day, east.hour, east.minute, east.second);
+        assert_eq!(wall, (20, 0, 59, 59));
+        assert_eq!(east.unix, 1_795_132_799);
         assert_eq!(NOW.weekday(), 4, "20 Nov 2026 is a Friday");
     }
 
     #[test]
     fn under_a_minute() {
-        let then = LocalTime {
-            second: 30,
-            ..at(11, 20, 14, 59)
-        };
+        let then = LocalTime::at(2026, 11, 20, 14, 59, 30);
         assert_eq!(
             both(then),
             [
@@ -475,6 +483,49 @@ mod tests {
         assert_eq!(long(EN, then, NOW), "1 Nov 2026");
         assert_eq!(compact(EN, then, NOW), "1 Nov");
         assert_eq!(date(FR, then), "1er nov. 2026");
+    }
+
+    #[test]
+    fn minutes_and_hours_count_real_time_across_a_dst_change() {
+        // 29 Mar 2026: Paris moves from UTC+1 to UTC+2 at 02:00 local.
+        let then = LocalTime::from_unix(1_774_742_400, 3600); // 01:00 local
+        let now = LocalTime::from_unix(1_774_742_400 + 90 * 60, 7200); // 03:30 local
+        assert_eq!((then.hour, now.hour, now.minute), (1, 3, 30));
+        // 2 h 30 on the wall clock, 1 h 30 in fact.
+        assert_eq!(long(EN, then, now), "1 h ago");
+        let now = LocalTime::from_unix(1_774_742_400 + 50 * 60, 7200); // 02:50 local
+        assert_eq!(long(EN, then, now), "50 min ago");
+    }
+
+    #[test]
+    fn day_bands_count_local_dates_across_midnight_and_years() {
+        // Just after midnight on New Year's Day.
+        let now = LocalTime::new(2027, 1, 1, 0, 30);
+        let then = LocalTime::new(2026, 12, 31, 22, 0);
+        assert_eq!(long(EN, then, now), "yesterday 22:00");
+        assert_eq!(long(FR, then, now), "hier \u{e0} 22:00");
+        // Four days back across the year: the weekday (Tue 29 Dec 2026).
+        let now = LocalTime::new(2027, 1, 2, 12, 0);
+        let then = LocalTime::new(2026, 12, 29, 9, 15);
+        assert_eq!(long(EN, then, now), "Tue 09:15");
+        assert_eq!(compact(FR, then, now), "Mar.");
+        // Older and in another year.
+        let now = LocalTime::new(2027, 1, 10, 12, 0);
+        let then = LocalTime::new(2026, 12, 20, 9, 0);
+        assert_eq!(compact(EN, then, now), "Dec 2026");
+        assert_eq!(compact(FR, then, now), "D\u{e9}c. 2026");
+        assert_eq!(long(EN, then, now), "20 Dec 2026");
+        // Midnight this morning is earlier today.
+        assert_eq!(long(EN, at(11, 20, 0, 0), NOW), "15 h ago");
+    }
+
+    #[test]
+    fn an_out_of_range_month_does_not_panic() {
+        for month in [0, 13, 255] {
+            let then = LocalTime::new(2026, month, 1, 9, 0);
+            let _ = (long(FR, then, NOW), compact(EN, then, NOW), full(FR, then));
+            let _ = (date(EN, then), datetime(FR, then));
+        }
     }
 
     #[test]

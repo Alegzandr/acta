@@ -9,6 +9,10 @@
 //! Nothing here depends on GPUI; what the user and Claude Code wrote is
 //! passed in as placeholder values and never translated.
 
+// No screen shows a time, a count or a multi-key hint yet. These parts are
+// loaded and tested now so that the screens of M2 only reference them; the
+// allowances go as each gets its first caller.
+#[allow(dead_code, reason = "the time forms of DESIGN.md 10.2, used from M2")]
 pub mod time;
 
 use std::fmt::Write as _;
@@ -76,15 +80,21 @@ macro_rules! catalogue {
     ($( $variant:ident $id:literal { en: $en:expr, fr: $fr:expr, } )*) => {
         /// A string of the catalogue (DESIGN.md 10.4), named as there.
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+        #[allow(
+            dead_code,
+            reason = "the whole catalogue of DESIGN.md 10.4 is loaded now; screens reference keys as they arrive"
+        )]
         pub enum Key {
             $( $variant, )*
         }
 
         impl Key {
             /// Every key, in catalogue order.
+            #[allow(dead_code, reason = "read by the tests against DESIGN.md")]
             pub const ALL: &'static [Key] = &[ $( Key::$variant, )* ];
 
             /// The key as DESIGN.md writes it, e.g. `common.cancel`.
+            #[allow(dead_code, reason = "read by the tests against DESIGN.md")]
             pub fn id(self) -> &'static str {
                 match self {
                     $( Key::$variant => $id, )*
@@ -111,6 +121,7 @@ pub enum Arg<'a> {
     Text(&'a str),
     /// A count: formatted for the locale, and it chooses the plural form
     /// when the message is chosen by this placeholder.
+    #[allow(dead_code, reason = "no screen shows a count yet")]
     Count(u64),
 }
 
@@ -198,6 +209,7 @@ pub fn percent(locale: Locale, n: u64) -> String {
     }
 }
 
+#[allow(dead_code, reason = "no screen shows a tree count yet")]
 /// A count where space is short (tree, tabs): "99+" above 99 (DESIGN.md 7).
 pub fn short_count(n: u64) -> String {
     if n > 99 { "99+".into() } else { n.to_string() }
@@ -206,6 +218,7 @@ pub fn short_count(n: u64) -> String {
 /// A key of a shortcut hint, named for the platform and the language
 /// (DESIGN.md 5 kbd, 10.1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(dead_code, reason = "only Mod is shown so far, in the Search hint")]
 pub enum KeyName {
     Mod,
     Ctrl,
@@ -265,6 +278,99 @@ mod tests {
             Msg::Text(text) => vec![text],
             Msg::Plural { one, other, .. } => vec![one, other],
         }
+    }
+
+    /// A cell of DESIGN.md 10.4 as the catalogue must hold it: notes for
+    /// the reader removed, the typography of 10.1 applied, "one · other"
+    /// split into a plural.
+    fn expected(key: &str, cell: &str, french: bool) -> Vec<String> {
+        // Parenthesised notes: platform marks, references to other keys,
+        // and the few notes in words.
+        const WORD_NOTES: [&str; 5] = [
+            "full weekday name",
+            "for the Kind filter",
+            "no-break space before the dash",
+            "the two counts are",
+            "form chosen by",
+        ];
+        let mut text = String::new();
+        let mut rest = cell;
+        while let Some(open) = rest.find(" (") {
+            let after = &rest[open + 2..];
+            let close = after.find(')').map(|i| i + 1);
+            let note = close.map(|close| &after[..close - 1]);
+            let is_note = note.is_some_and(|note| {
+                matches!(note, "W" | "M" | "L")
+                    || note.starts_with('`')
+                    || WORD_NOTES.iter().any(|word| note.starts_with(word))
+            });
+            match (is_note, close) {
+                (true, Some(close)) => {
+                    text.push_str(&rest[..open]);
+                    rest = &after[close..];
+                }
+                _ => {
+                    text.push_str(&rest[..open + 2]);
+                    rest = after;
+                }
+            }
+        }
+        text.push_str(rest);
+
+        let typeset = |part: &str| {
+            let mut part = part.replace("...", "\u{2026}").replace('\'', "\u{2019}");
+            if french {
+                for mark in [";", ":", "!", "?", "\u{bb}"] {
+                    part = part.replace(&format!(" {mark}"), &format!("\u{202f}{mark}"));
+                }
+                part = part
+                    .replace("\u{ab} ", "\u{ab}\u{202f}")
+                    .replace("400 Mo", "400\u{202f}Mo")
+                    .replace(" \u{2013} ", "\u{a0}\u{2013} ");
+            }
+            part
+        };
+        let parts: Vec<&str> = text.split(" \u{b7} ").collect();
+        if parts.len() == 2 && !matches!(key, "kb.scope" | "import.meta") {
+            parts.into_iter().map(typeset).collect()
+        } else {
+            vec![typeset(&text)]
+        }
+    }
+
+    #[test]
+    fn every_text_matches_design_md() {
+        const DESIGN_MD: &str = include_str!("../../../../DESIGN.md");
+        let section = DESIGN_MD
+            .split("### 10.4 Copy catalogue")
+            .nth(1)
+            .expect("DESIGN.md has 10.4");
+        let rows = section
+            .lines()
+            .take_while(|line| !line.starts_with("Strings that exist"))
+            .filter(|line| line.starts_with("| `"));
+        let mut checked = 0;
+        for line in rows {
+            let cells: Vec<&str> = line.trim().trim_matches('|').split(" | ").collect();
+            let id = cells[0].trim().trim_matches('`');
+            let key = Key::ALL
+                .iter()
+                .find(|key| key.id() == id)
+                .unwrap_or_else(|| panic!("{id} is not in the catalogue"));
+            let (en, fr) = key.messages();
+            assert_eq!(
+                all_texts(en),
+                expected(id, cells[1].trim(), false),
+                "{id} en"
+            );
+            assert_eq!(
+                all_texts(fr),
+                expected(id, cells[2].trim(), true),
+                "{id} fr"
+            );
+            checked += 1;
+        }
+        assert_eq!(checked, Key::ALL.len());
     }
 
     #[test]
