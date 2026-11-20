@@ -169,25 +169,35 @@ First push (`ci.yml`):
 First dry run (`release.yml` on `main`):
 
 - [ ] The .NET SDK is preinstalled on the Windows, macOS and Ubuntu runners and
-      `dotnet tool install vpk` works on each.
-- [ ] `x86_64-apple-darwin` cross-compiles on the Apple silicon runner (otherwise
-      `macos-26-intel`).
+      `dotnet tool install vpk` works on each. Seen on Windows and Ubuntu in the first
+      dry run (run 44819612791). On macOS the tool installed but could not start: the
+      runner sets no `DOTNET_ROOT` and keeps .NET outside the default location. The
+      install step now sets it and starts vpk once; confirm on the next dry run.
+- [x] `x86_64-apple-darwin` cross-compiles on the Apple silicon runner (first dry
+      run: about 2 minutes).
 - [ ] `vpk pack --signAppIdentity -` works with no certificate, and the bundle inside
       the portable zip passes `codesign --verify` (the script fails otherwise).
-- [ ] vpk builds the AppImage with `mksquashfs`, and it stays up for 15 seconds under
-      Xvfb without FUSE.
+- [x] vpk builds the AppImage with `mksquashfs`, and it stays up for 15 seconds under
+      Xvfb without FUSE (first dry run).
 - [ ] Asset names on macOS and Linux are the ones the install scripts download:
       `Acta-osx-arm64-Portable.zip`, `Acta-osx-x64-Portable.zip`,
       `Acta-linux-x64.AppImage`; `assets.<channel>.json` lists `RelativeFileName` on
       every system.
-- [ ] `vpk download github` with no published release fails softly and the build
-      continues without a delta.
+- [x] `vpk download github` with no published release fails softly and the build
+      continues without a delta. Seen on Windows and Linux: vpk logs "No releases
+      found" and "No full / applicable release was found to download. Aborting.", the
+      script prints "no previous <channel> release downloaded; no delta package will
+      be built". This is expected until a release exists, including on the `v0.1.0`
+      tag run; from the second release on, the same warning means something is wrong.
 - [ ] `collect` produces `SHA256SUMS` with no name collision between channels.
 - [ ] Every package contains the `licenses` directory: next to `Acta.exe` after a
       Windows install, in `Acta.app/Contents/Resources`, and inside the AppImage
       (`--appimage-extract`).
-- [ ] A release build with no cache fits in the 60 minute job timeout on every runner
-      (a tag build is always uncached; a dry run on a new cache key shows the time).
+- [x] A release build with no cache fits in the 60 minute job timeout on every runner
+      (a tag build is always uncached). First dry run, no cache found on any job:
+      `cargo build --release` took 7.5 min on Linux, 7.6 min on Windows, 6.2 min for
+      osx-arm64 and 2.1 min for osx-x64; the whole Linux and Windows jobs took 9.3 and
+      10 min. The macOS jobs stopped at packaging, which takes seconds elsewhere.
 
 First tag (`v0.1.0`):
 

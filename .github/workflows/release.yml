@@ -170,7 +170,32 @@ jobs:
         run: |
           dotnet tool install --global vpk --version $env:VPK_VERSION
           if ($LASTEXITCODE -ne 0) { exit 1 }
-          Join-Path $HOME '.dotnet/tools' | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+          $tools = Join-Path $HOME '.dotnet/tools'
+          $tools | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+          # vpk is a framework-dependent net10.0 tool. Its launcher looks for the runtime
+          # in DOTNET_ROOT, then in the system-wide default location; the macOS runners
+          # keep .NET elsewhere and set no DOTNET_ROOT, so `dotnet` works and vpk does
+          # not. Point DOTNET_ROOT at the install that owns the .NET 10 runtime.
+          $runtime = dotnet --list-runtimes |
+            Where-Object { $_ -match '^Microsoft\.NETCore\.App 10\.\S+ \[.+\]$' } |
+            Select-Object -Last 1
+          if (-not $runtime) {
+            dotnet --list-runtimes
+            Write-Output "::error::no .NET 10 runtime on this runner; vpk $env:VPK_VERSION needs one (add actions/setup-dotnet with dotnet-version 10.0.x)"
+            exit 1
+          }
+          $shared = $runtime -replace '^.*\[(.+)\]$', '$1'
+          $root = Split-Path (Split-Path $shared)
+          Write-Output "DOTNET_ROOT=$root ($runtime)"
+          "DOTNET_ROOT=$root" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          # Prove that vpk starts, here and not in the middle of packaging.
+          $env:DOTNET_ROOT = $root
+          $env:PATH = $tools + [IO.Path]::PathSeparator + $env:PATH
+          vpk --help | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            Write-Output "::error::vpk is installed but does not start"
+            exit 1
+          }
       - name: Package (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -355,7 +380,32 @@ jobs:
         run: |
           dotnet tool install --global vpk --version $env:VPK_VERSION
           if ($LASTEXITCODE -ne 0) { exit 1 }
-          Join-Path $HOME '.dotnet/tools' | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+          $tools = Join-Path $HOME '.dotnet/tools'
+          $tools | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+          # vpk is a framework-dependent net10.0 tool. Its launcher looks for the runtime
+          # in DOTNET_ROOT, then in the system-wide default location; the macOS runners
+          # keep .NET elsewhere and set no DOTNET_ROOT, so `dotnet` works and vpk does
+          # not. Point DOTNET_ROOT at the install that owns the .NET 10 runtime.
+          $runtime = dotnet --list-runtimes |
+            Where-Object { $_ -match '^Microsoft\.NETCore\.App 10\.\S+ \[.+\]$' } |
+            Select-Object -Last 1
+          if (-not $runtime) {
+            dotnet --list-runtimes
+            Write-Output "::error::no .NET 10 runtime on this runner; vpk $env:VPK_VERSION needs one (add actions/setup-dotnet with dotnet-version 10.0.x)"
+            exit 1
+          }
+          $shared = $runtime -replace '^.*\[(.+)\]$', '$1'
+          $root = Split-Path (Split-Path $shared)
+          Write-Output "DOTNET_ROOT=$root ($runtime)"
+          "DOTNET_ROOT=$root" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          # Prove that vpk starts, here and not in the middle of packaging.
+          $env:DOTNET_ROOT = $root
+          $env:PATH = $tools + [IO.Path]::PathSeparator + $env:PATH
+          vpk --help | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            Write-Output "::error::vpk is installed but does not start"
+            exit 1
+          }
       - name: Upload every channel to one draft release
         env:
           VPK_TOKEN: ${{ github.token }}

@@ -62,6 +62,10 @@ if (-not (Test-Path (Join-Path $licenses 'THIRD-PARTY-RUST.txt') -PathType Leaf)
 if (-not (Get-Command vpk -ErrorAction SilentlyContinue)) {
     throw 'vpk not found; run: dotnet tool install -g vpk --version 1.2.161'
 }
+# A vpk that cannot start (no .NET 10 runtime where its launcher looks: set DOTNET_ROOT)
+# must stop here, not be mistaken below for "no previous release".
+vpk --help | Out-Null
+if ($LASTEXITCODE -ne 0) { throw 'vpk is installed but does not start; see its message above' }
 
 Write-Output "Packaging $PackId $Version for $Channel from $BinDir into $OutputDir"
 
