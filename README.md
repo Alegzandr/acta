@@ -58,7 +58,7 @@ Not verified yet, because it needs a first real release and machines we have not
 on:
 
 - Everything on macOS and Linux: packaging, the ad-hoc signature, `install.sh`, first
-  launch, self-update.
+  launch, the Linux desktop entry and icon, self-update.
 - Both install scripts against a real GitHub release, and updates fetched from GitHub
   Releases rather than from a local feed.
 - What the operating systems show for browser downloads (SmartScreen, Smart App
@@ -129,6 +129,12 @@ gh attestation verify Acta-linux-x64.AppImage --repo Alegzandr/acta
 
 On Windows: `(Get-FileHash Acta-win-x64-Setup.exe).Hash` and compare it with the line in
 `SHA256SUMS`. The install scripts do the checksum comparison themselves.
+
+## Third-party licences
+
+Acta is built from open-source components: the Rust crates it links, its fonts, the
+Lucide icons and the Velopack updater. Their licence texts ship inside every package,
+in a `licenses` directory (`Acta.app/Contents/Resources/licenses` on macOS).
 
 ## Build from source
 

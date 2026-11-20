@@ -22,21 +22,28 @@ install scripts ignore.
 
 1. `check`: fails unless the tagged commit is an ancestor of `origin/main`, unless the
    tag is `v` + the workspace version, and unless the `velopack` crate in `Cargo.lock`
-   has the same version as the `vpk` tool the workflow installs.
+   has the same version as the `vpk` tool the workflow installs. It then collects the
+   third-party licence notices with `scripts/licenses.sh`, which fails if a dependency
+   has a licence that `about.toml` does not accept.
 2. `build`, one job per channel (`win-x64`, `osx-arm64`, `osx-x64`, `linux-x64`):
    `cargo build --release --locked`, then `scripts/package.ps1` or `scripts/package.sh`,
-   which stage `Acta` and `acta-cli` (on macOS inside an ad-hoc signed `Acta.app`),
-   download the previous release of the channel and run `vpk pack`. That produces the
+   which stage `Acta`, `acta-cli` and the `licenses` directory (on macOS inside an
+   ad-hoc signed `Acta.app`), download the previous release of the channel and run `vpk pack`. That produces the
    installer or portable package, the full update package and a delta from the previous
    version. A tag build restores no cargo cache: everything that ships is compiled in
    that run.
-3. `collect`, read-only: writes `SHA256SUMS` over the packages of the four channels and
-   the two install scripts.
+3. `collect`, read-only: writes `SHA256SUMS` over the packages and update feeds of the
+   four channels and the two install scripts.
 4. `publish`, the only job with write permissions, in the `release` environment, with no
-   checkout: checks every file against `SHA256SUMS` again, attests build provenance,
+   checkout: checks that `SHA256SUMS` is the file `collect` wrote and every file against
+   it, attests build provenance,
    uploads the four channels to one draft release with `vpk upload github --merge`, adds
    `SHA256SUMS`, `install.sh` and `install.ps1`, checks that the draft holds exactly the
    expected assets, then publishes it as the latest release.
+
+Splitting `collect` from `publish` keeps the write token away from everything but the
+upload. It does not make the content more trustworthy: a release contains what the
+build jobs produced from the tagged commit.
 
 It uses the workflow's `GITHUB_TOKEN` only. Every action is pinned to a commit SHA
 (ADR 0004). If a run fails before the last step, the release stays a draft, invisible to
@@ -91,13 +98,21 @@ Locally, for the current machine:
 
 ```sh
 cargo build --release --locked
+scripts/licenses.sh             # needs cargo-about 0.9.3; on Windows from Git Bash
 scripts/package.sh              # macOS, Linux; needs vpk 1.2.161, Linux also squashfs-tools
 scripts\package.ps1             # Windows
 ```
 
 The result is in `releases/<channel>/`. `vpk` is a .NET tool:
 `dotnet tool install -g vpk --version 1.2.161`. Its version must always equal the
-`velopack` crate version; bump them together.
+`velopack` crate version; bump them together. `cargo-about` is installed with
+`cargo install cargo-about --locked --version 0.9.3`; its version is pinned in
+`scripts/licenses.sh` and, with the checksum of the Linux binary, in
+`scripts/ci/install-cargo-about.sh`.
+
+A new dependency under a licence that is not in `about.toml` stops CI. Read the licence;
+if it allows shipping the binary with its notice, add it to `about.toml`, otherwise
+drop the dependency.
 
 ## Verify a release
 
@@ -147,6 +162,8 @@ First push (`ci.yml`):
 - [ ] The GUI stays up for 10 seconds under Xvfb with lavapipe (the step is not
       blocking until it has).
 - [ ] Only `main` saves the cargo cache, and branches restore it.
+- [ ] `scripts/ci/install-cargo-about.sh` installs the pinned binary and
+      `scripts/licenses.sh` passes on the Linux job.
 
 First dry run (`release.yml` on `main`):
 
@@ -165,6 +182,9 @@ First dry run (`release.yml` on `main`):
 - [ ] `vpk download github` with no published release fails softly and the build
       continues without a delta.
 - [ ] `collect` produces `SHA256SUMS` with no name collision between channels.
+- [ ] Every package contains the `licenses` directory: next to `Acta.exe` after a
+      Windows install, in `Acta.app/Contents/Resources`, and inside the AppImage
+      (`--appimage-extract`).
 - [ ] A release build with no cache fits in the 60 minute job timeout on every runner
       (a tag build is always uncached; a dry run on a new cache key shows the time).
 
@@ -177,6 +197,10 @@ First tag (`v0.1.0`):
       and `gh attestation verify` succeeds on a downloaded one.
 - [ ] `vpk upload github --merge` called four times from one job, with no checkout,
       fills a single draft; `--targetCommitish` is accepted for an existing tag.
+- [ ] `publish` receives the digest of `SHA256SUMS` from `collect` and accepts it.
+- [ ] The `releases.<channel>.json` feeds vpk uploads are byte-identical to the ones
+      the build wrote (the check step fails and the release stays a draft otherwise;
+      if vpk rewrites them on upload, take them out of `SHA256SUMS` again).
 - [ ] The draft holds exactly the expected assets (the check step prints the
       difference otherwise). In particular: vpk uploads `Acta-win-x64-Portable.zip`
       and neither `assets.*.json` nor `RELEASES-*`.
@@ -186,7 +210,8 @@ First tag (`v0.1.0`):
 - [ ] `install.ps1` on a clean Windows: no prompt, no elevation, Acta starts, `acta`
       is on the user PATH and the script says so only then.
 - [ ] `install.sh` on macOS arm64 and x64: no Gatekeeper warning, Acta opens. Run it a
-      second time with Acta open: the app quits, is replaced and reopens.
+      second time with Acta open: the app quits, is replaced and reopens (this relies
+      on `ps -o comm=` printing the full path of the executable).
 - [ ] `install.sh` on Linux: the AppImage starts, the desktop entry and icon appear.
 - [ ] A `Setup.exe` downloaded with a browser shows SmartScreen as the README says; a
       zip downloaded with a browser on macOS is blocked as the README says.

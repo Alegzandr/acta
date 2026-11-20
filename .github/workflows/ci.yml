@@ -33,19 +33,23 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Rust toolchain
         run: scripts/ci/setup-rust.sh
       - name: cargo fmt
         run: cargo fmt --all --check
       - name: shellcheck
-        run: shellcheck install.sh scripts/package.sh scripts/ci/*.sh spikes/storage/platform-checks.sh
+        run: shellcheck install.sh scripts/package.sh scripts/licenses.sh scripts/ci/*.sh spikes/storage/platform-checks.sh
       - name: PSScriptAnalyzer
         shell: pwsh
         run: |
           # Write-Host is intended in install.ps1: it talks to the person running it.
           # -Path takes a single string, so each file is analyzed on its own.
+          # ParseError is a severity of its own: without it a script that does not even
+          # parse is only reported on the error stream and the loop collects nothing.
           $issues = foreach ($file in 'install.ps1', 'scripts/package.ps1') {
-            Invoke-ScriptAnalyzer -Path $file -Severity Warning, Error -ExcludeRule PSAvoidUsingWriteHost
+            Invoke-ScriptAnalyzer -Path $file -Severity ParseError, Error, Warning -ExcludeRule PSAvoidUsingWriteHost
           }
           $issues | Format-Table -AutoSize ScriptName, Line, RuleName, Message
           if ($issues) { exit 1 }
@@ -61,6 +65,8 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Linux system packages
         if: runner.os == 'Linux'
         run: scripts/ci/linux-deps.sh --headless
@@ -80,6 +86,13 @@ jobs:
       # release.yml, which also runs as a dry run on main.
       - name: cargo build
         run: cargo build --workspace --locked
+      # Fails when a dependency has a licence about.toml does not accept or a font has
+      # no licence file, long before a release would.
+      - name: Third-party notices (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          scripts/ci/install-cargo-about.sh
+          scripts/licenses.sh
       # No GPU on the runner: Xvfb as the display and Mesa lavapipe as the Vulkan driver.
       # The window has to stay up for 10 seconds (timeout exits with 124).
       # Not blocking until it has proven reliable on real runs.
