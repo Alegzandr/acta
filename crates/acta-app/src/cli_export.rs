@@ -127,6 +127,32 @@ fn write_synced(path: &Path, bytes: &[u8]) -> io::Result<()> {
     file.sync_all()
 }
 
+/// Make a fresh copy of the packaged CLI usable and durable. `fs::copy` keeps
+/// the source's permissions, and a packaged file is often read-only (0555 in
+/// an app bundle or an AppImage mount, the read-only attribute on Windows):
+/// the exported file must stay replaceable by the next export, and flushing
+/// must not need a permission the copy does not have.
+fn settle_copy(copy: &Path) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        // Executable by all, writable by its owner.
+        fs::set_permissions(copy, fs::Permissions::from_mode(0o755))?;
+        // fsync needs no write access on Unix.
+        fs::File::open(copy)?.sync_all()
+    }
+    #[cfg(not(unix))]
+    {
+        let mut permissions = fs::metadata(copy)?.permissions();
+        // On Windows this only clears the read-only attribute.
+        #[allow(clippy::permissions_set_readonly_false)]
+        permissions.set_readonly(false);
+        fs::set_permissions(copy, permissions)?;
+        // FlushFileBuffers needs a handle opened for writing.
+        fs::OpenOptions::new().write(true).open(copy)?.sync_all()
+    }
+}
+
 /// Bring the exported CLI to `version`. `now_ms` is the current time in
 /// milliseconds; it also keeps the temporary names unique.
 pub fn export(layout: &Layout, version: &str, now_ms: u128) -> io::Result<Outcome> {
@@ -155,9 +181,7 @@ pub fn export(layout: &Layout, version: &str, now_ms: u128) -> io::Result<Outcom
     let incoming = layout
         .dir
         .join(format!("{}{INCOMING_TAG}{now_ms}", layout.exe_name));
-    let copied = fs::copy(&layout.source, &incoming)
-        .and_then(|_| fs::OpenOptions::new().write(true).open(&incoming))
-        .and_then(|file| file.sync_all());
+    let copied = fs::copy(&layout.source, &incoming).and_then(|_| settle_copy(&incoming));
     if let Err(err) = copied {
         let _ = fs::remove_file(&incoming);
         return Err(err);
@@ -420,6 +444,59 @@ pub(crate) mod tests {
             fs::read_to_string(layout.dir.join(MARKER)).unwrap(),
             "0.1.0"
         );
+    }
+
+    fn set_readonly(path: &Path, readonly: bool) {
+        let mut permissions = fs::metadata(path).unwrap().permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        permissions.set_readonly(readonly);
+        fs::set_permissions(path, permissions).unwrap();
+    }
+
+    #[test]
+    fn a_read_only_packaged_cli_exports_and_can_be_replaced_later() {
+        let tmp = tempfile::tempdir().unwrap();
+        let layout = layout(tmp.path());
+        fs::write(&layout.source, b"cli 0.1.0").unwrap();
+        set_readonly(&layout.source, true);
+
+        let outcome = export(&layout, "0.1.0", 1).unwrap();
+
+        assert_eq!(outcome.decision, Decision::Export);
+        assert_eq!(fs::read(layout.exported_exe()).unwrap(), b"cli 0.1.0");
+        let exported = fs::metadata(layout.exported_exe()).unwrap().permissions();
+        assert!(!exported.readonly(), "the export must stay replaceable");
+
+        // The next version, again from a read-only package.
+        set_readonly(&layout.source, false);
+        fs::write(&layout.source, b"cli 0.1.1!").unwrap();
+        set_readonly(&layout.source, true);
+        let outcome = export(&layout, "0.1.1", 2).unwrap();
+
+        assert_eq!(outcome.decision, Decision::Export);
+        assert_eq!(outcome.still_locked, 0);
+        assert_eq!(fs::read(layout.exported_exe()).unwrap(), b"cli 0.1.1!");
+        // Let the temporary directory be deleted on every platform.
+        set_readonly(&layout.source, false);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_0555_packaged_cli_is_exported_executable_and_owner_writable() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let layout = layout(tmp.path());
+        fs::write(&layout.source, b"cli 0.1.0").unwrap();
+        fs::set_permissions(&layout.source, fs::Permissions::from_mode(0o555)).unwrap();
+
+        export(&layout, "0.1.0", 1).unwrap();
+
+        let mode = fs::metadata(layout.exported_exe())
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o755);
     }
 
     #[test]

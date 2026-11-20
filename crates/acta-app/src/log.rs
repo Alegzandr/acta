@@ -42,19 +42,32 @@ pub fn rotate() {
 }
 
 /// Open `path` for appending, creating it and its directory when missing.
+/// On Unix the directory is created 0700 and the file is 0600, also when it
+/// already existed with a wider mode.
 fn open(path: &Path) -> io::Result<File> {
-    if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir)?;
-    }
     let mut options = OpenOptions::new();
     options.create(true).append(true);
     #[cfg(unix)]
     {
-        use std::os::unix::fs::OpenOptionsExt;
-        // Applies when the file is created; an existing file keeps its mode.
-        options.mode(0o600);
+        use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
+
+        if let Some(dir) = path.parent() {
+            fs::DirBuilder::new()
+                .recursive(true)
+                .mode(0o700)
+                .create(dir)?;
+        }
+        let file = options.mode(0o600).open(path)?;
+        file.set_permissions(fs::Permissions::from_mode(0o600))?;
+        Ok(file)
     }
-    options.open(path)
+    #[cfg(not(unix))]
+    {
+        if let Some(dir) = path.parent() {
+            fs::create_dir_all(dir)?;
+        }
+        options.open(path)
+    }
 }
 
 pub fn line(message: &str) {
@@ -95,14 +108,22 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn the_log_is_private_to_its_owner() {
+    fn the_log_and_its_directory_are_private_to_their_owner() {
         use std::os::unix::fs::PermissionsExt;
 
+        let mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
         let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("acta.log");
+        let dir = tmp.path().join("state").join("acta");
+        let path = dir.join("acta.log");
+
         drop(open(&path).unwrap());
 
-        let mode = fs::metadata(&path).unwrap().permissions().mode();
-        assert_eq!(mode & 0o777, 0o600);
+        assert_eq!(mode(&path), 0o600);
+        assert_eq!(mode(&dir), 0o700);
+
+        // A log that already exists with a wider mode is narrowed.
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        drop(open(&path).unwrap());
+        assert_eq!(mode(&path), 0o600);
     }
 }

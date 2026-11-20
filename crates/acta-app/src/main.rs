@@ -28,10 +28,7 @@ use shell::Shell;
 
 fn main() {
     log::rotate();
-    // Set by Velopack's updater when it starts the app after applying, or
-    // after failing to apply. `VelopackApp::run` removes it, so read it first.
-    let restarted_by_updater = std::env::var_os("VELOPACK_RESTART").is_some();
-    velopack_bootstrap();
+    let restarted_by_updater = velopack_bootstrap();
 
     // `Some` only when this executable was installed by Velopack. From a
     // build directory (cargo run, CI) nothing below exports, edits the PATH
@@ -55,7 +52,10 @@ fn main() {
                 integrate_with_desktop();
             });
         if let Err(err) = spawned {
-            log::line(&format!("export: could not start the thread: {err}"));
+            log::line(&format!(
+                "export: could not start the thread: {:?}",
+                err.kind()
+            ));
         }
         if !specimen {
             // Returns when the window may open; exits instead if it applies.
@@ -91,7 +91,11 @@ fn exports_cli(os: Os, portable: bool) -> bool {
 /// Must run before anything else: Velopack starts this executable with hook
 /// arguments at install, update and uninstall, and expects it to exit fast.
 /// It also applies an update that a previous run downloaded.
-fn velopack_bootstrap() {
+///
+/// Returns whether Velopack's updater started this launch.
+fn velopack_bootstrap() -> bool {
+    // Before `run`, which removes the variable.
+    let restarted = restarted_by_updater();
     let app = VelopackApp::build();
     // Velopack only has these hooks on Windows. Elsewhere the export is done
     // by the check at every start, and there is no uninstall step to hook.
@@ -110,6 +114,16 @@ fn velopack_bootstrap() {
         });
     let mut app = app;
     app.run();
+    restarted
+}
+
+/// Whether Velopack's updater started this process: it sets
+/// `VELOPACK_RESTART` when it restarts the app after applying an update, and
+/// also after failing to apply one. Only meaningful before
+/// `VelopackApp::run`, which removes the variable; hence private to
+/// [`velopack_bootstrap`].
+fn restarted_by_updater() -> bool {
+    std::env::var_os("VELOPACK_RESTART").is_some()
 }
 
 /// The export as run from a Velopack hook, which has no manager at hand.

@@ -179,6 +179,13 @@ mod registry {
     }
 
     /// `WM_SETTINGCHANGE` for "Environment" to every top-level window.
+    ///
+    /// The timeout is per window, so the total is not strictly bounded: with
+    /// `SMTO_ABORTIFHUNG` a window already known to be hung is skipped at
+    /// once, but each window that is merely slow can take its full 250 ms.
+    /// That is acceptable because this is always the last step (nothing is
+    /// left undone if a hook is cut off here) and the registry value is
+    /// already written: programs started later read it regardless.
     pub(super) fn broadcast() {
         let scope: Vec<u16> = "Environment\0".encode_utf16().collect();
         let mut result = 0usize;

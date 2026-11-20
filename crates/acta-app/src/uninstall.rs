@@ -38,7 +38,7 @@ pub fn run(layout: &crate::cli_export::Layout, path_value: &crate::user_path::Pa
             changed
         }
         Err(err) => {
-            log::line(&format!("uninstall: PATH not cleaned: {err}"));
+            log::line(&format!("uninstall: PATH not cleaned: {:?}", err.kind()));
             false
         }
     };
