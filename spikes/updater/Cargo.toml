@@ -1,0 +1,25 @@
+[package]
+name = "acta-spike"
+version = "0.0.2"
+edition = "2021"
+publish = false
+
+# Standalone: spikes are not part of the Acta workspace.
+[workspace]
+
+[dependencies]
+velopack = "=1.2.161"
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.55"
+
+# GUI executable (Windows subsystem: no console window). Velopack --mainExe.
+[[bin]]
+name = "Acta"
+path = "src/bin/gui.rs"
+
+# Console executable (CLI + MCP stdio). Shipped inside the package, exported
+# by the GUI to a stable directory outside the Velopack root as `acta(.exe)`.
+[[bin]]
+name = "acta-cli"
+path = "src/bin/cli.rs"

@@ -16,7 +16,7 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 - [x] ADR 0001: UI stack - gpui-kit 0.10.0 (GPUI snapshot gpui-pre 0.3.12), proven on Windows; macOS/Linux to prove in M1 CI
 - [x] ADR 0002: Terminal embedding - alacritty_terminal 0.26.0 for emulation and PTY, own GPUI element; headless spike proven on Windows with Claude Code
 - [ ] ADR 0003: Encrypted storage and key management
-- [ ] ADR 0004: Packaging, silent install, auto-update
+- [x] ADR 0004: Packaging and updates - Velopack 1.2.161, two executables (GUI + CLI/MCP) in one package; install, self-update and uninstall proven on Windows
 - [ ] ADR 0005: Claude Code integration (MCP, CLI, hooks, skill, setup)
 - [x] ADR 0006: Import, export and backups
 - [x] ADR 0007: Knowledge base (documents and agent memory) on projects, epics and topics
