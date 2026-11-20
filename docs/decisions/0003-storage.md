@@ -1,6 +1,6 @@
 # 0003 - Encrypted storage and key management
 
-Status: proposed
+Status: accepted for Windows and Linux. The macOS key store is provisional: the key file is a departure from the product requirement (key in the OS keychain) based on untested reasoning, so the keychain test listed under Consequences runs on a macOS runner in M1 and decides; the keychain wins if it can be made prompt-free.
 Date: 2026-11-20
 
 ## Context
