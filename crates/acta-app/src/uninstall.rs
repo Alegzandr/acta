@@ -207,9 +207,10 @@ mod tests {
 
         fn text(scratch: &Scratch) -> String {
             let bytes = scratch.get().unwrap().bytes;
-            let wide: Vec<u16> = bytes
-                .chunks_exact(2)
-                .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            let (pairs, _) = bytes.as_chunks::<2>();
+            let wide: Vec<u16> = pairs
+                .iter()
+                .map(|&pair| u16::from_le_bytes(pair))
                 .take_while(|&unit| unit != 0)
                 .collect();
             String::from_utf16(&wide).unwrap()
