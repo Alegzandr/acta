@@ -17,4 +17,5 @@ Local-first desktop app that complements Claude Code: a project tracker for the 
 - Every non-trivial change is reviewed by the `reviewer` agent, who did not write it, before it lands on `main`.
 - Agent-facing output (MCP, CLI, hooks) is compact by design: summaries first, pagination, no dumps.
 - No plaintext user data or key material on disk, in logs or in process arguments.
-- Nothing that costs money or cannot be undone without asking the user.
+- Zero budget: the user pays for nothing. No code signing, no paid services or runners. Builds are unsigned by decision.
+- Nothing that cannot be undone without asking the user.

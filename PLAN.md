@@ -52,5 +52,5 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 - [ ] Performance pass, empty and error states, onboarding
 - [ ] Documentation
 
-## Open questions for the user
-- Code signing (Windows certificate, Apple Developer membership) costs money. Builds are unsigned until decided.
+## Settled with the user
+- 2026-11-20: no spending at all. No code-signing certificate, no Apple Developer membership, no paid runners or services. Builds are unsigned; only free tooling.
