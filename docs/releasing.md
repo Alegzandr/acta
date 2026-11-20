@@ -37,7 +37,9 @@ install scripts ignore.
 4. `publish`, the only job with write permissions, in the `release` environment, with no
    checkout: checks that `SHA256SUMS` is the file `collect` wrote and every file against
    it, attests build provenance,
-   uploads the four channels to one draft release with `vpk upload github --merge`, adds
+   creates a draft release on the existing tag with `gh release create --verify-tag
+   --draft` and no target, uploads the four channels into it with
+   `vpk upload github --merge`, adds
    `SHA256SUMS`, `install.sh` and `install.ps1`, checks that the draft holds exactly the
    expected assets, then publishes it as the latest release.
 
@@ -50,6 +52,15 @@ It uses the workflow's `GITHUB_TOKEN` only. Every action is pinned to a commit S
 users and to installed apps: fix the cause and re-run the failed jobs from the Actions
 page. A draft left behind is replaced. Once a release is published it is never
 modified: a problem found afterwards is fixed by the next version.
+
+The draft is never created with a target commit. GitHub refuses to create or edit a
+release whose target commit differs from the default branch under `.github/workflows/`
+unless the token may write workflows, and `GITHUB_TOKEN` never may: it answers 403
+"Resource not accessible by integration". A tag's commit differs that way as soon as
+`main` gets a workflow change after the tag, which is how v0.1.1 failed to publish. With
+no target, GitHub checks the default branch against itself, and the release still
+belongs to the tag that started the run, since the target is ignored for a tag that
+exists. Do not add `--target` or vpk's `--targetCommitish` back.
 
 ## Repository settings
 

@@ -421,12 +421,22 @@ jobs:
             exit 1
           fi
 
+          # Create the draft here, on the tag that triggered this run, and let vpk
+          # merge into it. Never send target_commitish: GitHub refuses to create
+          # or edit a release whose target differs from the default branch under
+          # .github/workflows unless the token may write workflows, which
+          # GITHUB_TOKEN never may. Once main moves past the tag, a SHA target
+          # fails with 403 (v0.1.1). With no target the default branch is used,
+          # which never differs from itself, and the release still points at the
+          # existing tag: target_commitish is ignored when the tag exists, and
+          # --verify-tag aborts rather than create a tag on main.
           pre=
-          if [ "$PRERELEASE" = true ]; then pre=--pre; fi
+          if [ "$PRERELEASE" = true ]; then pre=--prerelease; fi
+          gh release create "$TAG" --verify-tag --draft --title "Acta $VERSION" --notes "" $pre
           for channel in $CHANNELS; do
             vpk upload github --repoUrl "$REPO_URL" --channel "$channel" \
               --outputDir "releases/$channel" --merge --tag "$TAG" \
-              --releaseName "Acta $VERSION" --targetCommitish "$GITHUB_SHA" $pre
+              --releaseName "Acta $VERSION"
           done
           gh release upload "$TAG" extras/SHA256SUMS extras/install.sh extras/install.ps1
       - name: Check the draft, then publish it
