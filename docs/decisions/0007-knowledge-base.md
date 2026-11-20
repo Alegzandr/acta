@@ -1,4 +1,4 @@
-# 0007 - Documents
+# 0007 - Knowledge base: documents and agent memory
 
 Status: accepted
 Date: 2026-11-20
@@ -14,8 +14,29 @@ Acta already has two kinds of text on a topic. Documents must not blur with them
 | Timeline | What happened and why? | Append-only entries, chronological |
 | Documents | What stays true and is worth re-reading? | Titled, edited in place: specs, architecture notes, research, how-tos, reports |
 
+The user then added: what Claude Code records as its memory must be readable by the human too, as a knowledge base at the scale of a project, an epic or a topic. Claude Code's built-in memory is a set of files outside the project that the human rarely sees; Acta replaces that blind spot with one shared, visible store.
+
 ## Decision
-**Model.** A document has a title, a one-line summary, a Markdown body, an author (human or Claude Code), timestamps, and exactly one owner: a project, an epic or a topic. It follows ADR 0006: stable UUID, soft delete, included in exports.
+**One knowledge base per level.** Each project, epic and topic has a knowledge base. It holds entries of two kinds, the same entity underneath:
+
+| Kind | What | Typical size | Typical author |
+|------|------|--------------|----------------|
+| Document | Long-form reference: spec, architecture, research, how-to, report | Pages | Either |
+| Memory | One durable fact worth not relearning: a convention, a pitfall, a preference, a constraint, where something lives | A few lines | Claude Code |
+
+Both have a title and a one-line summary, both are listed, searched, edited and versioned the same way. The kind only changes defaults: how it is displayed and how the agent is taught to use it.
+
+**The human owns the agent's memory.** Every memory Claude Code writes is visible in the UI at the level it was filed, marked as written by Claude Code, and can be edited, moved to another level, or deleted by the human. The agent reads the corrected version from then on. Nothing the agent remembers about the project is hidden from the person it works for.
+
+**Two directions of scope.**
+- The agent looks up: on a topic it sees the topic's knowledge, then its epic's, then its project's.
+- The human looks down: a project's knowledge base shows everything known in the project, filterable by level, kind and author; an epic's shows the epic and its topics.
+
+**Filing rule taught by the skill.** File a memory at the narrowest level where it stays true: a quirk of one task on the topic, a rule for a feature area on the epic, a convention of the codebase on the project. One fact per memory. Before writing, search; update the existing entry instead of adding a near-duplicate. Durable knowledge goes to Acta rather than to Claude Code's own memory files, so there is one place to look.
+
+**Recall.** The session briefing may list the titles of the few most relevant memories in scope within its token budget, and always gives the counts. Bodies are never injected; the agent opens what it needs.
+
+**Model.** An entry has a kind (document or memory), a title, a one-line summary, a Markdown body, an author (human or Claude Code), timestamps, and exactly one owner: a project, an epic or a topic. It follows ADR 0006: stable UUID, soft delete, included in exports.
 
 **Stored in the database.** Bodies live in the encrypted database, not as files on disk, so documents get the same encryption, snapshots, export and live refresh as everything else. A document can be created from a `.md` or `.txt` file and saved back to one.
 
@@ -36,16 +57,18 @@ The one-line summary is what makes the list useful: it is how the agent decides 
 
 The session briefing injected at start mentions only that documents exist and how many ("3 documents in scope"), never their content.
 
-**UI.** A Documents section on the project, epic and topic views: a compact list (title, summary, author mark, updated), a reading view set for long-form Markdown, an editor, history. Reachable from the command palette ("Open document...", "New document").
+**UI.** A Knowledge section on the project, epic and topic views, with documents and memories distinguishable at a glance: a compact list (title, summary, author mark, updated), a reading view set for long-form Markdown, an editor, history. Reachable from the command palette ("Open document...", "New document").
 
 ## Alternatives
+- Separate systems for documents and memory: two lists, two sets of tools, and the agent has to guess which one holds the answer.
+- Leaving memory in Claude Code's own files: invisible to the human, not scoped to epics or topics, lost on another machine.
 - Linking to files in the repository instead of storing content: breaks encryption and export guarantees, and paths rot. A document can still mention a repo path in its text.
 - One long description field per topic: no list to pick from, no summaries, forces the agent to read everything.
 - Documents only on topics: project-wide references would be duplicated or lost.
 - Binary attachments now: see above.
 
 ## Consequences
-- Schema: `documents` and `document_revisions` tables, bodies in the full-text index.
+- Schema: `kb_entries` (with `kind`) and `kb_revisions` tables, bodies in the full-text index.
 - MCP tool surface grows; ADR 0005 must absorb it while staying small, likely as two or three tools (`docs` list/search, `doc_read`, `doc_write`) rather than one per verb.
 - Revisions grow the database. Text is small; revisit with a retention rule only if measurements say so.
 - Heading-based section addressing needs a precise rule for duplicate headings and for documents without headings (fall back to ranges).
