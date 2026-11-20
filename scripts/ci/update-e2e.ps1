@@ -8,6 +8,7 @@
 #   scripts\ci\update-e2e.ps1 -Phase update    -From 0.1.0 -To 0.1.1
 #   scripts\ci\update-e2e.ps1 -Phase uninstall
 #   scripts\ci\update-e2e.ps1 -Phase collect   -Dir <dir>       copy the logs for an artifact
+#   scripts\ci\update-e2e.ps1 -Phase cleanup                    stop every Acta process left
 #
 # Versions are given without the leading v. Paths are the ones of ADR 0004.
 # Runs in Windows PowerShell 5.1, the shell a user pipes install.ps1 into.
@@ -15,7 +16,7 @@
     Justification = 'The documented install one-liner is irm | iex; the test runs exactly that.')]
 param(
     [Parameter(Mandatory)]
-    [ValidateSet('install', 'verify', 'update', 'uninstall', 'collect')]
+    [ValidateSet('install', 'verify', 'update', 'uninstall', 'collect', 'cleanup')]
     [string] $Phase,
     [string] $Version,
     [string] $From,
@@ -86,22 +87,33 @@ function Get-UserPathEntry {
     if ($value) { $value.Split(';') | Where-Object { $_ } } else { @() }
 }
 
-# What a user starts: the Start menu shortcut the installer created.
-function Open-Acta {
+# The Start menu shortcut the installer created, or $null.
+function Find-ActaShortcut {
     $programs = [Environment]::GetFolderPath('Programs')
     $shell = New-Object -ComObject WScript.Shell
     # Velopack points shortcuts at current\Acta.exe or at the stub in the root.
     $targets = $App, (Join-Path $Root 'Acta.exe')
-    $shortcut = Get-ChildItem -Path $programs -Filter '*.lnk' -Recurse |
+    Get-ChildItem -Path $programs -Filter '*.lnk' -Recurse |
         Where-Object { $targets -contains $shell.CreateShortcut($_.FullName).TargetPath } |
         Select-Object -First 1
-    if ($shortcut) { Write-Output "Starting $($shortcut.FullName)" }
-    if ($shortcut) {
-        Start-Process -FilePath $shortcut.FullName
-    } else {
-        Write-Output "::warning::no Start menu shortcut to $App; starting the executable"
-        Start-Process -FilePath $App
-    }
+}
+
+# What a user starts: the Start menu shortcut. Without one the install is broken.
+function Open-Acta {
+    $shortcut = Find-ActaShortcut
+    if (-not $shortcut) { Exit-Test "no Start menu shortcut to $App" }
+    Write-Output "Starting $($shortcut.FullName)"
+    Start-Process -FilePath $shortcut.FullName
+}
+
+# Leftovers of a run, so that nothing of Acta outlives the job.
+function Invoke-Cleanup {
+    Get-Process -ErrorAction SilentlyContinue |
+        Where-Object { $_.Path -and ($_.Path.StartsWith("$Root\") -or $_.Path.StartsWith("$CliRoot\")) } |
+        ForEach-Object {
+            Write-Output "Stopping $($_.Id) $($_.Path)"
+            Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
+        }
 }
 
 function Close-Acta([int] $ProcessId) {
@@ -136,6 +148,10 @@ function Invoke-Verify([string] $Version) {
     $licenses = Join-Path $Root 'current\licenses'
     if (-not (Test-Path $licenses)) { Exit-Test "$licenses is missing" }
     Write-Output 'ok: licenses directory next to Acta.exe'
+    # Checked before and after the update: an update must keep the shortcut working.
+    $shortcut = Find-ActaShortcut
+    if (-not $shortcut) { Exit-Test "no Start menu shortcut to $App" }
+    Write-Output "ok: Start menu shortcut $($shortcut.FullName)"
 
     # The CLI exported outside the Velopack root by the install or update hook.
     if (-not (Test-Path $Cli)) { Exit-Test "the exported CLI $Cli is missing" }
@@ -228,14 +244,16 @@ function Invoke-Uninstall {
     Write-Output "uninstaller exit code: $($process.ExitCode)"
 
     $deadline = (Get-Date).AddSeconds(60)
-    while ((Test-Path $CliRoot) -or (Test-Path $UninstallKey) -or (Test-Path $App)) {
+    while ((Test-Path $CliRoot) -or (Test-Path $UninstallKey) -or (Test-Path $Root)) {
         if ((Get-Date) -gt $deadline) {
-            Exit-Test ("after 60 s: ActaCli present: {0}, uninstall entry present: {1}, Acta.exe present: {2}" -f
-                (Test-Path $CliRoot), (Test-Path $UninstallKey), (Test-Path $App))
+            Exit-Test ("after 60 s: ActaCli present: {0}, uninstall entry present: {1}, install root present: {2}" -f
+                (Test-Path $CliRoot), (Test-Path $UninstallKey), (Test-Path $Root))
         }
         Start-Sleep -Seconds 2
     }
-    Write-Output "ok: $CliRoot, the uninstall entry and $App are gone"
+    Write-Output "ok: $CliRoot, the uninstall entry and the install root $Root are gone"
+    if (Find-ActaShortcut) { Exit-Test 'a Start menu shortcut to Acta is left' }
+    Write-Output 'ok: no Start menu shortcut left'
 
     $left = @(Get-UserPathEntry | Where-Object { $_ -like '*ActaCli*' })
     if ($left.Count) { Exit-Test "the user PATH still has $($left -join ';')" }
@@ -278,4 +296,5 @@ switch ($Phase) {
     'update' { Invoke-Update $From $To $UpdateTimeout }
     'uninstall' { Invoke-Uninstall }
     'collect' { Invoke-Collect $Dir }
+    'cleanup' { Invoke-Cleanup }
 }
