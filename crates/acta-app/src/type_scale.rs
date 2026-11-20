@@ -63,13 +63,8 @@ impl TypeRole {
 
     /// A block of text in this role. Colour is the caller's (a text token).
     pub fn el(&self) -> Div {
-        self.el_in(self.family())
-    }
-
-    /// The same metrics in another family (type specimen only).
-    pub fn el_in(&self, family: &'static str) -> Div {
         div()
-            .font_family(family)
+            .font_family(self.family())
             .text_size(px(self.size))
             .line_height(px(self.line))
             .font_weight(self.weight)

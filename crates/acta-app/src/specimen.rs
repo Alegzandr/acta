@@ -2,10 +2,9 @@
 //! `ACTA_SPECIMEN=1`. Not part
 //! of the product and not reachable from the UI.
 //!
-//! It exists for one decision: DESIGN.md 3.1 makes Source Sans 3 conditional
-//! on how GPUI renders it on Windows, with IBM Plex Sans as the fallback.
-//! Every sans role is shown in both families on the four surfaces, followed
-//! by the mono roles and the colour tokens.
+//! It shows how GPUI renders the bundled faces: every sans role of DESIGN.md
+//! 3.2 on the four surfaces, the text levels, the mono roles and the colour
+//! tokens. Source Sans 3 was confirmed on Windows with it.
 
 use std::sync::Arc;
 
@@ -15,7 +14,6 @@ use gpui_kit::{
     Render, StatefulInteractiveElement, Styled, Window, div, px,
 };
 
-use crate::fonts::FONT_PLEX;
 use crate::theme::{FONT_MONO, FONT_SANS, RADIUS_MD, RADIUS_SM, Tokens};
 use crate::type_scale::{self, MONO_ROLES, SANS_ROLES, TypeRole};
 
@@ -52,7 +50,7 @@ fn caption(text: impl Into<String>, color: Hsla) -> Div {
     type_scale::SMALL.el().text_color(color).child(text.into())
 }
 
-/// One surface with every sans role in both families, side by side.
+/// One surface with every sans role.
 /// `floating` dresses it as overlays are: `border.default` and `shadow.overlay`.
 fn surface(name: &'static str, background: Hsla, floating: bool, tokens: &Tokens) -> Div {
     let header = div()
@@ -64,8 +62,7 @@ fn surface(name: &'static str, background: Hsla, floating: bool, tokens: &Tokens
                 .w(px(132.))
                 .flex_shrink_0(),
         )
-        .child(caption(FONT_SANS, tokens.text_tertiary).flex_1())
-        .child(caption(FONT_PLEX, tokens.text_tertiary).flex_1());
+        .child(caption(FONT_SANS, tokens.text_tertiary).flex_1());
 
     let rows = SANS_ROLES.iter().map(|role| {
         div()
@@ -80,14 +77,6 @@ fn surface(name: &'static str, background: Hsla, floating: bool, tokens: &Tokens
             )
             .child(
                 role.el()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .text_color(tokens.text_primary)
-                    .child(sample(role)),
-            )
-            .child(
-                role.el_in(FONT_PLEX)
                     .flex_1()
                     .min_w_0()
                     .truncate()
@@ -116,7 +105,7 @@ fn surface(name: &'static str, background: Hsla, floating: bool, tokens: &Tokens
 }
 
 /// Body text in the three text levels, italics and tabular figures.
-fn text_levels(family: &'static str, tokens: &Tokens) -> Div {
+fn text_levels(tokens: &Tokens) -> Div {
     let reading = type_scale::READING;
     let tabular = FontFeatures(Arc::new(vec![("tnum".into(), 1), ("lnum".into(), 1)]));
     div()
@@ -125,44 +114,44 @@ fn text_levels(family: &'static str, tokens: &Tokens) -> Div {
         .flex()
         .flex_col()
         .gap(px(4.))
-        .child(caption(family, tokens.text_tertiary))
-        .child(reading.el_in(family).text_color(tokens.text_primary).child(
+        .child(caption(FONT_SANS, tokens.text_tertiary))
+        .child(reading.el().text_color(tokens.text_primary).child(
             "text.primary: Rendering and input work on Windows; resize still drops the last row.",
         ))
         .child(
             reading
-                .el_in(family)
+                .el()
                 .text_color(tokens.text_secondary)
                 .child("text.secondary: Run Claude Code inside Acta, in the project directory."),
         )
         .child(
             reading
-                .el_in(family)
+                .el()
                 .text_color(tokens.text_tertiary)
                 .child("text.tertiary: Updated 2 h ago by Claude Code, Tue 14:05."),
         )
         .child(
             reading
-                .el_in(family)
+                .el()
                 .text_color(tokens.text_disabled)
                 .child("text.disabled: a control that cannot be used."),
         )
         .child(
             reading
-                .el_in(family)
+                .el()
                 .text_color(tokens.accent)
                 .child("accent: a link to the topic, the focus, the one primary action."),
         )
         .child(
             reading
-                .el_in(family)
+                .el()
                 .italic()
                 .text_color(tokens.text_primary)
                 .child("Italic 400, for Markdown emphasis only. Il1 O0 rn m, fi fl."),
         )
         .child(
             reading
-                .el_in(family)
+                .el()
                 .italic()
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(tokens.text_primary)
@@ -170,13 +159,13 @@ fn text_levels(family: &'static str, tokens: &Tokens) -> Div {
         )
         .child(
             reading
-                .el_in(family)
+                .el()
                 .text_color(tokens.text_primary)
                 .child("Proportional figures 1111 0000 14:05 0.4.1"),
         )
         .child(
             reading
-                .el_in(family)
+                .el()
                 .font_features(tabular)
                 .text_color(tokens.text_primary)
                 .child("Tabular figures (tnum) 1111 0000 14:05 0.4.1"),
@@ -346,7 +335,7 @@ impl Render for Specimen {
                     .child(caption(
                         format!(
                             "Acta {}. Every role of DESIGN.md 3.2 at its size / line height \
-                             and weight: {FONT_SANS} first, {FONT_PLEX} beside it.",
+                             and weight, in {FONT_SANS} and {FONT_MONO}.",
                             acta_core::VERSION
                         ),
                         t.text_tertiary,
@@ -360,7 +349,7 @@ impl Render for Specimen {
                 surface("bg.raised", t.bg_raised, false, t),
                 surface("bg.overlay", t.bg_overlay, true, t),
             ))
-            .child(pair(text_levels(FONT_SANS, t), text_levels(FONT_PLEX, t)))
+            .child(text_levels(t))
             .child(mono_samples(t))
             .child(pair(
                 swatches("Colour tokens, dark (active)", t, t),
