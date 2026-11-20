@@ -1,0 +1,33 @@
+[package]
+name = "acta-app"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "Acta desktop application (GUI executable, Velopack main exe)."
+build = "build.rs"
+
+[[bin]]
+name = "Acta"
+path = "src/main.rs"
+
+[dependencies]
+acta-core.workspace = true
+# Exact pins: ADR 0001 (UI stack) and ADR 0004 (must match the vpk tool version).
+gpui-kit = "=0.10.0"
+velopack = "=1.2.161"
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.55"
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[build-dependencies]
+winresource = "0.1.34"

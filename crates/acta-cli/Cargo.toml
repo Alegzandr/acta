@@ -1,0 +1,15 @@
+[package]
+name = "acta-cli"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "Acta command line and MCP server. Exported to the user as `acta`."
+
+[[bin]]
+name = "acta-cli"
+path = "src/main.rs"
+
+[dependencies]
+acta-core.workspace = true
+clap = { version = "4.6", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }

@@ -24,7 +24,7 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 - [x] DESIGN.md - accepted; Source Sans 3 conditional on a GPUI rendering check on Windows in M1
 
 ## M1 - Pipeline
-- [ ] Cargo workspace, empty GPUI window
+- [x] Cargo workspace, empty GPUI window (built and run on Windows; macOS and Linux to be proven by CI)
 - [ ] Design foundations: tokens for both themes, fonts, Light / Dark / System, en/fr string table, persisted preferences
 - [ ] CI: fmt, clippy, tests on every push, all three OSes
 - [ ] Release workflow on `v*` tags: build all platforms, publish installers and updater artifacts
