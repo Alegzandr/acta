@@ -124,7 +124,8 @@ gh attestation verify Acta-win-x64-Setup.exe --repo Alegzandr/acta
 ```
 
 Then on a machine with the previous version installed: start Acta, it restarts as the
-new version within a few seconds. On a clean machine: run the install one-liner from the
+new version within a few seconds (an ordinary start may wait up to about 7 seconds for
+the window: 2 for the check, 5 for the download). On a clean machine: run the install one-liner from the
 README.
 
 ## Yank a bad release
@@ -212,7 +213,13 @@ First tag (`v0.1.0`):
 - [ ] `install.sh` on macOS arm64 and x64: no Gatekeeper warning, Acta opens. Run it a
       second time with Acta open: the app quits, is replaced and reopens (this relies
       on `ps -o comm=` printing the full path of the executable).
-- [ ] `install.sh` on Linux: the AppImage starts, the desktop entry and icon appear.
+- [ ] `install.sh` on Linux: the AppImage starts; `acta.desktop` appears in
+      `~/.local/share/applications` and `acta.png` in
+      `~/.local/share/icons/hicolor/512x512/apps`.
+- [ ] On macOS and Linux `~/.local/bin/acta` exists after the first start and runs;
+      an unrelated `acta` already there is left untouched.
+- [ ] The log is where the README says on each system, and a Windows uninstall leaves
+      `%LOCALAPPDATA%\ActaData` in place.
 - [ ] A `Setup.exe` downloaded with a browser shows SmartScreen as the README says; a
       zip downloaded with a browser on macOS is blocked as the README says.
 

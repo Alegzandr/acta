@@ -40,6 +40,11 @@ curl -fsSL https://github.com/Alegzandr/acta/releases/latest/download/install.sh
 A specific version: set `ACTA_VERSION=0.1.0` before running either script. Set
 `ACTA_NO_LAUNCH=1` to install without starting the app.
 
+The `acta` command: on Windows the installer puts it on your user PATH. On macOS and
+Linux Acta links it as `~/.local/bin/acta` the first time it starts; add `~/.local/bin`
+to your PATH if it is not there. An `acta` that is already in `~/.local/bin` and is not
+Acta's is left alone.
+
 On Linux the AppImage uses the system's fontconfig, xkbcommon, X11 or Wayland libraries
 and a Vulkan driver, which desktop distributions normally provide. It is built on
 Ubuntu 22.04 and so needs glibc 2.35 or later.
@@ -96,23 +101,36 @@ GitHub and on the checksums published with each release, not on a publisher sign
 
 By design, Acta checks GitHub Releases each time it starts. If a newer version exists it
 downloads it (only the difference when possible), applies it and restarts before the
-window opens, without asking. If the check is slow or fails, Acta opens normally and the
-update is applied at the next start. Updating uses [Velopack](https://velopack.io) and
-needs no administrator rights. This has been seen working on Windows against a local
+window opens, without asking. The check gets 2 seconds and the download 5; past that,
+or if either fails, Acta opens normally and the update is applied at a later start. An
+ordinary start can therefore take up to about 7 seconds before the window appears.
+Updating uses [Velopack](https://velopack.io) and needs no administrator rights. This has been seen working on Windows against a local
 feed; macOS, Linux and GitHub as the source are still to be confirmed.
 
 ## Uninstall
 
-The Windows path was verified with the test app. The macOS and Linux lists are the
-locations Acta is designed to use; they have not been checked on a real install yet.
+Uninstalling never deletes your data. The data directory is kept on every system;
+delete it yourself only if you want everything gone.
+
+The Windows uninstaller was verified with the test app. The macOS and Linux lists are
+the locations Acta is designed to use; they have not been checked on a real install
+yet, and there is no uninstaller on those systems.
 
 - **Windows.** Settings > Apps > Installed apps > Acta > Uninstall, or
-  `& "$env:LOCALAPPDATA\Acta\Update.exe" --uninstall --silent`.
-- **macOS.** Quit Acta and delete `~/Applications/Acta.app`. The `acta` command is a link
-  at `~/.local/bin/acta` to `~/Library/Application Support/Acta/bin`; delete both.
-- **Linux.** Quit Acta and delete `~/.local/share/acta/Acta.AppImage`,
-  `~/.local/share/acta/bin`, the link `~/.local/bin/acta` and Acta's entry in
-  `~/.local/share/applications`.
+  `& "$env:LOCALAPPDATA\Acta\Update.exe" --uninstall --silent`. This removes the app,
+  the `acta` command (`%LOCALAPPDATA%\ActaCli`) and its PATH entry. Your data stays in
+  `%LOCALAPPDATA%\ActaData`, which also holds the log (`logs\acta.log`).
+- **macOS.** Quit Acta and delete `~/Applications/Acta.app`, the link
+  `~/.local/bin/acta`, `~/Library/Application Support/ActaCli` (the `acta` command) and
+  `~/Library/Logs/Acta`. Your data stays in `~/Library/Application Support/Acta/data`.
+- **Linux.** Quit Acta and delete the file `~/.local/share/acta/Acta.AppImage` (not
+  the directory), the link `~/.local/bin/acta`, `~/.local/share/acta-cli` (the `acta`
+  command), `~/.local/share/applications/acta.desktop`,
+  `~/.local/share/icons/hicolor/512x512/apps/acta.png` and `~/.local/state/acta` (the
+  log). Your data stays in `~/.local/share/acta/data`. If `XDG_DATA_HOME` or
+  `XDG_STATE_HOME` is set, they replace `~/.local/share` and `~/.local/state` for
+  everything but the AppImage, which the install script always puts in
+  `~/.local/share/acta`.
 
 ## Verify a download
 

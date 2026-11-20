@@ -187,8 +187,9 @@ main() {
     esac
 
     # This script never touches PATH or a shell profile, so it has no "open a new
-    # terminal" to announce. Acta creates the link shortly after it first starts, so it
-    # may not be there yet: only the directory can be checked.
+    # terminal" to announce. Acta creates the link ~/.local/bin/acta shortly after it
+    # first starts (and leaves an acta that is not its own alone), so the link may not
+    # be there yet: only the directory can be checked.
     case ":${PATH:-}:" in
         *":$HOME/.local/bin:"*) ;;
         *) echo "Acta links the acta command into $HOME/.local/bin; add that directory to your PATH to use it." ;;
