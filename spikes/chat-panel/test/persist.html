@@ -1,0 +1,30 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>persist loading</title>
+<body style="background:#141210;color:#e9e3d8;font:16px sans-serif">
+<h1>Acta chat panel spike: persistence and keyboard test page</h1>
+<p id="state"></p>
+<input id="field" placeholder="web input" autofocus>
+<p><a id="out" href="https://example.com/">external link (must leave the panel)</a></p>
+<script>
+function cookie(name) {
+  const hit = document.cookie.split('; ').find(p => p.startsWith(name + '='));
+  return hit ? hit.split('=')[1] : null;
+}
+const stamp = String(Date.now());
+const c = cookie('acta_spike');
+const l = localStorage.getItem('acta_spike');
+if (!c) document.cookie = 'acta_spike=' + stamp + '; max-age=31536000; path=/';
+if (!l) localStorage.setItem('acta_spike', stamp);
+const state = 'persist ' + ((c || l) ? 'kept' : 'fresh') + ' cookie=' + c + ' ls=' + l;
+document.getElementById('state').textContent = state;
+document.title = state;
+const field = document.getElementById('field');
+field.addEventListener('input', () => { document.title = 'web input value: ' + field.value; });
+document.addEventListener('keydown', e => {
+  if (e.key.length > 1 && e.key !== 'Escape') return;
+  document.title = 'web keydown: ' + (e.ctrlKey ? 'ctrl+' : '') + (e.shiftKey ? 'shift+' : '') + e.key;
+});
+window.addEventListener('focus', () => { document.title = 'web window focus'; });
+window.addEventListener('blur', () => { document.title = 'web window blur'; });
+</script>

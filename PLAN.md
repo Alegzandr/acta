@@ -9,7 +9,7 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 | M2 | Data model and core UI | v0.2.0 | todo |
 | M3 | MCP server, CLI, Claude Code setup; Acta tracks itself | v0.3.0 | todo |
 | M4 | Integrated terminal running Claude Code | v0.4.0 | todo |
-| M5 | Claude chat panel beside the work (if the ADR 0009 spike holds) | v0.5.0 | todo |
+| M5 | Claude chat panel beside the work (Windows and macOS; link on Linux; ADR 0009) | v0.5.0 | todo |
 | M6 | Notes inbox and notes-to-topics flow | v0.6.0 | todo |
 | M7 | Polish | v1.0.0 | todo |
 
@@ -25,6 +25,7 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 
 ## M1 - Pipeline
 - [ ] Cargo workspace, empty GPUI window
+- [ ] Project Ledger foundations: tokens for both themes, fonts, Light / Dark / System, en/fr string table, persisted preferences
 - [ ] CI: fmt, clippy, tests on every push, all three OSes
 - [ ] Release workflow on `v*` tags: build all platforms, publish installers and updater artifacts
 - [ ] Silent per-user install verified on Windows; macOS and Linux verified as far as CI allows
@@ -56,7 +57,9 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 - [ ] Rendering, input, resize, scrollback, copy/paste, links
 
 ## M5 - Claude chat panel
-- [ ] ADR 0009: embedded web view for claude.ai (spike in progress; the milestone exists only if the spike holds)
+- [ ] ADR 0009 (proposed): claude.ai in the system web view, go with limits - Windows proven by the spike, macOS unproven, Linux gets a link
+- [ ] First: keyboard handoff while the page has focus, a real sign-in by the user, a macOS build (the three things the spike could not check)
+- [ ] DESIGN.md: specify the chat panel (placement, toggle, placeholder under overlays, failure and sign-in help states)
 - [ ] Side panel with a persistent session, toggled from the keyboard
 
 ## M6 - Notes
@@ -68,5 +71,22 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 - [ ] Performance pass, empty and error states, onboarding
 - [ ] Documentation
 
+## Paused - where to resume
+`main` was pushed to GitHub once, at commit 1009910 (not by the lead; a local pre-push hook now refuses pushes without `ACTA_LEAD_PUSH=1`). Everything after it is local. All agents are stopped; their work is on disk under `../acta-wt/`.
+- `gpui-engineer/m1-app` (worktree `m1-app`): draft workspace, crates and assets, untracked, uncommitted, unverified. Resume a gpui-engineer on it: read critically, finish, verify, commit.
+- `release-engineer/m1-pipeline` (worktree `m1-pipeline`): complete, reviewed, verdict "request changes". `main` is merged in; none of the fixes below are committed yet.
+  1. High: `ci.yml` passes two files to `Invoke-ScriptAnalyzer -Path` (single string); lint would fail every run. Analyze one file at a time.
+  2. Security: split `release.yml` publish into `collect` (read-only) and `publish` (write permissions, job-level `if`, `environment: release`).
+  3. Security: pin every action to a full commit SHA in all workflows; amend ADR 0004.
+  4. Security: no rust-cache restore on tag builds; `check` must verify the tagged commit is an ancestor of `origin/main`; document a `v*` tag ruleset and immutable releases in `docs/releasing.md`.
+  5. `platform-checks.sh` echoes the test secret (`-w "$value"`) to the log; never print it.
+  6. `install.sh` macOS reinstall: restore the previous app if the move fails; handle a running app; warn instead of failing when `open` fails.
+  7. README states unverified behaviour as fact; say what is verified. Install scripts print "open a new terminal to use acta" unconditionally.
+  8. `ci.yml` concurrency group: use the PR number, not `head_ref`.
+  9. `platform-checks.sh`: dismiss SecurityAgent after a timeout and mark results that followed one.
+  10. Keep the "to confirm on the first run" list in `docs/releasing.md`.
+- Order: merge m1-app first, then the pipeline, then push; iterate CI and the release dry run to green; run `platform-checks.yml`; apply the tag ruleset and the `release` environment in repo settings; tag v0.1.0, install, tag v0.1.1, prove self-update.
+
 ## Settled with the user
+- 2026-11-20: new art direction, "Project Ledger" (parchment, ink and burgundy, editorial serif headings, engraved illustrations, light theme as the primary reference, dark as its night-time equivalent). It replaces the M0 identity; the reference image is the source of truth. Light / Dark / System setting. UI in English (default) and French, every string in a central table. Sidebar: Projects, Memories, Activity, Settings. DESIGN.md is being rewritten on `product-designer/project-ledger`; implementation follows on the app branch (tokens, three font families, runtime theme switch, string table), then every M2+ screen is built to it.
 - 2026-11-20: no spending at all. No code-signing certificate, no Apple Developer membership, no paid runners or services. Builds are unsigned; only free tooling.
