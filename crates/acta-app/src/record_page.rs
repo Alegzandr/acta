@@ -1977,16 +1977,20 @@ impl RecordPage {
         let human = when::initial(&when::human_name(locale));
         // System events other than status changes have no line in the
         // catalogue yet (docs/design/data.md 11, request 10): not shown.
-        let shown: Vec<&Entry> = data
-            .entries
-            .iter()
-            .filter(|e| {
-                e.kind != EntryKind::System
-                    || e.event
-                        .as_ref()
-                        .is_some_and(|ev| ev.kind == acta_core::model::EventKind::Status)
-            })
-            .collect();
+        // Status changes in quick succession read as one line, and a
+        // change undone leaves none (components-records.md 5).
+        let shown: Vec<Entry> = record::collapse_status_events(
+            data.entries
+                .iter()
+                .filter(|e| {
+                    e.kind != EntryKind::System
+                        || e.event
+                            .as_ref()
+                            .is_some_and(|ev| ev.kind == acta_core::model::EventKind::Status)
+                })
+                .cloned()
+                .collect(),
+        );
         // The empty state is about what is shown: a timeline of hidden
         // system events alone is empty too.
         if shown.iter().all(|e| e.kind == EntryKind::System) {
@@ -1997,7 +2001,7 @@ impl RecordPage {
                     .child(text(locale, Key::TimelineEmpty)),
             );
         }
-        for (i, entry) in shown.into_iter().enumerate() {
+        for (i, entry) in shown.iter().enumerate() {
             list = list.child(self.render_entry(entry, i, &human, locale, t, cx));
         }
         div()
