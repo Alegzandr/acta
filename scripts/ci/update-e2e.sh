@@ -262,10 +262,17 @@ report_quota() {
 cmd_update() {
     from=$1
     to=$2
-    # The app checks without a token. With the IP's quota spent its check fails as a
-    # network error (HTTP 403), which says nothing about Acta: stop here and say so.
-    if ! report_quota "before the first launch"; then
-        fail "the unauthenticated GitHub API quota of this runner's IP is spent, so Acta cannot check for updates; rerun the job later"
+    # Up to 0.1.3 the app checks through the REST API without a token. With the IP's
+    # quota spent that check fails as a network error, which says nothing about Acta:
+    # stop here and say so. Later versions read releases/latest/download (ADR 0004).
+    uses_api=0
+    if [ "$(printf '%s
+%s
+' "$from" 0.1.3 | sort -V | head -n 1)" = "$from" ]; then
+        uses_api=1
+        if ! report_quota "before the first launch"; then
+            fail "the unauthenticated GitHub API quota of this runner's IP is spent, so Acta $from cannot check for updates; rerun the job later"
+        fi
     fi
     started=$(now)
     deadline=$((started + UPDATE_TIMEOUT))
@@ -298,7 +305,7 @@ cmd_update() {
             continue
         fi
         if [ "$(now)" -ge "$deadline" ]; then
-            report_quota "at the end" || true
+            if [ "$uses_api" = 1 ]; then report_quota "at the end" || true; fi
             fail "Acta did not restart as $to within $UPDATE_TIMEOUT s ($launches launch(es))"
         fi
         sleep 2

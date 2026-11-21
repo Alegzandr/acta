@@ -188,9 +188,11 @@ Two known sources of failure that are not necessarily a bug in Acta:
   `releases/latest/download/` and are not rate limited; the guard below matters while
   `from` is 0.1.3 or older.
   A refused check logs "update: check failed: network error; retrying at next
-  launch" (from 0.1.4 on, "network error (HTTP 403)" or "(HTTP 429)"). The update step
-  prints the runner's remaining quota (`/rate_limit`, which costs nothing) before the
-  first launch and again when it fails. It stops at once with "quota ... is spent"
+  launch". From 0.1.4 on, a failed download logs its HTTP status or the transport
+  failure, for example "network error (HTTP 404)" or "network error (timeout)". While
+  `from` is 0.1.3 or older, the update step prints the runner's remaining quota
+  (`/rate_limit`, which costs nothing) before the first launch and again when it
+  fails. It stops at once with "quota ... is spent"
   when fewer than 3 requests are left, since one update needs that many. Seen on
   2026-11-21 (run 44847527497, 0.1.0 to 0.1.3): macOS and Linux logged only "check
   failed: network error" three times while Windows updated; the 0.1.0 log could not
