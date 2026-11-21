@@ -153,7 +153,7 @@ impl Tokens {
         }
     }
 
-    /// Every token with its DESIGN.md name, in table order (type specimen).
+    /// Every token with its docs/design/color.md name, in table order (type specimen).
     pub fn named(&self) -> [(&'static str, Hsla); 28] {
         [
             ("bg.sunken", self.bg_sunken),
@@ -242,8 +242,8 @@ impl Global for Appearance {}
 
 /// The OS appearance as GPUI reports it. The pinned GPUI always reports one:
 /// on Linux a desktop without a colour-scheme preference reads as light (its
-/// portal maps "no preference" to light), so the dark fallback of DESIGN.md
-/// 2 can only apply where the platform says nothing at all.
+/// portal maps "no preference" to light), so the dark fallback of
+/// docs/design/color.md 2 can only apply where the platform says nothing at all.
 fn os_mode(cx: &App) -> Option<Mode> {
     Some(Mode::of(cx.window_appearance()))
 }
@@ -454,7 +454,7 @@ mod tests {
             .named()
             .into_iter()
             .find(|(n, _)| *n == name)
-            .unwrap_or_else(|| panic!("DESIGN.md token {name} is not in Tokens"))
+            .unwrap_or_else(|| panic!("color.md token {name} is not in Tokens"))
             .1
     }
 

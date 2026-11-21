@@ -96,7 +96,7 @@ macro_rules! catalogue {
             #[cfg(test)]
             pub const ALL: &'static [Key] = &[ $( Key::$variant, )* ];
 
-            /// The key as DESIGN.md writes it, e.g. `common.cancel`.
+            /// The key as docs/design/catalogue.md writes it, e.g. `common.cancel`.
             #[cfg(test)]
             pub fn id(self) -> &'static str {
                 match self {

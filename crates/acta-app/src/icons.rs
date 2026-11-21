@@ -1,10 +1,10 @@
-//! The icons DESIGN.md lists (Lucide, ISC), embedded as SVG with
+//! The icons the design docs list (Lucide, ISC), embedded as SVG with
 //! `stroke-width="1.5"` so strokes land at 1px at 16 (docs/design/layout.md 4.1), and
 //! the app mark. The SVGs in `assets/icons/lucide` are copies of the Lucide
 //! files bundled in `gpui-kit-assets` 0.10.0 with only the stroke width
 //! changed; their licence ships from `scripts/licenses/third-party`.
-//! DESIGN.md's `trash-2` is Lucide's `trash` today (Lucide renamed it); the
-//! file keeps DESIGN.md's name.
+//! The design docs' `trash-2` is Lucide's `trash` today (Lucide renamed it); the
+//! file keeps the design docs' name.
 
 use std::borrow::Cow;
 
@@ -12,7 +12,7 @@ use gpui_kit::{AssetSource, Hsla, Result, SharedString, Styled, Svg, px, svg};
 
 macro_rules! icons {
     ($( $variant:ident => $file:literal, )*) => {
-        /// An icon of DESIGN.md. Only the ones a screen uses are bundled.
+        /// An icon of docs/design/layout.md 4.1. Only the ones a screen uses are bundled.
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         pub enum Icon {
             $( $variant, )*

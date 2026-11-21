@@ -2,7 +2,7 @@
 //! the Appearance section with Theme and Language. Everything applies the
 //! moment it changes; there is no Save button.
 //!
-//! Left out until they can work, since DESIGN.md defines no "not available"
+//! Left out until they can work, since docs/design/components-app.md defines no "not available"
 //! state for a setting: Terminal text size (no terminal), and the Working
 //! folders, Claude Code, Data, Chat and About sections.
 //!

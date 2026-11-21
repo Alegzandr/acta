@@ -71,8 +71,8 @@ Hard constraint: Rust + GPUI on Windows, macOS, Linux. Facts checked on 2026-11-
 - Windows builds need `fxc.exe` (Windows SDK, present with VS Build Tools and on `windows-latest`);
   runtime needs Direct3D 11. Linux runtime needs a Vulkan driver.
 - Revisit when Zed resumes publishing `gpui` + `gpui_platform`, or if gpui-kit stops tracking upstream.
-- CI builds and smoke-runs on all three systems through `ci.yml` and `scripts/ci/linux-deps.sh` (ADR 0004),
-  which replace the spike CI job first proposed here. macOS needs no offline `metal` compiler: gpui-kit
+- CI builds on all three systems through `ci.yml`; a non-blocking smoke run under Xvfb runs on Linux
+  (`scripts/ci/linux-deps.sh`, ADR 0004). This replaces the spike CI job first proposed here. macOS needs no offline `metal` compiler: gpui-kit
   enables `runtime_shaders`.
 
 ## Changelog

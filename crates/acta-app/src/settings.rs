@@ -1,6 +1,6 @@
 //! The settings in force while the app runs: what `preferences.json` holds,
 //! as a GPUI global. Every change applies at once, repaints every window and
-//! is saved in the background (DESIGN.md: no Save button anywhere).
+//! is saved in the background (docs/design/interaction.md: no Save button anywhere).
 
 use gpui_kit::{App, Global, actions};
 

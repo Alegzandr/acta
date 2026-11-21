@@ -9,7 +9,7 @@ use crate::theme::{FONT_MONO, FONT_SANS};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TypeRole {
-    /// The DESIGN.md token, e.g. `type.title`.
+    /// The docs/design/typography.md token, e.g. `type.title`.
     pub name: &'static str,
     pub mono: bool,
     pub size: f32,
@@ -63,7 +63,7 @@ pub fn tabular() -> FontFeatures {
 pub const MONO_ROLES: [TypeRole; 2] = [CODE, TERMINAL];
 
 impl TypeRole {
-    /// The family DESIGN.md assigns to this role.
+    /// The family docs/design/typography.md assigns to this role.
     pub fn family(&self) -> &'static str {
         if self.mono { FONT_MONO } else { FONT_SANS }
     }
