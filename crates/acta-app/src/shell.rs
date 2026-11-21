@@ -2290,8 +2290,19 @@ impl Shell {
 
     fn show_toast(&mut self, toast: Toast, cx: &mut Context<Self>) {
         let Some(bench) = self.bench() else { return };
-        let stays = toast.kind == ToastKind::Error;
         bench.toast = Some(toast);
+        self.arm_toast_timer(cx);
+        cx.notify();
+    }
+
+    /// The toast goes 6 s after it shows, or after the pointer leaves it
+    /// (components.md 5, Toast); an error stays until dismissed.
+    fn arm_toast_timer(&mut self, cx: &mut Context<Self>) {
+        let Some(bench) = self.bench() else { return };
+        let stays = bench
+            .toast
+            .as_ref()
+            .is_none_or(|t| t.kind == ToastKind::Error);
         bench.toast_timer = if stays {
             Task::ready(())
         } else {
@@ -2305,7 +2316,18 @@ impl Shell {
                 });
             })
         };
-        cx.notify();
+    }
+
+    /// The toast is paused while the pointer is on it: a slow reader or a
+    /// pointer on its way to Undo never sees it go.
+    fn hover_toast(&mut self, hovered: bool, cx: &mut Context<Self>) {
+        if hovered {
+            if let Some(bench) = self.bench() {
+                bench.toast_timer = Task::ready(());
+            }
+        } else {
+            self.arm_toast_timer(cx);
+        }
     }
 
     /// `Mod+Z`: the newest undo step of the window, a layout change
@@ -3478,6 +3500,10 @@ impl Shell {
         };
         Some(
             div()
+                .id("toast")
+                .on_hover(
+                    cx.listener(|shell, hovered: &bool, _, cx| shell.hover_toast(*hovered, cx)),
+                )
                 .absolute()
                 .left(px(16.))
                 .bottom(px(16.))
@@ -3546,6 +3572,7 @@ impl Shell {
         let element = div()
             .id("layout-toast")
             .occlude()
+            .on_hover(cx.listener(|shell, hovered: &bool, _, cx| shell.hover_toast(*hovered, cx)))
             .absolute()
             .left(px(16.))
             .bottom(px(16.))
