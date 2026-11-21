@@ -1,26 +1,24 @@
 # Acta app icon
 
-The mark is a capital A whose crossbar is a ledger rule in the accent colour. The rule touches the left leg, stops short of the right leg, and continues past it off the edge of the plate, like a line leaving the page. The plate is `#42413D`, the A is `#E4E3DF` and the rule is verdigris `#72B5A2` (the dark-theme `accent` of DESIGN.md).
+The icon is Companion: an ivory planet with a thin brass ring tilted around it, and a small verdigris moon beyond the ring at the upper right, on a dark ink plate. The ring passes in front of the planet's lower half and behind its upper half, and casts a thin shadow on it. Nothing touches anything else. The verdigris is the dark-theme `accent` of DESIGN.md (`#72B5A2`).
 
 ## Files
 
 | File | Used by |
 |---|---|
-| `acta.svg` | Master for Windows and Linux: a 64-unit grid, full-bleed plate with radius 14. |
-| `acta-macos.svg` | macOS master: an 824 px continuous-curvature plate (corner r = 185.4) centred in a 1024 canvas, with no shadow. |
-| `acta-symbolic.svg` | Monochrome version: a `currentColor` plate with the A and the rule knocked out. |
 | `acta.ico` | Windows executable icon (`crates/acta-app/build.rs`, `scripts/package.ps1`). Sizes 16, 20, 24, 32, 40, 48, 64 and 256; the 256 entry is PNG-compressed. |
-| `acta.icns` | macOS bundle icon (`scripts/package.sh`). The full iconset from 16@1x to 512@2x, stored as PNG entries. |
+| `acta.icns` | macOS bundle icon (`scripts/package.sh`). The full iconset from 16@1x to 512@2x, as PNG entries, on Apple's 824 px continuous-curvature plate inside a 1024 canvas, with no shadow. |
 | `acta.png` | 512 x 512. Used for the Linux desktop entry (`desktop_entry.rs`), the Velopack `--icon` and the updater window's app mark (`icons.rs`). |
-| `hicolor/` | Freedesktop icon theme tree: 16, 22, 24, 32, 48, 64, 128 and 256 px, plus `scalable/apps/acta.svg` and `symbolic/apps/acta-symbolic.svg`. |
+| `acta-symbolic.svg` | Monochrome silhouette in `currentColor`: planet, ring (the front arc cut out of the planet, the back arc hidden behind it) and moon. Hand-written. |
+| `hicolor/` | Freedesktop icon theme tree: 16, 22, 24, 32, 48, 64, 128 and 256 px, plus `symbolic/apps/acta-symbolic.svg`. |
 
 Nothing installs the `hicolor/` tree yet: the AppImage desktop entry installs only the 512 px `acta.png`.
 
-The 16, 20, 22, 24 and 32 px bitmaps are hand-hinted from pixel tables, not downscaled: every glyph pixel is opaque, and the gaps on each side of the right leg are exactly 1 px. All other sizes are renders of the vector masters.
+The bitmaps from 40 px up are reductions of one 1024 render. 16, 20, 22, 24 and 32 px are rendered separately from the same scene with a thicker ring (1 to 1.2 px) and a slightly larger moon, so the ring stays visible and the moon stays clear of it. Windows and Linux use a full-bleed superellipse plate (n = 5).
 
 ## Provenance and licence
 
-This is original work for Acta. The concept came from explorations made with FLUX.2 Klein 4B running locally. The final geometry was drawn by hand and is written out in `scripts/icon/build_icons.py`; no generated pixels are shipped. The icon is covered by the same terms as the rest of this repository.
+This is original work for Acta. It is rendered by a script, `scripts/icon/tracer.py`: analytic spheres and a swept tube, Lambert and specular shading, and procedural noise for the moon's mottling and the plate's grain. No generated or third-party pixels are shipped. The direction was chosen from explorations made with FLUX.2 Klein 4B running locally, but none of those images are used. The icon is covered by the same terms as the rest of this repository.
 
 ## Regenerating
 
@@ -32,4 +30,4 @@ python -m venv .venv-icon
 .venv-icon/Scripts/python scripts/icon/build_icons.py
 ```
 
-The script rewrites every file listed above. To change the mark, edit the paths and hint tables in the script, never the generated files.
+The output is deterministic. The scene (positions, sizes, colours, light) is the `SPEC` table in `tracer.py`, and the per-size adjustments are in `build_icons.py`. Edit those, never the generated files.
