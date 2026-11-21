@@ -158,6 +158,10 @@ jobs:
         with:
           key: ${{ matrix.channel }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Native Perl for OpenSSL (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: scripts/ci/windows-perl.ps1
       - name: cargo build --release
         run: cargo build --release --locked --target "$TARGET"
       # The packaging scripts put this directory into every package.
