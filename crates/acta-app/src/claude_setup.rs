@@ -91,10 +91,38 @@ pub fn check() -> Option<Check> {
     Check::parse(&run(&["setup", "--check", "--json"], CHECK_LIMIT)?)
 }
 
-/// "Set up Claude Code" / "Run setup again": `acta setup`, then the check.
-pub fn install() -> Option<Check> {
+/// "Set up Claude Code" / "Run setup again": `acta setup`, then the open
+/// project's attached folders through `acta link --attached` (read from
+/// the store: no path on a command line; idempotent, never reorders; turns
+/// Claude Code's own memory off there, ADR 0005), then the check.
+pub fn install(project: Option<String>) -> Option<Check> {
     run(&["setup", "--json"], SETUP_LIMIT)?;
+    if let Some(p) = project {
+        let _ = run(
+            &["link", "--attached", "--project", &p, "--add"],
+            CHECK_LIMIT,
+        );
+    }
     check()
+}
+
+/// `acta setup --files-only`: the plugin tree of this build, which the
+/// terminal loads with `--plugin-dir` (ADR 0008 amendment). Nothing in
+/// Claude Code changes. Run at launch, so an update refreshes it at once.
+pub fn write_plugin_files() -> bool {
+    run(&["setup", "--files-only", "--json"], CHECK_LIMIT)
+        .is_some_and(|out| out.contains("\"ok\":true"))
+}
+
+/// Where `acta setup` writes the plugin: `<data dir>/claude/plugins/acta`.
+pub fn plugin_dir() -> Option<PathBuf> {
+    Some(
+        crate::db::config()?
+            .data_dir
+            .join("claude")
+            .join("plugins")
+            .join("acta"),
+    )
 }
 
 /// "Remove from Claude Code": `acta setup --remove`, then the check.
@@ -168,9 +196,11 @@ pub fn stale(ago: Duration) -> bool {
 
 const FOCUS_THROTTLE: Duration = Duration::from_secs(30);
 
-/// "Set up Claude Code" / "Run setup again".
-pub fn run_install(cx: &mut gpui_kit::App) {
-    start(cx, install, true);
+/// "Set up Claude Code" / "Run setup again", confirmed: `project` is the
+/// open project, whose folders setup links.
+pub fn run_install(project: Option<acta_core::model::ProjectId>, cx: &mut gpui_kit::App) {
+    let project = project.map(|p| p.to_string());
+    start(cx, move || install(project), true);
 }
 
 /// "Remove from Claude Code".
@@ -178,7 +208,11 @@ pub fn run_remove(cx: &mut gpui_kit::App) {
     start(cx, remove, true);
 }
 
-fn start(cx: &mut gpui_kit::App, work: fn() -> Option<Check>, writes: bool) {
+fn start(
+    cx: &mut gpui_kit::App,
+    work: impl FnOnce() -> Option<Check> + Send + 'static,
+    writes: bool,
+) {
     let state = cx.default_global::<SetupState>();
     if state.busy && !writes {
         return;

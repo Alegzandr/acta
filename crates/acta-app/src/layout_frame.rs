@@ -442,7 +442,14 @@ fn finish(
     line: Option<Rect>,
     ctx: DropContext,
 ) -> Option<Zone> {
-    let (after, spot) = simulate(layout, dragged, target, ctx.close, TabId(u64::MAX))?;
+    let (after, spot) = simulate(
+        layout,
+        dragged,
+        target,
+        ctx.close,
+        TabId(u64::MAX),
+        ctx.body.w,
+    )?;
     let f = frame(&after, ctx.body.w, ctx.body.h);
     let preview = group_rect(&after, &f, ctx.body, spot.place, spot.group)?;
     Some(Zone {
@@ -452,8 +459,50 @@ fn finish(
     })
 }
 
-/// The layout after dropping `dragged` at `target`, and where it landed.
+/// The layout after dropping `dragged` at `target` in a window `width`
+/// wide, and where it landed. A drop or a move never lands out of sight:
+/// when the left sidebar it lands in would auto-hide, the right sidebar
+/// narrows to make room ([`fit_left`]); with no room even so, `None`.
 pub fn simulate(
+    layout: &Layout,
+    dragged: Dragged,
+    target: Target,
+    close: Option<TabId>,
+    new_page: TabId,
+    width: f32,
+) -> Option<(Layout, crate::layout::Spot)> {
+    let (mut after, spot) = place(layout, dragged, target, close, new_page)?;
+    if spot.place == Place::Side(Side::Left) && !fit_left(&mut after, width) {
+        return None;
+    }
+    Some((after, spot))
+}
+
+/// Whether the left sidebar, when shown, has room beside the page in a
+/// window `width` wide, the right sidebar narrowed (down to its minimum)
+/// to give it that room. Nothing changes when there is no room at all.
+pub fn fit_left(l: &mut Layout, width: f32) -> bool {
+    if !l.left.shown {
+        return true;
+    }
+    let left = sidebar_width(l, Side::Left, width);
+    let right = l.right.shown.then(|| sidebar_width(l, Side::Right, width));
+    if left + PAGE_MIN_W + right.unwrap_or(0.) <= width {
+        return true;
+    }
+    if right.is_none() {
+        return false;
+    }
+    let room = (width - PAGE_MIN_W - left).floor();
+    if room < side_min(l, Side::Right) {
+        return false;
+    }
+    l.right.size = room;
+    true
+}
+
+/// The layout after dropping `dragged` at `target`, room or not.
+pub fn place(
     layout: &Layout,
     dragged: Dragged,
     target: Target,
@@ -1173,7 +1222,8 @@ mod tests {
             close: Some(TabId(7)),
         };
         let zone = zone_at(&l, &regions, &[], inbox, ctx, 600., 10.).unwrap();
-        let (after, spot) = simulate(&l, inbox, zone.target, ctx.close, TabId(9)).unwrap();
+        let (after, spot) =
+            simulate(&l, inbox, zone.target, ctx.close, TabId(9), CTX.body.w).unwrap();
         assert!(
             after.locate(Tab::Page(TabId(7))).is_none(),
             "the open page closed"
@@ -1207,6 +1257,120 @@ mod tests {
         };
         let ctx = DropContext { body, close: None };
         assert_eq!(zone_at(&l, &[], &[strip], chat, ctx, 10., 100.), None);
+    }
+
+    /// Every view dropped on the left sidebar lands there, on screen,
+    /// exactly where previewed: its header, its centre, its edge, the
+    /// Projects group, its strip when hidden, with the right sidebar shown
+    /// (it narrows to make room) or hidden.
+    #[test]
+    fn the_left_sidebar_takes_drops_everywhere() {
+        use crate::layout::Tab;
+        let body = Rect::new(0., 0., 1440., 840.);
+        let ctx = DropContext { body, close: None };
+        let views = [
+            Dragged {
+                tab: Tab::View(ViewId::Chat),
+                as_view: None,
+            },
+            Dragged {
+                tab: Tab::View(ViewId::Terminal),
+                as_view: None,
+            },
+            Dragged {
+                tab: Tab::View(ViewId::AgentBrowser),
+                as_view: None,
+            },
+            Dragged {
+                tab: Tab::Page(P2),
+                as_view: Some(ViewId::Inbox),
+            },
+            Dragged {
+                tab: Tab::Page(P1),
+                as_view: Some(ViewId::Knowledge),
+            },
+        ];
+        for right_shown in [true, false] {
+            for left_shown in [true, false] {
+                let mut l = shown();
+                l.set_area_shown(Side::Right, right_shown);
+                l.set_area_shown(Side::Left, left_shown);
+                let f = frame(&l, body.w, body.h);
+                let page_x = f.left.unwrap_or(0.);
+                let page = Rect::new(page_x, 0., f.page_w, 840.);
+                let strips = strips(&l, body, page);
+                let mut regions = regions(&l);
+                if !left_shown {
+                    regions.retain(|r| r.place != Place::Side(Side::Left));
+                }
+                let points: &[(f32, f32)] = if left_shown {
+                    // Header, centre, near the bottom and top edges.
+                    &[(100., 10.), (130., 400.), (130., 820.), (130., 40.)]
+                } else {
+                    &[(10., 400.), (2., 10.)]
+                };
+                for dragged in views {
+                    for &(x, y) in points {
+                        let case = format!(
+                            "{:?} at {x}, {y}, left {left_shown}, right {right_shown}",
+                            dragged.as_view.map(Tab::View).unwrap_or(dragged.tab)
+                        );
+                        let zone = zone_at(&l, &regions, &strips, dragged, ctx, x, y)
+                            .unwrap_or_else(|| panic!("no zone: {case}"));
+                        let (after, spot) =
+                            simulate(&l, dragged, zone.target, None, TabId(99), body.w)
+                                .unwrap_or_else(|| panic!("no drop: {case}"));
+                        assert_eq!(spot.place, Place::Side(Side::Left), "{case}");
+                        let tab = dragged.as_view.map(Tab::View).unwrap_or(dragged.tab);
+                        assert_eq!(zone.preview, landed(&after, body, tab), "{case}");
+                        let f = frame(&after, body.w, body.h);
+                        assert!(!f.left_auto_hidden, "{case}");
+                        let Tab::View(view) = tab else { unreachable!() };
+                        assert!(on_screen(&after, &f, Shown::default(), view), "{case}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_left_drop_with_no_room_even_beside_a_narrowed_right_sidebar_is_no_zone() {
+        use crate::layout::Tab;
+        // 1100: 400 for the chat + 420 for the page leaves 280 for the
+        // right sidebar, under its 400.
+        let body = Rect::new(0., 0., 1100., 840.);
+        let l = shown();
+        let chat = Dragged {
+            tab: Tab::View(ViewId::Chat),
+            as_view: None,
+        };
+        let target = Target::Area(Side::Left);
+        assert!(place(&l, chat, target, None, TabId(99)).is_some());
+        assert!(simulate(&l, chat, target, None, TabId(99), body.w).is_none());
+        // Without the right sidebar it fits.
+        let mut hidden = l.clone();
+        hidden.set_area_shown(Side::Right, false);
+        assert!(simulate(&hidden, chat, target, None, TabId(99), body.w).is_some());
+    }
+
+    #[test]
+    fn fit_left_narrows_the_right_sidebar_to_its_minimum_at_most() {
+        let mut l = shown();
+        l.move_tab(
+            crate::layout::Tab::View(ViewId::Chat),
+            Target::Area(Side::Left),
+        )
+        .unwrap();
+        assert!(frame(&l, 1440., 840.).left_auto_hidden);
+        let mut fitted = l.clone();
+        assert!(fit_left(&mut fitted, 1440.));
+        assert_eq!(fitted.right.size, 620.);
+        let f = frame(&fitted, 1440., 840.);
+        assert_eq!((f.left, f.right, f.page_w), (Some(400.), Some(620.), 420.));
+        // No room: nothing changes.
+        let mut narrow = l.clone();
+        assert!(!fit_left(&mut narrow, 1100.));
+        assert_eq!(narrow, l);
     }
 
     #[test]

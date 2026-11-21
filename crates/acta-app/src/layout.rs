@@ -22,17 +22,20 @@ pub enum ViewId {
     Terminal,
     Chat,
     AgentBrowser,
+    /// The live Claude Code sessions (components-app.md 5).
+    Sessions,
 }
 
 impl ViewId {
     /// In the order of 4.8.3 (the titlebar's view toggles).
-    pub const ALL: [ViewId; 6] = [
+    pub const ALL: [ViewId; 7] = [
         ViewId::Projects,
         ViewId::Inbox,
         ViewId::Knowledge,
         ViewId::Terminal,
         ViewId::Chat,
         ViewId::AgentBrowser,
+        ViewId::Sessions,
     ];
 
     pub fn key(self) -> &'static str {
@@ -43,6 +46,7 @@ impl ViewId {
             ViewId::Terminal => "terminal",
             ViewId::Chat => "chat",
             ViewId::AgentBrowser => "agent_browser",
+            ViewId::Sessions => "sessions",
         }
     }
 
@@ -57,6 +61,7 @@ impl ViewId {
             ViewId::Inbox | ViewId::Knowledge => (280., 200.),
             ViewId::Terminal => (400., 160.),
             ViewId::Chat | ViewId::AgentBrowser => (400., 240.),
+            ViewId::Sessions => (280., 120.),
         }
     }
 
@@ -691,16 +696,18 @@ impl Layout {
     /// The Inbox or Knowledge page `tab` dragged out of the page area: the
     /// page closes and the view lands at `target` (moved there if it was
     /// already shown elsewhere: a view is never duplicated). The last page
-    /// of the window never leaves (4.8.8).
+    /// of the window never leaves (4.8.8): it stays open and the view
+    /// lands beside it, as the palette's move does.
     pub fn page_to_view(
         &mut self,
         tab: TabId,
         view: ViewId,
         target: Target,
     ) -> Result<Spot, Refused> {
-        if !view.is_page_kind() || self.page_tabs().len() <= 1 {
+        if !view.is_page_kind() {
             return Err(Refused::Invalid);
         }
+        let last_page = self.page_tabs().len() <= 1;
         let place = match target {
             Target::Into { place, .. } | Target::Split { place, .. } => place,
             Target::Area(side) => Place::Side(side),
@@ -714,7 +721,9 @@ impl Layout {
         let from = self.locate(Tab::View(view));
         self.check(target, from)?;
         let mut next = self.clone();
-        next.take(page_spot);
+        if !last_page {
+            next.take(page_spot);
+        }
         if let Some(from) = next.locate(Tab::View(view)) {
             next.take(from);
         }
@@ -1058,6 +1067,8 @@ fn default_spot(view: ViewId) -> Option<Spot> {
         ViewId::Terminal => (Place::Side(Side::Right), 0),
         ViewId::Chat => (Place::Side(Side::Right), 1),
         ViewId::AgentBrowser => (Place::Side(Side::Right), 2),
+        // Hidden on a new install; shown in the bottom panel (4.8.13).
+        ViewId::Sessions => (Place::Side(Side::Bottom), 0),
         ViewId::Inbox | ViewId::Knowledge => return None,
     };
     Some(Spot {
@@ -1678,10 +1689,14 @@ mod tests {
     #[test]
     fn the_last_page_never_leaves_or_closes() {
         let mut l = Layout::defaults(vec![P1], true);
-        assert_eq!(
-            l.page_to_view(P1, ViewId::Inbox, Target::Area(Side::Bottom)),
-            Err(Refused::Invalid)
-        );
+        // Moved out from its tab menu or by a drag, the last page stays
+        // open and its view lands where asked.
+        let spot = l
+            .page_to_view(P1, ViewId::Inbox, Target::Area(Side::Bottom))
+            .unwrap();
+        assert_eq!(spot.place, Place::Side(Side::Bottom));
+        assert_eq!(l.page_tabs(), [P1]);
+        assert!(l.is_visible(ViewId::Inbox));
         assert_eq!(l.close_page(P1), Err(Refused::Invalid));
         // A page never goes to a side area as a page.
         assert_eq!(
@@ -1908,10 +1923,11 @@ mod tests {
     #[test]
     fn hide_and_show_never_lose_a_view_whatever_the_order() {
         // Every view hidden and shown in several orders, with moves between.
-        let orders: [[ViewId; 6]; 3] = [
+        let orders: [[ViewId; 7]; 3] = [
             ViewId::ALL,
             [
                 ViewId::Chat,
+                ViewId::Sessions,
                 ViewId::AgentBrowser,
                 ViewId::Projects,
                 ViewId::Terminal,
@@ -1925,6 +1941,7 @@ mod tests {
                 ViewId::Projects,
                 ViewId::AgentBrowser,
                 ViewId::Inbox,
+                ViewId::Sessions,
             ],
         ];
         for order in orders {

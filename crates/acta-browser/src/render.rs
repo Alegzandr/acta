@@ -490,7 +490,9 @@ pub fn fitting(lines: &[String], room: usize) -> usize {
 /// lines it holds.
 pub fn fenced(head: &str, lines: &[String], max: usize, tail_room: usize) -> (String, usize) {
     let fence = Fence::new();
-    let room = max.saturating_sub(head.len() + 1 + fence.cost() + tail_room);
+    // The head's newline and the open fence's are in `cost`; the close
+    // fence ends the text.
+    let room = max.saturating_sub(head.len() + fence.cost() + tail_room);
     let n = fitting(lines, room);
     let mut out = format!("{head}\n{}\n", fence.open());
     for l in &lines[..n] {

@@ -7,9 +7,7 @@
 
 use crate::open::Opener;
 use acta_core::agent::{Agent, Launch, PRE_COMPACT, Session, hook_json};
-use acta_core::link_index::LinkIndex;
 use acta_core::model::Author;
-use acta_core::paths::Os;
 use std::io::Read;
 use std::path::PathBuf;
 
@@ -46,11 +44,8 @@ pub fn run(event: Event, stdin: &str, opener: &Opener) -> Option<String> {
         session_id: input.session_id.or(env.session_id),
         ..env
     };
-    if !launch.has_env_binding() {
-        let index = LinkIndex::read(&opener.data_dir()?)?;
-        if !index.matches(Os::CURRENT, &launch.candidate_dirs()) {
-            return None;
-        }
+    if !launch.worth_opening(&opener.data_dir()?) {
+        return None;
     }
     match event {
         Event::PreCompact => Some(PRE_COMPACT.to_owned()),

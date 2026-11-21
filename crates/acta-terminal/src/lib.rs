@@ -22,8 +22,8 @@ pub mod url;
 pub mod view;
 
 pub use launch::{
-    ClaudeLaunch, Focus, LaunchError, LaunchSpec, launch_spec_for_claude,
-    launch_spec_for_claude_with,
+    ClaudeLaunch, ClaudeOptions, Conversation, Focus, LaunchError, LaunchSpec, claude_config_dir,
+    launch_spec_for_claude, transcript_exists,
 };
 pub use theme::TerminalTheme;
 pub use view::{TerminalEvent, TerminalView};

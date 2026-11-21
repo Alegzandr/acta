@@ -1176,6 +1176,7 @@ fn focus_is_saved_per_session_and_worktree_and_explicit_ids_do_not_move_it() {
         event: "clear".into(),
         session: Some("ghi".into()),
         agent: None,
+        detail: None,
     })
     .unwrap();
     let cleared = Launch {

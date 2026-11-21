@@ -169,6 +169,14 @@ pub fn clock(at: LocalTime) -> String {
     format!("{:02}:{:02}", at.hour, at.minute)
 }
 
+/// "Mon", "lun.": a day of the coming week (plan usage resets).
+pub fn weekday_short(locale: Locale, at: LocalTime) -> &'static str {
+    match locale {
+        Locale::En => WEEKDAYS_EN[at.weekday()],
+        Locale::Fr => WEEKDAYS_FR[at.weekday()],
+    }
+}
+
 /// The day of the month; "1er" for the first in French (10.2).
 fn day_of_month(locale: Locale, day: u8) -> String {
     match (locale, day) {

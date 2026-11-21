@@ -24,6 +24,9 @@ pub struct Launch {
     pub project: Option<String>,
     pub epic: Option<String>,
     pub topic: Option<String>,
+    /// `ACTA_LAUNCH`: the opaque token of the Acta terminal that started
+    /// this session, so the app can find its terminal (session presence).
+    pub token: Option<String>,
 }
 
 impl Launch {
@@ -38,12 +41,23 @@ impl Launch {
             project: var("ACTA_PROJECT"),
             epic: var("ACTA_EPIC"),
             topic: var("ACTA_TOPIC"),
+            token: var("ACTA_LAUNCH"),
         }
     }
 
     /// Whether the embedded terminal (or the user) pinned the binding.
     pub fn has_env_binding(&self) -> bool {
         self.project.is_some() || self.epic.is_some() || self.topic.is_some()
+    }
+
+    /// Whether a process of this session should open the database at all:
+    /// pinned by `ACTA_*`, or launched in a linked folder according to the
+    /// salted-hash pre-check file (ADR 0005, section 6). Reads that one
+    /// file, never the keychain, so unrelated repositories stay cheap.
+    pub fn worth_opening(&self, data_dir: &Path) -> bool {
+        self.has_env_binding()
+            || crate::link_index::LinkIndex::read(data_dir)
+                .is_some_and(|index| index.matches(Os::CURRENT, &self.candidate_dirs()))
     }
 
     /// Candidate directories in stored form, for the hooks' pre-check: the

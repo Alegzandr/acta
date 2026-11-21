@@ -124,7 +124,6 @@ pub enum Arg<'a> {
     Text(&'a str),
     /// A count: formatted for the locale, and it chooses the plural form
     /// when the message is chosen by this placeholder.
-    #[allow(dead_code, reason = "no screen shows a count yet")]
     Count(u64),
 }
 

@@ -52,6 +52,8 @@ pub enum PageEvent {
     /// The page learned which project it belongs to (a document opened by
     /// id): the active project follows it.
     Located(acta_core::model::ProjectId),
+    /// "Show terminal" on the Claude Code line: the project's terminal.
+    ShowTerminal(acta_core::model::ProjectId),
     /// Show the palette as a picker of these rows; the chosen one is
     /// handed to the page's callback.
     Pick(crate::palette::Picker, crate::palette::OnPick),
@@ -2650,6 +2652,85 @@ impl RecordPage {
 }
 
 /// The status a system event set, if it is a status change.
+impl RecordPage {
+    /// components-app.md 5, Claude Code sessions, Page line: "Claude Code
+    /// is working here · since 14:05 · last: WAL on", and "Show terminal"
+    /// when the session runs in Acta's terminal.
+    fn render_claude_line(
+        &self,
+        locale: Locale,
+        t: &Tokens,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let live = crate::sessions::live(cx);
+        let here = crate::sessions::here(live, self.owner)?;
+        let on: Vec<_> = live
+            .iter()
+            .filter(|s| crate::sessions::place(s) == self.owner)
+            .collect();
+        let first = on.iter().min_by_key(|s| s.started_at)?;
+        let tail = if here.count == 1 {
+            crate::sessions::detail(locale, first, false)
+        } else {
+            crate::sessions::since(locale, first.started_at)
+        };
+        let terminals = cx
+            .try_global::<crate::sessions_view::TerminalTokens>()
+            .map(|g| g.0.clone())
+            .unwrap_or_default();
+        let in_acta = on.iter().find_map(|s| {
+            let token = s.launch.as_deref()?;
+            terminals.iter().find(|(t, _)| t == token).map(|(_, p)| *p)
+        });
+        Some(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(8.))
+                .mt(px(8.))
+                .min_w_0()
+                .child(icon(
+                    Icon::Bot,
+                    14.,
+                    crate::sessions::state_color(here.state, t),
+                ))
+                .child(
+                    type_scale::SMALL
+                        .el()
+                        .min_w_0()
+                        .truncate()
+                        .text_color(t.text_secondary)
+                        .child(crate::sessions::here_text(locale, here))
+                        .child(
+                            type_scale::SMALL
+                                .el()
+                                .text_color(t.text_tertiary)
+                                .child(format!(" \u{b7} {tail}")),
+                        ),
+                )
+                .when_some(in_acta, |this, project| {
+                    this.child(
+                        ui::button(
+                            "claude-show-terminal",
+                            text(locale, Key::SessionsShowTerminal),
+                            Variant::Ghost,
+                            false,
+                            t,
+                        )
+                        .h(px(24.))
+                        .on_click(
+                            cx.listener(move |_, _, _, cx| {
+                                cx.emit(PageEvent::ShowTerminal(project))
+                            }),
+                        ),
+                    )
+                })
+                .into_any_element(),
+        )
+    }
+}
+
 fn event_status(entry: &Entry) -> Option<Status> {
     entry
         .event
@@ -2839,7 +2920,8 @@ impl Render for RecordPage {
         if let Some(data) = self.data.clone() {
             column = column
                 .child(self.render_title(&data, &t, cx))
-                .child(self.render_properties(&data, locale, &t, cx));
+                .child(self.render_properties(&data, locale, &t, cx))
+                .children(self.render_claude_line(locale, &t, cx));
             if self.topic().is_some() {
                 column = column.child(self.render_state(&data, locale, &t, cx));
             }

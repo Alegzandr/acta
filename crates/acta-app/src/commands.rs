@@ -77,6 +77,19 @@ pub enum Command {
     TextSize(crate::type_scale::TextSize),
     ReadingWidth(crate::ui::ReadingWidth),
     Language(Locale),
+    /// The Claude Code settings (components-app.md 5): each one's value.
+    Claude(ClaudeSetting, bool),
+}
+
+/// The Claude Code settings the palette can set.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ClaudeSetting {
+    /// Continue each page's last conversation.
+    Resume,
+    /// Flash the taskbar when a session waits (Windows).
+    Flash,
+    /// Plan usage in the status bar.
+    Usage,
 }
 
 /// Where a view is, for its palette commands (4.8.7).
@@ -259,6 +272,18 @@ impl Command {
         out.extend(crate::type_scale::TextSize::ALL.map(Command::TextSize));
         out.extend(crate::ui::ReadingWidth::ALL.map(Command::ReadingWidth));
         out.extend([Command::Language(Locale::En), Command::Language(Locale::Fr)]);
+        for setting in [ClaudeSetting::Resume, ClaudeSetting::Usage] {
+            out.extend([
+                Command::Claude(setting, true),
+                Command::Claude(setting, false),
+            ]);
+        }
+        if cfg!(windows) {
+            out.extend([
+                Command::Claude(ClaudeSetting::Flash, true),
+                Command::Claude(ClaudeSetting::Flash, false),
+            ]);
+        }
         out
     }
 
@@ -330,6 +355,12 @@ impl Command {
             Command::Snapshot => Key::CmdSnapshot,
             Command::Settings => Key::CmdSettings,
             Command::Shortcuts => Key::CmdShortcuts,
+            Command::Claude(ClaudeSetting::Resume, true) => Key::CmdResumeOn,
+            Command::Claude(ClaudeSetting::Resume, false) => Key::CmdResumeOff,
+            Command::Claude(ClaudeSetting::Flash, true) => Key::CmdFlashOn,
+            Command::Claude(ClaudeSetting::Flash, false) => Key::CmdFlashOff,
+            Command::Claude(ClaudeSetting::Usage, true) => Key::CmdUsageOn,
+            Command::Claude(ClaudeSetting::Usage, false) => Key::CmdUsageOff,
             Command::CloseTab => Key::TabClose,
             Command::CloseOtherTabs => Key::TabCloseOthers,
             Command::ReopenTab => Key::TabReopen,

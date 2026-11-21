@@ -42,6 +42,8 @@ mod preferences;
 mod record;
 mod record_page;
 mod route;
+mod sessions;
+mod sessions_view;
 mod settings;
 mod settings_page;
 mod shell;
@@ -61,6 +63,8 @@ mod update;
 mod update_source;
 mod updater_window;
 mod user_path;
+#[cfg(windows)]
+mod webview_build;
 mod when;
 mod workspace;
 
@@ -110,6 +114,8 @@ impl Options {
 }
 
 fn main() {
+    // SAFETY: first thing in `main`, before any thread exists.
+    unsafe { acta_terminal::launch::scrub_claude_session() };
     let launched = Instant::now();
     log::rotate();
     let restarted_by_updater = velopack_bootstrap();

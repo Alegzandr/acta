@@ -1723,6 +1723,11 @@ impl Agent<'_> {
                 ("SessionStart", self.session_briefing(event == "compact"))
             }
             "subagent" | "subagentstart" => ("SubagentStart", self.subagent_note()),
+            // Presence events are the server's (agent::presence); they
+            // never put anything in the model's context.
+            e if super::presence::Event::parse(e, a.detail.as_deref()).is_some() => {
+                return Ok(String::new());
+            }
             _ => return Err("event must be clear, compact or subagent".into()),
         };
         Ok(match text {

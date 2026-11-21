@@ -84,7 +84,7 @@ dependencies = [
 
 [[package]]
 name = "acta-app"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "acta-browser",
  "acta-core",
@@ -110,7 +110,7 @@ dependencies = [
 
 [[package]]
 name = "acta-browser"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "getrandom 0.4.3",
  "hmac 0.12.1",
@@ -124,7 +124,7 @@ dependencies = [
 
 [[package]]
 name = "acta-cli"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "acta-browser",
  "acta-core",
@@ -135,11 +135,12 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
 name = "acta-core"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "getrandom 0.4.3",
  "hmac 0.12.1",
@@ -156,7 +157,7 @@ dependencies = [
 
 [[package]]
 name = "acta-terminal"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "alacritty_terminal",
  "async-channel",
