@@ -15,7 +15,7 @@ use gpui_kit::{
 use crate::i18n::{Key, percent, text};
 use crate::icons::APP_MARK;
 use crate::settings;
-use crate::theme::{self, RADIUS_LG, RADIUS_SM, Tokens};
+use crate::theme::{self, RADIUS_XL, RADIUS_XS, Tokens};
 use crate::type_scale;
 use crate::update::{LaunchState, Status};
 
@@ -82,7 +82,7 @@ impl Render for UpdaterWindow {
             .bg(t.bg_base)
             .border_1()
             .border_color(t.border_default)
-            .rounded(px(RADIUS_LG))
+            .rounded(px(RADIUS_XL))
             .text_color(t.text_primary)
             // Draggable anywhere: the system moves it on Windows; elsewhere
             // the app starts the move.
@@ -106,13 +106,13 @@ impl Render for UpdaterWindow {
                         .mt(px(12.))
                         .w_full()
                         .h(px(4.))
-                        .rounded(px(RADIUS_SM))
+                        .rounded(px(RADIUS_XS))
                         .bg(t.fill_selected)
                         .child(
                             div()
                                 .h_full()
                                 .w(relative(fraction))
-                                .rounded(px(RADIUS_SM))
+                                .rounded(px(RADIUS_XS))
                                 .bg(t.text_secondary),
                         ),
                 )

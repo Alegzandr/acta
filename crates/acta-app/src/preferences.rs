@@ -26,6 +26,8 @@ use acta_core::paths::{self, BaseDirs, Os};
 
 use crate::i18n::Locale;
 use crate::theme::ThemeSetting;
+use crate::type_scale::TextSize;
+use crate::ui::ReadingWidth;
 
 pub const FILE_NAME: &str = "preferences.json";
 /// The schema version this build reads and writes.
@@ -46,6 +48,10 @@ pub struct Preferences {
     pub sidebar_hidden: bool,
     /// Terminal text size, 11 to 18; `None` is the default 13.
     pub terminal_text_size: Option<u8>,
+    /// The size of reading text (typography.md 3.2) and the width of the
+    /// content column (3.3).
+    pub text_size: TextSize,
+    pub reading_width: ReadingWidth,
     /// The chat panel lives in the bottom dock (default: the right one).
     pub chat_bottom: bool,
     /// The user has opened claude.ai in the panel: showing it starts the
@@ -90,6 +96,10 @@ struct Stored {
     sidebar_hidden: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     terminal_text_size: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    text_size: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    reading_width: Option<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     chat_bottom: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -187,6 +197,40 @@ impl From<ThemeSetting> for StoredTheme {
     }
 }
 
+/// A stored Text size; anything unknown is the default.
+fn text_size_of(stored: Option<&str>) -> TextSize {
+    match stored {
+        Some("small") => TextSize::Small,
+        Some("large") => TextSize::Large,
+        _ => TextSize::Default,
+    }
+}
+
+fn text_size_name(size: TextSize) -> Option<String> {
+    match size {
+        TextSize::Small => Some("small".into()),
+        TextSize::Default => None,
+        TextSize::Large => Some("large".into()),
+    }
+}
+
+/// A stored Reading width; anything unknown is the default.
+fn reading_width_of(stored: Option<&str>) -> ReadingWidth {
+    match stored {
+        Some("narrow") => ReadingWidth::Narrow,
+        Some("wide") => ReadingWidth::Wide,
+        _ => ReadingWidth::Default,
+    }
+}
+
+fn reading_width_name(width: ReadingWidth) -> Option<String> {
+    match width {
+        ReadingWidth::Narrow => Some("narrow".into()),
+        ReadingWidth::Default => None,
+        ReadingWidth::Wide => Some("wide".into()),
+    }
+}
+
 /// Why the file was not used. Carries no text from the file or the system.
 #[derive(Debug, PartialEq, Eq)]
 pub enum LoadError {
@@ -230,6 +274,8 @@ pub fn parse(text: &str) -> Result<Preferences, LoadError> {
         terminal_text_size: stored
             .terminal_text_size
             .filter(|size| (11..=18).contains(size)),
+        text_size: text_size_of(stored.text_size.as_deref()),
+        reading_width: reading_width_of(stored.reading_width.as_deref()),
         chat_bottom: stored.chat_bottom,
         chat_started: stored.chat_started,
         chat_help_dismissed: stored.chat_help_dismissed,
@@ -259,6 +305,8 @@ pub fn serialize(prefs: &Preferences) -> String {
         closed_shown: prefs.closed_shown.clone(),
         sidebar_hidden: prefs.sidebar_hidden,
         terminal_text_size: prefs.terminal_text_size,
+        text_size: text_size_name(prefs.text_size),
+        reading_width: reading_width_name(prefs.reading_width),
         chat_bottom: prefs.chat_bottom,
         chat_started: prefs.chat_started,
         chat_help_dismissed: prefs.chat_help_dismissed,
@@ -471,6 +519,8 @@ mod tests {
             closed_shown: vec!["closed:E-3".into()],
             sidebar_hidden: true,
             terminal_text_size: Some(15),
+            text_size: TextSize::Large,
+            reading_width: ReadingWidth::Narrow,
             chat_bottom: true,
             chat_started: true,
             chat_help_dismissed: true,
@@ -546,6 +596,33 @@ mod tests {
         assert_eq!(prefs.page, None);
         assert_eq!(prefs.collapsed, ["P-1"]);
         assert_eq!(prefs.terminal_text_size, None);
+    }
+
+    #[test]
+    fn reading_settings_round_trip_and_unknown_values_are_the_default() {
+        let text = serialize(&Preferences {
+            text_size: TextSize::Small,
+            reading_width: ReadingWidth::Wide,
+            ..Preferences::default()
+        });
+        assert!(text.contains("\"text_size\": \"small\""));
+        assert!(text.contains("\"reading_width\": \"wide\""));
+        let prefs = parse(&text).unwrap();
+        assert_eq!(
+            (prefs.text_size, prefs.reading_width),
+            (TextSize::Small, ReadingWidth::Wide)
+        );
+        let odd = parse(r#"{"version":1,"text_size":"huge","reading_width":7}"#);
+        assert_eq!(
+            odd,
+            Err(LoadError::Malformed),
+            "a non-string is malformed like any wrong type"
+        );
+        let odd = parse(r#"{"version":1,"text_size":"huge","reading_width":"vast"}"#).unwrap();
+        assert_eq!(
+            (odd.text_size, odd.reading_width),
+            (TextSize::Default, ReadingWidth::Default)
+        );
     }
 
     #[test]

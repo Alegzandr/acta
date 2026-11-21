@@ -22,7 +22,7 @@ use crate::icons::{Icon, icon};
 use crate::kb_model;
 use crate::palette_model::{self, Group, Item, Target};
 use crate::settings;
-use crate::theme::{RADIUS_LG, RADIUS_SM, Tokens};
+use crate::theme::{RADIUS_SM, RADIUS_XL, Tokens};
 use crate::type_scale;
 use crate::ui;
 
@@ -462,7 +462,7 @@ impl Render for Palette {
             .bg(t.bg_overlay)
             .border_1()
             .border_color(t.border_default)
-            .rounded(px(RADIUS_LG))
+            .rounded(px(RADIUS_XL))
             .shadow(vec![t.shadow_overlay()])
             .capture_action(cx.listener(|palette, _: &MoveUp, _, cx| {
                 palette.step(false, cx);
@@ -508,8 +508,9 @@ impl Render for Palette {
                         type_scale::READING.el().flex_1().child(
                             Input::new(&self.input)
                                 .appearance(false)
-                                .text_size(px(type_scale::READING.size))
-                                .line_height(px(type_scale::READING.line)),
+                                .px(px(0.))
+                                .text_size(px(type_scale::READING.size()))
+                                .line_height(px(type_scale::READING.line())),
                         ),
                     ),
             )

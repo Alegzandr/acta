@@ -157,6 +157,7 @@ impl TrashPage {
             .gap(px(8.))
             .h(px(32.))
             .px(px(8.))
+            .mx(px(-8.))
             .rounded(px(RADIUS_SM))
             .hover({
                 let hover = t.fill_hover;

@@ -1,5 +1,7 @@
 //! Small pieces of docs/design/components.md 5 shared by several views.
 
+use std::sync::atomic::{AtomicU8, Ordering};
+
 use acta_core::model::{Author, Status};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
@@ -10,7 +12,7 @@ use gpui_kit::{
 
 use crate::i18n::Key;
 use crate::icons::{Icon, icon};
-use crate::theme::{RADIUS_MD, RADIUS_SM, Tokens};
+use crate::theme::{RADIUS_LG, RADIUS_MD, RADIUS_SM, RADIUS_XS, Tokens};
 use crate::type_scale;
 
 /// The keyboard focus ring of docs/design/components.md 5, drawn inside
@@ -117,7 +119,7 @@ pub fn kbd(keys: &[&str], tokens: &Tokens) -> Div {
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded(px(RADIUS_SM))
+                .rounded(px(RADIUS_XS))
                 .border_1()
                 .border_color(tokens.border_default)
                 .text_color(tokens.text_tertiary)
@@ -340,7 +342,7 @@ pub fn author_mark(author: Author, human_initial: &str, tokens: &Tokens) -> Div 
             .text_color(tokens.text_primary)
             .child(human_initial.to_owned()),
         Author::Claude => mark
-            .rounded(px(RADIUS_SM))
+            .rounded(px(RADIUS_XS))
             .border_1()
             .border_color(tokens.border_strong)
             .child(icon(Icon::ChevronRight, 12., tokens.text_secondary)),
@@ -356,21 +358,32 @@ pub fn notice(
     div()
         .flex()
         .flex_row()
-        .items_center()
+        .items_start()
         .gap(px(8.))
         .w_full()
         .px(px(12.))
-        .py(px(8.))
-        .rounded(px(RADIUS_MD))
+        .py(px(6.))
+        .rounded(px(RADIUS_LG))
         .bg(tokens.bg_raised)
         .border_1()
         .border_color(tokens.border_subtle)
-        .children(glyph.map(|(glyph, color)| icon(glyph, 16., color)))
+        // Icon, message and actions share a 28 first line, so a message
+        // that wraps keeps its icon on the first line and a one-line
+        // message stays level with the ghost actions.
+        .children(glyph.map(|(glyph, color)| {
+            div()
+                .flex_shrink_0()
+                .h(px(28.))
+                .flex()
+                .items_center()
+                .child(icon(glyph, 16., color))
+        }))
         .child(
             type_scale::UI
                 .el()
                 .flex_1()
                 .min_w_0()
+                .py(px(4.))
                 .text_color(tokens.text_primary)
                 .child(message.into()),
         )
@@ -429,14 +442,60 @@ pub fn segmented(tokens: &Tokens) -> Div {
         .overflow_hidden()
 }
 
-/// docs/design/typography.md 3.3: the content column is at most 680 wide.
-pub const COLUMN_MAX: f32 = 680.;
+/// The Reading width setting (Settings > Appearance): the widest the
+/// content column gets (docs/design/typography.md 3.3).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum ReadingWidth {
+    Narrow,
+    #[default]
+    Default,
+    Wide,
+}
 
-/// The content column: at most 680 wide, 32 above the title.
+impl ReadingWidth {
+    pub const ALL: [ReadingWidth; 3] = [
+        ReadingWidth::Narrow,
+        ReadingWidth::Default,
+        ReadingWidth::Wide,
+    ];
+
+    /// The column's maximum width: about 65, 75 and 100 characters of
+    /// reading text per line at the Default text size.
+    pub fn column_max(self) -> f32 {
+        match self {
+            ReadingWidth::Narrow => 480.,
+            ReadingWidth::Default => 560.,
+            ReadingWidth::Wide => 720.,
+        }
+    }
+}
+
+/// The setting in force, written by the settings module (see
+/// `type_scale::set_text_size` for why it is not a GPUI global).
+static READING_WIDTH: AtomicU8 = AtomicU8::new(1);
+
+pub fn set_reading_width(width: ReadingWidth) {
+    let n = ReadingWidth::ALL
+        .iter()
+        .position(|w| *w == width)
+        .unwrap_or(1);
+    READING_WIDTH.store(n as u8, Ordering::Relaxed);
+}
+
+pub fn reading_width() -> ReadingWidth {
+    ReadingWidth::ALL[(READING_WIDTH.load(Ordering::Relaxed) as usize).min(2)]
+}
+
+/// The content column's maximum width under the Reading width setting.
+pub fn column_max() -> f32 {
+    reading_width().column_max()
+}
+
+/// The content column: at most [`column_max`] wide, 32 above the title.
 pub fn column() -> Div {
     div()
         .w_full()
-        .max_w(px(COLUMN_MAX))
+        .max_w(px(column_max()))
         .pt(px(32.))
         .pb(px(48.))
         .flex()

@@ -22,7 +22,7 @@ All values are sRGB hex. Alpha tokens are composited by the renderer (GPUI `hsla
 | `border.subtle` | `#353533` | `#E8E6E1` | Pane dividers, hairlines, panel outlines (on sunken, base and raised) |
 | `border.default` | `#424240` | `#D9D7D1` | Overlay outlines and hairlines inside overlays, decision entry box, kbd hint |
 | `border.strong` | `#85847E` | `#8A8881` | Input and secondary-button outline, Claude Code author mark, scrollbar thumb |
-| `text.primary` | `#E4E3DF` | `#24231F` | Titles, body, values |
+| `text.primary` | `#E4E3DF` | `#302F2B` | Titles, body, values |
 | `text.secondary` | `#B2B1AB` | `#56544E` | Tree rows at rest, entry type, icons at rest, metadata on selected rows |
 | `text.tertiary` | `#9C9B94` | `#66645E` | Property labels, timestamps, counts, placeholders, breadcrumb, hints, status bar |
 | `text.disabled` | `#62615C` | `#A7A59F` | Disabled controls only (exempt from AA by definition) |
@@ -42,7 +42,7 @@ All values are sRGB hex. Alpha tokens are composited by the renderer (GPUI `hsla
 
 Elevation is tone, lightest on top in dark and in light: `sunken < base < raised <= overlay`. In light, `raised` and `overlay` are both white; an overlay is told apart by its outline and shadow, which it always has. A surface never sits on a surface more than one step lighter than itself except overlays.
 
-Why neutral greys: the surfaces are greys with a trace of warmth (blue one to three points under red), close to what the three references use and far from the earlier brown-blacks. Neutral chrome lets the only colours on screen, status glyphs, the accent and terminal output, read true; the trace of warmth keeps hours of reading from feeling cold. The light theme's page is one step off white (`#FBFAF8`) so that white inputs and panels can sit above it.
+Why neutral greys: the surfaces are greys with a trace of warmth (blue one to three points under red), close to what the three references use and far from the earlier brown-blacks. Neutral chrome lets the only colours on screen, status glyphs, the accent and terminal output, read true; the trace of warmth keeps hours of reading from feeling cold. The light theme's page is one step off white (`#FBFAF8`) so that white inputs and panels can sit above it. Body text is comfortable rather than maximal (2026-11-21, for an app read for hours): `text.primary` measures about 12.5:1 on the page in both themes (12.55 dark, 12.85 light), not the 15 to 17 of near-black on white, which tires and, in dark, halates.
 
 Why verdigris: the semantic colours (red, amber, green) are all warm, so a warm accent would collide with danger or warning on a focus ring next to an error. A grey-green copper patina stays calm on neutral greys, separates from all three semantics, and is neither the blue nor the purple of the three references, so nothing in Acta reads as borrowed.
 
@@ -50,7 +50,7 @@ Why verdigris: the semantic colours (red, amber, green) are all warm, so a warm 
 
 | Pair | Dark | Light | Requirement |
 |---|---|---|---|
-| `text.primary` on `bg.sunken` / `base` / `raised` / `overlay` | 13.42 / 12.55 / 11.34 / 10.30 | 14.17 / 15.08 / 15.73 / 15.73 | 4.5 |
+| `text.primary` on `bg.sunken` / `base` / `raised` / `overlay` | 13.42 / 12.55 / 11.34 / 10.30 | 12.08 / 12.85 / 13.40 / 13.40 | 4.5 |
 | `text.secondary` on same four | 8.02 / 7.50 / 6.77 / 6.15 | 6.82 / 7.26 / 7.57 / 7.57 | 4.5 |
 | `text.tertiary` on same four | 6.18 / 5.78 / 5.22 / 4.74 | 5.33 / 5.67 / 5.92 / 5.92 | 4.5 |
 | `accent` (link, glyph) on same four | 7.26 / 6.79 / 6.13 / 5.57 | 5.33 / 5.67 / 5.92 / 5.92 | 4.5 |
@@ -59,20 +59,20 @@ Why verdigris: the semantic colours (red, amber, green) are all warm, so a warm 
 | `success` on same four | 7.37 / 6.89 / 6.22 / 5.65 | 5.58 / 5.93 / 6.19 / 6.19 | 3.0 (glyph) |
 | `text.on-accent` on `accent` / `.hover` / `.pressed` | 7.10 / 8.47 / 5.48 | 5.67 / 7.20 / 9.06 | 4.5 |
 | `text.on-accent` on `danger` | 5.76 | 5.54 | 4.5 |
-| `text.primary` on `fill.selected` over `sunken` / `base` / `overlay` | 10.73 / 9.93 / 8.08 | 11.94 / 12.68 / 13.22 | 4.5 |
-| `text.secondary` on `fill.selected` over `sunken` / `base` / `overlay` | 6.41 / 5.93 / 4.83 | 5.75 / 6.11 / 6.36 | 4.5 |
-| `text.secondary` on `fill.hover` over `sunken` / `base` / `overlay` | 6.96 / 6.45 / 5.24 | 6.09 / 6.48 / 6.75 | 4.5 |
-| `text.tertiary` on `fill.hover` over `sunken` / `base` (tree counts, folder row label) | 5.36 / 4.97 | 4.76 / 5.06 | 4.5 |
-| `warning` glyph on `fill.hover` over `base` (folder not found) | 5.99 | 5.24 | 3.0 (glyph) |
-| `accent` glyph on `fill.selected` over `sunken` (Active topic selected in the tree) | 5.81 | 4.49 | 3.0 (glyph) |
-| `text.primary` on `accent.subtle` over `sunken` / `base` / `overlay` | 10.09 / 9.37 / 7.73 | 11.41 / 12.07 / 12.55 | 4.5 |
-| `text.primary` on `selection` over `base` | 6.99 | 9.78 | 4.5 |
+| `text.primary` on `fill.selected` over `sunken` / `base` / `overlay` | 10.73 / 9.93 / 8.08 | 10.28 / 10.91 / 11.37 | 4.5 |
+| `text.secondary` on `fill.selected` over `sunken` / `base` / `overlay` | 6.41 / 5.93 / 4.83 | 5.81 / 6.17 / 6.42 | 4.5 |
+| `text.secondary` on `fill.hover` over `sunken` / `base` / `overlay` | 6.96 / 6.45 / 5.24 | 6.14 / 6.52 / 6.79 | 4.5 |
+| `text.tertiary` on `fill.hover` over `sunken` / `base` (tree counts, folder row label) | 5.36 / 4.97 | 4.79 / 5.09 | 4.5 |
+| `warning` glyph on `fill.hover` over `base` (folder not found) | 5.99 | 5.27 | 3.0 (glyph) |
+| `accent` glyph on `fill.selected` over `sunken` (Active topic selected in the tree) | 5.81 | 4.54 | 3.0 (glyph) |
+| `text.primary` on `accent.subtle` over `sunken` / `base` / `overlay` | 10.09 / 9.37 / 7.73 | 9.72 / 10.28 / 10.69 | 4.5 |
+| `text.primary` on `selection` over `base` | 6.99 | 8.34 | 4.5 |
 | `border.strong` vs `sunken` / `base` / `raised` / `overlay` | 4.60 / 4.30 / 3.88 / 3.53 | 3.20 / 3.40 / 3.55 / 3.55 | 3.0 (control boundary) |
 | `focus.ring` vs `sunken` / `base` / `overlay` | 7.26 / 6.79 / 5.57 | 5.33 / 5.67 / 5.92 | 3.0 |
 | `#FFFFFF` on `caption.close.hover` | 5.66 | 5.66 | 4.5 |
 
 Rules that follow from the numbers:
-- `text.tertiary` is not allowed on `fill.selected` (3.73 over `bg.overlay` in dark, 4.48 over `bg.sunken` in light, with the blended fill rounded to 8 bits as the renderer does). On any selected row, in the tree, a table, the palette or a menu, metadata switches to `text.secondary`.
+- `text.tertiary` is not allowed on `fill.selected` (3.73 over `bg.overlay` in dark; 4.52 over `bg.sunken` in light, too close to the bar to rely on; the blended fill rounded to 8 bits as the renderer does). On any selected row, in the tree, a table, the palette or a menu, metadata switches to `text.secondary`.
 - Text on `accent.subtle` is always `text.primary`. Coloured or tertiary text on a tinted fill is not allowed (it measures 4.1 to 5.1).
 - `border.subtle` and `border.default` are separators (1.1 to 1.7 against their surface), never the only boundary of an interactive control. `border.subtle` nearly vanishes on `bg.overlay` (1.08 in dark), so hairlines inside overlays use `border.default`.
 - `text.disabled` (2.1 to 2.8) is used only with a disabled control, never for information.

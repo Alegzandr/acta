@@ -14,8 +14,6 @@ use crate::theme::Tokens;
 use crate::type_scale;
 use crate::ui::{self, Variant};
 
-pub use crate::ui::COLUMN_MAX;
-
 pub enum FirstRunEvent {
     ChooseFolder,
 }
@@ -72,7 +70,7 @@ impl Render for FirstRun {
                 // The column is centred; everything inside it is left-aligned.
                 div()
                     .w_full()
-                    .max_w(px(COLUMN_MAX))
+                    .max_w(px(crate::ui::column_max()))
                     .pt(px(96.))
                     .pb(px(48.))
                     .flex()

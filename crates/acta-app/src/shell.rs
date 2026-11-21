@@ -50,7 +50,7 @@ use crate::route::{History, Route};
 use crate::settings;
 use crate::settings_page::SettingsPage;
 use crate::terminal_dock::{DockEvent, Origin, TerminalDock};
-use crate::theme::{self, RADIUS_MD, RADIUS_SM, Tokens};
+use crate::theme::{self, RADIUS_LG, RADIUS_SM, Tokens};
 use crate::titlebar::{self, Crumb};
 use crate::trash_page::TrashPage;
 use crate::tree::{self, Folds, Row};
@@ -1560,6 +1560,8 @@ impl Shell {
             Command::CloseOtherTabs => self.close_other_tabs(cx),
             Command::ReopenTab => self.reopen_tab(window, cx),
             Command::Theme(setting) => settings::set_theme(setting, cx),
+            Command::TextSize(size) => settings::set_text_size(size, cx),
+            Command::ReadingWidth(width) => settings::set_reading_width(width, cx),
             Command::Language(locale) => settings::set_language(locale, cx),
         }
     }
@@ -2650,7 +2652,7 @@ impl Shell {
             .child(
                 div()
                     .w_full()
-                    .max_w(px(ui::COLUMN_MAX))
+                    .max_w(px(ui::column_max()))
                     .pt(px(96.))
                     .flex()
                     .flex_col()
@@ -2830,7 +2832,7 @@ impl Shell {
             .child(
                 div()
                     .w_full()
-                    .max_w(px(ui::COLUMN_MAX))
+                    .max_w(px(ui::column_max()))
                     .pt(px(96.))
                     .flex()
                     .flex_col()
@@ -2940,7 +2942,7 @@ impl Shell {
                 .bg(t.bg_overlay)
                 .border_1()
                 .border_color(t.border_default)
-                .rounded(px(RADIUS_MD))
+                .rounded(px(RADIUS_LG))
                 .shadow(vec![t.shadow_overlay()])
                 .children(glyph)
                 .child(
@@ -3362,7 +3364,7 @@ fn tree_row(
             project,
         } => el
             .child(chevron(*expanded, eid.to_string(), cx))
-            .child(title(type_scale::LABEL, name.clone(), rest))
+            .child(title(type_scale::UI_STRONG, name.clone(), rest))
             .child(plus(*project, Some(*eid), cx)),
         Row::Topic {
             title: name,
@@ -3374,15 +3376,18 @@ fn tree_row(
             } else {
                 t.text_tertiary
             };
-            el.child(ui::status_glyph(*status, 14., t)).child(title(
-                if selected {
-                    type_scale::UI_STRONG
-                } else {
-                    type_scale::UI
-                },
-                name.clone(),
-                color,
-            ))
+            // The 14 glyph sits in a 16 slot, so topic titles line up
+            // with the Inbox and Knowledge titles above them.
+            el.child(icon_slot(ui::status_glyph(*status, 14., t)))
+                .child(title(
+                    if selected {
+                        type_scale::UI_STRONG
+                    } else {
+                        type_scale::UI
+                    },
+                    name.clone(),
+                    color,
+                ))
         }
         Row::Closed {
             count: n,
@@ -3392,7 +3397,9 @@ fn tree_row(
         } => {
             let key = group.key();
             let _ = shown;
+            // Under the titles of its group, not under their glyphs.
             el.on_click(cx.listener(move |shell, _, _, cx| shell.toggle_fold(key.clone(), cx)))
+                .child(div().w(px(16.)).flex_shrink_0())
                 .child(type_scale::SMALL.el().text_color(t.text_tertiary).child(tr(
                     locale,
                     Key::TreeClosed,
@@ -3421,6 +3428,18 @@ fn tree_row(
             );
     }
     el.into_any_element()
+}
+
+/// A 16 slot centring a smaller glyph, so rows with 14 and 16 icons keep
+/// one title column.
+fn icon_slot(glyph: impl IntoElement) -> gpui_kit::Div {
+    div()
+        .size(px(16.))
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(glyph)
 }
 
 /// A pinned row of the sidebar (docs/design/components.md 5, list / tree row).

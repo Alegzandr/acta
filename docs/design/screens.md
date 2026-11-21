@@ -26,7 +26,7 @@ Widths are for the default 1440 x 900 window. Every screen exists in both themes
 |       (-) Links      |        | Rendering and input work on Windows. Resize still      |       |
 |       3 closed       |        | drops the last row; fix is in progress.                |       |
 |   > Notes            |        +--------------------------------------------------------+       |
-| > Atlas              |    24   bg.raised, border.subtle, radius.md, padding 16, type.reading   |
+| > Atlas              |    24   bg.raised, border.subtle, radius.lg, padding 16, type.reading   |
 | > Field notes        |        Description                                  <- type.label       |
 |                      |        Run Claude Code inside Acta, in the project directory, so        |
 |                      |        the tracker and the agent share one window.                      |
@@ -51,7 +51,7 @@ Widths are for the default 1440 x 900 window. Every screen exists in both themes
 +----------------------+-------------------------------------------------------------------------+
 | [p] Acta   (v) Claude Code: ready                                                   Acta 0.4.1 | 24  status bar
 +------------------------------------------------------------------------------------------------+
-  260 sidebar, bg.sunken        1180 page area, bg.base; content column 680 centred (250 each side)
+  260 sidebar, bg.sunken        1180 page area, bg.base; content column 560 centred (310 each side)
   rows 28, indent 16            [..] around a tree row = fill.selected; * = unread dot (accent, 6)
 ```
 
@@ -104,7 +104,7 @@ Annotations: the capture editor is focused when the inbox opens. Newest note fir
                     +---------------------------------------------------------+
                     | Enter open   Ctrl Enter open in new tab       Esc close | 28  footer, type.small
                     +---------------------------------------------------------+
-                      bg.overlay, border.default, radius.lg, shadow.overlay, no scrim
+                      bg.overlay, border.default, radius.xl, shadow.overlay, no scrim
 ```
 
 Annotations: empty query shows "Recent" (the last 5 topics) then the 5 most relevant commands for the current page. Group order is fixed (Topics, Knowledge, Commands, Projects) so results do not jump between keystrokes; within a group, ranking is match quality then recency. `Up` / `Down` wrap; `Tab` narrows to the group of the selected row (adds the scope chip); `Backspace` on an empty input removes the chip.
@@ -155,7 +155,7 @@ Annotations: the terminal is a tool window in the right dock (4.5). Its header n
 |                 4  3  Open the terminal          Ctrl `                                        |
 |                                                                                                |
 +------------------------------------------------------------------------------------------------+
-  content column 680 centred; everything left-aligned inside it; no logo, no illustration
+  content column 560 centred; everything left-aligned inside it; no logo, no illustration
 ```
 
 Annotations: the three steps are plain text rows in `text.secondary` (not a checklist to tick, not a wizard); they become available as soon as the project exists and disappear for good once the project has one topic. Choosing a folder creates the project named after the folder, attaches the folder as the project's primary working folder, and opens its inbox with the capture editor focused. Other empty states follow the same pattern at the top of their column: empty project ("No topics yet. Capture notes and let Claude Code file them, or start one yourself." [New topic]), empty epic, empty timeline, no search results.
@@ -215,7 +215,7 @@ Annotations: `[d]` is the `file-text` icon, `[m]` the `pin` icon; `[>]` last wri
 |                      |        Measure     view       1 ms                                      |
 |                      |        Reflow      grid       4 ms                                      |
 +----------------------+-------------------------------------------------------------------------+
-  260                           column 680 centred; nothing in the margins; no outline column
+  260                           column 560 centred; nothing in the margins; no outline column
 ```
 
 Annotations: the tree keeps the owning topic selected. Edit turns this same page into the editor (title, summary and body become editable in place; a 44 Save bar appears at the bottom of the pane). History replaces everything under the rule with the revision list and the selected version. `Alt+Left` returns to the topic at its previous scroll position.
@@ -241,7 +241,7 @@ Annotations: the tree keeps the owning topic selected. Edit turns this same page
             | Show what changes                                          |  ghost
          24 |                                        [Cancel]  [Import]  |
             +------------------------------------------------------------+
-              520, bg.overlay, radius.lg, padding 24, over scrim; focus starts on Cancel
+              520, bg.overlay, radius.xl, padding 24, over scrim; focus starts on Cancel
 ```
 
 ### 8.9 Key-loss recovery
@@ -261,7 +261,7 @@ Annotations: the tree keeps the owning topic selected. Edit turns this same page
 |                    start empty; the file is kept as acta.unreadable-2026-11-20-091200.db       |
 |                 8  Start empty                                       <- ghost                  |
 +------------------------------------------------------------------------------------------------+
-  column 680 centred, left-aligned; no sidebar, no icon, no red; keychain name per platform
+  column 560 centred, left-aligned; no sidebar, no icon, no red; keychain name per platform
 ```
 
 Annotations: the keychain is named as the platform names it (Windows Credential Manager, macOS Keychain, the Secret Service keyring; the `keychain.*` strings, whose French values carry their article). "Import an export..." leads to the normal import preview, where every row is Created. The sentence about what cannot be done is stated once, plainly, and is not softened.
@@ -290,7 +290,7 @@ Annotations: the keychain is named as the platform names it (Windows Credential 
 |                      |               Written by Claude Code Mon 16:20                          |
 |                      |               [Edit] [History] [Move] [Delete]                          |
 +----------------------+-------------------------------------------------------------------------+
-  260; Knowledge row selected     column 680 centred; groups widest level first; rows as in 8.6
+  260; Knowledge row selected     column 560 centred; groups widest level first; rows as in 8.6
 ```
 
 Annotations: the view with two filters set (kind and author). Set filters show their value in `text.primary` weight 600. Group names link to the project, epic or topic. A memory unfolds in place, so the human can read, correct, move or delete what the agent recorded without leaving the list; a document row opens 8.7.

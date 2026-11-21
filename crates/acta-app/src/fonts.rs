@@ -14,15 +14,23 @@ macro_rules! font {
 /// Register the bundled families. A failure is logged and the platform UI
 /// font takes over: the window must open regardless.
 pub fn register(cx: &App) {
-    let fonts = vec![
-        font!("inter/Inter-Regular.ttf"),
-        font!("inter/Inter-Italic.ttf"),
-        font!("inter/Inter-SemiBold.ttf"),
-        font!("inter/Inter-SemiBoldItalic.ttf"),
+    #[allow(unused_mut)]
+    let mut fonts = vec![
         font!("jetbrains-mono-nl/JetBrainsMonoNL-Regular.ttf"),
         font!("jetbrains-mono-nl/JetBrainsMonoNL-Italic.ttf"),
         font!("jetbrains-mono-nl/JetBrainsMonoNL-Bold.ttf"),
     ];
+    // The sans is the platform UI face on Windows and macOS (theme::FONT_SANS);
+    // Inter is bundled only where it is used.
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        fonts.extend([
+            font!("inter/Inter-Regular.ttf"),
+            font!("inter/Inter-Italic.ttf"),
+            font!("inter/Inter-SemiBold.ttf"),
+            font!("inter/Inter-SemiBoldItalic.ttf"),
+        ]);
+    }
     if let Err(err) = cx.text_system().add_fonts(fonts) {
         crate::log::line(&format!("fonts: could not register bundled fonts: {err}"));
     }

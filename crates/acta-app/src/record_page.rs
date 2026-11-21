@@ -34,7 +34,7 @@ use crate::record::{self, EntryFilterKind, Loaded};
 use crate::route::Route;
 use crate::settings;
 use crate::table::{self, Column};
-use crate::theme::{RADIUS_MD, RADIUS_SM, Tokens};
+use crate::theme::{RADIUS_LG, RADIUS_SM, RADIUS_XS, Tokens};
 use crate::type_scale;
 use crate::ui::{self, Variant};
 use crate::when;
@@ -962,7 +962,7 @@ impl RecordPage {
                 .on_action(
                     cx.listener(|page, _: &Escape, window, cx| page.cancel_title(window, cx)),
                 )
-                .child(Input::new(state).appearance(false))
+                .child(Input::new(state).appearance(false).px(px(0.)))
                 .into_any_element();
         }
         type_scale::TITLE
@@ -1605,7 +1605,7 @@ impl RecordPage {
             .gap(px(8.))
             .mt(px(24.))
             .p(px(16.))
-            .rounded(px(RADIUS_MD))
+            .rounded(px(RADIUS_LG))
             .bg(t.bg_raised)
             .border_1()
             .border_color(t.border_subtle)
@@ -1655,13 +1655,19 @@ impl RecordPage {
             .id("description")
             .flex()
             .flex_col()
-            .gap(px(8.))
-            .mt(px(24.))
+            .gap(px(4.))
+            .mt(px(32.))
             .when(self.description_edit.is_none(), |this| {
                 this.cursor_text()
                     .on_click(cx.listener(|page, _, window, cx| page.open_editor(true, window, cx)))
             })
-            .child(ui::label(text(locale, Key::SectionDescription), t))
+            .child(
+                div()
+                    .h(px(28.))
+                    .flex()
+                    .items_center()
+                    .child(ui::label(text(locale, Key::SectionDescription), t)),
+            )
             .child(body)
             .into_any_element()
     }
@@ -1685,6 +1691,7 @@ impl RecordPage {
             .gap(px(8.))
             .h(px(32.))
             .px(px(8.))
+            .mx(px(-8.))
             .rounded(px(RADIUS_SM))
             .hover({
                 let hover = t.fill_hover;
@@ -1973,7 +1980,7 @@ impl RecordPage {
             })
             .collect::<Vec<_>>();
         let composer = self.render_composer(locale, t, cx);
-        let mut list = div().flex().flex_col().gap(px(24.)).mt(px(24.));
+        let mut list = div().flex().flex_col().gap(px(32.)).mt(px(32.));
         let human = when::initial(&when::human_name(locale));
         // System events other than status changes have no line in the
         // catalogue yet (docs/design/data.md 11, request 10): not shown.
@@ -2050,18 +2057,18 @@ impl RecordPage {
         div()
             .flex()
             .flex_col()
-            .rounded(px(RADIUS_MD))
+            .rounded(px(RADIUS_LG))
             .bg(t.bg_raised)
             .border_1()
             .border_color(t.border_strong)
             .px(px(16.))
             .py(px(12.))
             .child(
-                type_scale::READING.el().child(
+                type_scale::READING.el().mx(px(-10.)).my(px(-8.)).child(
                     Textarea::new(&self.composer)
                         .appearance(false)
-                        .text_size(px(type_scale::READING.size))
-                        .line_height(px(type_scale::READING.line)),
+                        .text_size(px(type_scale::READING.size()))
+                        .line_height(px(type_scale::READING.line())),
                 ),
             )
             .when(self.composer_open, |this| {
@@ -2243,15 +2250,19 @@ impl RecordPage {
                     cx.stop_propagation();
                 }
             }))
-            .rounded(px(RADIUS_MD))
+            .rounded(px(RADIUS_LG))
             .group(SharedString::from(format!("entry-{index}")))
             .flex()
             .flex_row()
             .gap(px(12.))
+            // The box hangs into the gutter by its padding and border, so
+            // its author mark and text stay in the same columns as every
+            // other entry's.
             .when(decision, |this| {
                 this.px(px(16.))
+                    .mx(px(-17.))
                     .py(px(12.))
-                    .rounded(px(RADIUS_MD))
+                    .rounded(px(RADIUS_LG))
                     .border_1()
                     .border_color(t.border_default)
             })
@@ -2379,6 +2390,7 @@ impl RecordPage {
             .gap(px(8.))
             .h(px(28.))
             .px(px(8.))
+            .mx(px(-8.))
             .mt(px(8.))
             .text_color(t.text_tertiary)
             .border_b_1()
@@ -2431,6 +2443,7 @@ impl RecordPage {
                 .gap(px(8.))
                 .h(px(32.))
                 .px(px(8.))
+                .mx(px(-8.))
                 .rounded(px(RADIUS_SM))
                 .hover({
                     let hover = t.fill_hover;
@@ -2498,6 +2511,7 @@ impl RecordPage {
                     .justify_between()
                     .h(px(28.))
                     .px(px(8.))
+                    .mx(px(-8.))
                     .mt(px(8.))
                     .child(ui::label(name, t))
                     .child(
@@ -2749,13 +2763,13 @@ fn progress(data: &Loaded, locale: Locale, t: &Tokens) -> AnyElement {
             div()
                 .w(px(120.))
                 .h(px(4.))
-                .rounded(px(RADIUS_SM))
+                .rounded(px(RADIUS_XS))
                 .bg(t.fill_selected)
                 .child(
                     div()
                         .h_full()
                         .w(px(120. * fraction))
-                        .rounded(px(RADIUS_SM))
+                        .rounded(px(RADIUS_XS))
                         .bg(t.text_secondary),
                 ),
         )
@@ -2782,7 +2796,7 @@ fn checkbox(checked: bool, t: &Tokens) -> gpui_kit::Div {
         .flex()
         .items_center()
         .justify_center()
-        .rounded(px(RADIUS_SM))
+        .rounded(px(RADIUS_XS))
         .when(checked, |this| {
             this.bg(t.accent)
                 .child(icon(Icon::Check, 12., t.text_on_accent))
@@ -2809,7 +2823,7 @@ fn editor_box(
     div()
         .flex()
         .flex_col()
-        .rounded(px(RADIUS_MD))
+        .rounded(px(RADIUS_LG))
         .bg(t.bg_raised)
         .border_2()
         .border_color(t.focus_ring)
@@ -2817,11 +2831,11 @@ fn editor_box(
         .py(px(12.))
         .on_action(cx.listener(|page, _: &Escape, window, cx| page.cancel_editors(window, cx)))
         .child(
-            type_scale::READING.el().child(
+            type_scale::READING.el().mx(px(-10.)).my(px(-8.)).child(
                 Textarea::new(editor)
                     .appearance(false)
-                    .text_size(px(type_scale::READING.size))
-                    .line_height(px(type_scale::READING.line)),
+                    .text_size(px(type_scale::READING.size()))
+                    .line_height(px(type_scale::READING.line())),
             ),
         )
         .child(

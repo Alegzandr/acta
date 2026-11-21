@@ -13,12 +13,27 @@
 use gpui_kit::component::{Theme, ThemeMode};
 use gpui_kit::{App, BoxShadow, Global, Hsla, WindowAppearance, point, px, rgb};
 
+/// The sans of docs/design/typography.md 3.1: the platform's own UI face
+/// where it renders best, the bundled Inter elsewhere. On Windows 10, which
+/// lacks Segoe UI Variable, GPUI falls back to Segoe UI, metric-compatible.
+#[cfg(target_os = "windows")]
+pub const FONT_SANS: &str = "Segoe UI Variable Text";
+#[cfg(target_os = "macos")]
+pub const FONT_SANS: &str = ".SystemUIFont";
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 pub const FONT_SANS: &str = "Inter";
 pub const FONT_MONO: &str = "JetBrains Mono NL";
 
-pub const RADIUS_SM: f32 = 4.;
-pub const RADIUS_MD: f32 = 6.;
-pub const RADIUS_LG: f32 = 8.;
+/// docs/design/layout.md 4.1, radii. `xs` for the small marks (kbd, inline
+/// code, checkbox, the Claude Code mark), `sm` for controls and rows, `md`
+/// for tooltips and code blocks, `lg` for panels, cards, menus and toasts,
+/// `xl` for the palette and dialogs. A row inside a padded container uses
+/// the container's radius minus its padding, so the corners stay concentric.
+pub const RADIUS_XS: f32 = 4.;
+pub const RADIUS_SM: f32 = 6.;
+pub const RADIUS_MD: f32 = 8.;
+pub const RADIUS_LG: f32 = 10.;
+pub const RADIUS_XL: f32 = 12.;
 
 /// Every colour token of docs/design/color.md 2.1. Field names are the token names with
 /// `.` and `-` replaced by `_`.
@@ -96,7 +111,7 @@ impl Tokens {
         Self::from_palette(&Palette {
             bg: [0xF4F3F0, 0xFBFAF8, 0xFFFFFF, 0xFFFFFF],
             border: [0xE8E6E1, 0xD9D7D1, 0x8A8881],
-            text: [0x24231F, 0x56544E, 0x66645E, 0xA7A59F],
+            text: [0x302F2B, 0x56544E, 0x66645E, 0xA7A59F],
             accent: [0x2B6F61, 0x235E52, 0x1C4E44],
             text_on_accent: 0xFBFAF8,
             danger: 0xAD4337,
@@ -293,7 +308,7 @@ fn install(mode: Mode, cx: &mut App) {
     Theme::change(theme_mode, None, cx);
     Theme::update(cx, |theme| {
         theme.font_family = FONT_SANS.into();
-        theme.font_size = px(13.);
+        theme.font_size = px(crate::type_scale::UI.size);
         theme.mono_font_family = FONT_MONO.into();
         theme.mono_font_size = px(13.);
         theme.radius = px(RADIUS_SM);
@@ -513,7 +528,7 @@ mod tests {
                     "text.primary",
                     t.text_primary,
                     [13.42, 12.55, 11.34, 10.30],
-                    [14.17, 15.08, 15.73, 15.73],
+                    [12.08, 12.85, 13.40, 13.40],
                 ),
                 (
                     "text.secondary",
@@ -579,28 +594,28 @@ mod tests {
                     t.text_primary,
                     t.fill_selected,
                     [10.73, 9.93, 8.08],
-                    [11.94, 12.68, 13.22],
+                    [10.28, 10.91, 11.37],
                 ),
                 (
                     "secondary on selected",
                     t.text_secondary,
                     t.fill_selected,
                     [6.41, 5.93, 4.83],
-                    [5.75, 6.11, 6.36],
+                    [5.81, 6.17, 6.42],
                 ),
                 (
                     "secondary on hover",
                     t.text_secondary,
                     t.fill_hover,
                     [6.96, 6.45, 5.24],
-                    [6.09, 6.48, 6.75],
+                    [6.14, 6.52, 6.79],
                 ),
                 (
                     "primary on accent.subtle",
                     t.text_primary,
                     t.accent_subtle,
                     [10.09, 9.37, 7.73],
-                    [11.41, 12.07, 12.55],
+                    [9.72, 10.28, 10.69],
                 ),
             ];
             for (name, fg, fill, d, l) in on_fill {
@@ -609,24 +624,24 @@ mod tests {
                     check(name, measured, pick(&d, &l, i));
                 }
             }
-            let (d, l) = ([5.36, 4.97], [4.76, 5.06]);
+            let (d, l) = ([5.36, 4.97], [4.79, 5.09]);
             for (i, surface) in [t.bg_sunken, t.bg_base].iter().enumerate() {
                 let measured = ratio(rgb8(t.text_tertiary), blend(t.fill_hover, *surface));
                 check("tertiary on hover", measured, pick(&d, &l, i));
             }
             let measured = ratio(rgb8(t.warning), blend(t.fill_hover, t.bg_base));
-            check("warning on hover", measured, if dark { 5.99 } else { 5.24 });
+            check("warning on hover", measured, if dark { 5.99 } else { 5.27 });
             let measured = ratio(rgb8(t.accent), blend(t.fill_selected, t.bg_sunken));
             check(
                 "accent on selected",
                 measured,
-                if dark { 5.81 } else { 4.49 },
+                if dark { 5.81 } else { 4.54 },
             );
             let measured = ratio(rgb8(t.text_primary), blend(t.selection, t.bg_base));
             check(
                 "primary on selection",
                 measured,
-                if dark { 6.99 } else { 9.78 },
+                if dark { 6.99 } else { 8.34 },
             );
 
             let (d, l) = ([4.60, 4.30, 3.88, 3.53], [3.20, 3.40, 3.55, 3.55]);
@@ -649,7 +664,7 @@ mod tests {
 
     #[test]
     fn tertiary_text_fails_on_a_selected_row_as_documented() {
-        // docs/design/color.md 2.2: 3.73 over overlay in dark, 4.48 over sunken in light.
+        // docs/design/color.md 2.2: 3.73 over overlay in dark, 4.52 over sunken in light.
         let t = Tokens::dark();
         let measured = ratio(
             rgb8(t.text_tertiary),
@@ -661,7 +676,7 @@ mod tests {
             rgb8(t.text_tertiary),
             rounded(blend(t.fill_selected, t.bg_sunken)),
         );
-        check("light", measured, 4.48);
+        check("light", measured, 4.52);
     }
 
     #[test]

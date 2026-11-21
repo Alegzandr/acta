@@ -21,7 +21,7 @@ use crate::i18n::{Arg, Key, KeyName, Locale, text, tr};
 use crate::icons::{Icon, icon};
 use crate::paths_view;
 use crate::settings;
-use crate::theme::{Appearance, Mode, RADIUS_SM, Tokens};
+use crate::theme::{Appearance, Mode, RADIUS_XS, Tokens};
 use crate::type_scale;
 use crate::ui::{self, Variant};
 use crate::workspace::{FolderRef, ToastKind, Undo, Workspace};
@@ -744,7 +744,7 @@ fn checkbox(checked: bool, t: &Tokens) -> gpui_kit::Div {
         .flex()
         .items_center()
         .justify_center()
-        .rounded(px(RADIUS_SM))
+        .rounded(px(RADIUS_XS))
         .when(checked, |this| {
             this.bg(t.accent)
                 .child(icon(Icon::Check, 12., t.text_on_accent))

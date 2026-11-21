@@ -120,6 +120,7 @@ fn kb_row(
         .gap(px(8.))
         .h(px(32.))
         .px(px(8.))
+        .mx(px(-8.))
         .rounded(px(RADIUS_SM))
         .hover({
             let hover = t.fill_hover;
@@ -513,9 +514,12 @@ impl Render for KnowledgePage {
                     .border_color(t.border_strong)
                     .child(icon(Icon::Search, 16., t.text_tertiary))
                     .child(
-                        div()
-                            .flex_1()
-                            .child(Input::new(&self.search).appearance(false)),
+                        div().flex_1().child(
+                            Input::new(&self.search)
+                                .appearance(false)
+                                .px(px(0.))
+                                .text_size(px(type_scale::UI.size)),
+                        ),
                     ),
             )
             .child(
@@ -600,6 +604,7 @@ impl Render for KnowledgePage {
                     .justify_between()
                     .h(px(28.))
                     .px(px(8.))
+                    .mx(px(-8.))
                     .child(
                         type_scale::SMALL
                             .el()
@@ -1135,6 +1140,7 @@ impl DocPage {
                 .gap(px(8.))
                 .h(px(32.))
                 .px(px(8.))
+                .mx(px(-8.))
                 .rounded(px(RADIUS_SM))
                 .when(selected, |this| this.bg(t.fill_selected))
                 .hover({
@@ -1316,7 +1322,7 @@ impl Render for DocPage {
                         div()
                             .mb(px(16.))
                             .p(px(12.))
-                            .rounded(px(crate::theme::RADIUS_MD))
+                            .rounded(px(crate::theme::RADIUS_LG))
                             .border_1()
                             .border_color(t.border_subtle)
                             .child(markdown_view::document(
@@ -1338,7 +1344,7 @@ impl Render for DocPage {
                             .text_size(px(24.))
                             .line_height(px(30.))
                             .font_weight(gpui_kit::FontWeight::SEMIBOLD)
-                            .child(Input::new(title).appearance(false)),
+                            .child(Input::new(title).appearance(false).px(px(0.))),
                     )
                     .child(
                         div()
@@ -1358,9 +1364,12 @@ impl Render for DocPage {
                     )
                     .child(div().mt(px(24.)).h(px(1.)).bg(t.border_subtle))
                     .child(
+                        // The editor's own padding (10 x 8) is taken back, so
+                        // the text sits where the reading view puts it.
                         type_scale::DOCUMENT
                             .el()
-                            .mt(px(24.))
+                            .mt(px(16.))
+                            .mx(px(-10.))
                             .child(Textarea::new(body).appearance(false)),
                     );
             }

@@ -313,6 +313,8 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `cmd.set_status` | Set status: {status} | Définir le statut : {status} |
 | `cmd.settings` | Open settings | Ouvrir les paramètres |
 | `cmd.theme` | Theme: {value} | Thème : {value} |
+| `cmd.text_size` | Text size: {value} | Taille du texte : {value} |
+| `cmd.reading_width` | Reading width: {value} | Largeur de lecture : {value} |
 | `cmd.language` | Language: {value} | Langue : {value} |
 | `cmd.new_project` | New project... | Nouveau projet... |
 | `cmd.new_epic` | New epic... | Nouvel epic... |
@@ -383,6 +385,16 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `settings.theme.hint` | System follows your computer's setting. | « Système » suit le réglage de votre ordinateur. |
 | `settings.language` | Language | Langue |
 | `settings.language.hint` | Changes Acta's own text. What you and Claude Code write is never translated. | Change les textes d'Acta. Ce que vous et Claude Code écrivez n'est jamais traduit. |
+| `settings.text_size` | Text size | Taille du texte |
+| `settings.text_size.hint` | Timelines, notes and documents. The interface keeps its size. | Fils, notes et documents. L'interface garde sa taille. |
+| `settings.text_size.small` | Small | Petit |
+| `settings.text_size.default` | Default | Normal |
+| `settings.text_size.large` | Large | Grand |
+| `settings.reading_width` | Reading width | Largeur de lecture |
+| `settings.reading_width.hint` | How wide pages get in a large window. | La largeur maximale des pages dans une grande fenêtre. |
+| `settings.reading_width.narrow` | Narrow | Étroite |
+| `settings.reading_width.default` | Default | Normale |
+| `settings.reading_width.wide` | Wide | Large |
 | `settings.terminal_size` | Terminal text size | Taille du texte du terminal |
 | `settings.folders` | Working folders | Dossiers de travail |
 | `settings.auto_memory` | Turn off Claude Code's own memory in attached folders | Désactiver la mémoire propre à Claude Code dans les dossiers rattachés |
@@ -414,7 +426,8 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `settings.about` | About | À propos |
 | `settings.release_notes` | Release notes | Notes de version |
 | `settings.licences` | Licences | Licences |
-| `settings.licences.hint` | Inter and JetBrains Mono under the SIL Open Font License, Lucide under ISC. | Inter et JetBrains Mono sous licence SIL Open Font License, Lucide sous licence ISC. |
+| `settings.licences.hint` | JetBrains Mono under the SIL Open Font License, Lucide under ISC. | JetBrains Mono sous licence SIL Open Font License, Lucide sous licence ISC. |
+| `settings.licences.hint_linux` | Inter and JetBrains Mono under the SIL Open Font License, Lucide under ISC. | Inter et JetBrains Mono sous licence SIL Open Font License, Lucide sous licence ISC. |
 | `statusbar.not_set_up` | Claude Code: not set up | Claude Code : non configuré |
 | `statusbar.not_found` | Claude Code: not found | Claude Code : introuvable |
 | `statusbar.no_folder` | Claude Code: no folder for this project | Claude Code : aucun dossier pour ce projet |

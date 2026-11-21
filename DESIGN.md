@@ -68,11 +68,11 @@ Run against every screen, in dark and in light, in English and in French. One fa
 - [ ] `accent` appears only on: focus, selection marker, the single primary action, links, Active, unread, cursor. Count accent elements at rest: three or fewer.
 - [ ] Every text style is a role from 3.2; only weights 400 and 600; no uppercase; nothing under 12px.
 - [ ] Digits that align or update use `tnum`.
-- [ ] Reading text is within the 680 column and left-aligned.
+- [ ] Reading text is within the content column (the Reading width setting) and left-aligned.
 - [ ] Text/surface pairs used are in 2.2 and pass; `text.tertiary` is not on a selected overlay row; no coloured text on `accent.subtle`.
 
 **Layout**
-- [ ] Every gap is on the spacing scale; control heights are 24, 28, 32 or 44; radii are 4, 6 or 8.
+- [ ] Every gap is on the spacing scale; control heights are 24, 28, 32 or 44; radii are 4, 6, 8, 10 or 12.
 - [ ] No shadow on anything that does not float; every floating layer has outline plus shadow.
 - [ ] No box inside a box; no divider where spacing already separates.
 - [ ] Works at 880 x 560 with the terminal open, and at 200% scale; no horizontal scroll outside code blocks.

@@ -20,11 +20,10 @@ use gpui_kit::{
     anchored, deferred, div, point, px,
 };
 
-use crate::first_run::COLUMN_MAX;
 use crate::i18n::{Key, Locale, text};
 use crate::icons::{Icon, icon};
 use crate::settings;
-use crate::theme::{RADIUS_MD, RADIUS_SM, ThemeSetting, Tokens};
+use crate::theme::{RADIUS_LG, RADIUS_SM, ThemeSetting, Tokens};
 use crate::type_scale;
 use crate::ui;
 use crate::workspace::Workspace;
@@ -38,16 +37,82 @@ const THEMES: [ThemeSetting; 3] = [
 /// The theme `key` moves to from `current` on the segmented control, if any.
 /// The ends do not wrap; a key pressed with a modifier is not ours.
 fn theme_after_key(current: ThemeSetting, key: &str, modified: bool) -> Option<ThemeSetting> {
+    after_key(&THEMES, current, key, modified)
+}
+
+/// What an arrow key does in a segmented control of `all`: the neighbour,
+/// or nothing at either end.
+fn after_key<T: Copy + PartialEq>(all: &[T], current: T, key: &str, modified: bool) -> Option<T> {
     if modified {
         return None;
     }
-    let at = THEMES.iter().position(|theme| *theme == current)?;
+    let at = all.iter().position(|value| *value == current)?;
     let to = match key {
         "left" => at.checked_sub(1)?,
         "right" => at + 1,
         _ => return None,
     };
-    THEMES.get(to).copied()
+    all.get(to).copied()
+}
+
+/// A segmented control over `options` (components.md 5) with its own focus
+/// ring and arrow keys; `set` applies a value.
+fn choice_control<T: Copy + PartialEq + 'static>(
+    id: &'static str,
+    focus: &FocusHandle,
+    options: Vec<(T, &'static str, String)>,
+    current: T,
+    set: fn(T, &mut gpui_kit::App),
+    t: &Tokens,
+) -> impl IntoElement {
+    let all: Vec<T> = options.iter().map(|(value, _, _)| *value).collect();
+    let segments = options.into_iter().map(|(value, segment_id, label)| {
+        let selected = value == current;
+        let hover = t.fill_hover;
+        let role = if selected {
+            type_scale::UI_STRONG
+        } else {
+            type_scale::UI
+        };
+        role.el()
+            .id(segment_id)
+            .flex()
+            .items_center()
+            .h_full()
+            .px(px(12.))
+            .text_color(if selected {
+                t.text_primary
+            } else {
+                t.text_secondary
+            })
+            .when(selected, |this| this.bg(t.fill_selected))
+            .when(!selected, |this| this.hover(move |style| style.bg(hover)))
+            .on_click(move |_, _, cx| set(value, cx))
+            .child(label)
+    });
+    focus_ring(id, focus, RADIUS_SM, t)
+        .on_key_down(move |event: &KeyDownEvent, _, cx| {
+            if let Some(next) = after_key(
+                &all,
+                current,
+                &event.keystroke.key,
+                event.keystroke.modifiers.modified(),
+            ) {
+                set(next, cx);
+                cx.stop_propagation();
+            }
+        })
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .h(px(28.))
+                .rounded(px(RADIUS_SM))
+                .border_1()
+                .border_color(t.border_strong)
+                .overflow_hidden()
+                .children(segments),
+        )
 }
 
 /// What a key does to a dropdown menu of `count` items.
@@ -89,6 +154,8 @@ fn menu_key(
 
 pub struct SettingsPage {
     theme_focus: FocusHandle,
+    text_size_focus: FocusHandle,
+    reading_width_focus: FocusHandle,
     language_focus: FocusHandle,
     language_menu_open: bool,
     language_highlighted: usize,
@@ -131,6 +198,8 @@ impl SettingsPage {
         });
         Self {
             theme_focus: cx.focus_handle(),
+            text_size_focus: cx.focus_handle(),
+            reading_width_focus: cx.focus_handle(),
             language_focus,
             language_menu_open: false,
             language_highlighted: 0,
@@ -174,13 +243,17 @@ fn setting_row(label: String, description: String, control: impl IntoElement, t:
                 .flex_1()
                 .min_w_0()
                 .child(type_scale::UI.el().text_color(t.text_primary).child(label))
-                .child(
-                    type_scale::SMALL
-                        .el()
-                        .max_w(px(420.))
-                        .text_color(t.text_tertiary)
-                        .child(description),
-                ),
+                // No description, no empty line under the label: the label
+                // then centres on the control like the others.
+                .when(!description.is_empty(), |this| {
+                    this.child(
+                        type_scale::SMALL
+                            .el()
+                            .max_w(px(420.))
+                            .text_color(t.text_tertiary)
+                            .child(description),
+                    )
+                }),
         )
         .child(div().flex_shrink_0().child(control))
 }
@@ -338,7 +411,7 @@ impl SettingsPage {
                         .bg(t.bg_overlay)
                         .border_1()
                         .border_color(t.border_default)
-                        .rounded(px(RADIUS_MD))
+                        .rounded(px(RADIUS_LG))
                         .shadow(vec![t.shadow_overlay()])
                         .on_mouse_down_out(cx.listener(|page, _, _, cx| {
                             page.language_menu_open = false;
@@ -363,6 +436,37 @@ impl Render for SettingsPage {
         let t = cx.global::<Tokens>().clone();
         let (locale, theme) = locale_and_theme(cx);
         let theme_control = self.theme_control(locale, theme, &t);
+        let prefs = settings::current(cx);
+        let text_size_control = choice_control(
+            "text-size-control",
+            &self.text_size_focus,
+            crate::type_scale::TextSize::ALL
+                .into_iter()
+                .zip(["text-size-small", "text-size-default", "text-size-large"])
+                .map(|(size, id)| (size, id, text(locale, crate::commands::text_size_key(size))))
+                .collect(),
+            prefs.text_size,
+            settings::set_text_size,
+            &t,
+        );
+        let reading_width_control = choice_control(
+            "reading-width-control",
+            &self.reading_width_focus,
+            crate::ui::ReadingWidth::ALL
+                .into_iter()
+                .zip(["width-narrow", "width-default", "width-wide"])
+                .map(|(width, id)| {
+                    (
+                        width,
+                        id,
+                        text(locale, crate::commands::reading_width_key(width)),
+                    )
+                })
+                .collect(),
+            prefs.reading_width,
+            settings::set_reading_width,
+            &t,
+        );
         let language = self.language_control(locale, &t, cx);
         let text_size = self.text_size_control(&t, cx);
         let claude = self.claude_section(locale, &t, cx);
@@ -380,7 +484,7 @@ impl Render for SettingsPage {
             .child(
                 div()
                     .w_full()
-                    .max_w(px(COLUMN_MAX))
+                    .max_w(px(crate::ui::column_max()))
                     .pt(px(32.))
                     .pb(px(48.))
                     .flex()
@@ -403,6 +507,18 @@ impl Render for SettingsPage {
                         text(locale, Key::SettingsTheme),
                         text(locale, Key::SettingsThemeHint),
                         theme_control,
+                        &t,
+                    ))
+                    .child(setting_row(
+                        text(locale, Key::SettingsTextSize),
+                        text(locale, Key::SettingsTextSizeHint),
+                        text_size_control,
+                        &t,
+                    ))
+                    .child(setting_row(
+                        text(locale, Key::SettingsReadingWidth),
+                        text(locale, Key::SettingsReadingWidthHint),
+                        reading_width_control,
                         &t,
                     ))
                     .child(setting_row(
@@ -1044,7 +1160,15 @@ fn about_section(locale: Locale, t: &Tokens) -> Vec<gpui_kit::AnyElement> {
         .into_any_element(),
         setting_row(
             text(locale, Key::SettingsLicences),
-            text(locale, Key::SettingsLicencesHint),
+            // Only the fonts this build ships (typography.md 3.1).
+            text(
+                locale,
+                if cfg!(any(target_os = "windows", target_os = "macos")) {
+                    Key::SettingsLicencesHint
+                } else {
+                    Key::SettingsLicencesHintLinux
+                },
+            ),
             div(),
             t,
         )
