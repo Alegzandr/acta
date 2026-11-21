@@ -926,6 +926,13 @@ fn commit_modes_and_the_pre_git_guard() {
     let heredoc = "git add a && git commit -m \"$(cat <<'EOF'\nNo --no-verify here\nEOF\n)\"";
     assert_eq!(hook(&repo, heredoc), "");
     assert_eq!(hook(&repo, "git push"), "");
+    // Forms that hide the call are read through; an alias is resolved.
+    assert!(reason(&hook(&repo, "{ git commit -n -m x; }")).contains("--no-verify"));
+    assert!(reason(&hook(&repo, "bash -c 'git push --force'")).contains("forced"));
+    assert!(reason(&hook(&repo, "git -c core.hooksPath=/x commit -m x")).contains("GIT_CONFIG"));
+    git(&repo, &["config", "alias.ci", "commit --no-verify"]);
+    assert!(reason(&hook(&repo, "git ci -m x")).contains("--no-verify"));
+    assert_eq!(hook(&repo, "git status && git log -1"), "");
     git(&repo, &["switch", "-q", "main"]);
     assert!(reason(&hook(&repo, "git commit -m x")).contains("on main"));
     let (ok, out, err) = cli(

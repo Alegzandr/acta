@@ -87,8 +87,20 @@ pub fn command(dir: &Path) -> Command {
         "GIT_COMMON_DIR",
         "GIT_PREFIX",
         "GIT_OBJECT_DIRECTORY",
+        "GIT_CONFIG_PARAMETERS",
+        "GIT_CONFIG_COUNT",
+        "GIT_SSH_COMMAND",
+        "GIT_ASKPASS",
     ] {
         c.env_remove(v);
+    }
+    // `GIT_CONFIG_KEY_<n>` / `GIT_CONFIG_VALUE_<n>` from a surrounding
+    // process: config Acta did not choose.
+    for (k, _) in std::env::vars_os() {
+        let k = k.to_string_lossy();
+        if k.starts_with("GIT_CONFIG_KEY_") || k.starts_with("GIT_CONFIG_VALUE_") {
+            c.env_remove(k.as_ref());
+        }
     }
     #[cfg(windows)]
     {
@@ -357,6 +369,17 @@ pub fn user_name(dir: &Path) -> Option<String> {
     let out = run_ok(dir, &["config", "user.name"], LOCAL_LIMIT).ok()?;
     let name = out.trim();
     (!name.is_empty()).then(|| name.to_owned())
+}
+
+/// The value of `alias.<name>` in the repository's config, for the guard.
+pub fn alias(dir: &Path, name: &str) -> Option<String> {
+    if name.starts_with('-') || name.contains(char::is_whitespace) {
+        return None;
+    }
+    let key = format!("alias.{name}");
+    let out = run_ok(dir, &["config", "--get", &key], LOCAL_LIMIT).ok()?;
+    let v = out.trim();
+    (!v.is_empty()).then(|| v.to_owned())
 }
 
 /// Whether `path` (relative to `dir`) is tracked by git.

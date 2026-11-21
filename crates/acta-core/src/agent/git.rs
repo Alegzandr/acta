@@ -13,13 +13,19 @@ pub struct GitInfo {
     /// Root of the main checkout (equal to `root` outside linked worktrees);
     /// `None` for a bare or unusual layout.
     pub main_root: Option<PathBuf>,
-    /// Current branch; `None` when detached.
+    /// Current branch; `None` when detached or not known.
     pub branch: Option<String>,
+    /// Whether HEAD could be read: `false` when the file is missing or
+    /// unreadable, or in a reftable repository (HEAD names `.invalid`).
+    pub head_known: bool,
     /// The git directory shared by all worktrees (holds `info/exclude`).
     pub common_dir: PathBuf,
     /// The default branch: the target of `refs/remotes/origin/HEAD`, else
     /// `main` if that branch exists, else `master`, else `None`.
     pub default_branch: Option<String>,
+    /// The branch the current branch merges from (`branch.<name>.merge` in
+    /// the repository's config), short form.
+    pub upstream_branch: Option<String>,
 }
 
 impl GitInfo {
@@ -58,16 +64,21 @@ pub fn inspect(dir: &Path) -> Option<GitInfo> {
         } else {
             None
         };
-        let branch = fs::read_to_string(git_dir.join("HEAD"))
-            .ok()
-            .and_then(|h| h.trim().strip_prefix("ref: refs/heads/").map(str::to_owned));
+        let head = fs::read_to_string(git_dir.join("HEAD")).ok();
+        let head = head.as_deref().map(str::trim);
+        let named = head.and_then(|h| h.strip_prefix("ref: refs/heads/"));
+        let head_known = head.is_some_and(|h| !h.is_empty()) && named != Some(".invalid");
+        let branch = named.filter(|_| head_known).map(str::to_owned);
         let default_branch = default_branch(&common);
+        let upstream_branch = branch.as_deref().and_then(|b| upstream(&common, b));
         return Some(GitInfo {
             root: root.to_path_buf(),
             main_root,
             branch,
+            head_known,
             common_dir: common,
             default_branch,
+            upstream_branch,
         });
     }
     None
@@ -90,6 +101,27 @@ fn default_branch(common: &Path) -> Option<String> {
         .into_iter()
         .find(|b| branch_exists(common, b))
         .map(str::to_owned)
+}
+
+/// `branch.<name>.merge` from the repository's config, without
+/// `refs/heads/`. Sections are matched exactly, keys without case.
+fn upstream(common: &Path, branch: &str) -> Option<String> {
+    let text = fs::read_to_string(common.join("config")).ok()?;
+    let wanted = format!("[branch \"{branch}\"]");
+    let mut inside = false;
+    let mut found = None;
+    for line in text.lines().map(str::trim) {
+        if line.starts_with('[') {
+            inside = line == wanted;
+        } else if inside
+            && let Some((k, v)) = line.split_once('=')
+            && k.trim().eq_ignore_ascii_case("merge")
+        {
+            let v = v.trim().trim_matches('"');
+            found = Some(v.strip_prefix("refs/heads/").unwrap_or(v).to_owned());
+        }
+    }
+    found
 }
 
 /// A local branch, loose or packed.
@@ -213,6 +245,43 @@ mod tests {
         assert_eq!(info.default_branch.as_deref(), Some("topic"));
         assert!(info.on_default_branch());
         assert!(!info.is_linked_worktree());
+    }
+
+    #[test]
+    fn reftable_head_is_unknown_and_upstream_is_read() {
+        let tmp = tempfile::tempdir().unwrap();
+        let git = tmp.path().join("r").join(".git");
+        fs::create_dir_all(&git).unwrap();
+        fs::write(
+            git.join("HEAD"),
+            "ref: refs/heads/.invalid
+",
+        )
+        .unwrap();
+        let info = inspect(&tmp.path().join("r")).unwrap();
+        assert!(!info.head_known);
+        assert_eq!(info.branch, None);
+        fs::write(
+            git.join("HEAD"),
+            "ref: refs/heads/feature
+",
+        )
+        .unwrap();
+        fs::write(
+            git.join("config"),
+            "[core]
+	bare = false
+[branch \"feature\"]
+	remote = origin
+	Merge = refs/heads/main
+[branch \"other\"]
+	merge = refs/heads/x
+",
+        )
+        .unwrap();
+        let info = inspect(&tmp.path().join("r")).unwrap();
+        assert!(info.head_known);
+        assert_eq!(info.upstream_branch.as_deref(), Some("main"));
     }
 
     #[test]

@@ -49,6 +49,12 @@ struct ToolInput {
 /// What the hook prints on stdout; `None` prints nothing.
 pub fn run(event: Event, stdin: &str, opener: &Opener) -> Option<String> {
     let input: Input = serde_json::from_str(stdin).unwrap_or_default();
+    // The guard's handlers match every git call and the wrappers that may
+    // hide one: most need nothing, decided before any file is read.
+    let command = input.tool_input.as_ref().and_then(|t| t.command.clone());
+    if event == Event::PreGit && !command.as_deref().is_some_and(git_guard::needs_check) {
+        return None;
+    }
     let env = Launch::from_env();
     let launch = Launch {
         dir: input.cwd.map(PathBuf::from).or(env.dir),
@@ -59,11 +65,7 @@ pub fn run(event: Event, stdin: &str, opener: &Opener) -> Option<String> {
         return None;
     }
     match event {
-        Event::PreGit => {
-            let command = input.tool_input?.command?;
-            let dir = launch.dir?;
-            pre_git(&command, &dir, opener)
-        }
+        Event::PreGit => pre_git(&command?, &launch.dir?, opener),
         Event::PreCompact => Some(PRE_COMPACT.to_owned()),
         Event::SessionStart => {
             let mut store = opener.open().ok()?;
@@ -90,7 +92,8 @@ fn pre_git(command: &str, dir: &Path, opener: &Opener) -> Option<String> {
         return None;
     }
     let info = acta_core::agent::git::inspect(dir)?;
-    git_guard::check(command, &settings, &info).map(|r| git_guard::deny_json(&r))
+    let alias = |name: &str| acta_core::git_cmd::alias(dir, name);
+    git_guard::check_with(command, &settings, &info, &alias).map(|r| git_guard::deny_json(&r))
 }
 
 /// Reads at most 1 MiB of stdin: hook payloads are small, and a hook must

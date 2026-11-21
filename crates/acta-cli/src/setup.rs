@@ -141,6 +141,25 @@ pub fn render_steps(steps: &[Step], json_out: bool) -> String {
         .join("\n")
 }
 
+/// The `if` rules of the `pre-git` guard: git itself (by name or path) and
+/// the commands Claude Code does not strip before matching that can run
+/// git (docs/permissions, "Wrappers").
+const GUARD_IFS: &[&str] = &[
+    "Bash(git *)",
+    "Bash(git.exe *)",
+    "Bash(*/git *)",
+    "Bash(env *)",
+    "Bash(sudo *)",
+    "Bash(exec *)",
+    "Bash(eval *)",
+    "Bash(xargs *)",
+    "Bash(bash *)",
+    "Bash(sh *)",
+    "Bash(zsh *)",
+    "Bash(*/bash *)",
+    "Bash(*/sh *)",
+];
+
 impl Setup<'_> {
     fn plugin_dir(&self) -> PathBuf {
         self.plugin_root.join("plugins").join(PLUGIN)
@@ -215,14 +234,14 @@ impl Setup<'_> {
                         {"matcher": "clear", "hooks": [mcp_hook("clear")]},
                         {"matcher": "compact", "hooks": [mcp_hook("compact")]}
                     ],
-                    // ADR 0011, the guard: spawned only for `git commit`
-                    // and `git push` (each subcommand is matched).
-                    "PreToolUse": [{"matcher": "Bash", "hooks": [
+                    // ADR 0011, the guard: spawned only for git calls and
+                    // the wrappers that may hide one (each subcommand is
+                    // matched); it returns at once unless a commit, a push
+                    // or an alias is there.
+                    "PreToolUse": [{"matcher": "Bash", "hooks": GUARD_IFS.iter().map(|rule| json!(
                         {"type": "command", "command": exe, "args": ["hook", "pre-git"],
-                         "if": "Bash(git commit *)", "timeout": 10},
-                        {"type": "command", "command": exe, "args": ["hook", "pre-git"],
-                         "if": "Bash(git push *)", "timeout": 10}
-                    ]}],
+                         "if": rule, "timeout": 10}
+                    )).collect::<Vec<_>>()}],
                     "PreCompact": [{"hooks": [
                         {"type": "command", "command": exe, "args": ["hook", "pre-compact"], "timeout": 10}
                     ]}],
@@ -1051,9 +1070,15 @@ mod tests {
         );
         let guard = &h["hooks"]["PreToolUse"][0];
         assert_eq!(guard["matcher"], "Bash");
-        assert_eq!(guard["hooks"][0]["if"], "Bash(git commit *)");
-        assert_eq!(guard["hooks"][1]["if"], "Bash(git push *)");
-        assert_eq!(guard["hooks"][1]["args"], json!(["hook", "pre-git"]));
+        assert_eq!(guard["hooks"][0]["if"], "Bash(git *)");
+        assert_eq!(guard["hooks"].as_array().unwrap().len(), GUARD_IFS.len());
+        assert!(
+            guard["hooks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|h| h["args"] == json!(["hook", "pre-git"]))
+        );
 
         let removed = s.remove();
         assert!(removed.iter().all(|x| x.ok), "{removed:?}");
