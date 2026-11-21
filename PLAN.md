@@ -83,6 +83,7 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 - [ ] Documentation
 
 ## Settled with the user
+- 2026-11-21: working in Acta must mean the fewest logins possible and Claude Code having, as directly as possible, everything it needs: Acta embeds what Claude Code uses (terminal, browser, chat) in the most practical way; it targets Claude Code on a subscription, not the API. Sessions persist so each login happens once.
 - 2026-11-20: design direction is inspired by Obsidian, Notion and JetBrains IDEs: a workbench (tree, document-like pages, tool windows for the terminal and the chat panel, search everywhere). A "Project Ledger" direction (parchment, serif, engravings) was briefed and withdrawn by the user the same day; do not revive it. Kept from that brief as functional requirements: Light / Dark / System setting, UI in English (default) and French from a central string table. DESIGN.md is being revised on `product-designer/workbench`.
 - 2026-11-20: no spending at all. No code-signing certificate, no Apple Developer membership, no paid runners or services. Builds are unsigned; only free tooling.
 
