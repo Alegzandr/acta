@@ -1190,9 +1190,11 @@ impl RecordPage {
             } else {
                 name.clone()
             };
+            // Narrow windows end it with an ellipsis rather than cut it.
             type_scale::SMALL
                 .el()
-                .flex_shrink_0()
+                .min_w_0()
+                .truncate()
                 .text_color(t.text_tertiary)
                 .child(tr(locale, key, &[("name", Arg::Text(&short))]))
         });
