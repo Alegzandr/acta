@@ -10,6 +10,7 @@
 mod exchange;
 mod folders;
 mod kb;
+mod overview;
 mod records;
 mod search;
 mod seen;
@@ -22,6 +23,10 @@ pub use exchange::{
 };
 pub use folders::{AUTO_MEMORY_PREFIX, FolderResolution, VisibleFolder, VisibleFolders};
 pub use kb::{KbCounts, KbEdit, KbFilter, KbRevisionSummary, KbUpdate, NewKb};
+pub use overview::{
+    IDLE_DAYS, INBOX_DAYS, Overview, OverviewEpic, OverviewFilter, OverviewItem, STALE_MEMORY_DAYS,
+    Scope, WEEK_DAYS,
+};
 pub use records::{EpicPatch, NewTopic, ProjectPatch, TopicFilter, TopicPatch};
 pub use search::{SNIPPET_CLOSE, SNIPPET_OPEN, SearchHit, SearchKind, SearchQuery};
 pub use seen::Unread;
