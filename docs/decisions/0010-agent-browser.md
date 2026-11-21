@@ -1,6 +1,6 @@
 # 0010 - Agent browser (browser tools for Claude Code inside Acta)
 
-Status: accepted (2026-11-21); built after the docking layout lands. Unverified items in Evidence are checked when it is built.
+Status: accepted (2026-11-21); built in M8 on Windows (see Implementation below).
 Date: 2026-11-21
 
 ## Context
@@ -277,6 +277,48 @@ Not verified:
   refused by the DACL (only one local user was available).
 - Image token cost (width x height / 750 is Anthropic's published estimate, not measured here).
 - macOS and Linux: nothing built or run.
+
+### Implementation (M8, 2026-11-21)
+Crate `acta-browser` (operations over a `Host` trait, policy, fence and budgets, event store, handshake,
+server with the lease, Windows pipe and client); the app's Browser view (`browser_panel.rs`,
+`browser_host.rs`); `acta mcp browser` (`crates/acta-cli/src/browser.rs`); setup and skill. Deviations
+from the text above, all small:
+- The pipe name ends with a tag of the data directory, `\\.\pipe\acta-<user SID>-browser-<8 hex
+  of SHA-256 of the data dir path>`, so a development or test instance never meets the installed app.
+- `open` takes `url` or `go` (`back`, `forward`, `reload`) instead of three booleans.
+- The lease is taken over by another session after 5 minutes without a call, so a session that went
+  away never holds the browser for good.
+- `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` asking for a debugging port refuses the view too.
+- The view is created with `with_focused(false)`, and setup takes a one-pixel capture: run, a new view
+  made Acta the foreground window when Windows allowed it, and dropped input until its first frame.
+- The blocked-sites list exists in the policy (hosts and their subdomains) but has no setting or
+  storage yet, nor does "Ask before opening a site for the first time".
+
+Verified by running (Windows 11 26300, WebView2 157, debug build, temporary data directory, loopback
+test pages, 2 headless `claude -p --model haiku` runs with `--plugin-dir`, about $0.015):
+- `tools/list` 4,854 chars for 9 tools, `snapshot` alone `alwaysLoad`, instructions under 400.
+- Through the real app: open, snapshot (403 chars interactive, 5,926 for a 3,000-link page cut with
+  "+5789 more lines"), read with cursor, type, click (`isTrusted` true), console, network, screenshot
+  (1024x700 JPEG, 29 KB) and of one element; `file:` and claude.ai refused before any call; the
+  password field refused; a download, a dialog, a claude.ai link and a `target=_blank` link reported
+  in the next reply; the page's fake marker defused inside the real fence.
+- The app started by `acta mcp browser` with `--no-focus`; the foreground window never changed during
+  the drives and the captures; the Browser view captured with PrintWindow idle, live (address,
+  activity line, page) and parked under the palette (its line shown, the click still worked).
+- Pipe: DACL read back `D:P(D;;FA;;;NU)(A;;FA;;;<user SID>)`; a wrong key refused by the real app
+  ("not authenticated", logged); a second session got "the browser is in use by another Claude Code
+  session" until the first ended; closing the app answered "Acta closed..." and the next call
+  restarted it; a `DevToolsActivePort` file in the agent profile refused the view with its reason.
+- Claude Code: the plugin's second server loaded, `mcp__plugin_<plugin>_browser__*` allowed every call,
+  Haiku opened the form, typed, clicked and reported "Hello, Alexandre!", described the screenshot
+  (image blocks reach the model), relayed the claude.ai refusal, and ignored the page's injected
+  instruction in both runs.
+
+Still not verified: Stop, Resume, Done and the address field by hand (they need real input);
+`handoff` waiting on a human; closing after 10 minutes idle; a real sign-in persisting; the
+`AdditionalBrowserArguments` registry value (the decision is unit-tested, the read is not); another
+user or a network client refused by the DACL; cross-origin iframes; memory with both views; CI's
+runner; macOS and Linux (cross-target clippy only).
 
 Sources: code.claude.com/docs/en/chrome · support.claude.com/en/articles/12012173,
 12902428, 12902446 · claude.com/blog/claude-for-chrome · anthropic.com/research/prompt-injection-defenses ·

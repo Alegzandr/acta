@@ -455,7 +455,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `settings.setup` | Set up Claude Code | Configurer Claude Code |
 | `settings.setup_again` | Run setup again | Relancer la configuration |
 | `settings.setup_remove` | Remove from Claude Code | Retirer de Claude Code |
-| `settings.setup.hint` | Setup installs Acta's plugin in Claude Code and adds one permission line to ~/.claude/settings.json. Remove undoes both. | La configuration installe le plugin d'Acta dans Claude Code et ajoute une ligne d'autorisation à ~/.claude/settings.json. Retirer annule les deux. |
+| `settings.setup.hint` | Setup installs Acta's plugin in Claude Code and adds two permission lines (Acta and its browser) to ~/.claude/settings.json. Remove undoes both. | La configuration installe le plugin d'Acta dans Claude Code et ajoute deux lignes d'autorisation (Acta et son navigateur) à ~/.claude/settings.json. Retirer annule les deux. |
 | `settings.remove.title` | Remove Acta from Claude Code? | Retirer Acta de Claude Code ? |
 | `settings.remove.body` | This uninstalls Acta's plugin and takes out the permission line setup added to ~/.claude/settings.json. Your projects stay in Acta. | Cela désinstalle le plugin d'Acta et retire la ligne d'autorisation ajoutée par la configuration à ~/.claude/settings.json. Vos projets restent dans Acta. |
 | `settings.remove.confirm` | Remove | Retirer |

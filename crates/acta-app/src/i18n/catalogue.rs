@@ -1790,8 +1790,8 @@ catalogue! {
         fr: t("Retirer de Claude Code"),
     }
     SettingsSetupHint "settings.setup.hint" {
-        en: t("Setup installs Acta\u{2019}s plugin in Claude Code and adds one permission line to ~/.claude/settings.json. Remove undoes both."),
-        fr: t("La configuration installe le plugin d\u{2019}Acta dans Claude Code et ajoute une ligne d\u{2019}autorisation à ~/.claude/settings.json. Retirer annule les deux."),
+        en: t("Setup installs Acta\u{2019}s plugin in Claude Code and adds two permission lines (Acta and its browser) to ~/.claude/settings.json. Remove undoes both."),
+        fr: t("La configuration installe le plugin d\u{2019}Acta dans Claude Code et ajoute deux lignes d\u{2019}autorisation (Acta et son navigateur) à ~/.claude/settings.json. Retirer annule les deux."),
     }
     SettingsRemoveTitle "settings.remove.title" {
         en: t("Remove Acta from Claude Code?"),
