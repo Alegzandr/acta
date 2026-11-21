@@ -231,6 +231,15 @@ impl TerminalView {
         crate::idle::claude_idle(&screen, &plain, self.last_output.elapsed())
     }
 
+    /// Write `bytes` into the session as if typed. Debug builds only: every
+    /// release path types through the idle check.
+    #[cfg(debug_assertions)]
+    pub fn send_raw(&mut self, bytes: Vec<u8>) {
+        if let Some(session) = &self.session {
+            session.input(bytes);
+        }
+    }
+
     /// The visible screen as text (checks and diagnostics).
     pub fn screen_text(&self) -> String {
         self.session.as_ref().map(Session::text).unwrap_or_default()
