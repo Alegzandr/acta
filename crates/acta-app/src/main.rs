@@ -110,6 +110,8 @@ impl Options {
 }
 
 fn main() {
+    // SAFETY: first thing in `main`, before any thread exists.
+    unsafe { acta_terminal::launch::scrub_claude_session() };
     let launched = Instant::now();
     log::rotate();
     let restarted_by_updater = velopack_bootstrap();
