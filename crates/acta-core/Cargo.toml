@@ -6,3 +6,22 @@ repository.workspace = true
 license.workspace = true
 publish.workspace = true
 description = "Acta domain layer: no GPUI, no Velopack. Shared by the app, the CLI and the MCP server."
+
+# Storage engine and key handling: ADR 0003. SQLCipher on vendored OpenSSL off
+# macOS (needs Perl at build time), on CommonCrypto on macOS.
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+rusqlite = { version = "0.43.0", default-features = false, features = ["bundled-sqlcipher-vendored-openssl", "backup"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+rusqlite = { version = "0.43.0", default-features = false, features = ["bundled-sqlcipher", "backup"] }
+
+[dependencies]
+getrandom = "0.4"
+keyring = "4.2.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", default-features = false, features = ["std", "v7"] }
+zeroize = "1"
+
+[dev-dependencies]
+tempfile = "3"

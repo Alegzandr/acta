@@ -19,4 +19,8 @@ accepted = [
     "CC0-1.0",
     "CDLA-Permissive-2.0",
     "MPL-2.0",
+    # SQLCipher's crate (ADR 0003): the SQLite blessing (public domain) and the
+    # WTFPL of the bundled libtomcrypt. Both put no condition on the binary.
+    "blessing",
+    "WTFPL",
 ]
