@@ -15,15 +15,18 @@ pub enum Group {
     Knowledge,
     Commands,
     Projects,
+    /// The rows of a picker (a destination, a heading): one group.
+    Choices,
 }
 
 /// The order groups appear in, fixed so results do not jump.
-pub const ORDER: [Group; 5] = [
+pub const ORDER: [Group; 6] = [
     Group::Recent,
     Group::Topics,
     Group::Knowledge,
     Group::Commands,
     Group::Projects,
+    Group::Choices,
 ];
 
 #[derive(Clone, Debug, PartialEq)]
@@ -32,6 +35,8 @@ pub enum Target {
     Project(ProjectId),
     Kb(KbId, KbKind),
     Command(Command),
+    /// The row of a picker, by its index in the choices given.
+    Choice(usize),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -153,6 +158,31 @@ pub fn arrange(mut items: Vec<Item>, scope: Option<Group>, limit: usize) -> Vec<
     out
 }
 
+/// The rows of a picker for `query`: every choice whose title (or detail)
+/// matches, best first; with no query, all of them in the order given.
+pub fn choices(choices: &[(String, String)], query: &str) -> Vec<Item> {
+    choices
+        .iter()
+        .enumerate()
+        .filter_map(|(i, (title, detail))| {
+            let (score, matched) = match fuzzy(query, title) {
+                Some(hit) => hit,
+                // A match in the detail ("Acta / Terminal") ranks below
+                // any match in a title.
+                None => (fuzzy(query, detail)?.0 - 1_000, Vec::new()),
+            };
+            Some(Item {
+                group: Group::Choices,
+                target: Target::Choice(i),
+                title: title.clone(),
+                detail: detail.clone(),
+                matched,
+                score: if query.is_empty() { -(i as i64) } else { score },
+            })
+        })
+        .collect()
+}
+
 /// `Up` / `Down` wrap (screens.md 8.3).
 pub fn step(selected: usize, len: usize, down: bool) -> usize {
     if len == 0 {
@@ -178,6 +208,31 @@ mod tests {
             matched: vec![],
             score,
         }
+    }
+
+    #[test]
+    fn choices_keep_their_order_until_typed_and_details_match_last() {
+        let all = [
+            ("New topic".to_owned(), String::new()),
+            (
+                "Terminal".to_owned(),
+                "New topic in Acta / Terminal".to_owned(),
+            ),
+            (
+                "Scrollback".to_owned(),
+                "Entry in Acta / Terminal".to_owned(),
+            ),
+        ];
+        let idle = arrange(choices(&all, ""), Some(Group::Choices), 10);
+        let order: Vec<_> = idle.iter().map(|i| i.target.clone()).collect();
+        assert_eq!(
+            order,
+            [Target::Choice(0), Target::Choice(1), Target::Choice(2)]
+        );
+        let typed = arrange(choices(&all, "term"), Some(Group::Choices), 10);
+        assert_eq!(typed[0].target, Target::Choice(1), "title match first");
+        assert_eq!(typed[1].target, Target::Choice(2), "then the detail");
+        assert_eq!(typed.len(), 2);
     }
 
     #[test]

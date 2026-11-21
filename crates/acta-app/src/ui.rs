@@ -370,6 +370,15 @@ pub fn button(
 /// The author mark of a timeline entry or knowledge row (docs/design/
 /// components-records.md 5): a circle with the initial for the human, a
 /// square with a prompt chevron for Claude Code. Shape, not colour.
+/// The unread dot: 6, `accent` (components.md 5, list / tree row).
+pub fn unread_dot(t: &Tokens) -> Div {
+    div()
+        .flex_shrink_0()
+        .size(px(6.))
+        .rounded(px(3.))
+        .bg(t.accent)
+}
+
 pub fn author_mark(author: Author, human_initial: &str, tokens: &Tokens) -> Div {
     let mark = div()
         .flex()
@@ -551,6 +560,35 @@ thread_local! {
     /// page group (workbench.md 4.8.8). Set around a group's page by
     /// [`NarrowPage`].
     static PAGE_PADDING: std::cell::Cell<f32> = const { std::cell::Cell::new(32.) };
+    /// The width of the content column being laid out, set the same way
+    /// (unknown: as wide as can be).
+    static COLUMN_WIDTH: std::cell::Cell<f32> = const { std::cell::Cell::new(f32::MAX) };
+}
+
+/// Under this column width, knowledge rows and the folder row take their
+/// two-line, 52 high form (components-knowledge.md 5; components-folders.md
+/// 5; screens.md 8.4).
+pub const TWO_LINE_UNDER: f32 = 520.;
+
+/// Whether rows in a column `width` wide take their two-line form.
+pub fn two_line(width: f32) -> bool {
+    width < TWO_LINE_UNDER
+}
+
+/// Whether the rows of the column being laid out take their two-line form.
+pub fn two_line_rows() -> bool {
+    two_line(COLUMN_WIDTH.with(|w| w.get()))
+}
+
+/// The content column of a page group `group_width` wide: the group less
+/// its side padding, at most the Reading width.
+pub fn page_column_width(group_width: f32, narrow: bool) -> f32 {
+    column_width_in(group_width, narrow, column_max())
+}
+
+fn column_width_in(group_width: f32, narrow: bool, max: f32) -> f32 {
+    let padding = if narrow { 16. } else { 32. };
+    (group_width - 2. * padding).min(max)
 }
 
 /// The side padding of pages (docs/design/layout.md 4.2; 16 in a page
@@ -565,11 +603,22 @@ pub fn page_padding() -> f32 {
 pub struct NarrowPage {
     child: gpui_kit::AnyElement,
     narrow: bool,
+    column: f32,
 }
 
 impl NarrowPage {
     pub fn new(child: gpui_kit::AnyElement, narrow: bool) -> Self {
-        Self { child, narrow }
+        Self {
+            child,
+            narrow,
+            column: f32::MAX,
+        }
+    }
+
+    /// The width of the content column inside (for the two-line rows).
+    pub fn column(mut self, width: f32) -> Self {
+        self.column = width;
+        self
     }
 }
 
@@ -601,8 +650,10 @@ impl gpui_kit::Element for NarrowPage {
         cx: &mut gpui_kit::App,
     ) -> (gpui_kit::LayoutId, ()) {
         let before = PAGE_PADDING.with(|p| p.replace(if self.narrow { 16. } else { 32. }));
+        let column = COLUMN_WIDTH.with(|w| w.replace(self.column));
         let id = self.child.request_layout(window, cx);
         PAGE_PADDING.with(|p| p.set(before));
+        COLUMN_WIDTH.with(|w| w.set(column));
         (id, ())
     }
 
@@ -630,6 +681,78 @@ impl gpui_kit::Element for NarrowPage {
     ) {
         self.child.paint(window, cx);
     }
+}
+
+/// An element over its parent that reports the parent's bounds when it is
+/// laid out (where a heading or an editor is, to scroll to it).
+pub fn measure(
+    record: impl Fn(gpui_kit::Bounds<gpui_kit::Pixels>, &mut gpui_kit::Window) + 'static,
+) -> gpui_kit::AnyElement {
+    gpui_kit::canvas(
+        move |bounds, window, _| record(bounds, window),
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
+    .into_any_element()
+}
+
+/// How a scroll brings something into view.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reveal {
+    /// Its top at the top of the viewport, less a margin (Go to heading).
+    Top,
+    /// The least scroll that shows it whole, or its top when it is taller
+    /// than the viewport (an editor opened near the bottom).
+    Whole,
+}
+
+/// The vertical scroll offset (0 or negative, as GPUI keeps it) that
+/// brings the span `top..bottom` into the viewport `view_top..view_bottom`.
+/// Positions are in window coordinates measured at `offset`; `max` is the
+/// furthest the content scrolls (positive).
+pub fn reveal_offset(
+    how: Reveal,
+    offset: f32,
+    (view_top, view_bottom): (f32, f32),
+    (top, bottom): (f32, f32),
+    max: f32,
+) -> f32 {
+    const MARGIN: f32 = 24.;
+    let to_top = offset - (top - view_top) + MARGIN;
+    let target = match how {
+        Reveal::Top => to_top,
+        Reveal::Whole => {
+            if bottom - top > view_bottom - view_top - 2. * MARGIN || top < view_top {
+                to_top
+            } else if bottom > view_bottom {
+                offset - (bottom - view_bottom) - MARGIN
+            } else {
+                offset
+            }
+        }
+    };
+    target.clamp(-max.max(0.), 0.)
+}
+
+/// Scroll `handle` so the span measured as `bounds` shows, by `how`.
+pub fn scroll_into_view(
+    handle: &gpui_kit::ScrollHandle,
+    bounds: gpui_kit::Bounds<gpui_kit::Pixels>,
+    how: Reveal,
+) {
+    let view = handle.bounds();
+    let offset = handle.offset();
+    let y = reveal_offset(
+        how,
+        f32::from(offset.y),
+        (f32::from(view.top()), f32::from(view.bottom())),
+        (f32::from(bounds.top()), f32::from(bounds.bottom())),
+        f32::from(handle.max_offset().y),
+    );
+    handle.set_offset(gpui_kit::point(offset.x, px(y)));
 }
 
 /// The scrolling page area that centres the column, with 32 of side
@@ -739,4 +862,55 @@ pub fn ghost_value(id: impl Into<ElementId>, tokens: &Tokens) -> Stateful<Div> {
         .rounded(px(RADIUS_SM))
         .text_color(tokens.text_primary)
         .hover(move |s| s.bg(hover))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_target_is_scrolled_to_the_top_or_just_into_view() {
+        let view = (100., 600.);
+        // A heading further down comes to the top, less the margin.
+        assert_eq!(
+            reveal_offset(Reveal::Top, 0., view, (900., 930.), 2000.),
+            -776.
+        );
+        // Never past the end of the content, never above the start.
+        assert_eq!(
+            reveal_offset(Reveal::Top, 0., view, (900., 930.), 500.),
+            -500.
+        );
+        assert_eq!(
+            reveal_offset(Reveal::Top, -300., view, (120., 150.), 2000.),
+            -296.
+        );
+        assert_eq!(
+            reveal_offset(Reveal::Top, -10., view, (110., 140.), 2000.),
+            0.
+        );
+        // An editor half below the viewport scrolls just enough.
+        assert_eq!(
+            reveal_offset(Reveal::Whole, 0., view, (500., 700.), 2000.),
+            -124.
+        );
+        // Already whole on screen: no scroll.
+        assert_eq!(
+            reveal_offset(Reveal::Whole, -40., view, (200., 400.), 2000.),
+            -40.
+        );
+    }
+
+    #[test]
+    fn rows_take_two_lines_in_a_column_under_520() {
+        // screens.md 8.4: at 880 with the terminal docked the column is
+        // 468, so the rows fold; a wide page keeps one line.
+        assert!(two_line(column_width_in(532., false, 720.)));
+        assert!(!two_line(column_width_in(1100., false, 720.)));
+        // The Reading width caps the column: Narrow (480) always folds.
+        assert!(two_line(column_width_in(1100., false, 480.)));
+        // A narrow group pads 16 a side.
+        assert_eq!(column_width_in(440., true, 720.), 408.);
+        assert!(!two_line(f32::MAX), "unknown width: one line");
+    }
 }

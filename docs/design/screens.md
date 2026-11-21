@@ -86,7 +86,7 @@ Annotations: one tab is open, so there is no tab bar. The tree follows 4.2.1: it
 +----------------------+-------------------------------------------------------------------------+
 ```
 
-Annotations: the capture editor is focused when the inbox opens. Newest note first. Card actions appear on hover or focus only (shown on the first card): Make topic `T`, Edit `Enter`, Delete `Delete`. "File with Claude Code" is the single secondary button: it shows the terminal and runs the filing command there; resulting topics arrive as Draft with unread dots, and their notes move to Filed with links. With the Open filter empty the button is disabled. `J` / `K` move between cards.
+Annotations: the capture editor is focused when the inbox opens. Newest note first. Card actions appear on hover or focus only (shown on the first card): Make topic `T`, Edit `Enter`, Delete `Delete`. "File with Claude Code" is the single secondary button: it shows the terminal and runs the filing command (`/acta:triage`) in the project's session. The command is typed into that session only when Claude Code sits idle at an empty prompt (nothing printed for 1.5 s, no "esc to interrupt" on screen, the cursor on an empty `>` line); with no live session, one starts on the project's folders with the command as its first prompt; with Claude Code mid-task (or anything that does not read as idle), nothing is typed and the restart confirmation of 6.4 asks before a new session starts on the command; resulting topics arrive as Draft with unread dots, and their notes move to Filed with links. With the Open filter empty the button is disabled. `J` / `K` move between cards.
 
 ### 8.3 Command palette
 

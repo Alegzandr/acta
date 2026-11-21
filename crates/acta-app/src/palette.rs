@@ -4,7 +4,7 @@
 //! to the selected row's group; `Enter` runs; with nothing found, `Enter`
 //! creates a topic with the typed title.
 
-use acta_core::model::{KbKind, PageReq, ProjectTree, Record, TopicId};
+use acta_core::model::{KbKind, PageReq, ProjectTree, Record, Status, TopicId};
 use acta_core::store::{SearchKind, SearchQuery};
 use gpui_kit::component::input::{
     Escape, IndentInline, Input, InputEvent, InputState, MoveDown, MoveUp,
@@ -40,7 +40,59 @@ pub enum PaletteEvent {
     /// Open or run the target; `true`: in a new tab (`Mod+Enter`).
     Run(Target, bool),
     Create(CreateKind, String),
+    /// A picker's row was chosen, by its index in the choices given.
+    Picked(usize),
     Dismiss,
+}
+
+/// What leads a picker's row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Lead {
+    Icon(Icon),
+    Status(Status),
+}
+
+/// A row of a picker: the palette narrowed to a list a page gives it (a
+/// destination for a note, a heading, an owner), with the same matching,
+/// keys and look as any palette row.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Choice {
+    pub title: String,
+    pub detail: String,
+    pub lead: Lead,
+}
+
+/// What a picker does with the row chosen, by its index. Compared by
+/// identity, so page events that carry one stay comparable.
+#[derive(Clone)]
+pub struct OnPick(pub std::rc::Rc<PickFn>);
+
+type PickFn = dyn Fn(usize, &mut Window, &mut gpui_kit::App);
+
+impl OnPick {
+    pub fn new(f: impl Fn(usize, &mut Window, &mut gpui_kit::App) + 'static) -> Self {
+        Self(std::rc::Rc::new(f))
+    }
+}
+
+impl std::fmt::Debug for OnPick {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("OnPick")
+    }
+}
+
+impl PartialEq for OnPick {
+    fn eq(&self, other: &Self) -> bool {
+        std::rc::Rc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+/// What a page asks of the palette as a picker: the chip and placeholder
+/// (`label`) and the rows.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Picker {
+    pub label: String,
+    pub choices: Vec<Choice>,
 }
 
 pub struct Palette {
@@ -48,6 +100,8 @@ pub struct Palette {
     scope: Option<Group>,
     /// Asked for by "New epic...": the typed text is the epic's title.
     create: Option<CreateKind>,
+    /// A picker: only its rows, and `Enter` picks.
+    picker: Option<Picker>,
     projects: Vec<ProjectTree>,
     recent: Vec<TopicId>,
     context: commands::Context,
@@ -64,6 +118,7 @@ impl EventEmitter<PaletteEvent> for Palette {}
 pub struct Setup {
     pub scope: Option<Group>,
     pub create: Option<CreateKind>,
+    pub picker: Option<Picker>,
     pub projects: Vec<ProjectTree>,
     pub recent: Vec<TopicId>,
     pub context: commands::Context,
@@ -73,10 +128,11 @@ pub struct Setup {
 impl Palette {
     pub fn new(setup: Setup, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let locale = settings::locale(cx);
-        let placeholder = match setup.create {
-            Some(CreateKind::Epic) => Command::NewEpic.label(locale),
-            Some(CreateKind::Topic) => text(locale, Key::TopicNew),
-            None => text(locale, Key::CommonSearch),
+        let placeholder = match (&setup.picker, setup.create) {
+            (Some(picker), _) => picker.label.clone(),
+            (None, Some(CreateKind::Epic)) => Command::NewEpic.label(locale),
+            (None, Some(CreateKind::Topic)) => text(locale, Key::TopicNew),
+            (None, None) => text(locale, Key::CommonSearch),
         };
         let input = cx.new(|cx| InputState::new(window, cx).placeholder(placeholder));
         input.update(cx, |state, cx| state.focus(window, cx));
@@ -91,8 +147,13 @@ impl Palette {
         )];
         let mut palette = Self {
             input,
-            scope: setup.scope,
+            scope: if setup.picker.is_some() {
+                Some(Group::Choices)
+            } else {
+                setup.scope
+            },
             create: setup.create,
+            picker: setup.picker,
             projects: setup.projects,
             recent: setup.recent,
             context: setup.context,
@@ -118,6 +179,7 @@ impl Palette {
         self.items = self.local_items(&query, locale);
         self.selected = 0;
         if self.create.is_none()
+            && self.picker.is_none()
             && !query.is_empty()
             && self.scope.is_none_or(|s| s == Group::Knowledge)
         {
@@ -166,6 +228,14 @@ impl Palette {
     fn local_items(&self, query: &str, locale: Locale) -> Vec<Item> {
         if self.create.is_some() {
             return Vec::new();
+        }
+        if let Some(picker) = &self.picker {
+            let rows: Vec<(String, String)> = picker
+                .choices
+                .iter()
+                .map(|c| (c.title.clone(), c.detail.clone()))
+                .collect();
+            return palette_model::choices(&rows, query);
         }
         let mut items = Vec::new();
         for tree in &self.projects {
@@ -250,6 +320,12 @@ impl Palette {
             return;
         }
         let shown = self.shown();
+        if self.picker.is_some() {
+            if let Some(Target::Choice(i)) = shown.get(self.selected).map(|i| &i.target) {
+                cx.emit(PaletteEvent::Picked(*i));
+            }
+            return;
+        }
         match shown.get(self.selected) {
             Some(item) => cx.emit(PaletteEvent::Run(item.target.clone(), new_tab)),
             None if !query.is_empty() => cx.emit(PaletteEvent::Create(CreateKind::Topic, query)),
@@ -294,6 +370,17 @@ impl Palette {
             // mark, and commands have no kind to show; the slot keeps the
             // titles aligned.
             Target::Command(_) => div().size(px(16.)).flex_shrink_0().into_any_element(),
+            Target::Choice(i) => match self.picker.as_ref().and_then(|p| p.choices.get(*i)) {
+                Some(Choice {
+                    lead: Lead::Icon(glyph),
+                    ..
+                }) => icon(*glyph, 16., t.text_secondary).into_any_element(),
+                Some(Choice {
+                    lead: Lead::Status(status),
+                    ..
+                }) => ui::status_glyph(*status, 16., t).into_any_element(),
+                _ => div().size(px(16.)).flex_shrink_0().into_any_element(),
+            },
         };
         // One text run per matched stretch, so the title truncates with an
         // ellipsis like any other text (components.md 5, Command palette):
@@ -370,17 +457,26 @@ impl Palette {
     }
 }
 
-fn group_label(locale: Locale, group: Group) -> String {
-    text(
-        locale,
-        match group {
-            Group::Recent => Key::PaletteRecent,
-            Group::Topics => Key::PaletteTopics,
-            Group::Knowledge => Key::SectionKnowledge,
-            Group::Commands => Key::PaletteCommands,
-            Group::Projects => Key::PaletteProjects,
-        },
-    )
+impl Palette {
+    fn group_label(&self, locale: Locale, group: Group) -> String {
+        text(
+            locale,
+            match group {
+                Group::Recent => Key::PaletteRecent,
+                Group::Topics => Key::PaletteTopics,
+                Group::Knowledge => Key::SectionKnowledge,
+                Group::Commands => Key::PaletteCommands,
+                Group::Projects => Key::PaletteProjects,
+                Group::Choices => {
+                    return self
+                        .picker
+                        .as_ref()
+                        .map(|p| p.label.clone())
+                        .unwrap_or_default();
+                }
+            },
+        )
+    }
 }
 
 impl Render for Palette {
@@ -404,12 +500,25 @@ impl Render for Palette {
                         .flex()
                         .items_center()
                         .text_color(t.text_tertiary)
-                        .child(group_label(locale, item.group)),
+                        .child(self.group_label(locale, item.group)),
                 );
             }
             results = results.child(self.row(item, i, locale, &t, cx));
         }
-        if shown.is_empty() && !query.is_empty() && self.create.is_none() {
+        if shown.is_empty() && !query.is_empty() && self.picker.is_some() {
+            results = results.child(
+                type_scale::UI
+                    .el()
+                    .px(px(12.))
+                    .py(px(8.))
+                    .text_color(t.text_secondary)
+                    .child(tr(
+                        locale,
+                        Key::PaletteNoChoice,
+                        &[("query", Arg::Text(&query))],
+                    )),
+            );
+        } else if shown.is_empty() && !query.is_empty() && self.create.is_none() {
             let keys = KeyName::Enter.label(locale, macos);
             results = results.child(
                 type_scale::UI
@@ -435,7 +544,7 @@ impl Render for Palette {
                 .rounded(px(RADIUS_SM))
                 .bg(t.accent_subtle)
                 .text_color(t.text_primary)
-                .child(group_label(locale, scope))
+                .child(self.group_label(locale, scope))
         });
         let m = KeyName::Mod.label(locale, macos);
         let enter = KeyName::Enter.label(locale, macos);
@@ -487,6 +596,7 @@ impl Render for Palette {
                 cx.listener(|palette, event: &gpui_kit::KeyDownEvent, _, cx| {
                     // Backspace on an empty input removes the chip (8.3).
                     if event.keystroke.key == "backspace"
+                        && palette.picker.is_none()
                         && palette.scope.is_some()
                         && palette.query(cx).is_empty()
                     {
@@ -533,7 +643,9 @@ impl Render for Palette {
                     // Naming a new topic or epic: Enter creates it, and
                     // there is nothing to open in a tab.
                     .map(|this| {
-                        if self.create.is_some() {
+                        if self.picker.is_some() {
+                            this.child(hint(Key::PaletteHintChoose, &[enter]))
+                        } else if self.create.is_some() {
                             this.child(hint(Key::PaletteHintCreate, &[enter]))
                         } else {
                             this.child(hint(Key::PaletteHintOpen, &[enter]))

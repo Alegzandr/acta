@@ -71,7 +71,7 @@ Left to right:
 | Keyboard focus | focus ring inside, as rows | unchanged |
 | Being dragged | the tab at 60% opacity | unchanged |
 
-`Left` / `Right` move between view tabs when one has keyboard focus, `Enter` or `Space` activates. No accent: tone carries the active tab, as on page tabs (4.4). When the tabs do not fit, the ones that do not are replaced by a ghost `chevron-down` at the end of the tab row opening a menu of all the group's views (the active one with a trailing `check`).
+`Left` / `Right` move between view tabs when one has keyboard focus, `Enter` or `Space` activates. No accent: tone carries the active tab, as on page tabs (4.4). When the tabs do not fit, the ones that do not are replaced by a ghost `chevron-down` at the end of the tab row opening a menu of all the group's views (the active one with a trailing `check`). Which fit is decided from the group's width in the frame before, less the header's padding and buttons: tabs are kept in order from the first while they fit, the active one always, with room left for the 24 chevron.
 
 **View menu** (`ellipsis`, right click or `Shift+F10` on a header, a view tab or a page-area view tab; the context menu component): "Move to left sidebar", "Move to right sidebar", "Move to bottom panel", "Move to page area" (the current area's item disabled, with a trailing `check`), "Split from group" (disabled when the area already has two groups or the view is alone), separator, "Hide". Every item exists in the palette (4.8.7). The tab menu of an Inbox or Knowledge page tab carries the four Move items too.
 

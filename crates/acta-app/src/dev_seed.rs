@@ -8,6 +8,17 @@ use acta_core::Store;
 use acta_core::model::{Author, EntryKind, KbKind, Owner, Status};
 use acta_core::store::{NewEntry, NewKb, NewTopic, TopicPatch};
 
+/// One empty project, "Acta", with `folder` as its working folder: no
+/// topics, no notes (the "File with Claude Code" check).
+pub fn bare(store: &mut Store, folder: &Path) -> acta_core::Result<()> {
+    if !store.projects()?.is_empty() {
+        return Ok(());
+    }
+    let acta = store.create_project("Acta", "", Author::Human)?;
+    store.add_folder(Owner::Project(acta), folder, Author::Human)?;
+    Ok(())
+}
+
 /// Fill an empty store. `folder` becomes the project's working folder.
 pub fn seed(store: &mut Store, folder: &Path) -> acta_core::Result<()> {
     if !store.projects()?.is_empty() {

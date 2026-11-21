@@ -82,13 +82,23 @@ pub fn launch_spec_for_claude(
     folders: &[PathBuf],
     focus: &Focus,
 ) -> Result<ClaudeLaunch, LaunchError> {
+    launch_spec_for_claude_with(folders, focus, None)
+}
+
+/// [`launch_spec_for_claude`] with a first prompt Claude Code starts on
+/// (`/acta:triage`), passed as its positional argument.
+pub fn launch_spec_for_claude_with(
+    folders: &[PathBuf],
+    focus: &Focus,
+    prompt: Option<&str>,
+) -> Result<ClaudeLaunch, LaunchError> {
     // Check the folders first: a missing folder must be reported even when
     // the search for `claude` would also fail.
     if folders.is_empty() {
         return Err(LaunchError::NoFolder);
     }
     let program = resolve_claude().ok_or(LaunchError::ClaudeNotFound)?;
-    build_claude_launch(&program, folders, focus, |path| path.is_dir())
+    build_claude_launch_with(&program, folders, focus, prompt, |path| path.is_dir())
 }
 
 /// The pure part of [`launch_spec_for_claude`], with the program already
@@ -97,6 +107,18 @@ pub fn build_claude_launch(
     program: &ClaudeProgram,
     folders: &[PathBuf],
     focus: &Focus,
+    exists: impl Fn(&Path) -> bool,
+) -> Result<ClaudeLaunch, LaunchError> {
+    build_claude_launch_with(program, folders, focus, None, exists)
+}
+
+/// [`build_claude_launch`] with a first prompt. A prompt `cmd.exe` would
+/// interpret on the shim path is left out rather than passed.
+pub fn build_claude_launch_with(
+    program: &ClaudeProgram,
+    folders: &[PathBuf],
+    focus: &Focus,
+    prompt: Option<&str>,
     exists: impl Fn(&Path) -> bool,
 ) -> Result<ClaudeLaunch, LaunchError> {
     let (primary, additional) = folders.split_first().ok_or(LaunchError::NoFolder)?;
@@ -113,6 +135,13 @@ pub fn build_claude_launch(
             claude_args.push(folder.to_string_lossy().into_owned());
         } else {
             left_out.push(folder.clone());
+        }
+    }
+    if let Some(prompt) = prompt.filter(|p| !p.is_empty()) {
+        let unsafe_for_cmd =
+            matches!(program, ClaudeProgram::CmdShim { .. }) && has_cmd_metachar(prompt);
+        if !unsafe_for_cmd {
+            claude_args.push(prompt.to_owned());
         }
     }
 
@@ -347,6 +376,30 @@ mod tests {
             launch_spec_for_claude(&[], &focus()),
             Err(LaunchError::NoFolder)
         );
+    }
+
+    #[test]
+    fn a_first_prompt_is_the_last_argument() {
+        let program = ClaudeProgram::Exe(PathBuf::from("claude"));
+        let folders = [alexandre("acta"), alexandre("docs")];
+        let launch =
+            build_claude_launch_with(&program, &folders, &focus(), Some("/acta:triage"), |_| true)
+                .unwrap();
+        assert_eq!(
+            launch.spec.args.last().map(String::as_str),
+            Some("/acta:triage")
+        );
+        let shim = ClaudeProgram::CmdShim {
+            comspec: "cmd.exe".into(),
+            shim: PathBuf::from("C:\\npm\\claude.cmd"),
+        };
+        let launch =
+            build_claude_launch_with(&shim, &folders, &focus(), Some("/acta:triage"), |_| true)
+                .unwrap();
+        assert!(launch.spec.args[3].ends_with(" \"/acta:triage\"\""));
+        let launch =
+            build_claude_launch_with(&shim, &folders, &focus(), Some("a&b"), |_| true).unwrap();
+        assert!(!launch.spec.args[3].contains("a&b"), "left out");
     }
 
     #[test]

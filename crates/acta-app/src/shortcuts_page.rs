@@ -7,8 +7,8 @@
 //! Rows are the palette commands with a direct key, with the labels and
 //! keys the palette shows, and the keys that have no command (tabs, focus,
 //! lists and the tree, editors). Keys that do nothing yet are left out
-//! (redo, entry types in the composer), except the area keys the spec
-//! lists as reserved.
+//! (entry types in the composer), except the area keys the spec lists as
+//! reserved.
 
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::{
@@ -75,14 +75,20 @@ pub fn groups(locale: Locale, macos: bool) -> Vec<(Key, Vec<Row>)> {
             Command::GoKnowledge,
             Command::NewDocument,
             Command::NewMemory,
+            Command::GoHeading,
             Command::Back,
             Command::Forward,
             Command::Undo,
-            Command::Settings,
-            Command::Shortcuts,
         ]
         .map(c),
     );
+    // interaction.md 6.1: Ctrl+Y as well on Windows and Linux.
+    let mut redo = c(Command::Redo);
+    if !macos {
+        redo.keys.push(vec![ctrl, "Y"]);
+    }
+    general.push(redo);
+    general.extend([Command::Settings, Command::Shortcuts].map(c));
 
     let mut tabs = vec![
         r(Key::TabOpenNew, vec![vec![m, enter]]),
@@ -331,6 +337,10 @@ mod tests {
                 .contains(&vec!["Ctrl", "Shift", "J"])
         );
         assert_eq!(find("Close tab").keys, [vec!["Ctrl", "W"]]);
+        assert_eq!(
+            find("Redo").keys,
+            [vec!["Ctrl", "Shift", "Z"], vec!["Ctrl", "Y"]]
+        );
         assert_eq!(find("Next tab").keys, [vec!["Ctrl", "Tab"]]);
         assert_eq!(
             find("Save the editor in focus").keys,

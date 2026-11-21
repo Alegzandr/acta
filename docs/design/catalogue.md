@@ -124,6 +124,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `error.save_entry` | Could not save the entry. The database is locked by another process. | Impossible d'enregistrer l'entrée. La base de données est verrouillée par un autre processus. |
 | `error.save` | Could not save the change. Try again. | Impossible d'enregistrer la modification. Réessayez. |
 | `undo.changed` | Not undone: it was changed since. | Non annulé : cela a été modifié depuis. |
+| `redo.changed` | Not redone: it was changed since. | Non rétabli : cela a été modifié depuis. |
 | `table.count` | {n} topic · {n} topics | {n} sujet · {n} sujets |
 | `table.filter.open` | Open | Ouverts |
 | `table.filter.all` | All | Tous |
@@ -143,6 +144,10 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `inbox.dismissed` | Dismissed | Écartée |
 | `inbox.by_claude` | by Claude Code | par Claude Code |
 | `inbox.make_topic` | Make topic | Créer un sujet |
+| `inbox.file_to` | File... | Classer... |
+| `inbox.pick.new_epic` | New epic | Nouvel epic |
+| `inbox.pick.in_epic` | New topic in {path} | Nouveau sujet dans {path} |
+| `inbox.pick.as_entry` | Entry in {path} | Entrée dans {path} |
 | `inbox.empty` | Inbox is empty. Notes you capture land here until they become topics. | La boîte de réception est vide. Les notes que vous saisissez arrivent ici jusqu'à devenir des sujets. |
 | `inbox.filed_empty` | No filed notes yet. Notes that become topics or entries are listed here. | Aucune note classée pour l'instant. Les notes devenues des sujets ou des entrées sont listées ici. |
 | `kb.new_document` | New document | Nouveau document |
@@ -168,6 +173,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `kb.move_to` | Move to... | Déplacer vers... |
 | `kb.change_kind` | Change kind | Changer de nature |
 | `kb.save_file` | Save as file | Enregistrer comme fichier |
+| `kb.saved_file` | Saved {name}. The file is not encrypted. | {name} enregistré. Le fichier n'est pas chiffré. |
 | `kb.moved.project.document` | Moved to project {name}. | Déplacé vers le projet {name}. |
 | `kb.moved.project.memory` | Moved to project {name}. | Déplacée vers le projet {name}. |
 | `kb.moved.epic.document` | Moved to epic {name}. | Déplacé vers l'epic {name}. |
@@ -191,6 +197,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `doc.editing` | Editing | Modification en cours |
 | `doc.needs` | A document needs a title and a summary. | Un document doit avoir un titre et un résumé. |
 | `doc.go_heading` | Go to heading | Aller au titre |
+| `doc.section_lines` | {n} line · {n} lines | {n} ligne · {n} lignes |
 | `history.version` | Version from {datetime} by {author} | Version du {datetime} par {author} |
 | `history.text` | Text | Texte |
 | `history.changes` | Changes | Modifications |
@@ -328,8 +335,10 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `palette.hint.open` | {keys} open | {keys} ouvrir |
 | `palette.hint.tab` | {keys} open in new tab | {keys} ouvrir dans un nouvel onglet |
 | `palette.hint.create` | {keys} create | {keys} créer |
+| `palette.hint.choose` | {keys} choose | {keys} choisir |
 | `palette.hint.close` | {keys} close | {keys} fermer |
 | `palette.none` | Nothing matches "{query}". {keys} creates a topic with this title. | Aucun résultat pour « {query} ». {keys} crée un sujet avec ce titre. |
+| `palette.no_choice` | Nothing matches "{query}". | Aucun résultat pour « {query} ». |
 | `cmd.go_topic` | Go to topic... | Aller au sujet... |
 | `cmd.capture` | Capture a note | Saisir une note |
 | `cmd.new_topic` | New topic | Nouveau sujet |
