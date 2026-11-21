@@ -116,7 +116,7 @@ When none applies, the section is its header row only, with "Nothing needs atten
 | No activity | The topic table with the chip "No activity for 7 days", oldest activity first |
 | Inbox | The inbox page, Open filter |
 | Topics done / Decisions / New topics | The topic table with the chip "Done in the last 7 days" / "Decided in the last 7 days" / "Created in the last 7 days" |
-| An epic row; "4 more epics" | That epic's page; the project's topic table |
+| An epic row; the "No epic" row; "4 more epics" | That epic's page; the project's topic table at its "No epic" group; the project's topic table |
 | Memories not updated | The knowledge base page, Kind: Memories, with the chip "Not updated for 90 days", oldest first |
 
 Opening a table from the Overview scrolls the page to it (the human asked, so 6.5 rule 2 is not broken) and puts keyboard focus on its first row.
