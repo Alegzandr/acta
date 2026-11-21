@@ -167,7 +167,7 @@ impl Store {
             )?;
         }
         tx.commit()?;
-        self.refresh_link_index();
+        let _ = self.refresh_link_index();
         Ok(())
     }
 
@@ -211,7 +211,7 @@ impl Store {
             super::timeline::system_event(&tx, t, EventKind::Restored, None, None, author, now)?;
         }
         tx.commit()?;
-        self.refresh_link_index();
+        let _ = self.refresh_link_index();
         Ok(())
     }
 

@@ -62,6 +62,8 @@ pub struct Store {
     data_dir: PathBuf,
     opened: Opened,
     writable: bool,
+    /// Set when the last rewrite of the hooks' pre-check file failed.
+    link_index_failed: std::cell::Cell<bool>,
 }
 
 /// `meta` key raised by the second release of a two-step destructive change
@@ -97,6 +99,7 @@ impl Store {
             data_dir: config.data_dir.clone(),
             opened,
             writable,
+            link_index_failed: std::cell::Cell::new(false),
         })
     }
 
@@ -182,7 +185,7 @@ impl Store {
             schema::MIGRATIONS,
         )
         .map_err(open_to_error)?;
-        self.refresh_link_index();
+        let _ = self.refresh_link_index();
         Ok(())
     }
 
@@ -215,6 +218,20 @@ impl Store {
         };
         tx.commit()?;
         Ok(())
+    }
+
+    /// Every local value whose key starts with `prefix`, keys as passed to
+    /// [`Store::set_local_value`].
+    pub fn local_values(&self, prefix: &str) -> Result<Vec<(String, String)>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT key, value FROM meta WHERE substr(key, 1, ?2) = ?1 ORDER BY key")?;
+        let full = format!("local.{prefix}");
+        let rows = stmt.query_map(rusqlite::params![full, full.chars().count() as i64], |r| {
+            let k: String = r.get(0)?;
+            Ok((k["local.".len()..].to_owned(), r.get(1)?))
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
     // ---- export history (request 5) ----

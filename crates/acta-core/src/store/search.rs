@@ -5,7 +5,7 @@
 use super::Store;
 use crate::error::Result;
 use crate::model::{
-    EntryId, KbId, KbKind, NoteId, Owner, Page, PageReq, ProjectId, Record, TopicId,
+    EntryId, EpicId, KbId, KbKind, NoteId, Owner, Page, PageReq, ProjectId, Record, Status, TopicId,
 };
 
 /// Marks the start and end of a matched term in [`SearchHit::snippet`].
@@ -30,6 +30,12 @@ pub struct SearchQuery {
     pub project: Option<ProjectId>,
     /// Empty means every kind.
     pub kinds: Vec<SearchKind>,
+    /// Topic statuses kept (empty: all). Applies to topics and to entries
+    /// through their topic; notes and knowledge are not filtered by it.
+    pub statuses: Vec<Status>,
+    /// Only topics of this epic and their entries; notes and knowledge are
+    /// left out when set.
+    pub epic: Option<EpicId>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -75,6 +81,19 @@ impl Store {
         let project = query
             .project
             .map_or(String::new(), |p| format!(" AND x.project_id = {}", p.0));
+        let mut topic_filter = String::new();
+        if !query.statuses.is_empty() {
+            let list: Vec<String> = query
+                .statuses
+                .iter()
+                .map(|s| format!("'{}'", s.as_str()))
+                .collect();
+            topic_filter.push_str(&format!(" AND t.status IN ({})", list.join(", ")));
+        }
+        if let Some(e) = query.epic {
+            topic_filter.push_str(&format!(" AND t.epic_id = {}", e.0));
+        }
+        let unfiled = query.epic.is_none();
         let (o, c) = (SNIPPET_OPEN, SNIPPET_CLOSE);
         let mut parts = Vec::new();
         if wants(SearchKind::Topic) {
@@ -82,7 +101,8 @@ impl Store {
                 "SELECT 'topic', x.id, x.project_id, NULL, x.title,
                         snippet(topics_fts, -1, '{o}', '{c}', '…', 12), bm25(topics_fts)
                  FROM topics_fts JOIN topics x ON x.id = topics_fts.rowid
-                 WHERE topics_fts MATCH ?1 AND x.deleted_at IS NULL{project}"
+                 WHERE topics_fts MATCH ?1 AND x.deleted_at IS NULL{project}{}",
+                topic_filter.replace("t.", "x.")
             ));
         }
         if wants(SearchKind::Entry) {
@@ -91,11 +111,11 @@ impl Store {
                         snippet(entries_fts, -1, '{o}', '{c}', '…', 12), bm25(entries_fts)
                  FROM entries_fts JOIN entries x ON x.id = entries_fts.rowid
                  JOIN topics t ON t.id = x.topic_id
-                 WHERE entries_fts MATCH ?1 AND x.deleted_at IS NULL AND t.deleted_at IS NULL{}",
+                 WHERE entries_fts MATCH ?1 AND x.deleted_at IS NULL AND t.deleted_at IS NULL{}{topic_filter}",
                 project.replace("x.project_id", "t.project_id")
             ));
         }
-        if wants(SearchKind::Note) {
+        if wants(SearchKind::Note) && unfiled {
             parts.push(format!(
                 "SELECT 'note', x.id, x.project_id, x.filed_topic_id, '',
                         snippet(notes_fts, -1, '{o}', '{c}', '…', 12), bm25(notes_fts)
@@ -103,7 +123,7 @@ impl Store {
                  WHERE notes_fts MATCH ?1 AND x.deleted_at IS NULL{project}"
             ));
         }
-        if wants(SearchKind::Kb) {
+        if wants(SearchKind::Kb) && unfiled {
             parts.push(format!(
                 "SELECT 'kb', x.id, x.project_id, x.topic_id, x.title,
                         snippet(kb_fts, -1, '{o}', '{c}', '…', 12), bm25(kb_fts)

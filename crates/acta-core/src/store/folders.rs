@@ -92,7 +92,7 @@ impl Store {
         )?;
         let id = FolderId(tx.last_insert_rowid());
         tx.commit()?;
-        self.refresh_link_index();
+        let _ = self.refresh_link_index();
         Ok(id)
     }
 
@@ -128,7 +128,7 @@ impl Store {
             params![id.0, stored, now_ms(), author],
         )?;
         tx.commit()?;
-        self.refresh_link_index();
+        let _ = self.refresh_link_index();
         Ok(())
     }
 
@@ -170,7 +170,7 @@ impl Store {
             )?;
         }
         tx.commit()?;
-        self.refresh_link_index();
+        let _ = self.refresh_link_index();
         Ok(changes.into_iter().map(|(id, _)| id).collect())
     }
 
@@ -348,13 +348,25 @@ impl Store {
     }
 
     /// Rewrites the hooks' pre-check file (ADR 0008) from the live folders.
-    /// Best effort: a failure only costs hooks their early exit, never a
-    /// write, so it is not reported.
-    pub fn refresh_link_index(&self) {
-        if let Ok(folders) = self.live_owner_folders() {
-            let paths: Vec<String> = folders.into_iter().map(|f| f.path).collect();
-            let _ = crate::link_index::write(&self.data_dir, Os::CURRENT, &paths);
-        }
+    /// A failure never undoes the committed write that triggered it; it is
+    /// returned here and remembered for [`Store::link_index_failed`], which
+    /// the CLI reports and `acta setup --check` surfaces.
+    pub fn refresh_link_index(&self) -> std::io::Result<()> {
+        let result = self
+            .live_owner_folders()
+            .map_err(|e| std::io::Error::other(e.to_string()))
+            .and_then(|folders| {
+                let paths: Vec<String> = folders.into_iter().map(|f| f.path).collect();
+                crate::link_index::write(&self.data_dir, Os::CURRENT, &paths)
+            });
+        self.link_index_failed.set(result.is_err());
+        result
+    }
+
+    /// Whether the last pre-check file rewrite failed: hooks may then miss
+    /// a newly attached folder until the next successful one.
+    pub fn link_index_failed(&self) -> bool {
+        self.link_index_failed.get()
     }
 
     /// Live folders whose owner chain is live.

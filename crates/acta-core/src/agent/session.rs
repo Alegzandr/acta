@@ -162,9 +162,11 @@ impl Session {
                     .local_value(&key)
                     .ok()
                     .flatten()
-                    .and_then(|v| parse_owner(&v))
+                    .and_then(|v| v.split_whitespace().next().and_then(parse_owner))
                     && let Some(project) = live_project(store, owner)
-                    && s.project.is_none_or(|p| p == project)
+                    // A saved focus never binds an unbound session: only
+                    // the environment and attached folders do.
+                    && s.project == Some(project)
                     && !matches!(owner, Owner::Project(_))
                 {
                     s.project = Some(project);
@@ -215,13 +217,41 @@ impl Session {
     fn save_focus(&self, store: &mut Store) -> crate::Result<()> {
         let value = self.focus.map(|f| f.to_string());
         if let Some(id) = &self.session_id {
-            store.set_local_value(&format!("{SESSION_KEY}{id}"), value.as_deref())?;
+            // Session rows carry their time and are pruned after 30 days;
+            // session ids are never reused.
+            let now = crate::time::now_ms();
+            let stamped = value.as_ref().map(|v| format!("{v} {now}"));
+            store.set_local_value(&format!("{SESSION_KEY}{id}"), stamped.as_deref())?;
+            prune_sessions(store, now)?;
         }
         if let Some(k) = &self.worktree_key {
             store.set_local_value(&format!("{WORKTREE_KEY}{k}"), value.as_deref())?;
         }
         Ok(())
     }
+}
+
+/// How long the focus saved for a Claude Code session is kept.
+pub const SESSION_FOCUS_TTL_MS: i64 = 30 * crate::time::MS_PER_DAY;
+
+/// Removes session focus rows older than [`SESSION_FOCUS_TTL_MS`] (and
+/// rows without a time, written before times were kept).
+fn prune_sessions(store: &mut Store, now: i64) -> crate::Result<()> {
+    let old: Vec<String> = store
+        .local_values(SESSION_KEY)?
+        .into_iter()
+        .filter(|(_, v)| {
+            v.split_whitespace()
+                .nth(1)
+                .and_then(|t| t.parse::<i64>().ok())
+                .is_none_or(|t| now - t > SESSION_FOCUS_TTL_MS)
+        })
+        .map(|(k, _)| k)
+        .collect();
+    for k in old {
+        store.set_local_value(&k, None)?;
+    }
+    Ok(())
 }
 
 fn live_project(store: &Store, owner: Owner) -> Option<ProjectId> {
