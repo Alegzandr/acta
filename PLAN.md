@@ -30,9 +30,9 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 - [x] CI: fmt, clippy, tests on every push, all three OSes (green since the Rust 1.100.0 bump)
 - [x] Release workflow on `v*` tags: builds all four channels, publishes installers, feeds, deltas, SHA256SUMS and attestations (v0.1.0 published; v0.1.1 and v0.1.2 are tags without a release, see ADR 0004 amendments)
 - [x] Repository settings: `v*` tag ruleset, immutable releases, `release` environment limited to `v*`
-- [ ] App icon: "Companion" (planet, ring, moon), rendered by `scripts/icon/`; ships in v0.1.3
-- [ ] Self-update proven end to end by `update-e2e.yml` on Windows, macOS and Linux runners: v0.1.0 -> v0.1.3; then delete the v0.1.2 draft
-- [ ] Silent per-user install verified (same workflow)
+- [x] App icon: "Companion" (planet, ring, moon), rendered by `scripts/icon/`; shipped in v0.1.3
+- [x] Self-update proven end to end by `update-e2e.yml` on Windows, macOS and Linux runners (v0.1.3 -> v0.1.4, run 44851174491; Windows also v0.1.0 -> v0.1.3). v0.1.4 moved the update source off the GitHub API; its first proof is the next release
+- [x] Silent per-user install and Windows uninstall verified (same workflow)
 - [ ] macOS keychain test with ad-hoc signed builds (ADR 0003, `platform-checks.yml`), and SQLCipher builds on macOS and Linux runners
 
 ## M2 - Data model and core UI
