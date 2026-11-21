@@ -144,6 +144,8 @@ actions!(
         OpenTrash,
         /// `Esc` in the sidebar shown over the page: dismiss it.
         DismissSidebar,
+        /// `Mod+/`, palette "Keyboard shortcuts".
+        OpenShortcuts,
     ]
 );
 
@@ -191,6 +193,7 @@ fn key_bindings() -> Vec<KeyBinding> {
     let mut out = vec![
         KeyBinding::new(m("cmd-b", "ctrl-b"), ToggleSidebar, app),
         KeyBinding::new(m("cmd-,", "ctrl-,"), OpenSettings, app),
+        KeyBinding::new(m("cmd-/", "ctrl-/"), OpenShortcuts, app),
         KeyBinding::new("tab", FocusNext, plain),
         KeyBinding::new("shift-tab", FocusPrevious, plain),
         KeyBinding::new(m("cmd-k", "ctrl-k"), OpenPalette, app),
@@ -267,6 +270,7 @@ enum PageView {
     Knowledge(Entity<KnowledgePage>),
     Doc(Entity<DocPage>),
     Trash(Entity<TrashPage>),
+    Shortcuts(Entity<crate::shortcuts_page::ShortcutsPage>),
 }
 
 impl PageView {
@@ -279,6 +283,7 @@ impl PageView {
             PageView::Knowledge(v) => v.clone().into(),
             PageView::Doc(v) => v.clone().into(),
             PageView::Trash(v) => v.clone().into(),
+            PageView::Shortcuts(v) => v.clone().into(),
         }
     }
 }
@@ -812,6 +817,10 @@ impl Shell {
                 let Some(bench) = self.bench() else { return };
                 (PageView::Settings(bench.settings.clone()), None)
             }
+            Route::Shortcuts => {
+                let page = cx.new(|cx| crate::shortcuts_page::ShortcutsPage::new(window, cx));
+                (PageView::Shortcuts(page), None)
+            }
         };
         let Some(bench) = self.bench() else { return };
         bench.page = page;
@@ -826,7 +835,7 @@ impl Shell {
             Route::Epic(id) => {
                 tree::locate_epic(&projects, id).and_then(|l| l.project.map(|p| p.0))
             }
-            Route::Kb(_) | Route::Trash | Route::Settings => None,
+            Route::Kb(_) | Route::Trash | Route::Settings | Route::Shortcuts => None,
         };
         if let Some(project) = project {
             bench.active_project = Some(project);
@@ -1217,6 +1226,7 @@ impl Shell {
             Command::Trash => self.navigate(Route::Trash, true, window, cx),
             Command::Snapshot => self.open_snapshots(window, cx),
             Command::Settings => self.open_settings(window, cx),
+            Command::Shortcuts => self.navigate(Route::Shortcuts, true, window, cx),
             Command::Theme(setting) => settings::set_theme(setting, cx),
             Command::Language(locale) => settings::set_language(locale, cx),
         }
@@ -2228,6 +2238,7 @@ impl Shell {
             (Some(Route::Kb(_)), _) => Vec::new(),
             (Some(Route::Trash), _) => vec![crumb(text(locale, Key::TreeTrash), None)],
             (Some(Route::Settings), _) => vec![crumb(text(locale, Key::TreeSettings), None)],
+            (Some(Route::Shortcuts), _) => vec![crumb(text(locale, Key::CmdShortcuts), None)],
         }
     }
 
@@ -3144,6 +3155,9 @@ impl Render for Shell {
             .on_action(
                 cx.listener(|shell, _: &OpenSettings, window, cx| shell.open_settings(window, cx)),
             )
+            .on_action(cx.listener(|shell, _: &OpenShortcuts, window, cx| {
+                shell.navigate(Route::Shortcuts, true, window, cx)
+            }))
             .on_action(|_: &FocusNext, window, cx| window.focus_next(cx))
             .on_action(|_: &FocusPrevious, window, cx| window.focus_prev(cx))
             .on_action(cx.listener(|s, _: &OpenPalette, w, cx| s.open_palette(None, None, w, cx)))

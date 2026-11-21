@@ -1024,6 +1024,22 @@ fn about_section(locale: Locale, t: &Tokens) -> Vec<gpui_kit::AnyElement> {
         )
         .into_any_element(),
         setting_row(
+            text(locale, Key::CmdShortcuts),
+            String::new(),
+            ui::button(
+                "settings-shortcuts",
+                text(locale, Key::CmdShortcuts),
+                ui::Variant::Secondary,
+                false,
+                t,
+            )
+            .on_click(|_, window, cx| {
+                window.dispatch_action(Box::new(crate::shell::OpenShortcuts), cx)
+            }),
+            t,
+        )
+        .into_any_element(),
+        setting_row(
             text(locale, Key::SettingsLicences),
             text(locale, Key::SettingsLicencesHint),
             div(),

@@ -17,6 +17,8 @@ pub enum Route {
     Kb(KbId),
     Trash,
     Settings,
+    /// The Keyboard shortcuts page (components-app.md 5).
+    Shortcuts,
 }
 
 impl Route {
@@ -32,6 +34,7 @@ impl Route {
             Route::Knowledge(id) => format!("knowledge:{id}"),
             Route::Trash => "trash".into(),
             Route::Settings => "settings".into(),
+            Route::Shortcuts => "shortcuts".into(),
         }
     }
 
@@ -45,6 +48,7 @@ impl Route {
         match key {
             "trash" => return Some(Route::Trash),
             "settings" => return Some(Route::Settings),
+            "shortcuts" => return Some(Route::Shortcuts),
             _ => {}
         }
         let (prefix, _) = key.split_once('-')?;

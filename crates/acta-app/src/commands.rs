@@ -53,6 +53,7 @@ pub enum Command {
     Trash,
     Snapshot,
     Settings,
+    Shortcuts,
     Theme(crate::theme::ThemeSetting),
     Language(Locale),
 }
@@ -139,6 +140,7 @@ impl Command {
             Command::Trash,
             Command::Snapshot,
             Command::Settings,
+            Command::Shortcuts,
             Command::Theme(ThemeSetting::System),
             Command::Theme(ThemeSetting::Light),
             Command::Theme(ThemeSetting::Dark),
@@ -192,6 +194,7 @@ impl Command {
             Command::Trash => Key::CmdTrash,
             Command::Snapshot => Key::CmdSnapshot,
             Command::Settings => Key::CmdSettings,
+            Command::Shortcuts => Key::CmdShortcuts,
             Command::SetStatus(status) => {
                 let name = text(locale, crate::ui::status_key(status));
                 return tr(locale, Key::CmdSetStatus, &[("status", Arg::Text(&name))]);
@@ -241,6 +244,13 @@ impl Command {
             #[cfg(not(windows))]
             Command::ChatBrowser => vec![m, shift, "H"],
             Command::Settings => vec![m, ","],
+            Command::Shortcuts => vec![m, "/"],
+            // components-app.md 5, Settings: never Ctrl+- (Claude Code's
+            // undo); Ctrl+Alt on Windows and Linux, Cmd+Shift on macOS.
+            Command::TerminalLarger if macos => vec![m, shift, "="],
+            Command::TerminalSmaller if macos => vec![m, shift, "-"],
+            Command::TerminalLarger => vec![KeyName::Ctrl.label(locale, macos), alt, "="],
+            Command::TerminalSmaller => vec![KeyName::Ctrl.label(locale, macos), alt, "-"],
             Command::Undo => vec![m, "Z"],
             Command::Back if macos => vec![m, "["],
             Command::Forward if macos => vec![m, "]"],

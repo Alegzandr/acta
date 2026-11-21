@@ -40,6 +40,7 @@ mod route;
 mod settings;
 mod settings_page;
 mod shell;
+mod shortcuts_page;
 mod specimen;
 mod table;
 mod terminal_dock;
