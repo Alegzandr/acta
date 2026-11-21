@@ -77,8 +77,9 @@ impl From<GridSize> for WindowSize {
 pub enum SessionEvent {
     /// New content; coalesced, so at most one is queued at a time.
     Wakeup,
-    /// The child set (`Some`) or reset (`None`) the title.
-    Title(Option<String>),
+    /// The title changed; read it with [`Session::take_title`]. Coalesced
+    /// like `Wakeup`.
+    Title,
     Bell,
     /// OSC 52: the child asks to put text on the clipboard.
     ClipboardStore(String),
@@ -91,6 +92,9 @@ struct Shared {
     size: Mutex<GridSize>,
     theme: Mutex<TerminalTheme>,
     wake_queued: AtomicBool,
+    /// The latest title not yet taken: `Some(None)` is a reset.
+    title: Mutex<Option<Option<String>>>,
+    exit_seen: AtomicBool,
 }
 
 #[derive(Clone)]
@@ -108,6 +112,18 @@ impl Listener {
 
     fn emit(&self, event: SessionEvent) {
         let _ = self.events.try_send(event);
+    }
+
+    fn title(&self, title: Option<String>) {
+        if self.shared.title.lock().unwrap().replace(title).is_none() {
+            self.emit(SessionEvent::Title);
+        }
+    }
+
+    fn exited(&self, code: Option<i32>) {
+        if !self.shared.exit_seen.swap(true, Ordering::AcqRel) {
+            self.emit(SessionEvent::Exited(code));
+        }
     }
 }
 
@@ -132,14 +148,17 @@ impl EventListener for Listener {
                     self.emit(SessionEvent::Wakeup);
                 }
             }
-            Event::Title(title) => self.emit(SessionEvent::Title(Some(title))),
-            Event::ResetTitle => self.emit(SessionEvent::Title(None)),
+            Event::Title(title) => self.title(Some(title)),
+            Event::ResetTitle => self.title(None),
             Event::Bell => self.emit(SessionEvent::Bell),
             Event::ClipboardStore(_, text) => self.emit(SessionEvent::ClipboardStore(text)),
-            Event::ChildExit(status) => self.emit(SessionEvent::Exited(status.code())),
+            Event::ChildExit(status) => self.exited(status.code()),
+            // The event loop stopped (the PTY closed) without a child exit:
+            // the session is over all the same.
+            Event::Exit => self.exited(None),
             // Reading the clipboard from the child (OSC 52 query) is refused:
             // it would hand any program the user's clipboard.
-            Event::ClipboardLoad(..) | Event::Exit => {}
+            Event::ClipboardLoad(..) => {}
         }
     }
 }
@@ -206,6 +225,8 @@ impl Session {
             size: Mutex::new(size),
             theme: Mutex::new(theme),
             wake_queued: AtomicBool::new(false),
+            title: Mutex::new(None),
+            exit_seen: AtomicBool::new(false),
         });
         let listener = Listener {
             events: tx,
@@ -229,12 +250,15 @@ impl Session {
         ]);
         env.extend(spec.env.iter().cloned());
         let options = tty::Options {
-            shell: Some(tty::Shell::new(spec.program.clone(), spec.args.clone())),
+            shell: Some(tty::Shell::new(
+                program_word(&spec.program),
+                spec.args.clone(),
+            )),
             working_directory: Some(spec.cwd.clone()),
             drain_on_exit: true,
             env,
             #[cfg(windows)]
-            escape_args: true,
+            escape_args: !spec.verbatim_args,
         };
         let pty = tty::new(&options, size.into(), 0)?;
         let event_loop = EventLoop::new(term.clone(), listener, pty, true, false)?;
@@ -252,6 +276,16 @@ impl Session {
     /// The event stream. Every clone sees each event once.
     pub fn events(&self) -> async_channel::Receiver<SessionEvent> {
         self.events.clone()
+    }
+
+    /// The title set since the last call: `Some(None)` is a reset.
+    pub fn take_title(&self) -> Option<Option<String>> {
+        self.shared.title.lock().unwrap().take()
+    }
+
+    /// The cursor cell, without copying the screen.
+    pub fn cursor(&self) -> Option<FrameCursor> {
+        cursor_of(&self.term.lock())
     }
 
     /// Mark the queued wake-up as consumed, so the next output sends another.
@@ -444,6 +478,34 @@ fn frame_of<T: EventListener>(term: &Term<T>, theme: &TerminalTheme) -> Frame {
     }
 }
 
+fn cursor_of<T>(term: &Term<T>) -> Option<FrameCursor> {
+    if !term.mode().contains(TermMode::SHOW_CURSOR) {
+        return None;
+    }
+    let point = term.grid().cursor.point;
+    let row = point.line.0 + term.grid().display_offset() as i32;
+    if row < 0 || row as usize >= term.screen_lines() {
+        return None;
+    }
+    let wide = term.grid()[point].flags.contains(Flags::WIDE_CHAR);
+    Some(FrameCursor {
+        row: row as usize,
+        col: point.column.0,
+        shape: term.cursor_style().shape,
+        wide,
+    })
+}
+
+/// Windows builds the command line by plain concatenation, so a program
+/// path with a space or tab must arrive quoted. Unix spawns it as is.
+fn program_word(program: &str) -> String {
+    if cfg!(windows) && program.contains([' ', '\t']) && !program.starts_with('"') {
+        format!("\"{program}\"")
+    } else {
+        program.to_owned()
+    }
+}
+
 fn text_of<T: EventListener>(term: &Term<T>) -> String {
     let frame = frame_of(term, &TerminalTheme::dark());
     let mut out = String::new();
@@ -474,6 +536,10 @@ fn link_of<T>(term: &Term<T>, row: usize, col: usize) -> Option<Link> {
     let grid = term.grid();
 
     if let Some(link) = grid[line_of(row)][Column(col)].hyperlink() {
+        // An OSC 8 target the gate refuses is no link at all.
+        if !url::is_openable(link.uri()) {
+            return None;
+        }
         // The run of cells around `col` carrying the same link.
         let same = |c: usize| grid[line_of(row)][Column(c)].hyperlink().as_ref() == Some(&link);
         let start = (0..=col)
@@ -518,7 +584,7 @@ fn link_of<T>(term: &Term<T>, row: usize, col: usize) -> Option<Link> {
         }
     }
     let index = cells.iter().position(|&(r, c)| r == row && c >= col)?;
-    let (range, uri) = url::url_at(&chars, index)?;
+    let (range, uri) = url::url_at(&chars, index).filter(|(_, uri)| url::is_openable(uri))?;
     let mut spans: Vec<(usize, Range<usize>)> = Vec::new();
     for &(r, c) in &cells[range] {
         match spans.last_mut() {
@@ -610,6 +676,7 @@ mod tests {
             args: args.iter().map(|a| (*a).to_owned()).collect(),
             cwd: std::env::temp_dir(),
             env: vec![("ACTA_TEST_NAME".to_owned(), "Alexandre".to_owned())],
+            verbatim_args: false,
         }
     }
 
@@ -625,10 +692,13 @@ mod tests {
         session.input(b"echo hello %ACTA_TEST_NAME%\r".to_vec());
         assert!(wait_for(&session, "hello Alexandre"), "{}", session.text());
 
-        // Resize reaches the child.
+        // Resize reaches the child. `mode con` is localised, so ask
+        // PowerShell; the typed command line itself cannot match `W=80`.
         session.resize(GridSize::new(80, 20));
-        session.input(b"mode con\r".to_vec());
-        assert!(wait_for(&session, "80"), "{}", session.text());
+        session.input(
+            b"powershell -NoProfile -Command \"'W=' + $Host.UI.RawUI.WindowSize.Width\"\r".to_vec(),
+        );
+        assert!(wait_for(&session, "W=80"), "{}", session.text());
 
         session.input(b"exit 3\r".to_vec());
         assert_eq!(wait_exit(&session), Some(Some(3)));
@@ -652,6 +722,102 @@ mod tests {
 
         session.input(b"exit 3\n".to_vec());
         assert_eq!(wait_exit(&session), Some(Some(3)));
+    }
+
+    /// A program path with a space, and a `.cmd` shim given quoted words.
+    #[cfg(windows)]
+    #[test]
+    fn windows_command_lines_survive_spaces() {
+        use crate::launch::{ClaudeProgram, Focus, build_claude_launch};
+        use std::path::PathBuf;
+
+        let dir = std::env::temp_dir().join(format!("acta term {}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let system = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".into());
+        let cmd = dir.join("my cmd.exe");
+        std::fs::copy(PathBuf::from(system).join("System32").join("cmd.exe"), &cmd).unwrap();
+        let session = Session::spawn(
+            &spec(
+                &cmd.to_string_lossy(),
+                &["/d", "/c", "echo spaced Alexandre & exit 4"],
+            ),
+            GridSize::new(100, 30),
+            TerminalTheme::dark(),
+        )
+        .expect("spawn through a path with a space");
+        assert_eq!(wait_exit(&session), Some(Some(4)));
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(
+            session.text().contains("spaced Alexandre"),
+            "{}",
+            session.text()
+        );
+        drop(session);
+
+        let shim = dir.join("claude shim.cmd");
+        std::fs::write(&shim, "@echo off\r\necho args:[%*]\r\n").unwrap();
+        let program = ClaudeProgram::CmdShim {
+            comspec: std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".into()),
+            shim,
+        };
+        let folders = [dir.clone(), PathBuf::from("D:\\my docs")];
+        let launch = build_claude_launch(&program, &folders, &Focus::default(), |_| true).unwrap();
+        let session = Session::spawn(&launch.spec, GridSize::new(120, 30), TerminalTheme::dark())
+            .expect("spawn the shim");
+        assert_eq!(wait_exit(&session), Some(Some(0)));
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(
+            session
+                .text()
+                .contains(r#"args:["--add-dir" "D:\my docs"]"#),
+            "{}",
+            session.text()
+        );
+        drop(session);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Arguments reach the program as separate words, quotes included.
+    #[cfg(unix)]
+    #[test]
+    fn unix_arguments_stay_words() {
+        let session = Session::spawn(
+            &spec(
+                "/bin/sh",
+                &[
+                    "-c",
+                    "exec printf '<%s>\\n' \"$@\"",
+                    "claude",
+                    "a b",
+                    "it's",
+                ],
+            ),
+            GridSize::new(100, 30),
+            TerminalTheme::dark(),
+        )
+        .expect("spawn /bin/sh");
+        assert_eq!(wait_exit(&session), Some(Some(0)));
+        std::thread::sleep(Duration::from_millis(300));
+        let text = session.text();
+        assert!(text.contains("<a b>") && text.contains("<it's>"), "{text}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn output_survives_a_quick_exit_unix() {
+        let session = Session::spawn(
+            &spec("/bin/sh", &["-c", "echo bye Alexandre; exit 2"]),
+            GridSize::new(100, 30),
+            TerminalTheme::dark(),
+        )
+        .expect("spawn /bin/sh");
+        assert_eq!(wait_exit(&session), Some(Some(2)));
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(
+            session.text().contains("bye Alexandre"),
+            "{}",
+            session.text()
+        );
     }
 
     /// The last screen stays after the child exits (ADR 0002 point 3).
@@ -719,6 +885,21 @@ mod tests {
         assert_eq!(link.uri, "https://acta.example/");
         assert_eq!(link.cells, vec![(0, 0..4)]);
         assert_eq!(link_of(&term, 0, 6), None);
+
+        // Only web links: anything else the system would open is no link.
+        for target in [
+            "file:///C:/Windows/System32/calc.exe",
+            "javascript:alert(1)",
+            "ms-msdt:/id PCWDiagnostic",
+            "C:/Users/alexandre/run.bat",
+            "//server/share/run.exe",
+        ] {
+            let term = term_with(&format!("\x1b]8;;{target}\x1b\\docs\x1b]8;;\x1b\\"));
+            assert_eq!(link_of(&term, 0, 1), None, "{target}");
+        }
+        let term = term_with("see file:///etc/passwd and \\\\server\\share\\x.exe");
+        assert_eq!(link_of(&term, 0, 8), None);
+        assert_eq!(link_of(&term, 0, 30), None);
     }
 
     #[test]

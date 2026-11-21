@@ -173,6 +173,11 @@ fn modifier_param(m: Mods) -> u8 {
 
 /// Bytes for a key that is not plain text, or `None` when the key types text.
 /// `Some(vec![])` means the key has no encoding and is swallowed.
+///
+/// Kitty keyboard protocol: the disambiguate level is implemented. With
+/// "report all keys as escape codes" set, modified keys are encoded the same
+/// way but plain text still arrives as text, and no release or repeat events
+/// are reported (Claude Code asks for the disambiguate level only).
 pub fn encode(key: &Key, mode: TermMode, os: Os) -> Option<Vec<u8>> {
     let m = key.mods;
     let kitty =
@@ -301,8 +306,14 @@ pub fn encode(key: &Key, mode: TermMode, os: Os) -> Option<Vec<u8>> {
         return None;
     }
     if kitty {
-        let code = ch.to_ascii_lowercase() as u32;
-        return Some(csi(format!("{code};{param}u")));
+        // Kitty reports the unshifted key: Windows names Ctrl+Shift+- as
+        // "_" with Shift already consumed, so put it back (US layout).
+        let (base, shifted) = unshift(ch);
+        let param = modifier_param(Mods {
+            shift: m.shift || shifted,
+            ..m
+        });
+        return Some(csi(format!("{};{param}u", base as u32)));
     }
     if m.platform {
         return Some(Vec::new());
@@ -325,6 +336,41 @@ pub fn encode(key: &Key, mode: TermMode, os: Os) -> Option<Vec<u8>> {
         bytes.extend(text.as_bytes());
     }
     Some(bytes)
+}
+
+/// The unshifted key of a shifted character on a US layout, and whether
+/// it was shifted.
+fn unshift(ch: char) -> (char, bool) {
+    const PAIRS: [(char, char); 21] = [
+        ('_', '-'),
+        ('+', '='),
+        ('!', '1'),
+        ('@', '2'),
+        ('#', '3'),
+        ('$', '4'),
+        ('%', '5'),
+        ('^', '6'),
+        ('&', '7'),
+        ('*', '8'),
+        ('(', '9'),
+        (')', '0'),
+        ('{', '['),
+        ('}', ']'),
+        ('|', '\\'),
+        (':', ';'),
+        ('"', '\''),
+        ('<', ','),
+        ('>', '.'),
+        ('?', '/'),
+        ('~', '`'),
+    ];
+    if ch.is_ascii_uppercase() {
+        return (ch.to_ascii_lowercase(), true);
+    }
+    PAIRS
+        .iter()
+        .find(|(shifted, _)| *shifted == ch)
+        .map_or((ch, false), |(_, base)| (*base, true))
 }
 
 fn single_char(key: &str) -> Option<char> {
@@ -447,6 +493,8 @@ mod tests {
             m.shift = true
         });
         assert_eq!(send(&ctrl_shift, KITTY), b"\x1b[45;6u");
+        // As Windows reports it: "_" with Shift consumed.
+        assert_eq!(send(&ctrl("_"), KITTY), b"\x1b[45;6u");
     }
 
     #[test]

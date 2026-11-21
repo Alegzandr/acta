@@ -41,6 +41,7 @@ fn default_spec() -> LaunchSpec {
         args: Vec::new(),
         cwd: std::env::current_dir().unwrap_or_else(|_| std::env::temp_dir()),
         env: Vec::new(),
+        verbatim_args: false,
     }
 }
 

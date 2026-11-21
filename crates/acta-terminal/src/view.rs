@@ -43,6 +43,7 @@ pub const MAX_TEXT_SIZE: f32 = 18.0;
 const LINE_RATIO: f32 = 17.0 / 13.0;
 /// The line under the last screen (docs/design/screens.md, terminal).
 pub const DEFAULT_ENDED_MESSAGE: &str = "Session ended. Enter to restart.";
+const RESIZE_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(75);
 
 gpui_kit::actions!(
     terminal,
@@ -121,6 +122,7 @@ pub struct TerminalView {
     /// Started before the first layout: spawned once the grid size is known.
     start_pending: bool,
     _start: Task<()>,
+    _resize: Task<()>,
     _events: Task<()>,
 }
 
@@ -156,6 +158,7 @@ impl TerminalView {
             scroll_remainder: 0.0,
             start_pending: false,
             _start: Task::ready(()),
+            _resize: Task::ready(()),
             _events: Task::ready(()),
         };
         view.start(spec, cx);
@@ -273,9 +276,11 @@ impl TerminalView {
                 }
                 cx.notify();
             }
-            SessionEvent::Title(title) => {
-                self.title = title.clone();
-                cx.emit(TerminalEvent::TitleChanged(title));
+            SessionEvent::Title => {
+                if let Some(title) = self.session.as_ref().and_then(Session::take_title) {
+                    self.title = title.clone();
+                    cx.emit(TerminalEvent::TitleChanged(title));
+                }
             }
             SessionEvent::Bell => cx.emit(TerminalEvent::Bell),
             SessionEvent::ClipboardStore(text) => {
@@ -306,8 +311,20 @@ impl TerminalView {
             return;
         }
         self.layout = Some(layout);
-        if let Some(session) = &self.session {
-            session.resize(self.grid_size());
+        // Debounced (ADR 0002): a dragged divider resizes the PTY once it
+        // rests, not on every frame. The layout itself applies at once.
+        if self.session.is_some() {
+            let size = self.grid_size();
+            let timer = cx.background_executor().timer(RESIZE_DEBOUNCE);
+            self._resize = cx.spawn(async move |this, cx| {
+                timer.await;
+                let _ = this.update(cx, |this, cx| {
+                    if let Some(session) = &this.session {
+                        session.resize(size);
+                        cx.notify();
+                    }
+                });
+            });
         }
         if self.start_pending {
             self.start(self.spec.clone(), cx);
@@ -449,6 +466,7 @@ impl TerminalView {
         if button == Button::Left
             && link_modifier(&event.modifiers)
             && let Some(link) = self.session.as_ref().and_then(|s| s.link_at(row, col))
+            && crate::url::is_openable(&link.uri)
         {
             cx.open_url(&link.uri);
             return;
@@ -706,8 +724,7 @@ impl EntityInputHandler for TerminalView {
     ) -> Option<Bounds<Pixels>> {
         // The IME window opens at the cursor cell.
         let layout = self.layout?;
-        let frame = self.session.as_ref()?.frame(&self.theme);
-        let cursor = frame.cursor?;
+        let cursor = self.session.as_ref()?.cursor()?;
         Some(Bounds::new(
             point(
                 layout.origin.x + layout.cell.width * cursor.col as f32,

@@ -3,7 +3,24 @@
 
 use std::ops::Range;
 
-const SCHEMES: [&str; 3] = ["https://", "http://", "file://"];
+/// Only web links are found or opened: a link is handed to the system's
+/// URL handler, which would also run `file:`, `ms-msdt:` and friends.
+const SCHEMES: [&str; 2] = ["https://", "http://"];
+
+/// Whether a link may be handed to the system's URL handler: `http` or
+/// `https` (any case) with a host. Every link, OSC 8 or found in the text,
+/// goes through this gate before it is shown or opened.
+pub fn is_openable(uri: &str) -> bool {
+    let lower = uri.to_ascii_lowercase();
+    let Some(rest) = SCHEMES.iter().find_map(|s| lower.strip_prefix(s)) else {
+        return false;
+    };
+    let host_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let host = &rest[..host_end];
+    !host.is_empty()
+        && !host.starts_with('@')
+        && !uri.chars().any(|c| c.is_whitespace() || c.is_control())
+}
 
 /// Ranges (indices into `line`) of every URL in the line.
 pub fn find_urls(line: &[char]) -> Vec<Range<usize>> {
@@ -97,10 +114,7 @@ mod tests {
             urls("see https://example.com/a?b=1#c and http://x.io"),
             ["https://example.com/a?b=1#c", "http://x.io"]
         );
-        assert_eq!(
-            urls("file:///home/alexandre/notes.md"),
-            ["file:///home/alexandre/notes.md"]
-        );
+        assert!(urls("file:///home/alexandre/notes.md").is_empty());
     }
 
     #[test]
@@ -120,6 +134,26 @@ mod tests {
         assert!(urls("https:// nothing").is_empty());
         assert!(urls("xhttps://example.com").is_empty());
         assert!(urls("no links here").is_empty());
+    }
+
+    #[test]
+    fn only_web_links_are_openable() {
+        assert!(is_openable("https://example.com/a"));
+        assert!(is_openable("HTTP://Example.com"));
+        for uri in [
+            "file:///C:/Users/alexandre/x.exe",
+            "file://server/share/x",
+            "javascript:alert(1)",
+            "ms-msdt:/id PCWDiagnostic",
+            r"C:\Users\alexandre\run.bat",
+            "/home/alexandre/run.sh",
+            r"\\server\share\x.exe",
+            "https://",
+            "https:///path",
+            "https://exa mple.com",
+        ] {
+            assert!(!is_openable(uri), "{uri}");
+        }
     }
 
     #[test]

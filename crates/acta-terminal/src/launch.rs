@@ -9,12 +9,15 @@ use std::path::{Path, PathBuf};
 
 /// A program to run in the terminal. `env` is added to the inherited
 /// environment; the session adds `TERM`, `COLORTERM` and `TERM_PROGRAM` itself.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LaunchSpec {
     pub program: String,
     pub args: Vec<String>,
     pub cwd: PathBuf,
     pub env: Vec<(String, String)>,
+    /// Windows only: `args` are already quoted for the command line and are
+    /// joined as they are, not escaped (the `cmd /s /c` shim path).
+    pub verbatim_args: bool,
 }
 
 /// What the terminal was opened from (ADR 0005 ids). Each level is set as
@@ -27,7 +30,8 @@ pub struct Focus {
 }
 
 /// A launch of Claude Code, with the additional folders that were left out
-/// because they do not exist (ADR 0008: reported, never blocking).
+/// (ADR 0008: reported, never blocking): missing ones, and on the Windows
+/// `.cmd` shim path those whose name `cmd.exe` would interpret.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ClaudeLaunch {
     pub spec: LaunchSpec,
@@ -102,7 +106,9 @@ pub fn build_claude_launch(
     let mut claude_args = Vec::new();
     let mut left_out = Vec::new();
     for folder in additional {
-        if exists(folder) {
+        let unsafe_for_cmd = matches!(program, ClaudeProgram::CmdShim { .. })
+            && has_cmd_metachar(&folder.to_string_lossy());
+        if exists(folder) && !unsafe_for_cmd {
             claude_args.push("--add-dir".to_owned());
             claude_args.push(folder.to_string_lossy().into_owned());
         } else {
@@ -121,17 +127,27 @@ pub fn build_claude_launch(
         env.push(("ACTA_TOPIC".to_owned(), topic.clone()));
     }
 
+    let mut verbatim_args = false;
     let (program, args) = match program {
         ClaudeProgram::Exe(path) => (path.to_string_lossy().into_owned(), claude_args),
         ClaudeProgram::CmdShim { comspec, shim } => {
-            let mut args = vec![
-                "/d".to_owned(),
-                "/s".to_owned(),
-                "/c".to_owned(),
-                shim.to_string_lossy().into_owned(),
-            ];
-            args.extend(claude_args);
-            (comspec.clone(), args)
+            // `cmd /s /c "<line>"` strips the outer quotes and runs <line>,
+            // where every word is quoted. cmd has no escape for `"` or `%`
+            // inside quotes, so a shim path with metacharacters is refused.
+            let shim = shim.to_string_lossy();
+            if has_cmd_metachar(&shim) {
+                return Err(LaunchError::ClaudeNotFound);
+            }
+            let words: Vec<String> = std::iter::once(shim.into_owned())
+                .chain(claude_args)
+                .map(|word| format!("\"{word}\""))
+                .collect();
+            verbatim_args = true;
+            let line = format!("\"{}\"", words.join(" "));
+            (
+                comspec.clone(),
+                vec!["/d".to_owned(), "/s".to_owned(), "/c".to_owned(), line],
+            )
         }
         ClaudeProgram::LoginShell(shell) => {
             // `exec claude "$@"`: the arguments stay separate words and never
@@ -154,9 +170,16 @@ pub fn build_claude_launch(
             args,
             cwd: primary.clone(),
             env,
+            verbatim_args,
         },
         left_out,
     })
+}
+
+/// Characters `cmd.exe` interprets even inside double quotes, or that end
+/// a quoted word.
+fn has_cmd_metachar(text: &str) -> bool {
+    text.contains(['"', '%', '!', '^', '&', '|', '<', '>'])
 }
 
 /// Find `claude` the way ADR 0002 point 3 says, for this platform.
@@ -326,16 +349,41 @@ mod tests {
         let folders = [PathBuf::from("C:\\acta"), PathBuf::from("D:\\docs")];
         let launch = build_claude_launch(&program, &folders, &focus(), |_| true).unwrap();
         assert_eq!(launch.spec.program, "C:\\Windows\\system32\\cmd.exe");
+        assert!(launch.spec.verbatim_args);
         assert_eq!(
             launch.spec.args,
             [
                 "/d",
                 "/s",
                 "/c",
-                "C:\\npm\\claude.cmd",
-                "--add-dir",
-                "D:\\docs"
+                r#"""C:\npm\claude.cmd" "--add-dir" "D:\docs"""#
             ]
+        );
+
+        // Folders cmd would interpret are left out and reported.
+        let folders = [
+            PathBuf::from("C:\\acta"),
+            PathBuf::from("D:\\R&D"),
+            PathBuf::from("D:\\100%"),
+            PathBuf::from("D:\\my docs"),
+        ];
+        let launch = build_claude_launch(&program, &folders, &focus(), |_| true).unwrap();
+        assert_eq!(
+            launch.spec.args[3],
+            r#"""C:\npm\claude.cmd" "--add-dir" "D:\my docs"""#
+        );
+        assert_eq!(
+            launch.left_out,
+            [PathBuf::from("D:\\R&D"), PathBuf::from("D:\\100%")]
+        );
+
+        let bad = ClaudeProgram::CmdShim {
+            comspec: "cmd.exe".into(),
+            shim: PathBuf::from("C:\\R&D\\claude.cmd"),
+        };
+        assert_eq!(
+            build_claude_launch(&bad, &folders[..1], &focus(), |_| true),
+            Err(LaunchError::ClaudeNotFound)
         );
     }
 
