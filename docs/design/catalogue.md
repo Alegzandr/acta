@@ -717,3 +717,36 @@ New with ADR 0011 (2026-11-21). They stay here, outside the table the tests read
 | `import.auto_commit` | {n} working folder lets Claude Code commit automatically. Acta writes its rules only once the folder is found on this computer. · {n} working folders let Claude Code commit automatically. Acta writes their rules only once each folder is found on this computer. | {n} dossier de travail laisse Claude Code commiter automatiquement. Acta n'écrit ses règles qu'une fois le dossier trouvé sur cet ordinateur. · {n} dossiers de travail laissent Claude Code commiter automatiquement. Acta n'écrit leurs règles qu'une fois chaque dossier trouvé sur cet ordinateur. |
 
 The checkbox of `settings.auto_commit` reuses `folders.commit.as_user`. `{branch}` is the default branch's name as git has it, never translated; `{key}` is a settings key (`attribution`, `env`), never translated.
+
+### 10.4.4 Keys of due dates, pending
+
+New with due dates (2026-11-21; components-records.md 5, layout.md 4.2.1, copy.md 10.2.1, data.md 11 request 16). They stay here, outside the table the tests read, until due dates are implemented; the implementing change moves them into 10.4 and adds them to `catalogue.rs` in the same commit: `prop.due` after `prop.level`, the `due.*` keys right after it, `event.due_*` after `event.status`, `table.due` and `table.filter.*` after `table.reset`, `cmd.due_*` after `cmd.set_status`. Month and weekday names and the compact form are formats of 10.2.1, not keys. In French, *échéance* is feminine ("Aucune"), and `{date}` takes "le" or "au" from the string (10.2).
+
+| Key | English | French |
+|---|---|---|
+| `prop.due` | Due | Échéance |
+| `due.none` | None | Aucune |
+| `due.today` | Today | Aujourd'hui |
+| `due.tomorrow` | Tomorrow | Demain |
+| `due.in_days` | In {n} day · In {n} days | Dans {n} jour · Dans {n} jours |
+| `due.overdue` | Overdue by {n} day · Overdue by {n} days | En retard de {n} jour · En retard de {n} jours |
+| `due.tip.today` | Due today | Échéance aujourd'hui |
+| `due.tip.tomorrow` | Due tomorrow | Échéance demain |
+| `due.tip.in_days` | Due {date}, in {n} day · Due {date}, in {n} days | Échéance le {date}, dans {n} jour · Échéance le {date}, dans {n} jours |
+| `due.tip.overdue` | Overdue by {n} day, due {date} · Overdue by {n} days, due {date} | En retard de {n} jour, échéance le {date} · En retard de {n} jours, échéance le {date} |
+| `due.tip.date` | Due {date} | Échéance le {date} |
+| `due.picker.placeholder` | fri, in 3d, 15/12, 2026-12-15 | ven., dans 3 j, 15/12, 2026-12-15 |
+| `due.picker.invalid` | Not a date. Try fri, in 3d, 15/12 or 2026-12-15. | Date non reconnue. Essayez ven., dans 3 j, 15/12 ou 2026-12-15. |
+| `due.picker.range` | Choose a date between 2000 and 2099. | Choisissez une date entre 2000 et 2099. |
+| `due.picker.none` | No due date | Aucune échéance |
+| `due.picker.prev` | Previous month | Mois précédent |
+| `due.picker.next` | Next month | Mois suivant |
+| `event.due_set` | {author} set the due date to {date} | {author} a fixé l'échéance au {date} |
+| `event.due_cleared` | {author} cleared the due date | {author} a supprimé l'échéance |
+| `table.due` | Due | Échéance |
+| `table.filter.overdue` | Overdue | En retard |
+| `table.filter.week` | Next 7 days | 7 prochains jours |
+| `cmd.due_set` | Set due date... | Définir l'échéance... |
+| `cmd.due_clear` | Clear due date | Effacer l'échéance |
+
+`due.in_days` and `due.tip.in_days` are used from 2 days ahead (today and tomorrow have their own keys), so their singular forms only serve the plural rule. `due.tip.date` is the tooltip of a date on a closed record, which is never "overdue". The picker's Clear button reuses `common.clear`. Agent-facing text (`due 11-27 (6d)`, `overdue 3d`) is protocol, English only, and not in this catalogue (10).

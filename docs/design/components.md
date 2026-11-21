@@ -29,11 +29,11 @@ Destructive actions outside a dialog are ghost buttons or menu items with `dange
 
 | Row kind | Leading | Title role and rest colour | Trailing (one at most, 4.2.1) |
 |---|---|---|---|
-| Project | chevron 16 `text.secondary` | `type.ui-strong`; `text.primary` when it is the active project (4.6), else `text.secondary` | 24 reserved: dot when folded with unread inside; `plus` on hover |
-| Epic | chevron 16 `text.secondary` | `type.ui-strong`; `text.primary` when the open page is in it, else `text.secondary` | 24 reserved: dot when folded with unread inside; `plus` on hover |
+| Project | chevron 16 `text.secondary` | `type.ui-strong`; `text.primary` when it is the active project (4.6), else `text.secondary` | 24 reserved: dot when folded with unread inside, else its own due mark; `plus` on hover |
+| Epic | chevron 16 `text.secondary` | `type.ui-strong`; `text.primary` when the open page is in it, else `text.secondary` | 24 reserved: dot when folded with unread inside, else its own due mark; `plus` on hover |
 | Inbox, Knowledge | `inbox`, `library` 16 `text.secondary` | `type.ui` `text.secondary` | Inbox: count `type.small` `text.tertiary` `tnum`, above 0 only, "99+" above 99. Knowledge: dot |
-| Topic, open | status glyph 14 in its colour (Draft `text.tertiary`, Planned `text.secondary`, Active `accent`, Blocked `warning`), centred in the 16 slot | `type.ui` `text.secondary` | dot |
-| Topic, closed | glyph 14 `text.tertiary` (Done, Dropped) | `type.ui` `text.tertiary`, no strikethrough | dot |
+| Topic, open | status glyph 14 in its colour (Draft `text.tertiary`, Planned `text.secondary`, Active `accent`, Blocked `warning`), centred in the 16 slot | `type.ui` `text.secondary` | dot, else due mark: overdue `clock-alert` 14 `text.secondary`, due today `clock` 14 `text.tertiary` (4.2.1) |
+| Topic, closed | glyph 14 `text.tertiary` (Done, Dropped) | `type.ui` `text.tertiary`, no strikethrough | dot (a closed topic is never overdue) |
 | "N closed" (ghost) | chevron 14 `text.tertiary`, centred in the 16 slot | `type.small` `text.tertiary`: "{n} closed" (`tree.closed`) | dot when folded with an unread closed topic |
 | "New topic" (ghost) | `plus` 14 `text.tertiary` | `type.small` `text.tertiary`: "New topic" (`topic.new`) | none |
 
@@ -58,7 +58,8 @@ Measured on `bg.sunken` (2.2), dark / light: titles `text.secondary` 8.02 / 6.82
 Behaviour:
 - **Click** opens the row's page in the focused group's active tab and puts the cursor on the row. `Mod+Enter`, `Mod`+click or a middle click opens it in a new tab. A click on the chevron folds or unfolds and opens nothing. A ghost row is activated by a click, `Enter` or `Space`: "N closed" folds and unfolds, "New topic" opens the palette in create mode for that epic (as the `plus` does).
 - **Hover `plus`** (project and epic rows only): compact ghost icon button 24, `plus` 16, tooltip "New topic" with `Mod+T`; it creates in that project (in no epic) or in that epic. No other row has hover controls; everything else is in the row menu (`Shift+F10`, right click).
-- **Unread dot tooltip**: "New changes by Claude Code" (`tree.unread`), on a 16 x 16 hit box around the dot, after the usual 500 ms.
+- **Unread dot tooltip**: "New changes by Claude Code" (`tree.unread`), on a 16 x 16 hit box around the dot, after the usual 500 ms. **Due mark tooltip**: the sentence form of 10.2.1 ("Overdue by 3 days, due 18 Nov 2026", "Due today"), same hit box and delay.
+- **`D`** on a focused project, epic or topic row opens the due date picker (components-records.md 5) anchored under the row's title; on any other row it does nothing.
 - **Title tooltip**: only when the title is truncated (the shaped line is wider than its box), the full title, after 500 ms (5, Tooltip).
 - **Drag to reorder** (the pointer path of `Alt+Up` / `Alt+Down` and `M`). A press on a project, epic or topic row that moves 4 starts a drag; Inbox, Knowledge, ghost rows and the sticky row do not drag. The source row drops to 60% opacity and the drag chip of 4.8.7 follows the pointer (its icon is the row's leading glyph or icon at 14, its name the title, truncated at 240 of chip width). Targets:
   - a topic: between two topics of any group of its own project (a 2px `accent` insertion line, `radius.xs` ends, from the target depth's leading slot to the row's content edge); onto an epic row, folded or not, to move it to the end of that epic's topics (the row takes the drop-target state); onto its project row to move it out of its epic, to the end of the topics in no epic;
