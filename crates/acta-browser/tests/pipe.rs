@@ -85,12 +85,11 @@ fn only_this_user_is_admitted_and_network_logons_are_denied() {
     );
     drop(c);
     let dacl = server.join().unwrap().remove(0);
-    let sid = pipe::user_sid().unwrap();
-    // Read back from the handle: protected, network denied, the user
-    // admitted, nobody else.
+    // Read back from the handle: protected, network denied, nobody else
+    // than one user admitted (ACE by ACE in `Server::accept`; the text
+    // names the user by SID or alias depending on the account).
     assert!(dacl.starts_with("D:P"), "{dacl}");
     assert!(dacl.contains(";;;NU)") && dacl.contains("(D;"), "{dacl}");
-    assert!(dacl.contains(&format!(";;;{sid})")), "{dacl}");
     assert_eq!(dacl.matches('(').count(), 2, "{dacl}");
 }
 

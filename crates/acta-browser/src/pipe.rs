@@ -21,7 +21,8 @@ use windows::Win32::Security::Authorization::{
     SE_KERNEL_OBJECT,
 };
 use windows::Win32::Security::{
-    DACL_SECURITY_INFORMATION, GetTokenInformation, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES,
+    ACCESS_ALLOWED_ACE, ACL, DACL_SECURITY_INFORMATION, GetAce, GetSecurityDescriptorControl,
+    GetTokenInformation, PSECURITY_DESCRIPTOR, PSID, SE_DACL_PROTECTED, SECURITY_ATTRIBUTES,
     TOKEN_QUERY, TOKEN_USER, TokenUser,
 };
 use windows::Win32::Storage::FileSystem::{FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_ACCESS_DUPLEX};
@@ -112,9 +113,67 @@ pub fn sddl(sid: &str) -> String {
     format!("D:P(D;;GA;;;NU)(A;;GA;;;{sid})")
 }
 
-/// The DACL as Windows reads it back (generic rights mapped to file rights).
-pub fn expected_dacl(sid: &str) -> String {
-    format!("D:P(D;;FA;;;NU)(A;;FA;;;{sid})")
+/// Full access to a file object: what `GA` maps to on a pipe.
+const FILE_ALL_ACCESS: u32 = 0x001F_01FF;
+/// NT AUTHORITY\NETWORK.
+const NETWORK_SID: &str = "S-1-5-2";
+
+/// The rule of [`sddl`], checked on a pipe handle ACE by ACE rather than as
+/// text: SDDL text names some users by alias (`LA` for the built-in
+/// administrator, as on CI runners), so the same DACL can read two ways.
+/// Protected, exactly two ACEs: network denied everything, then `sid`
+/// allowed everything.
+pub fn dacl_is_ours(h: HANDLE, sid: &str) -> bool {
+    // SAFETY: queries on a live handle; the descriptor (which owns the
+    // DACL and its ACEs) is freed with LocalFree after the last read.
+    unsafe {
+        let mut dacl: *mut ACL = std::ptr::null_mut();
+        let mut sd = PSECURITY_DESCRIPTOR::default();
+        if GetSecurityInfo(
+            h,
+            SE_KERNEL_OBJECT,
+            DACL_SECURITY_INFORMATION,
+            None,
+            None,
+            Some(&mut dacl),
+            None,
+            Some(&mut sd),
+        )
+        .is_err()
+            || dacl.is_null()
+        {
+            return false;
+        }
+        let ok = (|| {
+            let (mut control, mut revision) = (0u16, 0u32);
+            GetSecurityDescriptorControl(sd, &mut control, &mut revision).ok()?;
+            if control & SE_DACL_PROTECTED.0 == 0 || (*dacl).AceCount != 2 {
+                return None;
+            }
+            let ace = |i: u32| -> Option<(u8, u32, String)> {
+                let mut p: *mut core::ffi::c_void = std::ptr::null_mut();
+                GetAce(dacl, i, &mut p).ok()?;
+                // Allowed and denied ACEs share this layout.
+                let ace = &*(p as *const ACCESS_ALLOWED_ACE);
+                let sid_ptr = PSID(&ace.SidStart as *const u32 as *mut core::ffi::c_void);
+                let mut s = PWSTR::null();
+                ConvertSidToStringSidW(sid_ptr, &mut s).ok()?;
+                let text = s.to_string().unwrap_or_default();
+                let _ = LocalFree(Some(HLOCAL(s.0.cast())));
+                Some((ace.Header.AceType, ace.Mask, text))
+            };
+            const ALLOWED: u8 = 0;
+            const DENIED: u8 = 1;
+            let first = ace(0)?;
+            let second = ace(1)?;
+            (first == (DENIED, FILE_ALL_ACCESS, NETWORK_SID.to_string())
+                && second == (ALLOWED, FILE_ALL_ACCESS, sid.to_string()))
+                .then_some(())
+        })()
+        .is_some();
+        let _ = LocalFree(Some(HLOCAL(sd.0)));
+        ok
+    }
 }
 
 pub struct Server {
@@ -206,8 +265,9 @@ impl Server {
             File::from_raw_handle(h.0)
         };
         self.created_any = true;
-        let dacl = read_sddl(HANDLE(file.as_raw_handle()));
-        if dacl != expected_dacl(&self.sid) {
+        let h = HANDLE(file.as_raw_handle());
+        let dacl = read_sddl(h);
+        if !dacl_is_ours(h, &self.sid) {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::PermissionDenied,
                 "the pipe instance does not carry the expected DACL",
@@ -415,9 +475,30 @@ mod tests {
         assert!(!app_running(&name));
     }
 
+    /// A pipe name no other test, run or process uses.
+    fn unique_name(test: &str) -> String {
+        let mut b = [0u8; 8];
+        getrandom::fill(&mut b).unwrap();
+        let tag: String = b.iter().map(|x| format!("{x:02x}")).collect();
+        format!(r"\\.\pipe\acta-test-{test}-{tag}")
+    }
+
+    #[test]
+    fn our_dacl_is_recognised_on_what_we_create() {
+        let sid = user_sid().unwrap();
+        let mut server = Server::new(&unique_name("dacl"), &sid).unwrap();
+        let (file, text) = server.create().unwrap();
+        assert!(dacl_is_ours(HANDLE(file.as_raw_handle()), &sid), "{text}");
+        // Another user's SID is not ours.
+        assert!(!dacl_is_ours(
+            HANDLE(file.as_raw_handle()),
+            "S-1-5-21-1-2-3-500"
+        ));
+    }
+
     #[test]
     fn no_client_is_served_without_an_instance_behind_it() {
-        let name = format!(r"\\.\pipe\acta-test-next-{}", std::process::id());
+        let name = unique_name("next");
         let mut server = Server::new(&name, &user_sid().unwrap()).unwrap();
         server.fail_next = true;
         let t = std::thread::spawn(move || server.accept().map(|_| ()));
