@@ -42,6 +42,8 @@ mod preferences;
 mod record;
 mod record_page;
 mod route;
+mod sessions;
+mod sessions_view;
 mod settings;
 mod settings_page;
 mod shell;

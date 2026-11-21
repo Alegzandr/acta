@@ -761,7 +761,16 @@ mod tests {
             shim,
         };
         let folders = [dir.clone(), PathBuf::from("D:\\my docs")];
-        let launch = build_claude_launch(&program, &folders, &Focus::default(), |_| true).unwrap();
+        // Acta's options go through the shim as separate quoted words too.
+        let options = crate::launch::ClaudeOptions {
+            plugin_dir: None,
+            conversation: Some(crate::launch::Conversation::New(
+                "019a7a6e-1c2d-7f00-8a00-0123456789ab".into(),
+            )),
+            token: None,
+        };
+        let launch =
+            build_claude_launch(&program, &folders, &Focus::default(), &options, |_| true).unwrap();
         let session = Session::spawn(&launch.spec, GridSize::new(120, 30), TerminalTheme::dark())
             .expect("spawn the shim");
         assert_eq!(wait_exit(&session), Some(Some(0)));
@@ -769,7 +778,7 @@ mod tests {
         assert!(
             session
                 .text()
-                .contains(r#"args:["--add-dir" "D:\my docs"]"#),
+                .contains(r#"args:["--add-dir" "D:\my docs" "--session-id" "019a7a6e-1c2d-7f00-8a00-0123456789ab"]"#),
             "{}",
             session.text()
         );

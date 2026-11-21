@@ -28,6 +28,9 @@ pub const ALLOW_RULES: [&str; 2] = [ALLOW_RULE, BROWSER_ALLOW_RULE];
 const NOT_RUN: &str = "cannot run claude";
 /// How long one call to the `claude` CLI may take.
 const CLAUDE_LIMIT: std::time::Duration = std::time::Duration::from_secs(60);
+/// The notifications that mean a session is blocked on the human.
+const WAITING_NOTIFICATIONS: &str =
+    "permission_prompt|elicitation_dialog|elicitation_url_dialog|agent_needs_input";
 /// What setup did that `--remove` must undo; kept in the plugin directory.
 const RECORD: &str = "setup-record.json";
 
@@ -156,6 +159,19 @@ impl Setup<'_> {
             json!({"type": "mcp_tool", "server": server, "tool": "hook",
                    "input": {"event": event, "session": "${session_id}"}})
         };
+        // Session presence (agent::presence): answered with empty text, so
+        // nothing reaches the model; short timeouts, never blocking. No
+        // `SessionEnd`: Claude Code refuses `mcp_tool` hooks there ("no MCP
+        // client context", run on 2.1.330); the server ends the session
+        // when its stdin closes.
+        let presence = |event: &str, detail: Option<&str>| {
+            let mut input = json!({"event": event, "session": "${session_id}"});
+            if let Some(d) = detail {
+                input["detail"] = json!(d);
+            }
+            json!({"type": "mcp_tool", "server": server, "tool": "hook",
+                   "input": input, "timeout": 5})
+        };
         let p = self.plugin_dir();
         let mut out = vec![
             (
@@ -202,7 +218,12 @@ impl Setup<'_> {
                     "PreCompact": [{"hooks": [
                         {"type": "command", "command": exe, "args": ["hook", "pre-compact"], "timeout": 10}
                     ]}],
-                    "SubagentStart": [{"hooks": [mcp_hook("subagent")]}]
+                    "SubagentStart": [{"hooks": [mcp_hook("subagent")]}],
+                    "UserPromptSubmit": [{"hooks": [presence("prompt", None)]}],
+                    "PostToolUse": [{"hooks": [presence("tool", Some("${tool_name}"))]}],
+                    "Notification": [{"matcher": WAITING_NOTIFICATIONS,
+                                      "hooks": [presence("waiting", None)]}],
+                    "Stop": [{"hooks": [presence("stop", None)]}]
                 }})),
             ),
         ];
@@ -234,6 +255,16 @@ impl Setup<'_> {
             written += 1;
         }
         Ok(written)
+    }
+
+    /// Writes the plugin tree where it differs (`setup --files-only`, and
+    /// the first step of setup).
+    pub fn plugin_files(&self) -> Step {
+        match self.write_files() {
+            Ok(0) => Step::new("plugin files", true, "up to date"),
+            Ok(n) => Step::new("plugin files", true, format!("{n} written")),
+            Err(e) => Step::new("plugin files", false, format!("cannot write: {}", e.kind())),
+        }
     }
 
     /// Where Claude Code's `acta` marketplace points, from
@@ -295,20 +326,14 @@ impl Setup<'_> {
 
     /// Runs every step. Each one is skipped when already done; a
     /// registration pointing at another folder is replaced.
-    pub fn install(&self, allow: bool) -> Vec<Step> {
+    pub fn install_with(&self, allow: bool, statusline: bool) -> Vec<Step> {
         let mut steps = Vec::new();
         let mut record = self.record();
-        match self.write_files() {
-            Ok(0) => steps.push(Step::new("plugin files", true, "up to date")),
-            Ok(n) => steps.push(Step::new("plugin files", true, format!("{n} written"))),
-            Err(e) => {
-                steps.push(Step::new(
-                    "plugin files",
-                    false,
-                    format!("cannot write: {}", e.kind()),
-                ));
-                return steps;
-            }
+        let files = self.plugin_files();
+        let wrote = files.ok;
+        steps.push(files);
+        if !wrote {
+            return steps;
         }
         let root = self.plugin_root.to_string_lossy().into_owned();
         let add = |detail: &str| match self.claude.run(&["plugin", "marketplace", "add", &root]) {
@@ -387,6 +412,17 @@ impl Setup<'_> {
         } else {
             steps.push(Step::new("allow rule", true, "skipped (--no-allow)"));
         }
+        if statusline {
+            let command = statusline_command(&self.exe);
+            steps.push(
+                match edit_status_line(&self.settings_path(), true, &command, &mut record) {
+                    Ok(detail) => Step::new("status line", true, detail),
+                    Err(e) => Step::new("status line", false, e),
+                },
+            );
+        } else {
+            steps.push(Step::new("status line", true, "skipped (--no-statusline)"));
+        }
         if let Err(e) = self.save_record(&record) {
             steps.push(Step::new(
                 "record",
@@ -454,6 +490,28 @@ impl Setup<'_> {
                 "absent: every Acta tool call will prompt"
             },
         ));
+        let ours = statusline_command(&self.exe);
+        let current = read_settings(&self.settings_path())
+            .ok()
+            .flatten()
+            .and_then(|v| {
+                v.pointer("/statusLine/command")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            });
+        let wrapped = self.record()["statusline_original"].is_object();
+        steps.push(match current {
+            Some(c) if c == ours && wrapped => {
+                Step::new("status line", true, "Acta's, after your own status line")
+            }
+            Some(c) if c == ours => Step::new("status line", true, "Acta's"),
+            Some(_) => Step::new(
+                "status line",
+                false,
+                "another status line: run acta setup to add plan usage after it",
+            ),
+            None => Step::new("status line", false, "absent: plan usage is not recorded"),
+        });
         steps
     }
 
@@ -481,6 +539,16 @@ impl Setup<'_> {
                 Ok(_) => steps.push(Step::new("marketplace", true, "removed")),
                 Err(e) => steps.push(Step::new("marketplace", false, one_line(&e))),
             },
+        }
+        if record["statusline_added"] == json!(true) {
+            let command = statusline_command(&self.exe);
+            let mut r = record.clone();
+            steps.push(
+                match edit_status_line(&self.settings_path(), false, &command, &mut r) {
+                    Ok(detail) => Step::new("status line", true, detail),
+                    Err(e) => Step::new("status line", false, e),
+                },
+            );
         }
         if !recorded_rules(&record).is_empty() {
             match edit_allow_rule(&self.settings_path(), false, &record) {
@@ -709,6 +777,105 @@ pub fn edit_allow_rule(path: &Path, add: bool, record: &Value) -> Result<Edit, S
     })
 }
 
+/// The `statusLine.command` setup writes: the `acta` executable with forward
+/// slashes (Claude Code runs it through Git Bash or PowerShell on Windows,
+/// `sh` elsewhere; code.claude.com/docs/en/statusline), unquoted so both
+/// shells run it. A path either shell would split or interpret falls back
+/// to `acta` on `PATH`, where ADR 0004 exports it.
+pub fn statusline_command(exe: &Path) -> String {
+    let path = exe.to_string_lossy().replace('\\', "/");
+    let plain = path
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | ':' | '.' | '_' | '-'));
+    if plain {
+        format!("{path} statusline")
+    } else {
+        "acta statusline".to_owned()
+    }
+}
+
+/// Puts Acta's status line in `statusLine` (`add`) or takes it out. A status
+/// line the user had is kept whole in the record (`statusline_original`) and
+/// run first by `acta statusline`, then put back exactly by `--remove`. A
+/// `statusLine` the user changed after setup is never touched by removal.
+pub fn edit_status_line(
+    path: &Path,
+    add: bool,
+    command: &str,
+    record: &mut Value,
+) -> Result<&'static str, String> {
+    let existing = read_settings(path)?;
+    let mut v = existing.clone().unwrap_or_else(|| json!({}));
+    let obj = v.as_object_mut().expect("object");
+    let current = obj.get("statusLine").cloned();
+    let is_ours = current
+        .as_ref()
+        .and_then(|c| c.get("command"))
+        .and_then(Value::as_str)
+        == Some(command);
+    let detail = if add {
+        if is_ours {
+            return Ok("already present");
+        }
+        let mut line = match &current {
+            Some(Value::Object(o)) => Value::Object(o.clone()),
+            _ => json!({}),
+        };
+        line["type"] = json!("command");
+        line["command"] = json!(command);
+        obj.insert("statusLine".into(), line);
+        record["statusline_original"] = current.clone().unwrap_or(Value::Null);
+        record["statusline_added"] = json!(true);
+        if record["created_settings"].is_null() {
+            record["created_settings"] = json!(existing.is_none());
+        }
+        if current.is_some() {
+            "added after your own status line, which still shows first"
+        } else {
+            "added: plan usage is recorded"
+        }
+    } else {
+        if !is_ours {
+            record["statusline_added"] = json!(false);
+            return Ok("left as is (changed since setup)");
+        }
+        match record["statusline_original"].clone() {
+            Value::Null => {
+                obj.remove("statusLine");
+            }
+            original => {
+                obj.insert("statusLine".into(), original);
+            }
+        }
+        record["statusline_added"] = json!(false);
+        if record["created_settings"] == json!(true) && obj.is_empty() {
+            fs::remove_file(path)
+                .map_err(|e| format!("cannot remove settings.json: {}", e.kind()))?;
+            return Ok("removed");
+        }
+        if record["statusline_original"].is_null() {
+            "removed"
+        } else {
+            "your own status line is back"
+        }
+    };
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir)
+            .map_err(|e| format!("cannot create the settings folder: {}", e.kind()))?;
+    }
+    if add && existing.is_some() {
+        let backup = backup_path(path);
+        if !backup.exists() {
+            fs::copy(path, &backup)
+                .map_err(|e| format!("cannot back up settings.json: {}", e.kind()))?;
+            record["backup_created"] = json!(true);
+        }
+    }
+    let text = serde_json::to_string_pretty(&v).expect("json") + "\n";
+    write_atomic(path, &text).map_err(|e| format!("cannot write settings.json: {}", e.kind()))?;
+    Ok(detail)
+}
+
 /// Writes to a temporary file next to the real target, then renames it over
 /// the target. A symlink is followed (its target is replaced and the link
 /// stays) and the target's permissions are kept.
@@ -831,7 +998,7 @@ mod tests {
         fs::create_dir_all(&s.claude_dir).unwrap();
         fs::write(s.settings_path(), user).unwrap();
 
-        let first = s.install(true);
+        let first = s.install_with(true, true);
         assert!(first.iter().all(|x| x.ok), "{first:?}");
         assert!(s.check().iter().all(|x| x.ok), "{:?}", s.check());
         let after = fs::read_to_string(s.settings_path()).unwrap();
@@ -842,13 +1009,13 @@ mod tests {
         );
         // Key order and other keys are kept.
         let keys: Vec<&String> = v.as_object().unwrap().keys().collect();
-        assert_eq!(keys, ["theme", "permissions", "model"]);
+        assert_eq!(keys, ["theme", "permissions", "model", "statusLine"]);
         let backup = backup_path(&s.settings_path());
         assert_eq!(fs::read_to_string(&backup).unwrap(), user);
 
         // Second run: nothing changes, no install command repeated.
         let calls_before = claude.calls.borrow().len();
-        let second = s.install(true);
+        let second = s.install_with(true, true);
         assert!(second.iter().all(|x| x.ok));
         assert_eq!(second[0].detail, "up to date");
         assert_eq!(fs::read_to_string(s.settings_path()).unwrap(), after);
@@ -896,7 +1063,7 @@ mod tests {
             "{market:?}"
         );
 
-        let steps = s.install(false);
+        let steps = s.install_with(false, true);
         assert!(steps.iter().all(|x| x.ok), "{steps:?}");
         assert!(steps.iter().any(|x| x.detail.starts_with("re-added here")));
         assert!(
@@ -924,7 +1091,7 @@ mod tests {
         fs::create_dir_all(&s.claude_dir).unwrap();
         let user = format!("{{\"permissions\":{{\"allow\":[\"{ALLOW_RULE}\"]}}}}");
         fs::write(s.settings_path(), &user).unwrap();
-        s.install(true);
+        s.install_with(true, true);
         let v: Value =
             serde_json::from_str(&fs::read_to_string(s.settings_path()).unwrap()).unwrap();
         assert_eq!(v["permissions"]["allow"], json!(ALLOW_RULES));
@@ -951,7 +1118,7 @@ mod tests {
             r#"{"allow_rule_added": true, "created_settings": true, "created_permissions": true, "created_allow": true}"#,
         )
         .unwrap();
-        let steps = s.install(true);
+        let steps = s.install_with(true, true);
         let rule = steps.iter().find(|x| x.name == "allow rule").unwrap();
         assert!(
             rule.detail.contains(BROWSER_ALLOW_RULE) && !rule.detail.contains(ALLOW_RULE),
@@ -979,7 +1146,7 @@ mod tests {
         let s = setup(tmp.path(), &claude);
         fs::create_dir_all(&s.claude_dir).unwrap();
         fs::write(s.settings_path(), "{ // comment\n}").unwrap();
-        let steps = s.install(true);
+        let steps = s.install_with(true, true);
         let rule = steps.iter().find(|x| x.name == "allow rule").unwrap();
         assert!(!rule.ok);
         assert_eq!(
@@ -989,7 +1156,7 @@ mod tests {
 
         // A settings file setup creates is removed again.
         fs::remove_file(s.settings_path()).unwrap();
-        assert!(s.install(true).iter().all(|x| x.ok));
+        assert!(s.install_with(true, false).iter().all(|x| x.ok));
         let v: Value =
             serde_json::from_str(&fs::read_to_string(s.settings_path()).unwrap()).unwrap();
         assert_eq!(v, json!({"permissions": {"allow": ALLOW_RULES}}));
@@ -999,7 +1166,7 @@ mod tests {
         // An empty permissions object setup created is removed; the user's
         // other keys stay.
         fs::write(s.settings_path(), "{\"theme\": \"dark\"}").unwrap();
-        assert!(s.install(true).iter().all(|x| x.ok));
+        assert!(s.install_with(true, false).iter().all(|x| x.ok));
         assert!(s.remove().iter().all(|x| x.ok));
         let v: Value =
             serde_json::from_str(&fs::read_to_string(s.settings_path()).unwrap()).unwrap();
@@ -1011,13 +1178,112 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let claude = FakeClaude::default();
         let s = setup(tmp.path(), &claude);
-        assert!(s.install(false).iter().all(|x| x.ok));
+        assert!(s.install_with(false, false).iter().all(|x| x.ok));
         assert!(!s.settings_path().exists());
         let check = s.check();
         assert!(!check.iter().find(|x| x.name == "allow rule").unwrap().ok);
+        assert!(!check.iter().find(|x| x.name == "status line").unwrap().ok);
         let json_out: Value = serde_json::from_str(&render_steps(&check, true)).unwrap();
         assert_eq!(json_out["ok"], false);
-        assert_eq!(json_out["steps"].as_array().unwrap().len(), 6);
+        assert_eq!(json_out["steps"].as_array().unwrap().len(), 7);
+    }
+
+    #[test]
+    fn a_users_status_line_is_wrapped_and_restored_exactly() {
+        let tmp = tempfile::tempdir().unwrap();
+        let claude = FakeClaude::default();
+        let s = setup(tmp.path(), &claude);
+        let user = r#"{
+  "statusLine": {
+    "type": "command",
+    "command": "~/.claude/alexandre-line.sh",
+    "padding": 2,
+    "refreshInterval": 10
+  }
+}
+"#;
+        fs::create_dir_all(&s.claude_dir).unwrap();
+        fs::write(s.settings_path(), user).unwrap();
+        let steps = s.install_with(false, true);
+        assert!(steps.iter().all(|x| x.ok), "{steps:?}");
+        let v: Value =
+            serde_json::from_str(&fs::read_to_string(s.settings_path()).unwrap()).unwrap();
+        let ours = statusline_command(&s.exe);
+        // Acta's command in the user's object: padding and refresh kept.
+        assert_eq!(v["statusLine"]["command"], json!(ours));
+        assert_eq!(v["statusLine"]["padding"], json!(2));
+        assert_eq!(v["statusLine"]["refreshInterval"], json!(10));
+        // The original is in the record, for `acta statusline` to run first.
+        let record = s.record();
+        assert_eq!(
+            record["statusline_original"]["command"],
+            "~/.claude/alexandre-line.sh"
+        );
+        let wrapped = s.check();
+        let line = wrapped.iter().find(|x| x.name == "status line").unwrap();
+        assert!(
+            line.ok && line.detail.contains("after your own"),
+            "{line:?}"
+        );
+        // Idempotent.
+        let again = s.install_with(false, true);
+        assert_eq!(
+            again
+                .iter()
+                .find(|x| x.name == "status line")
+                .unwrap()
+                .detail,
+            "already present"
+        );
+        // Remove puts the user's object back, exactly.
+        let removed = s.remove();
+        assert!(removed.iter().all(|x| x.ok), "{removed:?}");
+        let back: Value =
+            serde_json::from_str(&fs::read_to_string(s.settings_path()).unwrap()).unwrap();
+        assert_eq!(back, serde_json::from_str::<Value>(user).unwrap());
+    }
+
+    #[test]
+    fn a_status_line_changed_after_setup_is_left_alone_and_a_created_file_goes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let claude = FakeClaude::default();
+        let s = setup(tmp.path(), &claude);
+        // No settings file: setup creates it for the status line alone.
+        assert!(s.install_with(false, true).iter().all(|x| x.ok));
+        assert!(s.settings_path().exists());
+        assert!(s.remove().iter().all(|x| x.ok));
+        assert!(
+            !s.settings_path().exists(),
+            "the file setup created is gone"
+        );
+
+        assert!(s.install_with(false, true).iter().all(|x| x.ok));
+        let mine = json!({"statusLine": {"type": "command", "command": "my-line"}});
+        fs::write(s.settings_path(), mine.to_string()).unwrap();
+        let removed = s.remove();
+        let line = removed.iter().find(|x| x.name == "status line").unwrap();
+        assert!(line.ok && line.detail.contains("left as is"), "{line:?}");
+        let v: Value =
+            serde_json::from_str(&fs::read_to_string(s.settings_path()).unwrap()).unwrap();
+        assert_eq!(v, mine);
+    }
+
+    #[test]
+    fn the_status_line_command_runs_in_bash_and_powershell() {
+        assert_eq!(
+            statusline_command(Path::new(
+                "C:\\Users\\alexandre\\AppData\\Local\\Acta\\bin\\acta.exe"
+            )),
+            "C:/Users/alexandre/AppData/Local/Acta/bin/acta.exe statusline"
+        );
+        assert_eq!(
+            statusline_command(Path::new("C:\\Users\\Alexandre B\\acta.exe")),
+            "acta statusline"
+        );
+        assert_eq!(
+            statusline_command(Path::new("/home/alexandre/.local/bin/acta")),
+            "/home/alexandre/.local/bin/acta statusline"
+        );
     }
 
     #[test]

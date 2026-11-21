@@ -91,10 +91,68 @@ pub fn check() -> Option<Check> {
     Check::parse(&run(&["setup", "--check", "--json"], CHECK_LIMIT)?)
 }
 
-/// "Set up Claude Code" / "Run setup again": `acta setup`, then the check.
-pub fn install() -> Option<Check> {
+/// "Set up Claude Code" / "Run setup again": `acta setup`, then every
+/// attached folder through `acta link` (idempotent: it never reorders, and
+/// it turns Claude Code's own memory off there, ADR 0005), then the check.
+/// One button makes Claude Code ready everywhere Acta knows a folder.
+pub fn install(folders: Vec<LinkTarget>) -> Option<Check> {
     run(&["setup", "--json"], SETUP_LIMIT)?;
+    for f in folders {
+        let path = f.path.to_string_lossy().into_owned();
+        if f.path.is_dir() {
+            let _ = run(&["link", &path, f.level, &f.owner, "--add"], CHECK_LIMIT);
+        }
+    }
     check()
+}
+
+/// An attached folder and its owner, as `acta link` takes them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LinkTarget {
+    pub path: PathBuf,
+    /// `--project`, `--epic` or `--topic`.
+    pub level: &'static str,
+    pub owner: String,
+}
+
+/// Every attached folder of every project, for [`install`].
+pub fn link_targets(store: &acta_core::Store) -> acta_core::Result<Vec<LinkTarget>> {
+    use acta_core::model::Owner;
+    Ok(store
+        .all_folders()?
+        .into_iter()
+        .map(|f| {
+            let level = match f.owner {
+                Owner::Project(_) => "--project",
+                Owner::Epic(_) => "--epic",
+                Owner::Topic(_) => "--topic",
+            };
+            LinkTarget {
+                path: PathBuf::from(&f.path),
+                level,
+                owner: f.owner.to_string(),
+            }
+        })
+        .collect())
+}
+
+/// `acta setup --files-only`: the plugin tree of this build, which the
+/// terminal loads with `--plugin-dir` (ADR 0008 amendment). Nothing in
+/// Claude Code changes. Run at launch, so an update refreshes it at once.
+pub fn write_plugin_files() -> bool {
+    run(&["setup", "--files-only", "--json"], CHECK_LIMIT)
+        .is_some_and(|out| out.contains("\"ok\":true"))
+}
+
+/// Where `acta setup` writes the plugin: `<data dir>/claude/plugins/acta`.
+pub fn plugin_dir() -> Option<PathBuf> {
+    Some(
+        crate::db::config()?
+            .data_dir
+            .join("claude")
+            .join("plugins")
+            .join("acta"),
+    )
 }
 
 /// "Remove from Claude Code": `acta setup --remove`, then the check.
@@ -170,7 +228,17 @@ const FOCUS_THROTTLE: Duration = Duration::from_secs(30);
 
 /// "Set up Claude Code" / "Run setup again".
 pub fn run_install(cx: &mut gpui_kit::App) {
-    start(cx, install, true);
+    let db = cx.try_global::<SetupDb>().map(|d| d.0.clone());
+    start(
+        cx,
+        move || {
+            let targets = db
+                .and_then(|db| link_targets(&db.lock()).ok())
+                .unwrap_or_default();
+            install(targets)
+        },
+        true,
+    );
 }
 
 /// "Remove from Claude Code".
@@ -178,7 +246,21 @@ pub fn run_remove(cx: &mut gpui_kit::App) {
     start(cx, remove, true);
 }
 
-fn start(cx: &mut gpui_kit::App, work: fn() -> Option<Check>, writes: bool) {
+/// The store, for the folders setup links.
+struct SetupDb(crate::db::Db);
+
+impl gpui_kit::Global for SetupDb {}
+
+/// Called once the store is open.
+pub fn set_db(db: crate::db::Db, cx: &mut gpui_kit::App) {
+    cx.set_global(SetupDb(db));
+}
+
+fn start(
+    cx: &mut gpui_kit::App,
+    work: impl FnOnce() -> Option<Check> + Send + 'static,
+    writes: bool,
+) {
     let state = cx.default_global::<SetupState>();
     if state.busy && !writes {
         return;

@@ -4,6 +4,7 @@
 
 use crate::open::Opener;
 use acta_core::agent::args::*;
+use acta_core::agent::presence::{Event, HEARTBEAT_MS, Tracker};
 use acta_core::agent::{Agent, INSTRUCTIONS, Launch, Reply, Session};
 use acta_core::model::Author;
 use acta_core::store::Store;
@@ -21,6 +22,47 @@ struct State {
     opener: Opener,
     launch: Launch,
     open: Option<(Store, Session)>,
+    /// Session presence; `None` until registered, and for sessions in
+    /// folders Acta does not track.
+    tracker: Option<Tracker>,
+    /// Whether this session may open the database for presence at all
+    /// (`Launch::worth_opening`), decided once.
+    tracked: Option<bool>,
+}
+
+impl State {
+    fn ensure_open(&mut self) -> Result<(), String> {
+        if self.open.is_none() {
+            let store = self.opener.open()?;
+            let session = Session::resolve(&store, &self.launch, Author::Claude);
+            self.open = Some((store, session));
+        }
+        Ok(())
+    }
+
+    /// The presence tracker, registering the session on first use. Never
+    /// opens the database for a session in an unrelated folder.
+    fn tracker(&mut self) -> Option<&mut Tracker> {
+        if self.tracker.is_none() {
+            let launch = &self.launch;
+            let opener = &self.opener;
+            let tracked = *self
+                .tracked
+                .get_or_insert_with(|| opener.data_dir().is_some_and(|d| launch.worth_opening(&d)));
+            if !tracked {
+                return None;
+            }
+            self.ensure_open().ok()?;
+            let (store, session) = self.open.as_ref()?;
+            let token = self.launch.token.clone();
+            self.tracker = Tracker::start(store, session, token, now()).ok().flatten();
+        }
+        self.tracker.as_mut()
+    }
+}
+
+fn now() -> i64 {
+    acta_core::time::now_ms()
 }
 
 #[derive(Clone)]
@@ -92,6 +134,8 @@ impl ActaServer {
                 opener,
                 launch,
                 open: None,
+                tracker: None,
+                tracked: None,
             })),
             tool_router: Self::compact_router(),
         }
@@ -109,24 +153,100 @@ impl ActaServer {
         router
     }
 
-    fn run(&self, f: impl FnOnce(&mut Agent<'_>) -> Reply) -> CallToolResult {
-        let mut guard = match self.state.lock() {
+    fn lock(&self) -> std::sync::MutexGuard<'_, State> {
+        match self.state.lock() {
             Ok(g) => g,
             Err(p) => p.into_inner(),
-        };
+        }
+    }
+
+    fn run(&self, f: impl FnOnce(&mut Agent<'_>) -> Reply) -> CallToolResult {
+        self.run_then(f, |_, _| {})
+    }
+
+    /// Runs a tool, then lets `after` report it to presence (only after a
+    /// success; the session may have moved).
+    fn run_then(
+        &self,
+        f: impl FnOnce(&mut Agent<'_>) -> Reply,
+        after: impl FnOnce(&mut Tracker, &Session),
+    ) -> CallToolResult {
+        let mut guard = self.lock();
         let state = &mut *guard;
-        if state.open.is_none() {
-            match state.opener.open() {
-                Ok(store) => {
-                    let session = Session::resolve(&store, &state.launch, Author::Claude);
-                    state.open = Some((store, session));
-                }
-                Err(msg) => return result(Err(msg)),
-            }
+        if let Err(msg) = state.ensure_open() {
+            return result(Err(msg));
         }
         let (store, session) = state.open.as_mut().expect("opened above");
         let mut agent = Agent { store, session };
-        result(f(&mut agent))
+        let reply = f(&mut agent);
+        if reply.is_ok() {
+            let session = state.open.as_ref().map(|(_, s)| s.clone());
+            if let (Some(session), Some(tracker)) = (session, state.tracker()) {
+                after(tracker, &session);
+            }
+        }
+        result(reply)
+    }
+
+    /// Registers the session (if its folder is linked) and beats every
+    /// [`HEARTBEAT_MS`] on the blocking pool; returns when presence is not
+    /// tracked. The database is opened here, off the transport, so a slow
+    /// keychain never delays `initialize`.
+    async fn heartbeat(&self) {
+        let mut interval =
+            tokio::time::interval(std::time::Duration::from_millis(HEARTBEAT_MS as u64));
+        loop {
+            interval.tick().await;
+            let state = Arc::clone(&self.state);
+            let tracked = tokio::task::spawn_blocking(move || {
+                let mut guard = match state.lock() {
+                    Ok(g) => g,
+                    Err(p) => p.into_inner(),
+                };
+                match guard.tracker() {
+                    Some(t) => {
+                        let _ = t.heartbeat(now());
+                        true
+                    }
+                    None => false,
+                }
+            })
+            .await
+            .unwrap_or(false);
+            if !tracked {
+                return;
+            }
+        }
+    }
+
+    /// The client closed the connection: the session ended.
+    fn ended(&self) {
+        if let Some(t) = self.lock().tracker.as_mut() {
+            let _ = t.end(now());
+        }
+    }
+
+    /// A presence hook: updates the row. Presence-only events answer an
+    /// empty text, so nothing reaches the model's context; `subagent` goes
+    /// on to its briefing.
+    fn presence_hook(&self, a: &HookArgs) -> Option<CallToolResult> {
+        let event = a.event.trim().to_ascii_lowercase();
+        let parsed = match event.as_str() {
+            "subagent" | "subagentstart" => Some(Event::Subagent),
+            e => Event::parse(e, a.detail.as_deref()),
+        };
+        let ev = parsed?;
+        {
+            let mut guard = self.lock();
+            if let Some(t) = guard.tracker() {
+                if let Some(id) = a.session.as_deref().filter(|s| !s.starts_with("${")) {
+                    let _ = t.adopt(id, now());
+                }
+                let _ = t.on_event(&ev, now());
+            }
+        }
+        (ev != Event::Subagent)
+            .then(|| CallToolResult::success(vec![ContentBlock::text(String::new())]))
     }
 }
 
@@ -139,7 +259,12 @@ impl ActaServer {
         meta = always_load()
     )]
     fn brief(&self, Parameters(a): Parameters<BriefArgs>) -> CallToolResult {
-        self.run(|ag| ag.brief(a))
+        self.run_then(
+            |ag| ag.brief(a),
+            |t, s| {
+                let _ = t.follow(s);
+            },
+        )
     }
 
     #[tool(
@@ -158,7 +283,13 @@ impl ActaServer {
         meta = always_load()
     )]
     fn log(&self, Parameters(a): Parameters<LogArgs>) -> CallToolResult {
-        self.run(|ag| ag.log(a))
+        let text = a.text.clone();
+        self.run_then(
+            |ag| ag.log(a),
+            |t, _| {
+                let _ = t.activity(&text, now());
+            },
+        )
     }
 
     #[tool(
@@ -221,7 +352,19 @@ impl ActaServer {
         annotations(read_only_hint = false, idempotent_hint = false)
     )]
     fn hook(&self, Parameters(a): Parameters<HookArgs>) -> CallToolResult {
-        self.run(|ag| ag.hook(a))
+        if let Some(done) = self.presence_hook(&a) {
+            return done;
+        }
+        let new_id = a.session.clone();
+        self.run_then(
+            |ag| ag.hook(a),
+            |t, _| {
+                // `clear`: the process goes on under the new session id.
+                if let Some(id) = new_id.as_deref().filter(|s| !s.starts_with("${")) {
+                    let _ = t.adopt(id, now());
+                }
+            },
+        )
     }
 }
 
@@ -266,10 +409,16 @@ pub fn serve(opener: Opener) -> Result<(), String> {
     runtime.block_on(async {
         let server = ActaServer::new(opener, Launch::from_env());
         let service = server
+            .clone()
             .serve(rmcp::transport::stdio())
             .await
             .map_err(|e| e.to_string())?;
-        service.waiting().await.map_err(|e| e.to_string())?;
+        let beats = server.clone();
+        let heartbeat = tokio::spawn(async move { beats.heartbeat().await });
+        let done = service.waiting().await.map_err(|e| e.to_string());
+        heartbeat.abort();
+        let _ = tokio::task::spawn_blocking(move || server.ended()).await;
+        done?;
         Ok(())
     })
 }

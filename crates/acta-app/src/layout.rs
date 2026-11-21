@@ -22,17 +22,20 @@ pub enum ViewId {
     Terminal,
     Chat,
     AgentBrowser,
+    /// The live Claude Code sessions (components-app.md 5).
+    Sessions,
 }
 
 impl ViewId {
     /// In the order of 4.8.3 (the titlebar's view toggles).
-    pub const ALL: [ViewId; 6] = [
+    pub const ALL: [ViewId; 7] = [
         ViewId::Projects,
         ViewId::Inbox,
         ViewId::Knowledge,
         ViewId::Terminal,
         ViewId::Chat,
         ViewId::AgentBrowser,
+        ViewId::Sessions,
     ];
 
     pub fn key(self) -> &'static str {
@@ -43,6 +46,7 @@ impl ViewId {
             ViewId::Terminal => "terminal",
             ViewId::Chat => "chat",
             ViewId::AgentBrowser => "agent_browser",
+            ViewId::Sessions => "sessions",
         }
     }
 
@@ -57,6 +61,7 @@ impl ViewId {
             ViewId::Inbox | ViewId::Knowledge => (280., 200.),
             ViewId::Terminal => (400., 160.),
             ViewId::Chat | ViewId::AgentBrowser => (400., 240.),
+            ViewId::Sessions => (280., 120.),
         }
     }
 
@@ -1058,6 +1063,8 @@ fn default_spot(view: ViewId) -> Option<Spot> {
         ViewId::Terminal => (Place::Side(Side::Right), 0),
         ViewId::Chat => (Place::Side(Side::Right), 1),
         ViewId::AgentBrowser => (Place::Side(Side::Right), 2),
+        // Hidden on a new install; shown in the bottom panel (4.8.13).
+        ViewId::Sessions => (Place::Side(Side::Bottom), 0),
         ViewId::Inbox | ViewId::Knowledge => return None,
     };
     Some(Spot {
@@ -1880,10 +1887,11 @@ mod tests {
     #[test]
     fn hide_and_show_never_lose_a_view_whatever_the_order() {
         // Every view hidden and shown in several orders, with moves between.
-        let orders: [[ViewId; 6]; 3] = [
+        let orders: [[ViewId; 7]; 3] = [
             ViewId::ALL,
             [
                 ViewId::Chat,
+                ViewId::Sessions,
                 ViewId::AgentBrowser,
                 ViewId::Projects,
                 ViewId::Terminal,
@@ -1897,6 +1905,7 @@ mod tests {
                 ViewId::Projects,
                 ViewId::AgentBrowser,
                 ViewId::Inbox,
+                ViewId::Sessions,
             ],
         ];
         for order in orders {

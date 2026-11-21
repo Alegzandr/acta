@@ -938,16 +938,16 @@ catalogue! {
         fr: t("Terminal"),
     }
     TerminalOnTopic "terminal.on_topic" {
-        en: t("on topic {name}"),
-        fr: t("sur le sujet {name}"),
+        en: t("{id} {name}"),
+        fr: t("{id} {name}"),
     }
     TerminalOnEpic "terminal.on_epic" {
-        en: t("on epic {name}"),
-        fr: t("sur l\u{2019}epic {name}"),
+        en: t("{id} {name}"),
+        fr: t("{id} {name}"),
     }
     TerminalOnProject "terminal.on_project" {
-        en: t("on project {name}"),
-        fr: t("sur le projet {name}"),
+        en: t("project {name}"),
+        fr: t("projet {name}"),
     }
     TerminalRestartHere "terminal.restart_here" {
         en: t("Restart here"),
@@ -1790,8 +1790,8 @@ catalogue! {
         fr: t("Retirer de Claude Code"),
     }
     SettingsSetupHint "settings.setup.hint" {
-        en: t("Setup installs Acta\u{2019}s plugin in Claude Code and adds two permission lines (Acta and its browser) to ~/.claude/settings.json. Remove undoes both."),
-        fr: t("La configuration installe le plugin d\u{2019}Acta dans Claude Code et ajoute deux lignes d\u{2019}autorisation (Acta et son navigateur) à ~/.claude/settings.json. Retirer annule les deux."),
+        en: t("Setup installs Acta\u{2019}s plugin in Claude Code, adds two permission lines (Acta and its browser) and Acta\u{2019}s status line to ~/.claude/settings.json (after your own status line, if you have one), and turns Claude Code\u{2019}s own memory off in attached folders. Remove undoes all of it."),
+        fr: t("La configuration installe le plugin d\u{2019}Acta dans Claude Code, ajoute deux lignes d\u{2019}autorisation (Acta et son navigateur) et la ligne d\u{2019}état d\u{2019}Acta à ~/.claude/settings.json (après votre propre ligne d\u{2019}état, si vous en avez une), et désactive la mémoire propre à Claude Code dans les dossiers rattachés. Retirer annule tout cela."),
     }
     SettingsRemoveTitle "settings.remove.title" {
         en: t("Remove Acta from Claude Code?"),
@@ -2440,5 +2440,181 @@ catalogue! {
     BrowserPipeFailed "browser.pipe.failed" {
         en: t("Claude Code cannot reach this browser. Restart Acta; the log says why."),
         fr: t("Claude Code ne peut pas joindre ce navigateur. Redémarrez Acta\u{202f}; le journal indique pourquoi."),
+    }
+    TerminalClaude "terminal.claude" {
+        en: t("Claude"),
+        fr: t("Claude"),
+    }
+    TerminalWaiting "terminal.waiting" {
+        en: t("waiting for you"),
+        fr: t("vous attend"),
+    }
+    ViewSessions "view.sessions" {
+        en: t("Claude Code sessions"),
+        fr: t("Sessions Claude Code"),
+    }
+    SessionsWorking "sessions.working" {
+        en: t("{n} working"),
+        fr: t("{n} au travail"),
+    }
+    SessionsWaiting "sessions.waiting" {
+        en: p("{n} waiting for you", "{n} waiting for you"),
+        fr: p("{n} vous attend", "{n} vous attendent"),
+    }
+    SessionsIdle "sessions.idle" {
+        en: p("{n} idle", "{n} idle"),
+        fr: p("{n} inactive", "{n} inactives"),
+    }
+    SessionsRunning "sessions.running" {
+        en: p("{n} running", "{n} running"),
+        fr: p("{n} en cours", "{n} en cours"),
+    }
+    StatusbarSessions "statusbar.sessions" {
+        en: t("Claude Code: {list}"),
+        fr: t("Claude Code\u{202f}: {list}"),
+    }
+    SessionsStateWorking "sessions.state.working" {
+        en: t("Working"),
+        fr: t("Au travail"),
+    }
+    SessionsStateWaiting "sessions.state.waiting" {
+        en: t("Waiting for you"),
+        fr: t("Vous attend"),
+    }
+    SessionsStateIdle "sessions.state.idle" {
+        en: t("Idle"),
+        fr: t("Inactive"),
+    }
+    SessionsSince "sessions.since" {
+        en: t("since {time}"),
+        fr: t("depuis {time}"),
+    }
+    SessionsLast "sessions.last" {
+        en: t("last: {activity}"),
+        fr: t("dernière action\u{202f}: {activity}"),
+    }
+    SessionsLastTool "sessions.last_tool" {
+        en: t("last tool: {tool}"),
+        fr: t("dernier outil\u{202f}: {tool}"),
+    }
+    SessionsInActa "sessions.in_acta" {
+        en: t("in Acta\u{2019}s terminal"),
+        fr: t("dans le terminal d\u{2019}Acta"),
+    }
+    SessionsOutside "sessions.outside" {
+        en: t("in another terminal"),
+        fr: t("dans un autre terminal"),
+    }
+    SessionsEmpty "sessions.empty" {
+        en: t("No Claude Code session is running. Sessions started in Acta\u{2019}s terminal, or in any terminal inside an attached folder, appear here."),
+        fr: t("Aucune session Claude Code n\u{2019}est en cours. Les sessions lancées dans le terminal d\u{2019}Acta, ou dans n\u{2019}importe quel terminal à l\u{2019}intérieur d\u{2019}un dossier rattaché, apparaissent ici."),
+    }
+    SessionsShowTerminal "sessions.show_terminal" {
+        en: t("Show terminal"),
+        fr: t("Afficher le terminal"),
+    }
+    SessionsEnd "sessions.end" {
+        en: t("End session"),
+        fr: t("Terminer la session"),
+    }
+    SessionsHereWorking "sessions.here.working" {
+        en: t("Claude Code is working here"),
+        fr: t("Claude Code travaille ici"),
+    }
+    SessionsHereWaiting "sessions.here.waiting" {
+        en: t("Claude Code is waiting for you here"),
+        fr: t("Claude Code vous attend ici"),
+    }
+    SessionsHereIdle "sessions.here.idle" {
+        en: t("Claude Code is open here"),
+        fr: t("Claude Code est ouvert ici"),
+    }
+    SessionsHereMany "sessions.here.many" {
+        en: p("{n} Claude Code session here", "{n} Claude Code sessions here"),
+        fr: p("{n} session Claude Code ici", "{n} sessions Claude Code ici"),
+    }
+    SettingsResume "settings.resume" {
+        en: t("Continue the last conversation of each page"),
+        fr: t("Reprendre la dernière conversation de chaque page"),
+    }
+    SettingsResumeHint "settings.resume.hint" {
+        en: t("When the terminal starts from a topic, an epic or a project, Claude Code resumes the conversation last held there, if it still has it. /clear in Claude Code starts a new one."),
+        fr: t("Quand le terminal démarre depuis un sujet, un epic ou un projet, Claude Code reprend la dernière conversation menée là, s\u{2019}il l\u{2019}a encore. /clear dans Claude Code en commence une nouvelle."),
+    }
+    SettingsFlashWaiting "settings.flash_waiting" {
+        en: t("Flash Acta in the taskbar when a session waits for you"),
+        fr: t("Faire clignoter Acta dans la barre des tâches quand une session vous attend"),
+    }
+    SettingsFlashWaitingHint "settings.flash_waiting.hint" {
+        en: t("For sessions started in Acta\u{2019}s terminal, while no Acta window is active. Acta never takes the focus."),
+        fr: t("Pour les sessions lancées dans le terminal d\u{2019}Acta, quand aucune fenêtre d\u{2019}Acta n\u{2019}est active. Acta ne prend jamais le focus."),
+    }
+    CmdResumeOn "cmd.resume_on" {
+        en: t("Continue the last conversation of each page"),
+        fr: t("Reprendre la dernière conversation de chaque page"),
+    }
+    CmdResumeOff "cmd.resume_off" {
+        en: t("Start a new Claude Code conversation each time"),
+        fr: t("Commencer une nouvelle conversation Claude Code à chaque fois"),
+    }
+    CmdFlashOn "cmd.flash_on" {
+        en: t("Flash Acta in the taskbar when a session waits for you"),
+        fr: t("Faire clignoter Acta dans la barre des tâches quand une session vous attend"),
+    }
+    CmdFlashOff "cmd.flash_off" {
+        en: t("Do not flash Acta when a session waits"),
+        fr: t("Ne pas faire clignoter Acta quand une session attend"),
+    }
+    UsageFiveHour "usage.five_hour" {
+        en: t("5h {percent}"),
+        fr: t("5 h {percent}"),
+    }
+    UsageSevenDay "usage.seven_day" {
+        en: t("7d {percent}"),
+        fr: t("7 j {percent}"),
+    }
+    UsageFiveHourTip "usage.five_hour.tip" {
+        en: t("5-hour limit: {percent} used"),
+        fr: t("Limite sur 5 heures\u{202f}: {percent} utilisés"),
+    }
+    UsageSevenDayTip "usage.seven_day.tip" {
+        en: t("7-day limit: {percent} used"),
+        fr: t("Limite sur 7 jours\u{202f}: {percent} utilisés"),
+    }
+    UsageResetsAt "usage.resets_at" {
+        en: t("resets at {time}"),
+        fr: t("réinitialisée à {time}"),
+    }
+    UsageResetsOn "usage.resets_on" {
+        en: t("resets {day} {time}"),
+        fr: t("réinitialisée {day} à {time}"),
+    }
+    UsageStale "usage.stale" {
+        en: t("This window has reset since Claude Code last reported it."),
+        fr: t("Cette fenêtre a été réinitialisée depuis le dernier relevé de Claude Code."),
+    }
+    UsageNoData "usage.no_data" {
+        en: t("Plan usage: no data yet"),
+        fr: t("Utilisation du forfait\u{202f}: pas encore de données"),
+    }
+    UsageNoDataTip "usage.no_data.tip" {
+        en: t("Claude Code reports your plan\u{2019}s limits after the first answer of a session (Pro, Max and Ultra plans), through Acta\u{2019}s status line."),
+        fr: t("Claude Code signale les limites de votre forfait après la première réponse d\u{2019}une session (forfaits Pro, Max et Ultra), par la ligne d\u{2019}état d\u{2019}Acta."),
+    }
+    SettingsUsage "settings.usage" {
+        en: t("Show plan usage in the status bar"),
+        fr: t("Afficher l\u{2019}utilisation du forfait dans la barre d\u{2019}état"),
+    }
+    SettingsUsageHint "settings.usage.hint" {
+        en: t("The 5-hour and 7-day limits of your Claude plan, as Claude Code last reported them."),
+        fr: t("Les limites sur 5 heures et sur 7 jours de votre forfait Claude, telles que Claude Code les a signalées en dernier."),
+    }
+    CmdUsageOn "cmd.usage_on" {
+        en: t("Show plan usage in the status bar"),
+        fr: t("Afficher l\u{2019}utilisation du forfait dans la barre d\u{2019}état"),
+    }
+    CmdUsageOff "cmd.usage_off" {
+        en: t("Hide plan usage"),
+        fr: t("Masquer l\u{2019}utilisation du forfait"),
     }
 }

@@ -28,7 +28,8 @@ Nothing on screen is illustrative. Every value comes from the model of ADRs 0005
 | Breadcrumb | The page's project and epic. |
 | Tabs | A preference: per window, a list of typed references (a record id, or a fixed page key with its project id where it has one). |
 | Terminal header context | The page the session was started from, held by the app while the session lives. |
-| Status bar: Claude Code status | `acta setup --check` (ADR 0005) and whether the active project has a working folder. Tooltip: the latest write authored by Claude Code in the project. |
+| Status bar: Claude Code status | `acta setup --check` (ADR 0005) and whether the active project has a working folder. Tooltip: the latest write authored by Claude Code in the project. While sessions run: their count by state, from session presence. |
+| Claude Code sessions (status bar, tree glyph, page line, Sessions view, terminal context) | Session presence: one row per live session in `presence.db` (local, not exported, not in snapshots), written by the session's `acta mcp` (ADR 0005 amendment of 2026-11-21). |
 | Status bar: version, update | The running build and the updater's state (ADR 0004). |
 | Settings: last export, snapshots, trash count, database path | Export history, the snapshot list and the trash of ADR 0006; the storage location of ADR 0003. |
 | Settings: folders not found | Every folder record, across projects, whose path is not a folder on this machine. |
@@ -39,7 +40,7 @@ Nothing on screen is illustrative. Every value comes from the model of ADRs 0005
 For the lead. Each is something the design wants and the ADRs do not yet give; the design works without them today, in the way stated.
 
 1. **Read markers.** The unread dot (tree, tabs, topic table, knowledge rows) needs, per record, when this installation last showed it: a `last_seen_at` per topic and per knowledge entry, local and not exported. Without it the dot can only cover changes that arrive while the app is running.
-2. **Session presence.** To let the status bar say that a Claude Code session is live on a topic right now, `acta mcp` would have to keep a presence row (session, project, focus, heartbeat) while it runs. Until then the status bar reports setup and the last write, and makes no claim about live sessions.
+2. **Session presence.** Done (2026-11-21): `acta mcp` keeps a row per session (opaque session id, project and focus, launch token of Acta's terminal, start, last activity, heartbeat, state, last tool name, one line of what the agent logged) in `presence.db`, encrypted with the database key, apart from the main database so heartbeats never reload the pages. Rows expire 90 s after the last heartbeat and are deleted a day later.
 3. **Links between records.** Backlinks and a "mentioned in" list, taken from Obsidian, need stable references in text (for example a link form that carries the UUID) or a relation table; the short ids are per-installation aliases and cannot serve after an import. Left out of v1.
 4. **Setup check as data.** The four checks of `acta setup --check` and the path of the `acta` command must be callable from the app as structured results, not parsed from CLI text.
 5. **Export history.** "Last export: 12 days ago" needs the time of the last export recorded (in the database or the preferences file; it must survive an update).
