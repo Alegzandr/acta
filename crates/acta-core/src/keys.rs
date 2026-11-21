@@ -110,21 +110,27 @@ pub struct KeyStores(pub Vec<Arc<dyn KeyStore>>);
 
 impl KeyStores {
     /// The stores of ADR 0003 for this OS, for a database in `data_dir`:
-    /// Windows the Credential Manager; Linux the Secret Service, falling back
-    /// to a key file when it is unavailable at creation; macOS a key file
-    /// (provisional until `platform-checks.yml` decides on the keychain).
+    /// - macOS: the key file `data_dir/acta.key`, always. The keychain is not
+    ///   offered: with ad-hoc signed builds every update would prompt
+    ///   (confirmed on a macOS runner, ADR 0003).
+    /// - Windows: the Credential Manager.
+    /// - Linux and other Unix: the Secret Service, falling back to the key
+    ///   file when the Secret Service is unavailable at creation.
     pub fn os_default(data_dir: &Path) -> KeyStores {
-        let keychain: Arc<dyn KeyStore> = Arc::new(OsKeychain::new());
-        let file: Arc<dyn KeyStore> = Arc::new(KeyFile::new(data_dir.join(KEY_FILE)));
-        let stores = if cfg!(target_os = "macos") {
-            // Both are listed so a database marked `keychain` (if the decision
-            // changes) still opens; a new one gets the file.
-            vec![file, keychain]
-        } else if cfg!(windows) {
-            vec![keychain]
-        } else {
-            vec![keychain, file]
+        let file = || -> Arc<dyn KeyStore> { Arc::new(KeyFile::new(data_dir.join(KEY_FILE))) };
+        let keychain = || -> Arc<dyn KeyStore> { Arc::new(OsKeychain::new()) };
+        #[cfg(target_os = "macos")]
+        let stores = {
+            let _ = keychain;
+            vec![file()]
         };
+        #[cfg(windows)]
+        let stores = {
+            let _ = file;
+            vec![keychain()]
+        };
+        #[cfg(not(any(target_os = "macos", windows)))]
+        let stores = vec![keychain(), file()];
         KeyStores(stores)
     }
 
@@ -324,16 +330,39 @@ mod tests {
         }
     }
 
+    fn default_names(dir: &Path) -> Vec<&'static str> {
+        KeyStores::os_default(dir)
+            .0
+            .iter()
+            .map(|s| s.name())
+            .collect()
+    }
+
+    #[cfg(target_os = "macos")]
     #[test]
-    fn os_default_order_follows_the_adr() {
-        let stores = KeyStores::os_default(Path::new("data"));
-        let names: Vec<_> = stores.0.iter().map(|s| s.name()).collect();
-        if cfg!(target_os = "macos") {
-            assert_eq!(names, ["file", "keychain"]);
-        } else if cfg!(windows) {
-            assert_eq!(names, ["keychain"]);
-        } else {
-            assert_eq!(names, ["keychain", "file"]);
-        }
+    fn macos_always_uses_the_private_key_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("Acta").join("data");
+        assert_eq!(default_names(&dir), ["file"]);
+        let key = Key::generate().unwrap();
+        KeyStores::os_default(&dir).0[0].save(&key).unwrap();
+        let path = dir.join(KEY_FILE);
+        assert_eq!(KeyFile::new(path.clone()).load().unwrap(), Some(key));
+        let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&path), 0o600);
+        assert_eq!(mode(&dir), 0o700);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_uses_the_credential_manager_only() {
+        assert_eq!(default_names(Path::new("data")), ["keychain"]);
+    }
+
+    #[cfg(not(any(target_os = "macos", windows)))]
+    #[test]
+    fn linux_uses_the_secret_service_then_the_key_file() {
+        assert_eq!(default_names(Path::new("data")), ["keychain", "file"]);
     }
 }
