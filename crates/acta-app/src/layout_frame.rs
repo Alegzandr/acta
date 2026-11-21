@@ -905,8 +905,12 @@ mod tests {
         // (532 / 2 = 266 < 400: too narrow to split, so it is the centre.)
         let zone = zone_at(&l, &regions, &strips, chat, CTX, 270., 400.).unwrap();
         assert!(matches!(zone.target, Target::Into { .. }));
-        // Its own group's centre is its own place: no zone.
-        assert_eq!(zone_at(&l, &regions, &strips, chat, CTX, 1100., 400.), None);
+        // Its own group's centre is the last tab's own place: no zone.
+        let last = Dragged {
+            tab: crate::layout::Tab::View(ViewId::AgentBrowser),
+            as_view: None,
+        };
+        assert_eq!(zone_at(&l, &regions, &strips, last, CTX, 1100., 400.), None);
         // Before the terminal in the header: an insertion line.
         let zone = zone_at(&l, &regions, &strips, chat, CTX, 805., 10.).unwrap();
         assert_eq!(
@@ -932,7 +936,7 @@ mod tests {
         );
         assert_eq!(zone.preview, Rect::new(792., 420., 648., 420.));
         // The right edge of a sidebar is not a split: centre.
-        let zone = zone_at(&l, &regions, &strips, chat, CTX, 1430., 400.);
+        let zone = zone_at(&l, &regions, &strips, last, CTX, 1430., 400.);
         assert_eq!(zone, None, "the centre of its own group");
         // Outside every region: nothing.
         assert_eq!(zone_at(&l, &regions, &strips, chat, CTX, 2000., 400.), None);

@@ -33,7 +33,7 @@ pub struct ActaServer {
 /// formats, `null` in the types of optional fields (they are already absent
 /// from `required`) and `null` defaults. `tools/list` stays under 7,000
 /// characters (ADR 0005).
-fn compact_schema(v: &mut serde_json::Value) {
+pub(crate) fn compact_schema(v: &mut serde_json::Value) {
     use serde_json::Value;
     match v {
         Value::Object(o) => {

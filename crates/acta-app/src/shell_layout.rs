@@ -258,6 +258,7 @@ pub(crate) fn view_name(view: ViewId) -> Key {
         ViewId::Knowledge => Key::TreeKnowledge,
         ViewId::Terminal => Key::TerminalTitle,
         ViewId::Chat => Key::ChatTitle,
+        ViewId::AgentBrowser => Key::ViewAgentBrowser,
     }
 }
 
@@ -268,6 +269,38 @@ pub(crate) fn view_icon(view: ViewId) -> Icon {
         ViewId::Knowledge => Icon::Library,
         ViewId::Terminal => Icon::SquareTerminal,
         ViewId::Chat => Icon::MessageCircle,
+        ViewId::AgentBrowser => Icon::Globe,
+    }
+}
+
+/// The agent browser is working (a call, or a handoff waiting): its tab
+/// and toggle show [`busy_dot`] while it is not on screen (ADR 0010).
+#[cfg(windows)]
+fn view_busy(bench: &super::Bench, view: ViewId, cx: &App) -> bool {
+    view == ViewId::AgentBrowser && bench.browser.read(cx).busy()
+}
+
+#[cfg(not(windows))]
+fn view_busy(_: &super::Bench, _: ViewId, _: &App) -> bool {
+    false
+}
+
+/// A 6 dot in `accent` (components-app.md 5, Agent browser).
+pub(crate) fn busy_dot(t: &Tokens) -> gpui_kit::Div {
+    div()
+        .flex_shrink_0()
+        .size(px(6.))
+        .rounded(px(3.))
+        .bg(t.accent)
+}
+
+impl Shell {
+    /// Whether the titlebar toggle of `view` shows the busy dot.
+    pub(crate) fn view_busy_hidden(&self, view: ViewId, window: &Window, cx: &App) -> bool {
+        let Content::Workbench(bench) = &self.content else {
+            return false;
+        };
+        !self.view_drawn(view, window) && view_busy(bench, view, cx)
     }
 }
 
@@ -291,9 +324,7 @@ fn moved_key(place: Place) -> Key {
 
 /// The views this build has, in titlebar order.
 pub(crate) fn views() -> impl Iterator<Item = ViewId> {
-    ViewId::ALL
-        .into_iter()
-        .filter(|v| CHAT || *v != ViewId::Chat)
+    ViewId::ALL.into_iter().filter(|v| CHAT || !v.is_web())
 }
 
 /// The keys of a view's toggle (6.1), for tooltips and menus.
@@ -310,6 +341,8 @@ pub(crate) fn view_keys(
         ViewId::Knowledge => vec![m, "L"],
         ViewId::Terminal => vec![KeyName::Ctrl.label(locale, macos), "`"],
         ViewId::Chat => vec![m, shift, "H"],
+        // No key of its own (interaction.md 6.1): the toggle, the palette.
+        ViewId::AgentBrowser => Vec::new(),
     }
 }
 
@@ -555,8 +588,10 @@ impl Shell {
             ViewId::Terminal => bench.dock.read(cx).focus_handle(cx),
             #[cfg(windows)]
             ViewId::Chat => bench.chat.read(cx).focus_handle(cx),
+            #[cfg(windows)]
+            ViewId::AgentBrowser => bench.browser.read(cx).focus_handle(cx),
             #[cfg(not(windows))]
-            ViewId::Chat => return None,
+            ViewId::Chat | ViewId::AgentBrowser => return None,
             ViewId::Inbox => bench.inbox_focus.clone(),
             ViewId::Knowledge => bench.knowledge_focus.clone(),
         })
@@ -596,7 +631,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !matches!(self.content, Content::Workbench(_)) || (view == ViewId::Chat && !CHAT) {
+        if !matches!(self.content, Content::Workbench(_)) || (view.is_web() && !CHAT) {
             return;
         }
         let Some(bench) = self.bench() else { return };
@@ -700,7 +735,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if view == ViewId::Chat && !CHAT {
+        if view.is_web() && !CHAT {
             return;
         }
         let locale = settings::locale(cx);
@@ -1303,7 +1338,9 @@ impl Shell {
         #[cfg(windows)]
         if let Some(bench) = self.bench() {
             let chat = bench.chat.clone();
+            let browser = bench.browser.clone();
             chat.update(cx, |chat, cx| chat.set_rearranging(on, window, cx));
+            browser.update(cx, |browser, cx| browser.set_rearranging(on, window, cx));
         }
         #[cfg(not(windows))]
         let _ = (on, window, cx);
@@ -1594,8 +1631,17 @@ impl Shell {
     ) {
         #[cfg(windows)]
         {
+            let browser_on_screen = self.view_on_screen(ViewId::AgentBrowser, f);
+            let browser_covered = self.web_covered(ViewId::AgentBrowser, cx);
+            if let Some(bench) = self.bench() {
+                let browser = bench.browser.clone();
+                browser.update(cx, |browser, cx| {
+                    browser.set_shown(browser_on_screen, window, cx);
+                    browser.set_covered(browser_covered, window, cx);
+                });
+            }
             let on_screen = self.view_on_screen(ViewId::Chat, f);
-            let covered = self.chat_covered(cx);
+            let covered = self.web_covered(ViewId::Chat, cx);
             let Some(bench) = self.bench() else { return };
             let chat = bench.chat.clone();
             if bench.ui.chat_shown != on_screen {
@@ -1803,7 +1849,7 @@ impl Shell {
             };
             (text(locale, key), area_keys(s, macos, locale))
         });
-        let has_own_menu = active == ViewId::Chat;
+        let has_own_menu = active.is_web();
         let id = SharedString::from(format!("area-header-{key}-{group}"));
         let dragged = Dragged {
             tab: Tab::View(active),
@@ -1938,6 +1984,7 @@ impl Shell {
             return div().into_any_element();
         };
         let geometry = Rc::clone(&bench.ui.geometry);
+        let busy = view_busy(bench, view, cx);
         let key = place_key(place);
         let (hover, pressed, secondary) = (t.fill_hover, t.fill_pressed, t.text_secondary);
         let drag = Dragged {
@@ -1968,6 +2015,7 @@ impl Shell {
         })
         .when(dragged, |this| this.opacity(0.6))
         .child(type_scale::LABEL.el().child(text(locale, view_name(view))))
+        .when(!active && busy, |this| this.gap(px(4.)).child(busy_dot(t)))
         .child(measure(&geometry, move |g, r| {
             g.tabs.insert((key, group, index), r);
         }))
@@ -2052,6 +2100,8 @@ impl Shell {
                     .child("claude.ai")
                     .into_any_element(),
             ),
+            #[cfg(windows)]
+            ViewId::AgentBrowser => bench.browser.read(cx).header_context(cx),
             ViewId::Inbox | ViewId::Knowledge => {
                 let project = bench.active_project?;
                 let name = bench
@@ -2095,6 +2145,12 @@ impl Shell {
                 let chat = bench.chat.clone();
                 Some(chat.update(cx, |chat, cx| chat.header_buttons(place, can_split, cx)))
             }
+            #[cfg(windows)]
+            ViewId::AgentBrowser => {
+                let can_split = bench.layout.can_split_off(ViewId::AgentBrowser);
+                let browser = bench.browser.clone();
+                Some(browser.update(cx, |b, cx| b.header_buttons(place, can_split, cx)))
+            }
             _ => {
                 let _ = place;
                 None
@@ -2122,8 +2178,10 @@ impl Shell {
             ViewId::Terminal => bench.dock.clone().into_any_element(),
             #[cfg(windows)]
             ViewId::Chat => bench.chat.clone().into_any_element(),
+            #[cfg(windows)]
+            ViewId::AgentBrowser => bench.browser.clone().into_any_element(),
             #[cfg(not(windows))]
-            ViewId::Chat => div().into_any_element(),
+            ViewId::Chat | ViewId::AgentBrowser => div().into_any_element(),
             ViewId::Inbox | ViewId::Knowledge => {
                 let focus = match view {
                     ViewId::Inbox => bench.inbox_focus.clone(),
@@ -2248,7 +2306,7 @@ impl Shell {
                 (div().size_full().children(view).into_any_element(), None)
             }
             Some(Tab::View(v)) => {
-                let strip = matches!(v, ViewId::Terminal | ViewId::Chat)
+                let strip = matches!(v, ViewId::Terminal | ViewId::Chat | ViewId::AgentBrowser)
                     .then(|| self.view_strip(v, &t, cx));
                 (self.view_content(v, Place::Page, window, cx), strip)
             }

@@ -13,7 +13,7 @@ Implemented in M8; the catalogue rows of this section are in 10.4.
 #### 4.8.1 Vocabulary
 
 - An **area** is a region of the window that holds things. There are four: the **left sidebar**, the **right sidebar**, the **bottom panel** and the **page area**. Areas never move; what is in them does. (VS Code's "primary side bar", "secondary side bar", "panel" and "editor area".)
-- A **view** is a movable unit that keeps running when hidden: Projects (the tree), Inbox, Knowledge, Terminal, Chat, and the Agent browser when ADR 0010 ships. A view is in exactly one place at a time, or hidden; it is never duplicated.
+- A **view** is a movable unit that keeps running when hidden: Projects (the tree), Inbox, Knowledge, Terminal, Chat and Agent browser. A view is in exactly one place at a time, or hidden; it is never duplicated.
 - A **group** is a set of tabs inside an area, one of them active. A side area or the bottom panel holds one or two groups; the page area holds one to three.
 - A **page** is what 4.2 already calls a page (topic, epic, project, document, settings, trash, shortcuts). Pages live only in the page area. Inbox and Knowledge are both: a page by default, a view once moved out of the page area (4.8.3).
 
@@ -43,7 +43,7 @@ User-facing words, in both languages, are exactly the catalogue's: "left sidebar
 | Knowledge | `knowledge` | `library` | Page area, as the knowledge base page | 280 x 200 | Same. |
 | Terminal | `terminal` | `square-terminal` | Right sidebar, first tab | 400 x 160 | One session per project, unchanged (4.5). Moving never restarts it; the grid reflows to the new size. |
 | Chat | `chat` | `message-circle` | Right sidebar, second tab | 400 x 240 | Windows only (ADR 0009). A native web view (4.8.9). Moving never reloads it. |
-| Agent browser | `agent_browser` | `globe` | Right sidebar, third tab | 400 x 240 | Ships with ADR 0010. A native web view (4.8.9). Until it ships it has no toggle, no command and no catalogue row in 10.4. |
+| Agent browser | `agent_browser` | `globe` | Right sidebar, third tab | 400 x 240 | Windows only (ADR 0010). A native web view (4.8.9), parked rather than hidden when off screen (components-app.md 5, Agent browser). Moving never reloads it. |
 
 **What a view looks like where it lands.**
 - In a side area or the bottom panel, the area header (4.8.4) names the view, so a view drops its page title and its meta line; its content starts 12 below the header with side padding 12. Inbox and Knowledge take the narrow forms their components already define (note cards full width; knowledge rows in their two-line 52 form under 520; the filter row wraps). Projects is the tree, padding 8 as in 4.2.
@@ -79,7 +79,7 @@ Left to right:
 
 Two kinds of toggle, both in the titlebar (4.3) and both always visible, whatever is hidden.
 
-**View toggles**: one ghost icon button (28 x 28, icon 16; 24 x 24 on macOS, like every titlebar control there) per view, in the table order of 4.8.3, gap 4. Visible view: `fill.selected`, icon `text.primary`. Hidden view: no fill, icon `text.secondary`. Hover `fill.hover`, pressed `fill.pressed`, keyboard focus ring inside. Tooltip: the view's name and its shortcut. Right click opens the view menu. The chat toggle exists on Windows only (ADR 0009); the agent browser's when it ships. For Inbox and Knowledge while they are pages, the toggle is selected when the active tab of the focused group shows that page.
+**View toggles**: one ghost icon button (28 x 28, icon 16; 24 x 24 on macOS, like every titlebar control there) per view, in the table order of 4.8.3, gap 4. Visible view: `fill.selected`, icon `text.primary`. Hidden view: no fill, icon `text.secondary`. Hover `fill.hover`, pressed `fill.pressed`, keyboard focus ring inside. Tooltip: the view's name and its shortcut. Right click opens the view menu. The chat toggle exists on Windows only (ADR 0009); the agent browser's too (ADR 0010). For Inbox and Knowledge while they are pages, the toggle is selected when the active tab of the focused group shows that page.
 
 **Area toggles**: `panel-left`, `panel-bottom`, `panel-right`, same size and states; selected when the area is shown. They replace the sidebar toggle at the left of the titlebar. Right click opens the Layout menu.
 
@@ -203,7 +203,7 @@ The layout is saved per window in `preferences.json` (4.7) under one `layout` ke
 
 The defaults are 4.2's workbench, unchanged for someone who never moves anything:
 - Left sidebar shown, 260, Projects alone.
-- Right sidebar hidden, 648, Terminal then Chat as tabs (Agent browser third once it ships), Terminal active. It is hidden on a new install because showing the terminal starts a shell and showing the chat creates a web view; both wait for the user (4.5, 5).
+- Right sidebar hidden, 648, Terminal, Chat and Agent browser as tabs (the last two on Windows), Terminal active. It is hidden on a new install because showing the terminal starts a shell and showing the chat creates a web view; both wait for the user (4.5, 5).
 - Bottom panel hidden, 320, empty.
 - Page area: one group. Inbox and Knowledge are pages.
 

@@ -1790,8 +1790,8 @@ catalogue! {
         fr: t("Retirer de Claude Code"),
     }
     SettingsSetupHint "settings.setup.hint" {
-        en: t("Setup installs Acta\u{2019}s plugin in Claude Code and adds one permission line to ~/.claude/settings.json. Remove undoes both."),
-        fr: t("La configuration installe le plugin d\u{2019}Acta dans Claude Code et ajoute une ligne d\u{2019}autorisation à ~/.claude/settings.json. Retirer annule les deux."),
+        en: t("Setup installs Acta\u{2019}s plugin in Claude Code and adds two permission lines (Acta and its browser) to ~/.claude/settings.json. Remove undoes both."),
+        fr: t("La configuration installe le plugin d\u{2019}Acta dans Claude Code et ajoute deux lignes d\u{2019}autorisation (Acta et son navigateur) à ~/.claude/settings.json. Retirer annule les deux."),
     }
     SettingsRemoveTitle "settings.remove.title" {
         en: t("Remove Acta from Claude Code?"),
@@ -2304,5 +2304,141 @@ catalogue! {
     ShortcutsEditorCancel "shortcuts.editor.cancel" {
         en: t("Cancel the edit"),
         fr: t("Annuler la modification"),
+    }
+    ViewAgentBrowser "view.agent_browser" {
+        en: t("Agent browser"),
+        fr: t("Navigateur de l\u{2019}agent"),
+    }
+    BrowserAddress "browser.address" {
+        en: t("Type an address and press Enter"),
+        fr: t("Saisissez une adresse et appuyez sur Entrée"),
+    }
+    BrowserIdleTitle "browser.idle.title" {
+        en: t("Claude Code\u{2019}s browser"),
+        fr: t("Le navigateur de Claude Code"),
+    }
+    BrowserIdleBody "browser.idle.body" {
+        en: t("Claude Code opens pages here when it needs a browser: your local dev server, or a site you signed into here. Sign in to a site once in this view and Claude Code reuses the session. It never opens claude.ai and never types passwords."),
+        fr: t("Claude Code ouvre ici les pages dont il a besoin\u{202f}: votre serveur de développement local, ou un site auquel vous vous êtes connecté ici. Connectez-vous une fois à un site dans cette vue et Claude Code réutilise la session. Il n\u{2019}ouvre jamais claude.ai et ne saisit jamais de mot de passe."),
+    }
+    BrowserIdleMemory "browser.idle.memory" {
+        en: t("The browser starts on first use and uses about 150 MB of memory until it has been unused for 10 minutes."),
+        fr: t("Le navigateur démarre à la première utilisation et occupe environ 150\u{202f}Mo de mémoire jusqu\u{2019}à 10 minutes sans utilisation."),
+    }
+    BrowserStarting "browser.starting" {
+        en: t("Starting the browser\u{2026}"),
+        fr: t("Démarrage du navigateur\u{2026}"),
+    }
+    BrowserHidden "browser.hidden" {
+        en: t("The browser is hidden while this is open."),
+        fr: t("Le navigateur est masqué tant que ceci est ouvert."),
+    }
+    BrowserStop "browser.stop" {
+        en: t("Stop Claude Code"),
+        fr: t("Arrêter Claude Code"),
+    }
+    BrowserResume "browser.resume" {
+        en: t("Resume"),
+        fr: t("Reprendre"),
+    }
+    BrowserStopped "browser.stopped" {
+        en: t("Stopped. Claude Code is told to ask you before it continues."),
+        fr: t("Arrêté. Claude Code doit vous demander avant de continuer."),
+    }
+    BrowserHandoff "browser.handoff" {
+        en: t("Claude Code asks you: {message}"),
+        fr: t("Claude Code vous demande\u{202f}: {message}"),
+    }
+    BrowserDone "browser.done" {
+        en: t("Done"),
+        fr: t("Terminé"),
+    }
+    BrowserDriver "browser.driver" {
+        en: t("driven by {session}"),
+        fr: t("piloté par {session}"),
+    }
+    BrowserDriverUnnamed "browser.driver.unnamed" {
+        en: t("driven by Claude Code"),
+        fr: t("piloté par Claude Code"),
+    }
+    BrowserActOpened "browser.act.opened" {
+        en: t("Claude Code opened {target}"),
+        fr: t("Claude Code a ouvert {target}"),
+    }
+    BrowserActReloaded "browser.act.reloaded" {
+        en: t("Claude Code reloaded the page"),
+        fr: t("Claude Code a rechargé la page"),
+    }
+    BrowserActBack "browser.act.back" {
+        en: t("Claude Code went back"),
+        fr: t("Claude Code est revenu en arrière"),
+    }
+    BrowserActForward "browser.act.forward" {
+        en: t("Claude Code went forward"),
+        fr: t("Claude Code est allé en avant"),
+    }
+    BrowserActClicked "browser.act.clicked" {
+        en: t("Claude Code clicked {target}"),
+        fr: t("Claude Code a cliqué sur {target}"),
+    }
+    BrowserActTyped "browser.act.typed" {
+        en: t("Claude Code typed into {target}"),
+        fr: t("Claude Code a saisi du texte dans {target}"),
+    }
+    BrowserActScreenshot "browser.act.screenshot" {
+        en: t("Claude Code took a screenshot"),
+        fr: t("Claude Code a pris une capture d\u{2019}écran"),
+    }
+    BrowserActWaiting "browser.act.waiting" {
+        en: t("Claude Code is waiting for you"),
+        fr: t("Claude Code vous attend"),
+    }
+    BrowserClear "browser.clear" {
+        en: t("Clear browser data\u{2026}"),
+        fr: t("Effacer les données du navigateur\u{2026}"),
+    }
+    BrowserClearTitle "browser.clear.title" {
+        en: t("Clear the browser\u{2019}s data?"),
+        fr: t("Effacer les données du navigateur\u{202f}?"),
+    }
+    BrowserClearBody "browser.clear.body" {
+        en: t("This deletes the cookies and site data of Acta\u{2019}s browser from this computer: you are signed out of every site you signed into there."),
+        fr: t("Cela supprime de cet ordinateur les cookies et les données de site du navigateur d\u{2019}Acta\u{202f}: vous êtes déconnecté de tous les sites auxquels vous vous y étiez connecté."),
+    }
+    BrowserClearConfirm "browser.clear.confirm" {
+        en: t("Clear data"),
+        fr: t("Effacer les données"),
+    }
+    BrowserClearFailed "browser.clear_failed" {
+        en: t("The browser data could not be deleted. Close what may use it and try again."),
+        fr: t("Les données du navigateur n\u{2019}ont pas pu être supprimées. Fermez ce qui peut les utiliser et réessayez."),
+    }
+    BrowserRefusedTitle "browser.refused.title" {
+        en: t("Acta did not start its browser"),
+        fr: t("Acta n\u{2019}a pas démarré son navigateur"),
+    }
+    BrowserRefusedBody "browser.refused.body" {
+        en: t("A debugging port or another WebView2 override is configured for Acta (a WebView2 policy, an environment variable or a DevToolsActivePort file). It could let another program control or read the browser. Remove it, then try again."),
+        fr: t("Un port de débogage ou un autre réglage WebView2 est configuré pour Acta (une stratégie WebView2, une variable d\u{2019}environnement ou un fichier DevToolsActivePort). Il pourrait permettre à un autre programme de piloter ou de lire le navigateur. Supprimez-le, puis réessayez."),
+    }
+    BrowserRuntimeTitle "browser.runtime.title" {
+        en: t("The agent browser needs WebView2"),
+        fr: t("Le navigateur de l\u{2019}agent a besoin de WebView2"),
+    }
+    BrowserRuntimeBody "browser.runtime.body" {
+        en: t("Microsoft\u{2019}s WebView2 runtime is not installed on this computer, so Acta cannot open its browser. Everything else in Acta works."),
+        fr: t("Le composant WebView2 de Microsoft n\u{2019}est pas installé sur cet ordinateur\u{202f}; Acta ne peut donc pas ouvrir son navigateur. Tout le reste d\u{2019}Acta fonctionne."),
+    }
+    BrowserFailedTitle "browser.failed.title" {
+        en: t("The browser could not be started"),
+        fr: t("Le navigateur n\u{2019}a pas pu être démarré"),
+    }
+    BrowserPipeTaken "browser.pipe.taken" {
+        en: t("Claude Code cannot reach this browser: another copy of Acta, or another program, already serves it. Close it and restart Acta."),
+        fr: t("Claude Code ne peut pas joindre ce navigateur\u{202f}: une autre copie d\u{2019}Acta, ou un autre programme, le sert déjà. Fermez-le et redémarrez Acta."),
+    }
+    BrowserPipeFailed "browser.pipe.failed" {
+        en: t("Claude Code cannot reach this browser. Restart Acta; the log says why."),
+        fr: t("Claude Code ne peut pas joindre ce navigateur. Redémarrez Acta\u{202f}; le journal indique pourquoi."),
     }
 }

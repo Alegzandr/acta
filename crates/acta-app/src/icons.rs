@@ -84,6 +84,9 @@ icons! {
     PanelBottom => "panel-bottom",
     PanelRight => "panel-right",
     PanelsTopLeft => "panels-top-left",
+    Globe => "globe",
+    Square => "square",
+    Play => "play",
 }
 
 /// The app mark, shown in the updater window only (docs/design/components-app.md 5).

@@ -12,7 +12,8 @@ use std::collections::BTreeMap;
 
 use serde_json::{Map, Value, json};
 
-/// 4.8.3: the movable views. The agent browser joins with ADR 0010.
+/// 4.8.3: the movable views. Chat and Agent browser are Windows only
+/// (ADR 0009, ADR 0010): native web views.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ViewId {
     Projects,
@@ -20,16 +21,18 @@ pub enum ViewId {
     Knowledge,
     Terminal,
     Chat,
+    AgentBrowser,
 }
 
 impl ViewId {
     /// In the order of 4.8.3 (the titlebar's view toggles).
-    pub const ALL: [ViewId; 5] = [
+    pub const ALL: [ViewId; 6] = [
         ViewId::Projects,
         ViewId::Inbox,
         ViewId::Knowledge,
         ViewId::Terminal,
         ViewId::Chat,
+        ViewId::AgentBrowser,
     ];
 
     pub fn key(self) -> &'static str {
@@ -39,6 +42,7 @@ impl ViewId {
             ViewId::Knowledge => "knowledge",
             ViewId::Terminal => "terminal",
             ViewId::Chat => "chat",
+            ViewId::AgentBrowser => "agent_browser",
         }
     }
 
@@ -52,7 +56,7 @@ impl ViewId {
             ViewId::Projects => (200., 160.),
             ViewId::Inbox | ViewId::Knowledge => (280., 200.),
             ViewId::Terminal => (400., 160.),
-            ViewId::Chat => (400., 240.),
+            ViewId::Chat | ViewId::AgentBrowser => (400., 240.),
         }
     }
 
@@ -60,6 +64,11 @@ impl ViewId {
     /// (4.8.3).
     pub fn is_page_kind(self) -> bool {
         matches!(self, ViewId::Inbox | ViewId::Knowledge)
+    }
+
+    /// A native web view: Windows only for now (ADR 0009, ADR 0010).
+    pub fn is_web(self) -> bool {
+        matches!(self, ViewId::Chat | ViewId::AgentBrowser)
     }
 }
 
@@ -298,12 +307,14 @@ pub struct Layout {
 }
 
 impl Layout {
-    /// 4.8.13: Projects alone on the left; Terminal then Chat in the hidden
-    /// right sidebar; nothing below; one page group holding `pages`.
+    /// 4.8.13: Projects alone on the left; Terminal, Chat and Agent browser
+    /// in the hidden right sidebar (`chat`: this build has the web views);
+    /// nothing below; one page group holding `pages`.
     pub fn defaults(pages: Vec<TabId>, chat: bool) -> Layout {
         let mut right = vec![Tab::View(ViewId::Terminal)];
         if chat {
             right.push(Tab::View(ViewId::Chat));
+            right.push(Tab::View(ViewId::AgentBrowser));
         }
         let page_group = Group {
             tabs: pages.into_iter().map(Tab::Page).collect(),
@@ -936,12 +947,15 @@ impl Layout {
     /// every live page tab somewhere, no empty group, the group limits, the
     /// active indexes and shares in range, at least one page group. `live`
     /// is every page tab the shell holds; `chat` whether this build has the
-    /// chat panel (elsewhere the chat keeps only its last place).
+    /// web views (elsewhere the chat and the agent browser keep only their
+    /// last place).
     pub fn repair(&mut self, live: &[TabId], chat: bool) {
-        if !chat && let Some(spot) = self.locate(Tab::View(ViewId::Chat)) {
-            // The chat is ignored, not removed: where it was is kept as its
-            // last place, so a shared file does not lose it.
-            self.last.insert(ViewId::Chat, spot);
+        for web in [ViewId::Chat, ViewId::AgentBrowser] {
+            if !chat && let Some(spot) = self.locate(Tab::View(web)) {
+                // Ignored, not removed: where it was is kept as its last
+                // place, so a shared file does not lose it.
+                self.last.insert(web, spot);
+            }
         }
         let mut seen_views = Vec::new();
         let mut seen_pages = Vec::new();
@@ -953,7 +967,7 @@ impl Layout {
                     Tab::View(v) => {
                         let keep = !seen_views.contains(v)
                             && !(page && v.is_page_kind())
-                            && (chat || *v != ViewId::Chat);
+                            && (chat || !v.is_web());
                         if keep {
                             seen_views.push(*v);
                         }
@@ -1043,6 +1057,7 @@ fn default_spot(view: ViewId) -> Option<Spot> {
         ViewId::Projects => (Place::Side(Side::Left), 0),
         ViewId::Terminal => (Place::Side(Side::Right), 0),
         ViewId::Chat => (Place::Side(Side::Right), 1),
+        ViewId::AgentBrowser => (Place::Side(Side::Right), 2),
         ViewId::Inbox | ViewId::Knowledge => return None,
     };
     Some(Spot {
@@ -1519,7 +1534,11 @@ mod tests {
         );
         assert_eq!(
             l.right.groups[0].tabs,
-            [Tab::View(ViewId::Terminal), Tab::View(ViewId::Chat)]
+            [
+                Tab::View(ViewId::Terminal),
+                Tab::View(ViewId::Chat),
+                Tab::View(ViewId::AgentBrowser)
+            ]
         );
         assert!(l.is_visible(ViewId::Projects));
         assert!(!l.is_visible(ViewId::Terminal), "its area is hidden");
@@ -1544,6 +1563,7 @@ mod tests {
         );
         assert!(l.right.shown, "the terminal is still there");
         assert!(l.hide_view(ViewId::Terminal));
+        assert!(l.hide_view(ViewId::AgentBrowser));
         assert!(!l.right.shown, "an area left empty hides");
         assert!(l.right.groups.is_empty());
         // Showing the chat again puts it back in the right sidebar, the
@@ -1666,7 +1686,11 @@ mod tests {
             .unwrap();
         assert_eq!(
             l.right.groups[0].tabs,
-            [Tab::View(ViewId::Chat), Tab::View(ViewId::Terminal)]
+            [
+                Tab::View(ViewId::Chat),
+                Tab::View(ViewId::Terminal),
+                Tab::View(ViewId::AgentBrowser)
+            ]
         );
         // The terminal to the bottom panel (the hidden area's strip).
         let spot = l
@@ -1856,10 +1880,11 @@ mod tests {
     #[test]
     fn hide_and_show_never_lose_a_view_whatever_the_order() {
         // Every view hidden and shown in several orders, with moves between.
-        let orders: [[ViewId; 5]; 3] = [
+        let orders: [[ViewId; 6]; 3] = [
             ViewId::ALL,
             [
                 ViewId::Chat,
+                ViewId::AgentBrowser,
                 ViewId::Projects,
                 ViewId::Terminal,
                 ViewId::Inbox,
@@ -1870,6 +1895,7 @@ mod tests {
                 ViewId::Chat,
                 ViewId::Knowledge,
                 ViewId::Projects,
+                ViewId::AgentBrowser,
                 ViewId::Inbox,
             ],
         ];
@@ -1954,7 +1980,7 @@ mod tests {
         let value: Value = serde_json::from_str(
             r#"{"v":1,
             "areas":{
-              "left":{"shown":true,"size":12,"groups":[{"views":["projects","agent_browser","projects"],"active":9}]},
+              "left":{"shown":true,"size":12,"groups":[{"views":["projects","maps","projects"],"active":9}]},
               "right":{"shown":"yes","size":648,"groups":[{"views":["terminal","chat"],"active":1}]},
               "bottom":{"shown":true,"size":320,"groups":[{"views":["nonsense"]}]}
             },
@@ -2007,7 +2033,10 @@ mod tests {
             (l.left.size, l.right.size, l.bottom.size),
             (300., 520., 240.)
         );
-        assert_eq!(l.right.groups[0].tabs, [Tab::View(ViewId::Terminal)]);
+        assert_eq!(
+            l.right.groups[0].tabs,
+            [Tab::View(ViewId::Terminal), Tab::View(ViewId::AgentBrowser)]
+        );
         assert_eq!(l.bottom.groups[0].tabs, [Tab::View(ViewId::Chat)]);
         assert!(!l.bottom.shown);
         assert_eq!(

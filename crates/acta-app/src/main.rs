@@ -2,6 +2,10 @@
 //! installs, updates or uninstalls anything (ADR 0004).
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+#[cfg(windows)]
+mod browser_host;
+#[cfg(windows)]
+mod browser_panel;
 mod capture;
 #[cfg(windows)]
 mod chat;
@@ -162,6 +166,9 @@ fn main() {
         }
     }
 
+    // The agent browser's "Acta runs here" mark (ADR 0010), held until exit.
+    #[cfg(windows)]
+    let _app_mutex = browser_host::hold_app_mutex();
     run_app(options, pending, launched);
 }
 

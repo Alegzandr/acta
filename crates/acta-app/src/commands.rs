@@ -96,7 +96,7 @@ pub struct Context {
     pub tabs: bool,
     pub closed_tab: bool,
     /// Each view of this build, by `ViewId as usize`.
-    pub views: [Option<ViewState>; 5],
+    pub views: [Option<ViewState>; ViewId::ALL.len()],
     /// The view keyboard focus is in: its commands rank first.
     pub focused_view: Option<ViewId>,
     /// The page groups, and whether "Split right" / "Split down" apply.
@@ -493,7 +493,7 @@ mod tests {
 
     #[test]
     fn view_commands_follow_where_each_view_is() {
-        let mut views = [None; 5];
+        let mut views = [None; ViewId::ALL.len()];
         views[ViewId::Terminal as usize] = Some(ViewState {
             place: Some(Place::Side(Side::Right)),
             visible: true,

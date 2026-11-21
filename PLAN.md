@@ -79,7 +79,7 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 
 ## M8 - Workbench layout and agent browser
 - [ ] Workbench layout of workbench.md 4.8 - built on `gpui-engineer/m8-workbench` (Windows; macOS and Linux by cross-target clippy only): layout model, persistence and M7 migration, areas, area headers and view tabs, view and area toggles, Layout and view menus, page groups (up to three) and their tab bars, resize handles with snap to hide, drag and drop with drop zones and preview, Inbox and Knowledge as views, the chat web view moved (never recreated) and hidden during drags, undo of every layout step (Mod+Z and "Undo layout change"), the move toast, Reset layout (menu, palette, toast, Settings), narrow folding. Left: dragging and dropping by hand (needs real input), the overflow chevron of view tabs, Linux/macOS runs
-- [ ] Agent browser (ADR 0010)
+- [ ] Agent browser (ADR 0010) - built on `integration-engineer/m8-agent-browser` (Windows): crate `acta-browser`, the Browser view, `acta mcp browser` with 9 tools, setup's second server and allow rule, the debugging-port check. Verified through the real app and 2 headless Haiku runs. Left: Stop/Resume/Done by hand, a real sign-in, the blocked-sites setting, macOS and Linux (Claude in Chrome there)
 
 ## M7 - Polish
 - [x] Design review of every screen against DESIGN.md (6 blockers, 21 should, 8 nice)

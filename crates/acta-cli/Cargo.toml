@@ -13,6 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 acta-core.workspace = true
+acta-browser = { path = "../acta-browser" }
 clap = { version = "4.6", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
 # ADR 0005: rmcp pinned by Cargo.lock, transport kept behind `mcp.rs`.
 rmcp = { version = "3.11.0", default-features = false, features = ["server", "macros", "schemars", "transport-io"] }

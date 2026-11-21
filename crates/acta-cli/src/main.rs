@@ -7,6 +7,7 @@
 //! from stdin or `--file`, never from arguments: process arguments are
 //! visible to other processes (CLAUDE.md).
 
+mod browser;
 mod hook;
 mod link;
 mod mcp;
@@ -46,12 +47,21 @@ struct TextSource {
     file: Option<PathBuf>,
 }
 
+#[derive(Subcommand, Clone, Copy)]
+enum McpServer {
+    /// The agent browser's server (Windows; drives Acta's browser view)
+    Browser,
+}
+
 #[derive(Subcommand)]
 enum Command {
     /// Print the version
     Version,
     /// Run the MCP server on stdio (started by Claude Code)
-    Mcp,
+    Mcp {
+        #[command(subcommand)]
+        server: Option<McpServer>,
+    },
     /// Run a Claude Code hook: session-start or pre-compact (hook JSON on stdin)
     Hook { event: String },
     /// Install Acta in Claude Code: plugin, MCP server, hooks, skills, allow rule
@@ -325,7 +335,10 @@ fn run(command: Command) -> ExitCode {
             println!("{}", version_line());
             ExitCode::SUCCESS
         }
-        Command::Mcp => finish(mcp::serve(opener).map(|_| String::new())),
+        Command::Mcp { server: None } => finish(mcp::serve(opener).map(|_| String::new())),
+        Command::Mcp {
+            server: Some(McpServer::Browser),
+        } => finish(browser::serve(opener).map(|_| String::new())),
         Command::Hook { event } => {
             let Some(event) = hook::Event::parse(&event) else {
                 return ExitCode::SUCCESS;
@@ -685,7 +698,7 @@ fn run_on(store: &mut acta_core::Store, command: Command) -> Result<String, Stri
             Some(KbAction::Export { id, path }) => kb_export(&mut ag, &id, &path),
         },
         Command::Version
-        | Command::Mcp
+        | Command::Mcp { .. }
         | Command::Hook { .. }
         | Command::Setup { .. }
         | Command::Link { .. }
