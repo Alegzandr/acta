@@ -21,7 +21,8 @@ fn base_cmd(data: &Path) -> Command {
         .env_remove("ACTA_TOPIC")
         .env_remove("CLAUDE_CODE_SESSION_ID")
         .env_remove("CLAUDECODE")
-        .env_remove("CLAUDE_CONFIG_DIR");
+        .env_remove("CLAUDE_CONFIG_DIR")
+        .env_remove("CLAUDE_PROJECT_DIR");
     c
 }
 
@@ -968,4 +969,151 @@ fn due_dates_set_found_and_cleared_over_stdio() {
         ok && out.contains("E-1 epic  Storage") && out.trim_end().ends_with("1 hit"),
         "{out}"
     );
+}
+
+fn git(dir: &Path, args: &[&str]) {
+    let out = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// ADR 0011: `acta folders commit` writes the folder's Claude Code
+/// settings (refused under Claude Code), and `acta hook pre-git` denies
+/// what an automatic mode forbids, silently otherwise, within 200 chars.
+#[test]
+fn commit_modes_and_the_pre_git_guard() {
+    let tmp = tempfile::tempdir().unwrap();
+    let data = tmp.path().join("data");
+    let repo = tmp.path().join("repo");
+    let other = tmp.path().join("other");
+    std::fs::create_dir_all(&repo).unwrap();
+    std::fs::create_dir_all(&other).unwrap();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    git(
+        &repo,
+        &[
+            "-c",
+            "user.name=Alexandre",
+            "-c",
+            "user.email=alexandre@example.com",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "First",
+        ],
+    );
+    git(&repo, &["switch", "-q", "-c", "feature"]);
+    let (ok, out, err) = cli(&data, &repo, &["link"], "");
+    assert!(ok, "{out}{err}");
+
+    // Claude Code cannot set a commit mode.
+    let out = base_cmd(&data)
+        .args(["folders", "commit", "push"])
+        .env("CLAUDECODE", "1")
+        .current_dir(&repo)
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("set by the user in Acta"));
+
+    let (ok, out, err) = cli(&data, &repo, &["folders", "commit", "push", "--as-me"], "");
+    assert!(ok, "{out}{err}");
+    assert!(
+        out.contains("commit and push automatically, in your name, not on main"),
+        "{out}"
+    );
+    let local: Value = serde_json::from_str(
+        &std::fs::read_to_string(repo.join(".claude/settings.local.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(local["autoMemoryEnabled"], json!(false));
+    assert_eq!(local["permissions"]["allow"][2], "Bash(git push)");
+    assert_eq!(local["env"]["GIT_TERMINAL_PROMPT"], "0");
+    assert_eq!(local["attribution"]["sessionUrl"], json!(false));
+
+    let hook = |dir: &Path, command: &str| {
+        let input = json!({
+            "session_id": "s1", "cwd": dir, "hook_event_name": "PreToolUse",
+            "tool_name": "Bash", "tool_input": {"command": command}
+        })
+        .to_string();
+        let (ok, out, err) = cli(&data, dir, &["hook", "pre-git"], &input);
+        assert!(ok && err.is_empty(), "{err}");
+        assert!(chars(out.trim()) <= 200, "{out}");
+        out.trim().to_owned()
+    };
+    let reason = |out: &str| {
+        let v: Value = serde_json::from_str(out).unwrap();
+        assert_eq!(v["hookSpecificOutput"]["permissionDecision"], "deny");
+        v["hookSpecificOutput"]["permissionDecisionReason"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    assert!(reason(&hook(&repo, "git commit --no-verify -m x")).contains("--no-verify"));
+    assert!(reason(&hook(&repo, "git push origin feature")).contains("exactly `git push`"));
+    assert!(reason(&hook(&repo, "git push --force-with-lease")).contains("forced"));
+    let heredoc = "git add a && git commit -m \"$(cat <<'EOF'\nNo --no-verify here\nEOF\n)\"";
+    assert_eq!(hook(&repo, heredoc), "");
+    assert_eq!(hook(&repo, "git push"), "");
+    // Forms that hide the call are read through; an alias is resolved.
+    assert!(reason(&hook(&repo, "{ git commit -n -m x; }")).contains("--no-verify"));
+    assert!(reason(&hook(&repo, "bash -c 'git push --force'")).contains("forced"));
+    assert!(reason(&hook(&repo, "git -c core.hooksPath=/x commit -m x")).contains("GIT_CONFIG"));
+    git(&repo, &["config", "alias.ci", "commit --no-verify"]);
+    assert!(reason(&hook(&repo, "git ci -m x")).contains("--no-verify"));
+    assert_eq!(hook(&repo, "git status && git log -1"), "");
+    // Judged where it acts: a manual folder next door, variables.
+    let manual = tmp.path().join("manual");
+    std::fs::create_dir_all(&manual).unwrap();
+    git(&manual, &["init", "-q", "-b", "main"]);
+    let (ok, out, err) = cli(&data, &manual, &["link", "--add", "--keep-auto-memory"], "");
+    assert!(ok, "{out}{err}");
+    assert!(
+        reason(&hook(&repo, "git -C ../manual commit -m x"))
+            .contains("commits in manual are manual")
+    );
+    assert!(reason(&hook(&repo, "cd ../manual && git commit -m x")).contains("are manual"));
+    assert!(
+        reason(&hook(&repo, "cd \"$HOME\" && git commit -m x")).contains("run git in this folder")
+    );
+    assert!(reason(&hook(&repo, "HUSKY=0 git commit -m x")).contains("environment variables"));
+    git(&repo, &["switch", "-q", "main"]);
+    assert!(reason(&hook(&repo, "git commit -m x")).contains("on main"));
+    let (ok, out, err) = cli(
+        &data,
+        &repo,
+        &["folders", "commit", "push", "--on-default"],
+        "",
+    );
+    assert!(ok && out.contains("also on main"), "{out}{err}");
+    assert_eq!(hook(&repo, "git commit -m x"), "");
+    // An unlinked folder: silent.
+    assert_eq!(hook(&other, "git commit --no-verify -m x"), "");
+
+    // Manual: nothing denied, Acta's commit entries out, auto memory kept.
+    let (ok, out, err) = cli(&data, &repo, &["folders", "commit", "manual"], "");
+    assert!(ok, "{out}{err}");
+    assert_eq!(hook(&repo, "git commit --no-verify -m x"), "");
+    let text = std::fs::read_to_string(repo.join(".claude/settings.local.json")).unwrap();
+    assert_eq!(text, "{\n  \"autoMemoryEnabled\": false\n}\n");
+
+    // Unlink takes out everything Acta wrote.
+    let (ok, _, _) = cli(&data, &repo, &["folders", "commit", "commit"], "");
+    assert!(ok);
+    let (ok, out, err) = cli(&data, &repo, &["link", "--remove"], "");
+    assert!(ok, "{out}{err}");
+    assert!(!repo.join(".claude").exists());
 }

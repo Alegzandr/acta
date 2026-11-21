@@ -552,6 +552,12 @@ impl Store {
         let report = merge(&tx, file, author)?;
         tx.commit()?;
         let _ = self.refresh_link_index();
+        // Commit settings and paths may have changed: Claude Code's
+        // settings follow the columns (ADR 0011, Export). An import by
+        // Claude Code changes neither, and never writes them.
+        if author != Author::Claude {
+            let _ = crate::claude_settings::sync_all(self);
+        }
         Ok(report)
     }
 }
@@ -1002,7 +1008,8 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile, author: Author) -> Result<Im
             Action::Update(l) => {
                 let (d, db) = merged_deleted(&l, s);
                 tx.execute(
-                    "UPDATE folders SET project_id = ?2, epic_id = ?3, topic_id = ?4, path = ?5, position = ?6,
+                    "UPDATE folders SET project_id = ?2, epic_id = ?3, topic_id = ?4,
+                            path = CASE WHEN ?18 THEN path ELSE ?5 END, position = ?6,
                             updated_at = ?7, updated_by = ?8, deleted_at = ?9, deleted_by = ?10,
                             deleted_batch = CASE WHEN deleted_at IS ?9 THEN deleted_batch ELSE NULL END,
                             name = CASE WHEN ?16 THEN name ELSE ?11 END,
@@ -1013,7 +1020,7 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile, author: Author) -> Result<Im
                      WHERE id = ?1",
                     params![l.id, project, epic, topic, x.path, x.position, s.updated_at, s.updated_by, d, db,
                             x.name, icon(&x.icon), mode, as_user, on_default,
-                            old_format, old_format || by_claude],
+                            old_format, old_format || by_claude, by_claude],
                 )?;
             }
             Action::Skip => {}

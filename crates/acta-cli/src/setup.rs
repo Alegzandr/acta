@@ -141,6 +141,25 @@ pub fn render_steps(steps: &[Step], json_out: bool) -> String {
         .join("\n")
 }
 
+/// The `if` rules of the `pre-git` guard: git itself (by name or path) and
+/// the commands Claude Code does not strip before matching that can run
+/// git (docs/permissions, "Wrappers").
+const GUARD_IFS: &[&str] = &[
+    "Bash(git *)",
+    "Bash(git.exe *)",
+    "Bash(*/git *)",
+    "Bash(env *)",
+    "Bash(sudo *)",
+    "Bash(exec *)",
+    "Bash(eval *)",
+    "Bash(xargs *)",
+    "Bash(bash *)",
+    "Bash(sh *)",
+    "Bash(zsh *)",
+    "Bash(*/bash *)",
+    "Bash(*/sh *)",
+];
+
 impl Setup<'_> {
     fn plugin_dir(&self) -> PathBuf {
         self.plugin_root.join("plugins").join(PLUGIN)
@@ -215,6 +234,14 @@ impl Setup<'_> {
                         {"matcher": "clear", "hooks": [mcp_hook("clear")]},
                         {"matcher": "compact", "hooks": [mcp_hook("compact")]}
                     ],
+                    // ADR 0011, the guard: spawned only for git calls and
+                    // the wrappers that may hide one (each subcommand is
+                    // matched); it returns at once unless a commit, a push
+                    // or an alias is there.
+                    "PreToolUse": [{"matcher": "Bash", "hooks": GUARD_IFS.iter().map(|rule| json!(
+                        {"type": "command", "command": exe, "args": ["hook", "pre-git"],
+                         "if": rule, "timeout": 10}
+                    )).collect::<Vec<_>>()}],
                     "PreCompact": [{"hooks": [
                         {"type": "command", "command": exe, "args": ["hook", "pre-compact"], "timeout": 10}
                     ]}],
@@ -904,31 +931,8 @@ pub fn edit_status_line(
     Ok(detail)
 }
 
-/// Writes to a temporary file next to the real target, then renames it over
-/// the target. A symlink is followed (its target is replaced and the link
-/// stays) and the target's permissions are kept.
-pub fn write_atomic(path: &Path, text: &str) -> io::Result<()> {
-    let target = match fs::symlink_metadata(path) {
-        Ok(m) if m.file_type().is_symlink() => fs::canonicalize(path)?,
-        _ => path.to_path_buf(),
-    };
-    let permissions = fs::metadata(&target).ok().map(|m| m.permissions());
-    let name = target
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let tmp = target.with_file_name(format!(".{name}.acta-tmp-{}", std::process::id()));
-    let result = fs::write(&tmp, text)
-        .and_then(|()| match permissions {
-            Some(p) => fs::set_permissions(&tmp, p),
-            None => Ok(()),
-        })
-        .and_then(|()| fs::rename(&tmp, &target));
-    if result.is_err() {
-        let _ = fs::remove_file(&tmp);
-    }
-    result
-}
+/// Atomic replace, shared with the settings writer.
+pub use acta_core::claude_settings::write_atomic;
 
 #[cfg(test)]
 mod tests {
@@ -1063,6 +1067,17 @@ mod tests {
         assert_eq!(
             h["hooks"]["SessionStart"][1]["hooks"][0]["server"],
             "plugin:acta:acta"
+        );
+        let guard = &h["hooks"]["PreToolUse"][0];
+        assert_eq!(guard["matcher"], "Bash");
+        assert_eq!(guard["hooks"][0]["if"], "Bash(git *)");
+        assert_eq!(guard["hooks"].as_array().unwrap().len(), GUARD_IFS.len());
+        assert!(
+            guard["hooks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|h| h["args"] == json!(["hook", "pre-git"]))
         );
 
         let removed = s.remove();

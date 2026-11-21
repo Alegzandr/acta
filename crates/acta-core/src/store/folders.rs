@@ -73,6 +73,49 @@ pub const AUTO_MEMORY_PREFIX: &str = "automemory.";
 /// followed by its local id: never exported, like the path's meaning.
 const IDENTITY_PREFIX: &str = "folderid.";
 
+/// Local values kept per folder path (ADR 0008 "Live files"): the
+/// auto-memory marker of earlier versions and Claude Code's settings ledger
+/// (ADR 0011). They follow the path whenever a folder's path changes.
+const PATH_KEYED: [&str; 2] = [AUTO_MEMORY_PREFIX, crate::claude_settings::LEDGER_PREFIX];
+
+/// Carries the path-keyed values from `old` to `new` after folder `id`
+/// moved there: moved when no other live folder still has `old` (one path
+/// may be attached at several levels), copied otherwise. A value already
+/// under `new` is kept.
+fn carry_path_keys(
+    conn: &rusqlite::Connection,
+    id: FolderId,
+    old: &str,
+    new: &str,
+) -> rusqlite::Result<()> {
+    if old == new {
+        return Ok(());
+    }
+    let others: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM folders WHERE path = ?1 AND id != ?2 AND deleted_at IS NULL",
+        params![old, id.0],
+        |r| r.get(0),
+    )?;
+    for prefix in PATH_KEYED {
+        let (from, to) = (
+            format!("local.{prefix}{old}"),
+            format!("local.{prefix}{new}"),
+        );
+        if others > 0 {
+            conn.execute(
+                "INSERT OR IGNORE INTO meta (key, value) SELECT ?2, value FROM meta WHERE key = ?1",
+                params![from, to],
+            )?;
+        } else {
+            conn.execute(
+                "UPDATE OR IGNORE meta SET key = ?2 WHERE key = ?1",
+                params![from, to],
+            )?;
+        }
+    }
+    Ok(())
+}
+
 fn identity_key(id: FolderId) -> String {
     format!("local.{IDENTITY_PREFIX}{}", id.0)
 }
@@ -273,7 +316,7 @@ impl Store {
 
     /// Points a folder at another existing folder (repair after an import).
     pub fn set_folder_path(&mut self, id: FolderId, path: &Path, author: Author) -> Result<()> {
-        self.folder(id)?;
+        let old = self.folder(id)?.path;
         let stored = folder_path::canonical(path)
             .map_err(|e| Error::Invalid(format!("cannot use this folder: {e}")))?;
         let tx = self.write()?;
@@ -281,8 +324,11 @@ impl Store {
             "UPDATE folders SET path = ?2, updated_at = ?3, updated_by = ?4 WHERE id = ?1",
             params![id.0, stored, now_ms(), author],
         )?;
+        carry_path_keys(&tx, id, &old, &stored)?;
         tx.commit()?;
         let _ = self.refresh_link_index();
+        // Found again: its Claude Code settings are written now.
+        let _ = crate::claude_settings::sync_path(self, Path::new(&stored));
         self.remember_identity(id, &stored);
         Ok(())
     }
@@ -330,11 +376,15 @@ impl Store {
                 "UPDATE folders SET path = ?2, updated_at = ?3, updated_by = ?4 WHERE id = ?1",
                 params![id.0, path, now, author],
             )?;
+            carry_path_keys(&tx, *id, &folder.path, path)?;
             // Another folder now: its identity is learned on the next pass.
             tx.execute("DELETE FROM meta WHERE key = ?1", [identity_key(*id)])?;
         }
         tx.commit()?;
         let _ = self.refresh_link_index();
+        for (_, path) in changes {
+            let _ = crate::claude_settings::sync_path(self, Path::new(path));
+        }
         Ok(())
     }
 
@@ -346,12 +396,13 @@ impl Store {
         stored: &str,
         author: Author,
     ) -> Result<()> {
-        self.folder(id)?;
+        let old = self.folder(id)?.path;
         let tx = self.write()?;
         tx.execute(
             "UPDATE folders SET path = ?2, updated_at = ?3, updated_by = ?4 WHERE id = ?1",
             params![id.0, stored, now_ms(), author],
         )?;
+        carry_path_keys(&tx, id, &old, stored)?;
         tx.execute("DELETE FROM meta WHERE key = ?1", [identity_key(id)])?;
         tx.commit()?;
         let _ = self.refresh_link_index();
@@ -429,13 +480,7 @@ impl Store {
                 params![f.id.0, f.new, now, Author::Human],
             )?;
             upsert_meta(&tx, &identity_key(f.id), &f.identity)?;
-            tx.execute(
-                "UPDATE OR IGNORE meta SET key = ?2 WHERE key = ?1",
-                params![
-                    format!("local.{AUTO_MEMORY_PREFIX}{}", f.old),
-                    format!("local.{AUTO_MEMORY_PREFIX}{}", f.new)
-                ],
-            )?;
+            carry_path_keys(&tx, f.id, &f.old, &f.new)?;
             moved.push(f.id);
         }
         tx.commit()?;
@@ -471,21 +516,25 @@ impl Store {
                 new_root.join(rest)
             };
             if let Ok(stored) = folder_path::canonical(&candidate) {
-                changes.push((f.id, stored));
+                changes.push((f.id, f.path.clone(), stored));
             }
         }
         let tx = self.write()?;
         let now = now_ms();
-        for (id, stored) in &changes {
+        for (id, old, stored) in &changes {
             tx.execute(
                 "UPDATE folders SET path = ?2, updated_at = ?3, updated_by = ?4 WHERE id = ?1",
                 params![id.0, stored, now, author],
             )?;
+            carry_path_keys(&tx, *id, old, stored)?;
             tx.execute("DELETE FROM meta WHERE key = ?1", [identity_key(*id)])?;
         }
         tx.commit()?;
         let _ = self.refresh_link_index();
-        Ok(changes.into_iter().map(|(id, _)| id).collect())
+        for (_, _, path) in &changes {
+            let _ = crate::claude_settings::sync_path(self, Path::new(path));
+        }
+        Ok(changes.into_iter().map(|(id, _, _)| id).collect())
     }
 
     /// The folders a page sees, each with its origin, and which is active

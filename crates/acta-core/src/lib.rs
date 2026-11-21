@@ -3,13 +3,17 @@
 //! GPUI type appears here, so the app, the CLI and the MCP server share it.
 
 pub mod agent;
+pub mod claude_settings;
 pub mod date;
 pub mod db;
 pub mod error;
 pub mod folder_identity;
 pub mod folder_path;
 mod fsutil;
+pub mod git_cmd;
+pub mod git_guard;
 pub mod keys;
+pub mod launch_plan;
 pub mod link_index;
 pub mod markdown;
 pub mod model;
