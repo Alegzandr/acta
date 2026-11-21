@@ -93,6 +93,7 @@ impl Store {
         )?;
         let id = FolderId(tx.last_insert_rowid());
         tx.commit()?;
+        self.refresh_link_index();
         Ok(id)
     }
 
@@ -141,6 +142,7 @@ impl Store {
             params![id.0, stored, now_ms(), author],
         )?;
         tx.commit()?;
+        self.refresh_link_index();
         Ok(())
     }
 
@@ -182,6 +184,7 @@ impl Store {
             )?;
         }
         tx.commit()?;
+        self.refresh_link_index();
         Ok(changes.into_iter().map(|(id, _)| id).collect())
     }
 
@@ -348,6 +351,16 @@ impl Store {
             topic: None,
             candidates,
         }))
+    }
+
+    /// Rewrites the hooks' pre-check file (ADR 0008) from the live folders.
+    /// Best effort: a failure only costs hooks their early exit, never a
+    /// write, so it is not reported.
+    pub fn refresh_link_index(&self) {
+        if let Ok(folders) = self.live_owner_folders() {
+            let paths: Vec<String> = folders.into_iter().map(|f| f.path).collect();
+            let _ = crate::link_index::write(&self.data_dir, Os::CURRENT, &paths);
+        }
     }
 
     /// Live folders whose owner chain is live.

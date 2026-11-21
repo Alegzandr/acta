@@ -4,7 +4,9 @@
 
 use super::Store;
 use crate::error::Result;
-use crate::model::{EntryId, KbId, NoteId, Page, PageReq, ProjectId, Record, TopicId};
+use crate::model::{
+    EntryId, KbId, KbKind, NoteId, Owner, Page, PageReq, ProjectId, Record, TopicId,
+};
 
 /// Marks the start and end of a matched term in [`SearchHit::snippet`].
 pub const SNIPPET_OPEN: char = '\u{2}';
@@ -150,6 +152,63 @@ impl Store {
             .skip(offset as usize)
             .take(limit as usize)
             .collect();
+        Ok(Page {
+            items,
+            total,
+            offset,
+        })
+    }
+}
+
+impl Store {
+    /// Full-text search over the knowledge an agent at `owner` sees (its own,
+    /// its epic's, its project's), best match first. Hits carry the entry
+    /// title and a short excerpt.
+    pub fn kb_search(
+        &self,
+        owner: Owner,
+        text: &str,
+        kind: Option<KbKind>,
+        page: PageReq,
+    ) -> Result<Page<SearchHit>> {
+        let (offset, limit) = page.clamped();
+        let scope = self.scope_condition(owner)?;
+        let Some(fts) = fts_query(text) else {
+            return Ok(Page {
+                items: Vec::new(),
+                total: 0,
+                offset,
+            });
+        };
+        let kind = kind.map_or(String::new(), |k| format!(" AND k.kind = '{}'", k.as_str()));
+        let (o, c) = (SNIPPET_OPEN, SNIPPET_CLOSE);
+        let filter = format!("kb_fts MATCH ?1 AND k.deleted_at IS NULL AND {scope}{kind}");
+        let total: i64 = self.conn.query_row(
+            &format!(
+                "SELECT count(*) FROM kb_fts JOIN kb_entries k ON k.id = kb_fts.rowid WHERE {filter}"
+            ),
+            [&fts],
+            |r| r.get(0),
+        )?;
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT k.id, k.project_id, k.topic_id, k.title,
+                    snippet(kb_fts, -1, '{o}', '{c}', '…', 16), bm25(kb_fts)
+             FROM kb_fts JOIN kb_entries k ON k.id = kb_fts.rowid
+             WHERE {filter}
+             ORDER BY 6, 1 LIMIT {limit} OFFSET {offset}"
+        ))?;
+        let items = stmt
+            .query_map([&fts], |r| {
+                Ok(SearchHit {
+                    record: Record::Kb(KbId(r.get(0)?)),
+                    project: ProjectId(r.get(1)?),
+                    topic: r.get::<_, Option<i64>>(2)?.map(TopicId),
+                    title: r.get(3)?,
+                    snippet: r.get(4)?,
+                    rank: r.get(5)?,
+                })
+            })?
+            .collect::<rusqlite::Result<_>>()?;
         Ok(Page {
             items,
             total,

@@ -2,11 +2,13 @@
 //! encrypted store (ADR 0003) and the domain model (ADR 0005 to 0008). No
 //! GPUI type appears here, so the app, the CLI and the MCP server share it.
 
+pub mod agent;
 pub mod db;
 pub mod error;
 pub mod folder_path;
 mod fsutil;
 pub mod keys;
+pub mod link_index;
 pub mod markdown;
 pub mod model;
 pub mod paths;

@@ -33,7 +33,7 @@ use crate::model::{Author, EpicId, Owner, ProjectId, Stamp, TopicId};
 use crate::paths::{self, BaseDirs, Os};
 use crate::schema;
 use crate::snapshots::{self, Snapshot, SnapshotKind};
-use rusqlite::{Connection, Row, Transaction, TransactionBehavior};
+use rusqlite::{Connection, OptionalExtension, Row, Transaction, TransactionBehavior};
 use std::path::{Path, PathBuf};
 
 pub use crate::db::DB_FILE;
@@ -171,6 +171,38 @@ impl Store {
             schema::MIGRATIONS,
         )
         .map_err(open_to_error)?;
+        self.refresh_link_index();
+        Ok(())
+    }
+
+    // ---- local values ----
+
+    /// A value of this installation, kept in the encrypted database and never
+    /// exported: the agent focus per session and per worktree (ADR 0005).
+    pub fn local_value(&self, key: &str) -> Result<Option<String>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT value FROM meta WHERE key = ?1",
+                [format!("local.{key}")],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
+    /// Sets (`Some`) or removes (`None`) a local value.
+    pub fn set_local_value(&mut self, key: &str, value: Option<&str>) -> Result<()> {
+        let key = format!("local.{key}");
+        let tx = self.write()?;
+        match value {
+            Some(v) => tx.execute(
+                "INSERT INTO meta (key, value) VALUES (?1, ?2)
+                 ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+                rusqlite::params![key, v],
+            )?,
+            None => tx.execute("DELETE FROM meta WHERE key = ?1", [key])?,
+        };
+        tx.commit()?;
         Ok(())
     }
 
