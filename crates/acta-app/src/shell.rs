@@ -146,6 +146,13 @@ actions!(
         DismissSidebar,
         /// `Mod+/`, palette "Keyboard shortcuts".
         OpenShortcuts,
+        /// `Mod+W`, palette "Close tab" (layout.md 4.4).
+        CloseTab,
+        /// `Ctrl+Tab` / `Ctrl+Shift+Tab`.
+        NextTab,
+        PreviousTab,
+        /// `Mod+Enter` on a tree row: open it in a new tab.
+        TreeOpenTab,
     ]
 );
 
@@ -194,6 +201,10 @@ fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new(m("cmd-b", "ctrl-b"), ToggleSidebar, app),
         KeyBinding::new(m("cmd-,", "ctrl-,"), OpenSettings, app),
         KeyBinding::new(m("cmd-/", "ctrl-/"), OpenShortcuts, app),
+        KeyBinding::new(m("cmd-w", "ctrl-w"), CloseTab, app),
+        KeyBinding::new("ctrl-tab", NextTab, app),
+        KeyBinding::new("ctrl-shift-tab", PreviousTab, app),
+        KeyBinding::new(m("cmd-enter", "ctrl-enter"), TreeOpenTab, Some("Tree")),
         KeyBinding::new("tab", FocusNext, plain),
         KeyBinding::new("shift-tab", FocusPrevious, plain),
         KeyBinding::new(m("cmd-k", "ctrl-k"), OpenPalette, app),
@@ -296,7 +307,14 @@ enum Overlay {
 
 struct Bench {
     ws: Entity<Workspace>,
+    /// The active tab's history (layout.md 4.4).
     history: History,
+    /// Every tab's history, in order; the active one's entry is refreshed
+    /// from `history` whenever tabs change.
+    tabs: Vec<History>,
+    active_tab: usize,
+    /// Closed tabs, most recent last ("Reopen closed tab").
+    closed_tabs: Vec<History>,
     page: PageView,
     settings: Entity<SettingsPage>,
     folds: Folds,
@@ -482,6 +500,9 @@ impl Shell {
         let bench = Bench {
             ws,
             history: History::default(),
+            tabs: vec![History::default()],
+            active_tab: 0,
+            closed_tabs: Vec::new(),
             page: PageView::FirstRun(first_run),
             settings: settings_page,
             folds,
@@ -542,7 +563,24 @@ impl Shell {
         let on_first_run = matches!(bench.page, PageView::FirstRun(_));
         let started = bench.history.current().is_some();
         if !started {
-            let saved = settings::current(cx).page.as_deref().and_then(Route::parse);
+            // layout.md 4.4: tabs are restored at launch.
+            let prefs = settings::current(cx).clone();
+            let restored: Vec<History> = prefs
+                .tabs
+                .iter()
+                .filter_map(|k| Route::parse(k))
+                .map(History::at)
+                .collect();
+            if restored.len() >= 2 && has_projects && start.page != Page::Settings {
+                let active = prefs.active_tab.min(restored.len() - 1);
+                bench.history = restored[active].clone();
+                bench.tabs = restored;
+                bench.active_tab = active;
+            }
+            let saved = bench
+                .history
+                .current()
+                .or_else(|| prefs.page.as_deref().and_then(Route::parse));
             let route = if start.page == Page::Settings {
                 Some(Route::Settings)
             } else if has_projects {
@@ -933,8 +971,25 @@ impl Shell {
         let mut closed: Vec<String> = bench.folds.closed_shown.iter().cloned().collect();
         collapsed.sort();
         closed.sort();
+        bench.tabs[bench.active_tab] = bench.history.clone();
+        let (tabs, active_tab) = if bench.tabs.len() >= 2 {
+            (
+                bench
+                    .tabs
+                    .iter()
+                    .filter_map(|h| h.current().map(Route::key))
+                    .collect::<Vec<_>>(),
+                bench.active_tab,
+            )
+        } else {
+            (Vec::new(), 0)
+        };
         let current = settings::current(cx);
-        if current.page == page && current.collapsed == collapsed && current.closed_shown == closed
+        if current.page == page
+            && current.collapsed == collapsed
+            && current.closed_shown == closed
+            && current.tabs == tabs
+            && current.active_tab == active_tab
         {
             return;
         }
@@ -942,7 +997,247 @@ impl Shell {
             prefs.page = page;
             prefs.collapsed = collapsed;
             prefs.closed_shown = closed;
+            prefs.tabs = tabs;
+            prefs.active_tab = active_tab;
         });
+    }
+
+    // ---- tabs (layout.md 4.4) ----
+
+    /// Open `route` in a new tab, or focus the tab that already shows it.
+    fn open_in_tab(&mut self, route: Route, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(bench) = self.bench() else { return };
+        bench.tabs[bench.active_tab] = bench.history.clone();
+        if let Some(at) = bench.tabs.iter().position(|h| h.current() == Some(route)) {
+            self.switch_tab(at, window, cx);
+            return;
+        }
+        bench.tabs.push(History::at(route));
+        let at = bench.tabs.len() - 1;
+        self.switch_tab(at, window, cx);
+    }
+
+    fn switch_tab(&mut self, at: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(bench) = self.bench() else { return };
+        if at >= bench.tabs.len() {
+            return;
+        }
+        bench.tabs[bench.active_tab] = bench.history.clone();
+        bench.active_tab = at;
+        bench.history = bench.tabs[at].clone();
+        if let Some(route) = bench.history.current() {
+            self.show(route, window, cx);
+        }
+        cx.notify();
+    }
+
+    /// Close tab `at`; the last remaining tab cannot be closed.
+    fn close_tab(&mut self, at: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(bench) = self.bench() else { return };
+        if bench.tabs.len() <= 1 || at >= bench.tabs.len() {
+            return;
+        }
+        bench.tabs[bench.active_tab] = bench.history.clone();
+        let closed = bench.tabs.remove(at);
+        bench.closed_tabs.push(closed);
+        let was_active = at == bench.active_tab;
+        if at < bench.active_tab || bench.active_tab >= bench.tabs.len() {
+            bench.active_tab = bench.active_tab.saturating_sub(1);
+        }
+        bench.history = bench.tabs[bench.active_tab].clone();
+        if was_active && let Some(route) = bench.history.current() {
+            self.show(route, window, cx);
+        } else {
+            self.save_layout(cx);
+        }
+        cx.notify();
+    }
+
+    fn close_other_tabs(&mut self, cx: &mut Context<Self>) {
+        let Some(bench) = self.bench() else { return };
+        bench.tabs[bench.active_tab] = bench.history.clone();
+        let keep = bench.tabs.remove(bench.active_tab);
+        bench.closed_tabs.append(&mut bench.tabs);
+        bench.tabs = vec![keep];
+        bench.active_tab = 0;
+        self.save_layout(cx);
+        cx.notify();
+    }
+
+    fn reopen_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(bench) = self.bench() else { return };
+        let Some(history) = bench.closed_tabs.pop() else {
+            return;
+        };
+        bench.tabs[bench.active_tab] = bench.history.clone();
+        bench.tabs.push(history);
+        let at = bench.tabs.len() - 1;
+        self.switch_tab(at, window, cx);
+    }
+
+    /// `Ctrl+Tab` / `Ctrl+Shift+Tab`, wrapping.
+    fn cycle_tab(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(bench) = self.bench() else { return };
+        let n = bench.tabs.len();
+        if n < 2 {
+            return;
+        }
+        let at = if forward {
+            (bench.active_tab + 1) % n
+        } else {
+            (bench.active_tab + n - 1) % n
+        };
+        self.switch_tab(at, window, cx);
+    }
+
+    /// A tab's icon and title (layout.md 4.4).
+    fn tab_label(&self, route: Route, locale: Locale, cx: &App) -> (Icon, Option<Status>, String) {
+        let Content::Workbench(bench) = &self.content else {
+            return (Icon::FileText, None, String::new());
+        };
+        let projects = &bench.ws.read(cx).projects;
+        match route {
+            Route::Topic(id) => {
+                let topic = projects
+                    .iter()
+                    .flat_map(|p| {
+                        p.loose_topics
+                            .iter()
+                            .chain(p.epics.iter().flat_map(|(_, t)| t))
+                    })
+                    .find(|t| t.id == id);
+                match topic {
+                    Some(t) => (Icon::Circle, Some(t.status), t.title.clone()),
+                    None => (Icon::Circle, None, id.to_string()),
+                }
+            }
+            Route::Epic(id) => (
+                Icon::Layers,
+                None,
+                tree::locate_epic(projects, id)
+                    .and_then(|l| l.epic.map(|e| e.1))
+                    .unwrap_or_else(|| id.to_string()),
+            ),
+            Route::Project(id) => (
+                Icon::Folder,
+                None,
+                tree::locate_project(projects, id)
+                    .and_then(|l| l.project.map(|p| p.1))
+                    .unwrap_or_else(|| id.to_string()),
+            ),
+            Route::Kb(id) => {
+                let title = match &bench.page {
+                    PageView::Doc(page) if bench.history.current() == Some(route) => {
+                        page.read(cx).located().and_then(|(_, t)| t)
+                    }
+                    _ => None,
+                };
+                (
+                    Icon::FileText,
+                    None,
+                    title.unwrap_or_else(|| id.to_string()),
+                )
+            }
+            Route::Inbox(_) => (Icon::Inbox, None, text(locale, Key::TreeInbox)),
+            Route::Knowledge(_) => (Icon::Library, None, text(locale, Key::TreeKnowledge)),
+            Route::Trash => (Icon::Trash2, None, text(locale, Key::TreeTrash)),
+            Route::Settings => (Icon::Settings, None, text(locale, Key::TreeSettings)),
+            Route::Shortcuts => (Icon::Settings, None, text(locale, Key::CmdShortcuts)),
+        }
+    }
+
+    /// The tab bar (layout.md 4.4): 32 high, `bg.sunken`, only with two or
+    /// more tabs, across the page area.
+    fn tab_bar(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let t = cx.global::<Tokens>().clone();
+        let locale = settings::locale(cx);
+        let (routes, active) = match &self.content {
+            Content::Workbench(bench) if bench.tabs.len() >= 2 => {
+                let mut tabs = bench.tabs.clone();
+                tabs[bench.active_tab] = bench.history.clone();
+                (
+                    tabs.iter().map(|h| h.current()).collect::<Vec<_>>(),
+                    bench.active_tab,
+                )
+            }
+            _ => return None,
+        };
+        let mut bar = div()
+            .id("tab-bar")
+            .flex()
+            .flex_row()
+            .flex_shrink_0()
+            .h(px(32.))
+            .w_full()
+            .overflow_x_scroll()
+            .bg(t.bg_sunken)
+            .border_b_1()
+            .border_color(t.border_subtle);
+        for (i, route) in routes.into_iter().enumerate() {
+            let Some(route) = route else { continue };
+            let (glyph, status, title) = self.tab_label(route, locale, cx);
+            let is_active = i == active;
+            let group = SharedString::from(format!("tab-{i}"));
+            let hover = t.fill_hover;
+            let leading = match status {
+                Some(status) => ui::status_glyph(status, 14., &t),
+                None => icon(glyph, 14., t.text_secondary),
+            };
+            let close = ui::ghost_icon_button(
+                format!("tab-close-{i}"),
+                Icon::X,
+                16.,
+                false,
+                false,
+                true,
+                &t,
+            )
+            .when(!is_active, |this| {
+                this.invisible().group_hover(group.clone(), |s| s.visible())
+            })
+            .on_click(cx.listener(move |shell, _, window, cx| {
+                cx.stop_propagation();
+                shell.close_tab(i, window, cx)
+            }));
+            bar = bar.child(
+                ui::focusable(div().id(("tab", i)), &t, false)
+                    .group(group)
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(8.))
+                    .h_full()
+                    .px(px(12.))
+                    .min_w(px(120.))
+                    .max_w(px(220.))
+                    .flex_shrink(1.)
+                    .when(is_active, |this| this.bg(t.bg_base))
+                    .when(!is_active, |this| this.hover(move |s| s.bg(hover)))
+                    .on_click(
+                        cx.listener(move |shell, _, window, cx| shell.switch_tab(i, window, cx)),
+                    )
+                    .on_mouse_down(
+                        gpui_kit::MouseButton::Middle,
+                        cx.listener(move |shell, _, window, cx| shell.close_tab(i, window, cx)),
+                    )
+                    .child(leading)
+                    .child(
+                        type_scale::UI
+                            .el()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_color(if is_active {
+                                t.text_primary
+                            } else {
+                                t.text_secondary
+                            })
+                            .child(title),
+                    )
+                    .child(close),
+            );
+        }
+        Some(bar.into_any_element())
     }
 
     fn focus_page(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1022,6 +1317,8 @@ impl Shell {
                 on_record: matches!(bench.page, PageView::Record(_)),
                 can_back: bench.history.can_go_back(),
                 can_forward: bench.history.can_go_forward(),
+                tabs: bench.tabs.len() > 1,
+                closed_tab: !bench.closed_tabs.is_empty(),
                 #[cfg(windows)]
                 chat_bottom: bench.chat.read(cx).dock == Dock::Bottom,
             },
@@ -1059,14 +1356,19 @@ impl Shell {
                 }
                 self.close_overlay(window, cx)
             }
-            PaletteEvent::Run(target) => {
-                let target = target.clone();
+            PaletteEvent::Run(target, new_tab) => {
+                let (target, new_tab) = (target.clone(), *new_tab);
                 self.close_overlay(window, cx);
-                match target {
-                    Target::Topic(id, _) => self.navigate(Route::Topic(id), true, window, cx),
-                    Target::Project(id) => self.navigate(Route::Project(id), true, window, cx),
-                    Target::Kb(id, _) => self.navigate(Route::Kb(id), true, window, cx),
-                    Target::Command(command) => self.run_command(command, window, cx),
+                let route = match target {
+                    Target::Topic(id, _) => Route::Topic(id),
+                    Target::Project(id) => Route::Project(id),
+                    Target::Kb(id, _) => Route::Kb(id),
+                    Target::Command(command) => return self.run_command(command, window, cx),
+                };
+                if new_tab {
+                    self.open_in_tab(route, window, cx);
+                } else {
+                    self.navigate(route, true, window, cx);
                 }
             }
             PaletteEvent::Create(kind, title) => {
@@ -1227,6 +1529,13 @@ impl Shell {
             Command::Snapshot => self.open_snapshots(window, cx),
             Command::Settings => self.open_settings(window, cx),
             Command::Shortcuts => self.navigate(Route::Shortcuts, true, window, cx),
+            Command::CloseTab => {
+                if let Some(at) = self.bench().map(|b| b.active_tab) {
+                    self.close_tab(at, window, cx)
+                }
+            }
+            Command::CloseOtherTabs => self.close_other_tabs(cx),
+            Command::ReopenTab => self.reopen_tab(window, cx),
             Command::Theme(setting) => settings::set_theme(setting, cx),
             Command::Language(locale) => settings::set_language(locale, cx),
         }
@@ -1586,12 +1895,9 @@ impl Shell {
             Kept::Focus(1) => Box::new(FocusSidebar),
             Kept::Focus(2) => Box::new(FocusPage),
             Kept::Focus(3) => Box::new(FocusTerminal),
-            Kept::Focus(_)
-            | Kept::NextTab
-            | Kept::PreviousTab
-            | Kept::NextPane
-            | Kept::PreviousPane
-            | Kept::ZoomToolWindow => return,
+            Kept::NextTab => Box::new(NextTab),
+            Kept::PreviousTab => Box::new(PreviousTab),
+            Kept::Focus(_) | Kept::NextPane | Kept::PreviousPane | Kept::ZoomToolWindow => return,
         };
         // The keyboard comes back to the GPUI window before the action
         // runs, so that what it focuses receives the next keys.
@@ -1969,6 +2275,16 @@ impl Shell {
                     )
                     .on_action(cx.listener(|s, _: &TreeEnd, w, cx| s.tree_key(TreeKey::End, w, cx)))
                     .on_action(cx.listener(|s, _: &DismissSidebar, w, cx| s.dismiss_sidebar(w, cx)))
+                    .on_action(cx.listener(|s, _: &TreeOpenTab, w, cx| {
+                        let rows = s.rows(cx);
+                        let route = s
+                            .bench()
+                            .and_then(|b| rows.get(b.cursor))
+                            .and_then(Row::route);
+                        if let Some(route) = route {
+                            s.open_in_tab(route, w, cx);
+                        }
+                    }))
                     .children(items),
             )
             .child(pinned)
@@ -2649,6 +2965,7 @@ impl Shell {
         let first_run = matches!(self.bench().map(|b| &b.page), Some(PageView::FirstRun(_)));
         let bulk = self.bulk_notice(cx);
         let toast = self.toast_element(cx);
+        let tab_bar = self.tab_bar(cx);
         let (right_chat, bottom) = self.chat_docks(window, cx);
         let terminal = self.terminal_visible();
         let right_wanted = if terminal {
@@ -2708,6 +3025,7 @@ impl Shell {
             .flex_1()
             .min_w_0()
             .min_h_0()
+            .children(tab_bar)
             .children(bulk)
             .child(div().flex_1().min_h_0().child(page_view))
             .children(toast);
@@ -3056,12 +3374,24 @@ fn tree_row(
         }
     };
     if let Some(route) = row.route() {
-        el = el.on_click(cx.listener(move |shell, _, window, cx| {
-            if let Some(bench) = shell.bench() {
-                bench.cursor = index;
-            }
-            shell.navigate(route, true, window, cx)
-        }));
+        // Mod+click or a middle click opens the row in a new tab (4.4).
+        el = el
+            .on_click(
+                cx.listener(move |shell, event: &gpui_kit::ClickEvent, window, cx| {
+                    if let Some(bench) = shell.bench() {
+                        bench.cursor = index;
+                    }
+                    if event.modifiers().secondary(cx) {
+                        shell.open_in_tab(route, window, cx)
+                    } else {
+                        shell.navigate(route, true, window, cx)
+                    }
+                }),
+            )
+            .on_mouse_down(
+                gpui_kit::MouseButton::Middle,
+                cx.listener(move |shell, _, window, cx| shell.open_in_tab(route, window, cx)),
+            );
     }
     el.into_any_element()
 }
@@ -3180,6 +3510,11 @@ impl Render for Shell {
             .on_action(cx.listener(|shell, _: &OpenShortcuts, window, cx| {
                 shell.navigate(Route::Shortcuts, true, window, cx)
             }))
+            .on_action(
+                cx.listener(|s, _: &CloseTab, w, cx| s.run_command(Command::CloseTab, w, cx)),
+            )
+            .on_action(cx.listener(|s, _: &NextTab, w, cx| s.cycle_tab(true, w, cx)))
+            .on_action(cx.listener(|s, _: &PreviousTab, w, cx| s.cycle_tab(false, w, cx)))
             .on_action(|_: &FocusNext, window, cx| window.focus_next(cx))
             .on_action(|_: &FocusPrevious, window, cx| window.focus_prev(cx))
             .on_action(cx.listener(|s, _: &OpenPalette, w, cx| s.open_palette(None, None, w, cx)))

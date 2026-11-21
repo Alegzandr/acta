@@ -37,7 +37,8 @@ pub enum CreateKind {
 }
 
 pub enum PaletteEvent {
-    Run(Target),
+    /// Open or run the target; `true`: in a new tab (`Mod+Enter`).
+    Run(Target, bool),
     Create(CreateKind, String),
     Dismiss,
 }
@@ -84,7 +85,7 @@ impl Palette {
             window,
             |palette, _, event: &InputEvent, _, cx| match event {
                 InputEvent::Change => palette.refresh(cx),
-                InputEvent::PressEnter { .. } => palette.run(cx),
+                InputEvent::PressEnter { secondary, .. } => palette.run(*secondary, cx),
                 _ => {}
             },
         )];
@@ -237,7 +238,7 @@ impl Palette {
         out
     }
 
-    fn run(&mut self, cx: &mut Context<Self>) {
+    fn run(&mut self, new_tab: bool, cx: &mut Context<Self>) {
         let query = self.query(cx);
         if let Some(kind) = self.create {
             if !query.is_empty() {
@@ -247,7 +248,7 @@ impl Palette {
         }
         let shown = self.shown();
         match shown.get(self.selected) {
-            Some(item) => cx.emit(PaletteEvent::Run(item.target.clone())),
+            Some(item) => cx.emit(PaletteEvent::Run(item.target.clone(), new_tab)),
             None if !query.is_empty() => cx.emit(PaletteEvent::Create(CreateKind::Topic, query)),
             None => {}
         }
@@ -335,10 +336,13 @@ impl Palette {
             .rounded(px(RADIUS_SM))
             .when(selected, |this| this.bg(t.fill_selected))
             .when(!selected, |this| this.hover(move |s| s.bg(hover)))
-            .on_click(cx.listener(move |palette, _, _, cx| {
-                palette.selected = index;
-                palette.run(cx);
-            }))
+            .on_click(
+                cx.listener(move |palette, event: &gpui_kit::ClickEvent, _, cx| {
+                    palette.selected = index;
+                    let new_tab = event.modifiers().secondary(cx);
+                    palette.run(new_tab, cx);
+                }),
+            )
             .child(leading)
             .child(title)
             .child(

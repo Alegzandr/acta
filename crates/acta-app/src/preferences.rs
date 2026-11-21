@@ -65,6 +65,10 @@ pub struct Preferences {
     /// The version that last ran ("0.4.1"): a launch on another version
     /// shows "Updated to ..." in the status bar for that session.
     pub last_version: Option<String>,
+    /// The open tabs, as route keys (record ids or fixed page keys, never a
+    /// title), when there are two or more; and the active one's index.
+    pub tabs: Vec<String>,
+    pub active_tab: usize,
 }
 
 /// The file as stored. Every field but the version may be missing (it then
@@ -104,6 +108,14 @@ struct Stored {
     chat_height: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     last_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    tabs: Vec<String>,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    active_tab: usize,
+}
+
+fn is_zero(n: &usize) -> bool {
+    *n == 0
 }
 
 /// A stored version: digits and dots only, short.
@@ -223,6 +235,12 @@ pub fn parse(text: &str) -> Result<Preferences, LoadError> {
         chat_width: pane_size(stored.chat_width),
         chat_height: pane_size(stored.chat_height),
         last_version: stored.last_version.filter(|v| is_version(v)),
+        tabs: stored
+            .tabs
+            .into_iter()
+            .filter(|k| is_reference(k))
+            .collect(),
+        active_tab: stored.active_tab,
     })
 }
 
@@ -246,6 +264,8 @@ pub fn serialize(prefs: &Preferences) -> String {
         chat_width: prefs.chat_width,
         chat_height: prefs.chat_height,
         last_version: prefs.last_version.clone(),
+        tabs: prefs.tabs.clone(),
+        active_tab: prefs.active_tab,
     };
     // A struct of plain enums and numbers always serializes.
     let mut text = serde_json::to_string_pretty(&stored).unwrap_or_default();
@@ -456,6 +476,8 @@ mod tests {
             chat_width: Some(480),
             chat_height: Some(240),
             last_version: Some("0.3.0".into()),
+            tabs: vec!["T-42".into(), "settings".into()],
+            active_tab: 1,
         };
         save_to(&path, &prefs).unwrap();
         assert_eq!(load_from(&path).unwrap(), prefs);

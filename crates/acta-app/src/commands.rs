@@ -54,6 +54,9 @@ pub enum Command {
     Snapshot,
     Settings,
     Shortcuts,
+    CloseTab,
+    CloseOtherTabs,
+    ReopenTab,
     Theme(crate::theme::ThemeSetting),
     Language(Locale),
 }
@@ -69,6 +72,9 @@ pub struct Context {
     /// The chat panel is in the bottom dock.
     #[cfg(windows)]
     pub chat_bottom: bool,
+    /// More than one tab is open; a closed tab can be reopened.
+    pub tabs: bool,
+    pub closed_tab: bool,
 }
 
 impl Command {
@@ -129,6 +135,12 @@ impl Command {
         }
         if ctx.can_forward {
             out.push(Command::Forward);
+        }
+        if ctx.tabs {
+            out.extend([Command::CloseTab, Command::CloseOtherTabs]);
+        }
+        if ctx.closed_tab {
+            out.push(Command::ReopenTab);
         }
         out.extend([
             Command::Undo,
@@ -195,6 +207,9 @@ impl Command {
             Command::Snapshot => Key::CmdSnapshot,
             Command::Settings => Key::CmdSettings,
             Command::Shortcuts => Key::CmdShortcuts,
+            Command::CloseTab => Key::TabClose,
+            Command::CloseOtherTabs => Key::TabCloseOthers,
+            Command::ReopenTab => Key::TabReopen,
             Command::SetStatus(status) => {
                 let name = text(locale, crate::ui::status_key(status));
                 return tr(locale, Key::CmdSetStatus, &[("status", Arg::Text(&name))]);
@@ -245,6 +260,7 @@ impl Command {
             Command::ChatBrowser => vec![m, shift, "H"],
             Command::Settings => vec![m, ","],
             Command::Shortcuts => vec![m, "/"],
+            Command::CloseTab => vec![m, "W"],
             // components-app.md 5, Settings: never Ctrl+- (Claude Code's
             // undo); Ctrl+Alt on Windows and Linux, Cmd+Shift on macOS.
             Command::TerminalLarger if macos => vec![m, shift, "="],
