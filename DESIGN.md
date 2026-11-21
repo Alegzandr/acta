@@ -119,6 +119,14 @@ Run against every screen, in dark and in light, in English and in French. One fa
 - [ ] Setting, changing and clearing is one `Mod+Z` step, writes a system event, and shows no toast. Past midnight, relative forms and marks update without moving a row; day counts are calendar days across a daylight-saving change.
 - [ ] Agent side: `brief`, `find` and the session briefing stay within their budgets with every record dated; `update` takes only `YYYY-MM-DD` or `""`.
 
+**Overview** (components-records.md 5, screens.md 8.20; run with a calm project, then one with blocked, overdue, idle topics and a 12-day-old inbox, in both themes and languages)
+- [ ] At rest the project page shows at most four attention lines, each only above zero; nothing applies: the header row and "Nothing needs attention." only; no zero, no chart, no tile, no card.
+- [ ] Colour is `warning` on the Blocked and Overdue glyphs only; no accent at rest; every line reads in greyscale by glyph and words.
+- [ ] "More" is collapsed by default and holds only Last 7 days, Epics and the memory line, each absent when it has nothing to say; the epic page's section is absent with nothing to report and collapsed by default otherwise.
+- [ ] Every number opens the list it counts, and the list's count equals it; the chip clears with its `x`, `Backspace` or `Esc`; every line has its palette command.
+- [ ] A remote write that adds or removes a line moves neither focus nor viewport; values change at local midnight without moving anything else.
+- [ ] Agent side: the `Attention:` line appears only when something needs attention, is one line within 160 chars (120 on an epic), and `brief` stays within its budget with every topic blocked, overdue or idle.
+
 **Behaviour**
 - [ ] Feedback on the next frame; nothing in the "never animates" list animates; budgets in 6.3 hold with 10,000 topics.
 - [ ] Writes are optimistic; failure restores state and keeps the user's text.
