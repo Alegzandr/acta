@@ -82,6 +82,9 @@ pub const MIN_SIZE: (f32, f32) = (880., 560.);
 const STATUS_BAR_HEIGHT: f32 = 24.;
 /// docs/design/components.md 5, Toast: 6 s.
 const TOAST_TIME: Duration = Duration::from_secs(6);
+/// Deferred layers paint by priority: the sidebar over the page 1, the
+/// layout toast 2, menus 3, a drag 4, the palette and dialogs above all.
+const OVERLAY_PRIORITY: usize = 10;
 /// Type-ahead in the tree: keys typed within this of each other extend
 /// the same search.
 const TYPE_AHEAD_PAUSE: Duration = Duration::from_secs(1);
@@ -3423,7 +3426,8 @@ impl Shell {
     }
 
     /// The palette and quick capture: 96 below the window top, centred,
-    /// no scrim; dialogs draw their own scrim.
+    /// no scrim; dialogs draw their own scrim. Above every other layer (the
+    /// sidebar over the page, the toast, menus, a drag).
     fn overlay_element(&mut self) -> Option<AnyElement> {
         let bench = self.bench()?;
         let top = |child: AnyElement| {
@@ -3437,12 +3441,15 @@ impl Shell {
                     .justify_center()
                     .child(child),
             )
+            .with_priority(OVERLAY_PRIORITY)
             .into_any_element()
         };
         Some(match bench.overlay.as_ref()? {
             Overlay::Palette(palette) => top(palette.clone().into_any_element()),
             Overlay::Capture(capture) => top(capture.clone().into_any_element()),
-            Overlay::Dialog(dialog) => deferred(dialog.clone()).into_any_element(),
+            Overlay::Dialog(dialog) => deferred(dialog.clone())
+                .with_priority(OVERLAY_PRIORITY)
+                .into_any_element(),
         })
     }
 
