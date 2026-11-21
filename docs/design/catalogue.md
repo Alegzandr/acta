@@ -751,9 +751,51 @@ New with due dates (2026-11-21; components-records.md 5, layout.md 4.2.1, copy.m
 
 `due.in_days` and `due.tip.in_days` are used from 2 days ahead (today and tomorrow have their own keys), so their singular forms only serve the plural rule. `due.tip.date` is the tooltip of a date on a closed record, which is never "overdue". The picker's Clear button reuses `common.clear`. Agent-facing text (`due 11-27 (6d)`, `overdue 3d`) is protocol, English only, and not in this catalogue (10).
 
-### 10.4.5 Keys of questions and people, pending
+### 10.4.5 Keys of the Overview, pending
 
-New with questions and Report to (2026-11-21; components-questions.md 5, data.md 11 requests 17 and 18). They stay here, outside the table the tests read, until the feature is implemented; the implementing change moves them into 10.4 and adds them to `catalogue.rs` in the same commit: `section.questions` after `section.description`, `prop.report_to` after `prop.due`, `event.report_*` after `event.due_*`, `table.questions*` and `table.report_to` after `table.due`, the `cmd.*` keys after `cmd.due_*`, the other families together after `kb.*`. In French, *question* is feminine ("répondue", "abandonnée", "close"); the person is user text and always follows a colon in French ("Posée à : Marie", "À rapporter à : le service RH"), so no article or preposition ever meets it (10.3). `{name}` is a person or a record name, never translated; `{date}` is the absolute date of 10.2.
+New with the Overview (2026-11-21; components-records.md 5, screens.md 8.20, data.md 11 request 17). They stay here, outside the table the tests read, until the Overview is implemented; the implementing change moves them into 10.4 and adds them to `catalogue.rs` in the same commit: `overview.*` after `section.knowledge`, `filter.*` after `table.filter.*` (10.4.4), `cmd.show_*` and `cmd.overview_*` after `cmd.go_inbox`. Reused, not duplicated: "No epic" is `tree.no_epic`, the Knowledge block label is `section.knowledge`. Every `{n}` and `{days}` takes `tnum`; `{days}` is always 7 or more, so its sentences are written in the plural; `{when}` is the long form of 10.2 and the French brings its own preposition ("Dernière activité mardi à 14:05", "Dernière activité le 12 nov. 2026"). Memories are feminine in French (*mémoire*), topics masculine (*sujet*), epics masculine (*epic*).
+
+| Key | English | French |
+|---|---|---|
+| `overview.title` | Overview | Vue d'ensemble |
+| `overview.clear` | Nothing needs attention. | Rien ne demande votre attention. |
+| `overview.more` | More | Plus |
+| `overview.less` | Less | Moins |
+| `overview.attention` | Needs attention | À traiter |
+| `overview.blocked` | {n} blocked topic · {n} blocked topics | {n} sujet bloqué · {n} sujets bloqués |
+| `overview.overdue` | {n} overdue topic · {n} overdue topics | {n} sujet en retard · {n} sujets en retard |
+| `overview.idle` | {n} active topic with no activity for 7 days · {n} active topics with no activity for 7 days | {n} sujet actif sans activité depuis 7 jours · {n} sujets actifs sans activité depuis 7 jours |
+| `overview.inbox` | {n} note in the inbox for {days} days · {n} notes in the inbox, the oldest for {days} days | {n} note dans la boîte de réception depuis {days} jours · {n} notes dans la boîte de réception, la plus ancienne depuis {days} jours |
+| `overview.week` | Last 7 days | 7 derniers jours |
+| `overview.week.done` | {n} topic done · {n} topics done | {n} sujet terminé · {n} sujets terminés |
+| `overview.week.decisions` | {n} decision · {n} decisions | {n} décision · {n} décisions |
+| `overview.week.new` | {n} new topic · {n} new topics | {n} nouveau sujet · {n} nouveaux sujets |
+| `overview.week.none` | Nothing done, decided or opened in the last 7 days. Last activity {when}. | Rien de terminé, décidé ni ouvert ces 7 derniers jours. Dernière activité {when}. |
+| `overview.epics` | Epics | Epics |
+| `overview.epics.more` | {n} more epic · {n} more epics | {n} autre epic · {n} autres epics |
+| `overview.epics.complete` | {n} complete epic · {n} complete epics | {n} epic terminé · {n} epics terminés |
+| `overview.memories` | {n} memory not updated for 90 days · {n} memories not updated for 90 days | {n} mémoire non mise à jour depuis 90 jours · {n} mémoires non mises à jour depuis 90 jours |
+| `filter.blocked` | Blocked | Bloqués |
+| `filter.idle` | No activity for 7 days | Sans activité depuis 7 jours |
+| `filter.done_week` | Done in the last 7 days | Terminés ces 7 derniers jours |
+| `filter.decided_week` | Decided in the last 7 days | Décidés ces 7 derniers jours |
+| `filter.created_week` | Created in the last 7 days | Créés ces 7 derniers jours |
+| `filter.stale_memories` | Not updated for 90 days | Non mises à jour depuis 90 jours |
+| `filter.clear` | Clear filter | Effacer le filtre |
+| `cmd.show_blocked` | Show blocked topics | Afficher les sujets bloqués |
+| `cmd.show_idle` | Show topics with no activity | Afficher les sujets sans activité |
+| `cmd.show_done_week` | Show topics done in the last 7 days | Afficher les sujets terminés ces 7 derniers jours |
+| `cmd.show_decided_week` | Show topics with a decision in the last 7 days | Afficher les sujets avec une décision ces 7 derniers jours |
+| `cmd.show_created_week` | Show topics created in the last 7 days | Afficher les sujets créés ces 7 derniers jours |
+| `cmd.show_stale_memories` | Show memories not updated for 90 days | Afficher les mémoires non mises à jour depuis 90 jours |
+| `cmd.overview_more` | Overview: Show more | Vue d'ensemble : afficher plus |
+| `cmd.overview_less` | Overview: Show less | Vue d'ensemble : afficher moins |
+
+`overview.inbox` is chosen by `{n}`; with one note, "the oldest" would be wrong, so the singular form names that note's age directly. `filter.decided_week` lists topics, so "Décidés" agrees with *sujets*. Agent-facing text (`Attention: blocked T-12 ...`, `· no activity 12d`) is protocol, English only, and not in this catalogue (10).
+
+### 10.4.6 Keys of questions and people, pending
+
+New with questions and Report to (2026-11-21; components-questions.md 5, data.md 11 requests 18 and 19). They stay here, outside the table the tests read, until the feature is implemented; the implementing change moves them into 10.4 and adds them to `catalogue.rs` in the same commit: `section.questions` after `section.description`, `prop.report_to` after `prop.due`, `event.report_*` after `event.due_*`, `table.questions*` and `table.report_to` after `table.due`, the `cmd.*` keys after `cmd.due_*`, the other families together after `kb.*`. In French, *question* is feminine ("répondue", "abandonnée", "close"); the person is user text and always follows a colon in French ("Posée à : Marie", "À rapporter à : le service RH"), so no article or preposition ever meets it (10.3). `{name}` is a person or a record name, never translated; `{date}` is the absolute date of 10.2.
 
 | Key | English | French |
 |---|---|---|
@@ -842,12 +884,14 @@ New with questions and Report to (2026-11-21; components-questions.md 5, data.md
 | `cmd.question_reopen` | Reopen question | Rouvrir la question |
 | `cmd.question_move` | Move question to... | Déplacer la question vers... |
 | `cmd.question_delete` | Delete question | Supprimer la question |
+| `overview.questions_late` | {n} question past its answer date · {n} questions past their answer date | {n} question dont la date de réponse est passée · {n} questions dont la date de réponse est passée |
+| `cmd.show_questions_late` | Show questions past their answer date | Afficher les questions dont la date de réponse est passée |
 
 `questions.more_*_overdue` replace `questions.more_*` when `{late}` is above 0, and `table.questions_tip_overdue` replaces `table.questions_tip` the same way (its first form is for one question, which is then the overdue one). The overdue clause ("1 overdue", "dont 1 en retard") is drawn in `warning` as one run (components-questions.md 5): the implementation marks the span of that clause in the formatted string, it never builds the sentence from fragments. `report.pending`, `report.done` and the events agree with *sujet* and *epic*, both masculine. The relative phrases of an answer date reuse `due.*` (10.4.4); the empty Answer by value reuses `due.none` (« Aucune », agreeing with *date*), Clear in the popover `common.clear`, and the remaining menu items `common.edit` and `common.delete`. Agent-facing text (`Q-12 Marie · overdue 3d`, `report to Marie`) is protocol, English only, and not in this catalogue (10).
 
-### 10.4.6 Keys of attachments, pending
+### 10.4.7 Keys of attachments, pending
 
-New with attachments (2026-11-21; components-attachments.md 5, ADR 0012, data.md 11 request 19). They stay here until attachments are implemented; the implementing change moves them into 10.4 and `catalogue.rs` in one commit, as a family after the `inbox.*` keys, with `settings.attachments`, `export.include_files` and `import.files_missing` beside their families. In French the word is *fichier* (masculine): "Fichier retiré". `{size}` is the size format of components-attachments.md 5 ("2.1 MB" / "2,1 Mo"); `{name}` a file name, never translated.
+New with attachments (2026-11-21; components-attachments.md 5, ADR 0012, data.md 11 request 20). They stay here until attachments are implemented; the implementing change moves them into 10.4 and `catalogue.rs` in one commit, as a family after the `inbox.*` keys, with `settings.attachments`, `export.include_files` and `import.files_missing` beside their families. In French the word is *fichier* (masculine): "Fichier retiré". `{size}` is the size format of components-attachments.md 5 ("2.1 MB" / "2,1 Mo"); `{name}` a file name, never translated.
 
 | Key | English | French |
 |---|---|---|

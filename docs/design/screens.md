@@ -624,7 +624,65 @@ Annotations: the pointer is on the 24 strip along the bottom of the page area, w
 
 Annotations: the Inbox was dragged from its page tab into the left sidebar's header, so it became the Inbox view and follows the active project ("Acta" is its context). It drops its page title; its capture editor and cards take the full 276 of width. The second page group was made by dragging "Resize protocol" to the right edge of the page area. Each group is at least 400 wide; a narrower window folds the split (4.8.10) and lists "Group 2" in the tab bar's menu. The right sidebar is hidden; its toggle in the titlebar still shows, as do the Terminal and Chat toggles.
 
-### 8.20 Topic page with questions and Report to
+### 8.20 Project page with its Overview
+
+At rest, something needs attention (Saturday 21 Nov 2026):
+
+```
+        Acta                                                       <- type.title
+    12  Progress   14 of 31 topics done  [====--------]            <- properties block
+        Due        None
+        Folders    > [f] ~\dev\acta
+        Updated    2 h ago by Claude Code
+    24  Overview                                       [More v]    28  header, type.label
+     4  (=)  2 blocked topics                                      32  circle-pause, warning
+        (!)  1 overdue topic                                       32  clock-alert, warning
+        (.)  3 active topics with no activity for 7 days           32  circle-dot, text.secondary
+        [i]  6 notes in the inbox, the oldest for 12 days          32  inbox, text.secondary
+    32  Description
+        ...
+```
+
+At rest, nothing needs attention:
+
+```
+    24  Overview  Nothing needs attention.                [More v]    28  the whole section
+    32  Description
+```
+
+"More" expanded:
+
+```
+    24  Overview  Nothing needs attention.                [Less ^]
+    16  Last 7 days                                                16  type.small, text.tertiary
+     4  [4 topics done] · [2 decisions] · [3 new topics]           28  inline ghost links
+    16  Epics
+     4  No epic           [==========--]   5 of 6                  28
+        Terminal          [====--------]   3 of 7   ! 18 Nov       28  overdue epic date, warning
+        Core UI           [=-----------]   1 of 9      Tue         28
+        2 complete epics                                           28  text.tertiary, not a control
+    16  Knowledge
+     4  5 memories not updated for 90 days                         28
+        |<- name, fills ->|<- 120 ->|12|<- 56 ->|<- 88 ->|
+```
+
+Epic page, the mini version collapsed (the default) and expanded:
+
+```
+        Terminal                                                   <- type.title
+    12  Progress   3 of 7 topics done  [====--------]
+        ...
+    24  > Needs attention  2                                       28  collapsed
+    32  Description
+
+    24  v Needs attention  2                                       28  expanded
+     4  (=)  1 blocked topic                                       32
+        (!)  1 overdue topic                                       32
+```
+
+Annotations: no figure is drawn at zero and no line exists for a normal state; a fresh inbox (newest note 2 days old) shows nothing here, because the tree's Inbox count already says it. The Overview spends no accent: colour is `warning` on the two glyphs that mean a real problem, nothing else. Every line, link and epic row opens the list behind its number (components-records.md 5); the topic table then shows a filter chip in place of its segmented control, for example `[Blocked x]  2 topics`. An epic with nothing to report has no section at all.
+
+### 8.21 Topic page with questions and Report to
 
 Content column only (560); the drawing is made on Saturday 21 Nov 2026.
 
@@ -687,7 +745,7 @@ The "3 closed" row unfolded, and the composer open (`Q`), with the person field'
 
 Annotations: `(?)` is `circle-question-mark` (open, `text.secondary`), `(v)` `circle-check` and `(-)` `circle-slash` (closed, `text.tertiary`); `(A)` and `[>]` are the author marks of the timeline, at the right, for who created the question. The overdue phrase is the Due row's ("Overdue by 3 days", `warning`), so lateness reads in words. Report to is set and the topic is open, so no run follows the name; once the topic is Done it reads "Marie  Not reported yet". The decision checkbox is there because the question belongs to a topic; on an epic or a project page it is absent. On epic and project pages the section ends with the roll-up row ("4 more open in the topics of this epic, 1 overdue"). 8.1 predates this section; the order drawn here is the one of layout.md 4.2.
 
-### 8.21 Questions page (project)
+### 8.22 Questions page (project)
 
 ```
         Questions                                                   <- type.title
@@ -710,9 +768,9 @@ Annotations: `(?)` is `circle-question-mark` (open, `text.secondary`), `(v)` `ci
         ...
 ```
 
-Annotations: groups are owners, widest first, as on the knowledge base page; rows are the question rows of 8.20, and `Enter` opens the owner's page with the question focused. With Overdue selected the list is ungrouped, earliest answer date first, each meta line starting "in Topic Embed the terminal". Scoped to an epic (from its roll-up row) the scope line reads "Epic Terminal · 3 open, 5 closed" followed by the ghost link "Whole project".
+Annotations: groups are owners, widest first, as on the knowledge base page; rows are the question rows of 8.21, and `Enter` opens the owner's page with the question focused. With Overdue selected the list is ungrouped, earliest answer date first, each meta line starting "in Topic Embed the terminal". Scoped to an epic (from its roll-up row) the scope line reads "Epic Terminal · 3 open, 5 closed" followed by the ghost link "Whole project".
 
-### 8.22 Person page
+### 8.23 Person page
 
 ```
         Marie                                                       <- type.title, as written
@@ -734,7 +792,7 @@ Annotations: groups are owners, widest first, as on the knowledge base page; row
 
 Annotations: `[l]` is `layers` (an epic), `[n]` `sticky-note` (a note). Questions are ordered by lateness here, not by their owner's order: the reader is about to talk to Marie. `Space` on "Encrypted backups" marks it reported; it moves into "2 reported" on the next frame and the change is one `Mod+Z` step, with no toast. Reached from any "Marie" link and from "Go to person...". The tab is not restored after a restart (4.7).
 
-### 8.23 Quick capture with Report to, and the note card
+### 8.24 Quick capture with Report to, and the note card
 
 ```
     +--------------------------------------------------------------+
@@ -752,7 +810,7 @@ Annotations: `[l]` is `layers` (an epic), `[n]` `sticky-note` (a note). Question
 
 Annotations: the field starts empty on every capture and is optional; `Mod+Enter` saves from the editor or the field. Made into a topic, the note gives "Marie" to the topic's Report to. In the inbox toolbar, "Report to: anyone" appears next to Open / Filed while a listed note names a person.
 
-### 8.24 Note with files, and the viewer
+### 8.25 Note with files, and the viewer
 
 A note card in the inbox, with two images and two other files; one chip is focused:
 

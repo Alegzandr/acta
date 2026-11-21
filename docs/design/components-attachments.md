@@ -4,7 +4,7 @@ Part of the Acta design system. [DESIGN.md](../../DESIGN.md) is the index: direc
 
 ## 5. Components (continued): attachments
 
-Added 2026-11-21 at the user's request: files can be pasted into notes (clipboard, drag and drop, a button), and go with the note when it is filed. Storage, limits, export and agent access are decided in [ADR 0012](../decisions/0012-attachments.md); model in data.md 11, request 19; copy in catalogue 10.4.6. In the interface the word is **file** / **fichier** ("Attach files", "3 files"); "attachment" is the docs' and the code's word.
+Added 2026-11-21 at the user's request: files can be pasted into notes (clipboard, drag and drop, a button), and go with the note when it is filed. Storage, limits, export and agent access are decided in [ADR 0012](../decisions/0012-attachments.md); model in data.md 11, request 20; copy in catalogue 10.4.7. In the interface the word is **file** / **fichier** ("Attach files", "3 files"); "attachment" is the docs' and the code's word.
 
 **Where files can be.** A note; a timeline entry; the description of a topic or an epic (where a note's text and files land when it becomes one, ADR 0012, 5). Files are added wherever such text is written: quick capture, the inbox's capture editor, a note being edited, the timeline composer and an entry being edited, a description being edited. Knowledge documents and memories take no files (ADR 0007).
 
