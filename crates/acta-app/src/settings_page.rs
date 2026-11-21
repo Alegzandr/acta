@@ -433,11 +433,10 @@ pub fn load_facts(store: &acta_core::Store) -> acta_core::Result<DataFacts> {
     let snapshots = store.snapshots()?;
     let newest = snapshots.iter().map(|s| s.taken_at).max();
     let trash = store.trash(PageReq::first(1))?.total;
+    // Every folder with its owner; the caller keeps those not found,
+    // checking the disk once the store is released.
     let mut missing = Vec::new();
     for folder in store.all_folders()? {
-        if std::path::Path::new(&folder.path).is_dir() {
-            continue;
-        }
         let owner = match folder.owner {
             Owner::Project(id) => store.project(id).map(|p| p.title),
             Owner::Epic(id) => store.epic(id).map(|e| e.title),
@@ -474,7 +473,16 @@ impl SettingsPage {
         let Some(ws) = &self.ws else { return };
         let task = ws.read(cx).db.run(cx, |store| load_facts(store));
         self._load = cx.spawn(async move |page, cx| {
-            if let Ok(facts) = task.await {
+            if let Ok(mut facts) = task.await {
+                let all = std::mem::take(&mut facts.missing);
+                facts.missing = cx
+                    .background_executor()
+                    .spawn(async move {
+                        all.into_iter()
+                            .filter(|(_, path, _)| !std::path::Path::new(path).is_dir())
+                            .collect()
+                    })
+                    .await;
                 let _ = page.update(cx, |page, cx| {
                     page.facts = Some(facts);
                     cx.notify();
@@ -497,10 +505,11 @@ impl SettingsPage {
                 return;
             };
             let Some(path) = paths.pop() else { return };
+            // The shared Locate (undo and the bulk offer); folders across
+            // projects sit on no project's undo stack.
             ws.update(cx, |ws, cx| {
-                ws.write_detached(cx, Key::ErrorSave, move |store| {
-                    store.set_folder_path(id, &path, acta_core::model::Author::Human)
-                })
+                ws.locate(crate::workspace::FolderRef::Id(id), path, None, cx)
+                    .detach()
             });
         })
         .detach();

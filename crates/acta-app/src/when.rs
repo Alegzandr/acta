@@ -58,21 +58,21 @@ pub fn days_between(ms: i64) -> u64 {
 /// The name shown for an author. Claude Code is named as such in every
 /// language; the human is the user of this computer (the model stores no
 /// name, docs/design/data.md 11).
-pub fn author(author: Author) -> String {
+pub fn author(locale: Locale, author: Author) -> String {
     match author {
         Author::Claude => CLAUDE_CODE.into(),
-        Author::Human => human_name(),
+        Author::Human => human_name(locale),
     }
 }
 
 /// The user's name as the OS gives it, with a capital initial.
-pub fn human_name() -> String {
+pub fn human_name(locale: Locale) -> String {
     let name = std::env::var("USERNAME")
         .or_else(|_| std::env::var("USER"))
         .unwrap_or_default();
     let name = name.trim();
     if name.is_empty() {
-        return "You".into();
+        return crate::i18n::text(locale, crate::i18n::Key::AuthorYou);
     }
     time::capitalize(name)
 }
@@ -104,6 +104,6 @@ mod tests {
 
     #[test]
     fn claude_code_is_named_as_such() {
-        assert_eq!(author(Author::Claude), "Claude Code");
+        assert_eq!(author(Locale::En, Author::Claude), "Claude Code");
     }
 }

@@ -35,6 +35,9 @@ pub enum Kind {
         file_name: String,
         file: Arc<ExportFile>,
         report: ImportReport,
+        /// From the key-loss screen: confirming sets the unreadable
+        /// database aside and imports into a new one.
+        recovery: bool,
     },
     /// The file could not be imported: one notice and Close.
     ImportRefused {
@@ -50,12 +53,15 @@ pub enum Kind {
 
 pub enum DialogEvent {
     Close,
+    /// Key-loss import confirmed: start a new database from this file.
+    Recover(Arc<ExportFile>),
     /// The terminal restart was confirmed.
     RestartTerminal,
 }
 
 pub struct Dialog {
-    ws: Entity<Workspace>,
+    /// `None` on the key-loss screen, where no database is open.
+    ws: Option<Entity<Workspace>>,
     pub kind: Kind,
     focus: FocusHandle,
 }
@@ -78,6 +84,82 @@ pub fn export_name(now_ms: i64) -> String {
     )
 }
 
+/// The result line of an import (components-app.md 5, Import).
+pub fn import_done(locale: Locale, report: &ImportReport, missing_folders: u64) -> String {
+    let total = report.total();
+    let created = tr(
+        locale,
+        Key::ImportCountCreated,
+        &[("n", Arg::Count(total.created.max(0) as u64))],
+    );
+    let updated = tr(
+        locale,
+        Key::ImportCountUpdated,
+        &[("n", Arg::Count(total.updated.max(0) as u64))],
+    );
+    let mut message = tr(
+        locale,
+        Key::ImportDone,
+        &[
+            ("created", Arg::Text(&created)),
+            ("updated", Arg::Text(&updated)),
+        ],
+    );
+    if missing_folders > 0 {
+        message.push(' ');
+        message.push_str(&tr(
+            locale,
+            Key::ImportFolders,
+            &[("n", Arg::Count(missing_folders))],
+        ));
+    }
+    message
+}
+
+/// What importing `file` into an empty database does: every record is
+/// created (the key-loss preview, before any database exists).
+pub fn report_into_empty(file: &ExportFile) -> ImportReport {
+    let created = |n: usize| acta_core::store::ImportCounts {
+        created: n as i64,
+        updated: 0,
+        skipped: 0,
+    };
+    ImportReport {
+        projects: created(file.projects.len()),
+        epics: created(file.epics.len()),
+        topics: created(file.topics.len()),
+        entries: created(file.entries.len()),
+        notes: created(file.notes.len()),
+        knowledge: created(file.knowledge.len()),
+        revisions: created(file.knowledge.iter().map(|k| k.revisions.len()).sum()),
+        folders: created(file.folders.len()),
+    }
+}
+
+/// Write `bytes` to `path` without ever leaving half a file: a temporary
+/// file in the same directory, flushed, then renamed over the target.
+pub fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let dir = path
+        .parent()
+        .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::InvalidInput))?;
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let temp = dir.join(format!(".{name}.{}.tmp", std::process::id()));
+    let written = (|| {
+        let mut file = std::fs::File::create(&temp)?;
+        file.write_all(bytes)?;
+        file.sync_all()
+    })();
+    let result = written.and_then(|()| std::fs::rename(&temp, path));
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    result
+}
+
 /// The label of a snapshot kind (components-app.md 5, Snapshot restore).
 pub fn snapshot_label(locale: Locale, kind: SnapshotKind) -> String {
     match kind {
@@ -97,7 +179,7 @@ pub fn snapshot_label(locale: Locale, kind: SnapshotKind) -> String {
 
 impl Dialog {
     pub fn new(
-        ws: Entity<Workspace>,
+        ws: Option<Entity<Workspace>>,
         kind: Kind,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -119,6 +201,7 @@ impl Dialog {
         else {
             return;
         };
+        let Some(ws) = self.ws.clone() else { return };
         let scope = if *this_project {
             project.as_ref().map(|p| p.0)
         } else {
@@ -129,7 +212,6 @@ impl Dialog {
             .map(PathBuf::from)
             .unwrap_or_else(std::env::temp_dir);
         let chosen = cx.prompt_for_new_path(&dir, Some(&name));
-        let ws = self.ws.clone();
         cx.emit(DialogEvent::Close);
         cx.spawn(async move |_, cx| {
             let Ok(Ok(Some(path))) = chosen.await else {
@@ -139,83 +221,67 @@ impl Dialog {
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            let task = ws.update(cx, |ws, cx| {
-                ws.write(cx, Key::ErrorSave, move |store| {
+            // Read under the store, write the file without it.
+            let read = ws.update(cx, |ws, cx| {
+                ws.db.run(cx, move |store| {
                     let file = store.export(scope)?;
-                    let count = file.projects.len() as u64;
-                    let json = file.to_json()?;
-                    std::fs::write(&path, json)?;
-                    store.record_export()?;
-                    Ok(count)
+                    Ok((file.projects.len() as u64, file.to_json()?))
                 })
             });
-            if let Some(count) = task.await {
-                ws.update(cx, |ws, cx| {
-                    let locale = settings::locale(cx);
-                    let message = tr(
-                        locale,
-                        Key::ExportDone,
-                        &[("n", Arg::Count(count)), ("file", Arg::Text(&file_name))],
-                    );
-                    ws.toast(message, ToastKind::Done, cx);
-                });
+            let Ok((count, json)) = read.await else {
+                ws.update(cx, |ws, cx| ws.toast_error(Key::ErrorSave, cx));
+                return;
+            };
+            let written = cx
+                .background_executor()
+                .spawn(async move { write_atomic(&path, json.as_bytes()) })
+                .await;
+            if written.is_err() {
+                ws.update(cx, |ws, cx| ws.toast_error(Key::ErrorSave, cx));
+                return;
             }
+            ws.update(cx, |ws, cx| {
+                ws.write_detached(cx, Key::ErrorSave, |store| store.record_export());
+                let locale = settings::locale(cx);
+                let message = tr(
+                    locale,
+                    Key::ExportDone,
+                    &[("n", Arg::Count(count)), ("file", Arg::Text(&file_name))],
+                );
+                ws.toast(message, ToastKind::Done, cx);
+            });
         })
         .detach();
     }
 
     fn import(&mut self, cx: &mut Context<Self>) {
-        let Kind::Import { file, .. } = &self.kind else {
+        let Kind::Import { file, recovery, .. } = &self.kind else {
             return;
         };
         let file = Arc::clone(file);
-        let ws = self.ws.clone();
+        if *recovery {
+            // Key loss: the unreadable database is set aside only now.
+            cx.emit(DialogEvent::Recover(file));
+            return;
+        }
+        let Some(ws) = self.ws.clone() else { return };
         cx.emit(DialogEvent::Close);
         cx.spawn(async move |_, cx| {
             let task = ws.update(cx, |ws, cx| {
-                ws.write(cx, Key::ErrorSave, move |store| {
-                    let report = store.import(&file, false)?;
-                    let missing = file
-                        .folders
-                        .iter()
-                        .filter(|f| !std::path::Path::new(&f.path).is_dir())
-                        .count() as u64;
-                    Ok((report, missing))
-                })
+                let file = Arc::clone(&file);
+                ws.write(cx, Key::ErrorSave, move |store| store.import(&file, false))
             });
-            if let Some((report, missing)) = task.await {
-                ws.update(cx, |ws, cx| {
-                    let locale = settings::locale(cx);
-                    let total = report.total();
-                    let created = tr(
-                        locale,
-                        Key::ImportCountCreated,
-                        &[("n", Arg::Count(total.created.max(0) as u64))],
-                    );
-                    let updated = tr(
-                        locale,
-                        Key::ImportCountUpdated,
-                        &[("n", Arg::Count(total.updated.max(0) as u64))],
-                    );
-                    let mut message = tr(
-                        locale,
-                        Key::ImportDone,
-                        &[
-                            ("created", Arg::Text(&created)),
-                            ("updated", Arg::Text(&updated)),
-                        ],
-                    );
-                    if missing > 0 {
-                        message.push(' ');
-                        message.push_str(&tr(
-                            locale,
-                            Key::ImportFolders,
-                            &[("n", Arg::Count(missing))],
-                        ));
-                    }
-                    ws.toast(message, ToastKind::Done, cx);
-                });
-            }
+            let Ok(report) = task.await else { return };
+            // Existence is checked off the store.
+            let paths: Vec<String> = file.folders.iter().map(|f| f.path.clone()).collect();
+            let missing = cx
+                .background_executor()
+                .spawn(async move { crate::workspace::missing_paths(paths).len() as u64 })
+                .await;
+            ws.update(cx, |ws, cx| {
+                let message = import_done(settings::locale(cx), &report, missing);
+                ws.toast(message, ToastKind::Done, cx);
+            });
         })
         .detach();
     }
@@ -231,13 +297,14 @@ impl Dialog {
         let Some(snapshot) = list.get(*at).cloned() else {
             return;
         };
-        let task = self.ws.update(cx, |ws, cx| {
+        let Some(ws) = self.ws.clone() else { return };
+        let task = ws.update(cx, |ws, cx| {
             ws.write(cx, Key::ErrorSave, move |store| {
                 store.restore_snapshot(&snapshot.path)
             })
         });
         cx.spawn(async move |_, cx| {
-            if task.await.is_some() {
+            if task.await.is_ok() {
                 cx.update(|cx| {
                     crate::settings::flush(cx);
                     cx.restart();
@@ -327,6 +394,7 @@ impl Dialog {
                 file_name,
                 file,
                 report,
+                ..
             } => {
                 let title = tr(locale, Key::ImportTitle, &[("file", Arg::Text(file_name))]);
                 let date = when::date(locale, file.exported_at);
@@ -646,6 +714,42 @@ mod tests {
     fn the_export_is_named_after_the_day() {
         // 2026-11-20T12:00:00Z
         assert_eq!(export_name(1_795_176_000_000), "acta-2026-11-20.acta.json");
+    }
+
+    #[test]
+    fn an_export_is_written_whole_and_leaves_no_temporary_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("acta-2026-11-21.acta.json");
+        std::fs::write(&path, "old").unwrap();
+        write_atomic(&path, b"{\"format\":\"acta\"}").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "{\"format\":\"acta\"}"
+        );
+        let names: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
+        assert_eq!(names.len(), 1);
+        assert!(write_atomic(&dir.path().join("missing").join("x.json"), b"x").is_err());
+    }
+
+    #[test]
+    fn an_import_into_an_empty_database_creates_everything() {
+        let mut temp = crate::db::test_support::temp_store();
+        let p = temp
+            .store
+            .create_project("Acta", "", acta_core::model::Author::Human)
+            .unwrap();
+        temp.store
+            .add_note(p, "Alexandre's note", acta_core::model::Author::Human)
+            .unwrap();
+        let file = temp.store.export(None).unwrap();
+        let report = report_into_empty(&file);
+        assert_eq!(report.projects.created, 1);
+        assert_eq!(report.notes.created, 1);
+        let empty = crate::db::test_support::temp_store();
+        let mut store = empty.store;
+        let real = store.import(&file, true).unwrap();
+        assert_eq!(real.projects, report.projects);
+        assert_eq!(real.notes, report.notes);
     }
 
     #[test]

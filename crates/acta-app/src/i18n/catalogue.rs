@@ -385,6 +385,30 @@ catalogue! {
         en: t("Topic deleted."),
         fr: t("Sujet supprimé."),
     }
+    AuthorYou "author.you" {
+        en: t("You"),
+        fr: t("Vous"),
+    }
+    KbDeleted "kb.deleted" {
+        en: t("Deleted from knowledge."),
+        fr: t("Supprimé des connaissances."),
+    }
+    NoteDeleted "note.deleted" {
+        en: t("Note deleted."),
+        fr: t("Note supprimée."),
+    }
+    EntryDeleted "entry.deleted" {
+        en: t("Entry deleted."),
+        fr: t("Entrée supprimée."),
+    }
+    EpicDeleted "epic.deleted" {
+        en: t("Epic deleted."),
+        fr: t("Epic supprimé."),
+    }
+    ProjectDeleted "project.deleted" {
+        en: t("Project deleted."),
+        fr: t("Projet supprimé."),
+    }
     TopicRestored "topic.restored" {
         en: t("Topic restored."),
         fr: t("Sujet restauré."),
@@ -400,6 +424,10 @@ catalogue! {
     ErrorSave "error.save" {
         en: t("Could not save the change. Try again."),
         fr: t("Impossible d\u{2019}enregistrer la modification. Réessayez."),
+    }
+    UndoChanged "undo.changed" {
+        en: t("Not undone: it was changed since."),
+        fr: t("Non annulé\u{202f}: cela a été modifié depuis."),
     }
     TableCount "table.count" {
         en: p("{n} topic", "{n} topics"),
@@ -1717,6 +1745,10 @@ catalogue! {
         en: t("Topic and its epic restored."),
         fr: t("Sujet et son epic restaurés."),
     }
+    TrashRestoredItem "trash.restored" {
+        en: t("Item restored."),
+        fr: t("Élément restauré."),
+    }
     TrashDays "trash.days" {
         en: p("{n} day left", "{n} days left"),
         fr: p("{n} jour restant", "{n} jours restants"),
@@ -1773,6 +1805,10 @@ catalogue! {
         en: t("The database is on this computer and intact, but its key is missing from {keychain}. This usually follows a system reinstall, a new user profile or a move to another machine."),
         fr: t("La base de données est sur cet ordinateur et intacte, mais sa clé est absente {keychain}. Cela arrive généralement après une réinstallation du système, la création d\u{2019}un nouveau profil utilisateur ou un changement de machine."),
     }
+    KeylossBodyM "keyloss.body.m" {
+        en: t("The database is on this computer and intact, but its key file is missing from Acta\u{2019}s data folder. This usually follows a restore from a backup that left it out, a new user profile or a move to another machine."),
+        fr: t("La base de données est sur cet ordinateur et intacte, mais son fichier de clé manque dans le dossier de données d\u{2019}Acta. Cela suit en général une restauration de sauvegarde qui l\u{2019}a omis, un nouveau profil utilisateur ou un changement de machine."),
+    }
     KeychainW "keychain.w" {
         en: t("Windows Credential Manager"),
         fr: t("du Gestionnaire d\u{2019}identification Windows"),
@@ -1800,6 +1836,18 @@ catalogue! {
     KeylossStartEmpty "keyloss.start_empty" {
         en: t("Start empty"),
         fr: t("Repartir de zéro"),
+    }
+    OpenfailTitle "openfail.title" {
+        en: t("Acta could not open its database"),
+        fr: t("Acta n\u{2019}a pas pu ouvrir sa base de données"),
+    }
+    OpenfailBody "openfail.body" {
+        en: t("Something on this computer kept Acta from reading its data. Nothing was changed. Try again; if it keeps failing, the log in the data folder says what failed."),
+        fr: t("Quelque chose sur cet ordinateur empêche Acta de lire ses données. Rien n\u{2019}a été modifié. Réessayez\u{202f}; si l\u{2019}échec se répète, le journal du dossier de données indique la cause."),
+    }
+    OpenfailNodir "openfail.nodir" {
+        en: t("Acta could not find where to keep its data on this computer."),
+        fr: t("Acta ne trouve pas où conserver ses données sur cet ordinateur."),
     }
     FirstrunTitle "firstrun.title" {
         en: t("Start with a project"),

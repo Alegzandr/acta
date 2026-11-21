@@ -37,7 +37,7 @@ use crate::theme::{RADIUS_MD, RADIUS_SM, Tokens};
 use crate::type_scale;
 use crate::ui::{self, Variant};
 use crate::when;
-use crate::workspace::{Undo, Workspace};
+use crate::workspace::{FolderRef, Undo, Workspace};
 
 /// What a page asks the window to do.
 #[derive(Clone, Debug, PartialEq)]
@@ -72,6 +72,7 @@ pub struct RecordPage {
     filter: EntryFilterKind,
     focus: FocusHandle,
     title_edit: Option<Entity<InputState>>,
+    saving_title: bool,
     state_edit: Option<Entity<TextareaState>>,
     description_edit: Option<Entity<TextareaState>>,
     composer: Entity<TextareaState>,
@@ -130,6 +131,7 @@ impl RecordPage {
             filter: EntryFilterKind::All,
             focus: cx.focus_handle(),
             title_edit: None,
+            saving_title: false,
             state_edit: None,
             description_edit: None,
             composer,
@@ -175,9 +177,15 @@ impl RecordPage {
             .run(cx, move |store| record::load(store, owner, filter));
         self._load = cx.spawn(async move |page, cx| {
             let loaded = task.await;
+            let paths = loaded.as_ref().ok().map(|d| d.folders.paths());
             let _ = page.update(cx, |page, cx| {
                 match loaded {
-                    Ok(data) => {
+                    Ok(mut data) => {
+                        // Until the check answers, folders render as before
+                        // (found when new), so nothing flickers.
+                        if let Some(old) = &page.data {
+                            data.folders.missing = old.folders.missing.clone();
+                        }
                         page.data = Some(data);
                         page.gone = false;
                     }
@@ -191,10 +199,27 @@ impl RecordPage {
                 }
                 cx.notify();
             });
+            // Existence on this computer, checked off the store.
+            if let Some(paths) = paths {
+                let missing = cx
+                    .background_executor()
+                    .spawn(async move { crate::workspace::missing_paths(paths) })
+                    .await;
+                let _ = page.update(cx, |page, cx| {
+                    if let Some(data) = page.data.as_mut() {
+                        data.folders.missing = missing;
+                    }
+                    cx.notify();
+                });
+            }
         });
     }
 
     // ---- writes ----
+
+    fn project_id(&self) -> Option<acta_core::model::ProjectId> {
+        self.data.as_ref().map(|d| d.project.0)
+    }
 
     fn set_status(&mut self, status: Status, cx: &mut Context<Self>) {
         let Some(id) = self.topic() else { return };
@@ -211,23 +236,13 @@ impl RecordPage {
             cx.notify();
             return;
         }
-        // Optimistic: the page shows it in this frame.
+        // Optimistic: the page shows it in this frame; the reload after the
+        // write shows what was stored.
         if let Some(topic) = self.data.as_mut().and_then(|d| d.topic.as_mut()) {
             topic.status = status;
         }
         cx.notify();
-        self.ws.update(cx, |ws, cx| {
-            ws.write_undoable(cx, Undo::Status(id, old), None, move |store| {
-                store.update_topic(
-                    id,
-                    TopicPatch {
-                        status: Some(status),
-                        ..TopicPatch::default()
-                    },
-                    Author::Human,
-                )
-            });
-        });
+        self.ws.update(cx, |ws, cx| ws.set_status(id, status, cx));
     }
 
     pub fn edit_title(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -250,55 +265,96 @@ impl RecordPage {
         cx.notify();
     }
 
+    /// Save the title. The editor stays, with the typed text, until the
+    /// write succeeds; a failure leaves it open (interaction.md 6.4).
     fn commit_title(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(state) = self.title_edit.take() else {
+        if self.saving_title {
+            return;
+        }
+        let Some(state) = self.title_edit.clone() else {
             return;
         };
         let new = state.read(cx).value().trim().to_owned();
-        window.focus(&self.focus, cx);
-        let Some(data) = self.data.as_mut() else {
+        let Some(data) = self.data.as_ref() else {
             return;
         };
         if new.is_empty() || new == data.title {
+            self.title_edit = None;
+            window.focus(&self.focus, cx);
             cx.notify();
             return;
         }
-        let old = std::mem::replace(&mut data.title, new.clone());
+        self.saving_title = true;
         let owner = self.owner;
-        let undo = match owner {
-            Owner::Topic(id) => Undo::TopicTitle(id, old),
-            Owner::Epic(id) => Undo::EpicTitle(id, old),
-            Owner::Project(id) => Undo::ProjectTitle(id, old),
-        };
-        cx.notify();
-        self.ws.update(cx, |ws, cx| {
-            ws.write_undoable(cx, undo, None, move |store| match owner {
-                Owner::Topic(id) => store.update_topic(
-                    id,
-                    TopicPatch {
-                        title: Some(new),
-                        ..TopicPatch::default()
-                    },
-                    Author::Human,
-                ),
-                Owner::Epic(id) => store.update_epic(
-                    id,
-                    EpicPatch {
-                        title: Some(new),
-                        ..EpicPatch::default()
-                    },
-                    Author::Human,
-                ),
-                Owner::Project(id) => store.update_project(
-                    id,
-                    ProjectPatch {
-                        title: Some(new),
-                        ..ProjectPatch::default()
-                    },
-                    Author::Human,
-                ),
-            });
+        let project = self.project_id();
+        let task = self.ws.update(cx, |ws, cx| {
+            ws.write_undoable(cx, project, None, move |store| {
+                let me = Author::Human;
+                let undo = match owner {
+                    Owner::Topic(id) => {
+                        let back = store.topic(id)?.title;
+                        store.update_topic(
+                            id,
+                            TopicPatch {
+                                title: Some(new.clone()),
+                                ..TopicPatch::default()
+                            },
+                            me,
+                        )?;
+                        Undo::TopicTitle {
+                            id,
+                            back,
+                            expect: store.topic(id)?.title,
+                        }
+                    }
+                    Owner::Epic(id) => {
+                        let back = store.epic(id)?.title;
+                        store.update_epic(
+                            id,
+                            EpicPatch {
+                                title: Some(new.clone()),
+                                ..EpicPatch::default()
+                            },
+                            me,
+                        )?;
+                        Undo::EpicTitle {
+                            id,
+                            back,
+                            expect: store.epic(id)?.title,
+                        }
+                    }
+                    Owner::Project(id) => {
+                        let back = store.project(id)?.title;
+                        store.update_project(
+                            id,
+                            ProjectPatch {
+                                title: Some(new.clone()),
+                                ..ProjectPatch::default()
+                            },
+                            me,
+                        )?;
+                        Undo::ProjectTitle {
+                            id,
+                            back,
+                            expect: store.project(id)?.title,
+                        }
+                    }
+                };
+                Ok((undo, ()))
+            })
         });
+        cx.spawn_in(window, async move |page, cx| {
+            let saved = task.await.is_ok();
+            let _ = page.update_in(cx, |page, window, cx| {
+                page.saving_title = false;
+                if saved {
+                    page.title_edit = None;
+                    window.focus(&page.focus, cx);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     fn cancel_title(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -349,26 +405,19 @@ impl RecordPage {
         cx.notify();
     }
 
+    /// Save the description or current state. The editor stays open with
+    /// the typed text until the write succeeds; a failure keeps it.
     fn commit_editor(&mut self, description: bool, window: &mut Window, cx: &mut Context<Self>) {
         let editor = if description {
-            self.description_edit.take()
+            self.description_edit.clone()
         } else {
-            self.state_edit.take()
+            self.state_edit.clone()
         };
         let Some(editor) = editor else { return };
-        window.focus(&self.focus, cx);
         let value = editor.read(cx).value().trim_end().to_owned();
         let owner = self.owner;
-        if let Some(data) = self.data.as_mut() {
-            if description {
-                data.description = value.clone();
-            } else if let Some(topic) = data.topic.as_mut() {
-                topic.state = value.clone();
-            }
-        }
-        cx.notify();
-        self.ws.update(cx, |ws, cx| {
-            ws.write_detached(cx, Key::ErrorSave, move |store| {
+        let task = self.ws.update(cx, |ws, cx| {
+            ws.write(cx, Key::ErrorSave, move |store| {
                 let me = Author::Human;
                 match (owner, description) {
                     (Owner::Topic(id), true) => store.update_topic(
@@ -404,8 +453,26 @@ impl RecordPage {
                         me,
                     ),
                 }
-            });
+            })
         });
+        cx.spawn_in(window, async move |page, cx| {
+            if task.await.is_ok() {
+                let _ = page.update_in(cx, |page, window, cx| {
+                    let open = if description {
+                        &mut page.description_edit
+                    } else {
+                        &mut page.state_edit
+                    };
+                    // Only the editor that was saved closes.
+                    if open.as_ref() == Some(&editor) {
+                        *open = None;
+                        window.focus(&page.focus, cx);
+                    }
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
     }
 
     /// `Esc` in an editor: close it; its text is dropped from the editor
@@ -483,7 +550,7 @@ impl RecordPage {
         });
         // A failed write puts the text back (interaction.md 6.4).
         cx.spawn_in(window, async move |page, cx| {
-            if task.await.is_none() {
+            if task.await.is_err() {
                 let _ = page.update_in(cx, |page, window, cx| {
                     page.composer
                         .update(cx, |state, cx| state.set_value(restore, window, cx));
@@ -497,20 +564,17 @@ impl RecordPage {
 
     fn delete_entry(&mut self, entry: &Entry, cx: &mut Context<Self>) {
         let record = Record::Entry(entry.id);
-        let locale = settings::locale(cx);
-        let message = text(locale, Key::CommonDelete);
-        self.ws.update(cx, |ws, cx| {
-            ws.write_undoable(cx, Undo::Restore(record), Some(message), move |store| {
-                store.delete(record, Author::Human)
-            });
-        });
+        let project = self.project_id();
+        self.ws.update(cx, |ws, cx| ws.delete(record, project, cx));
     }
 
     fn restore_record(&mut self, cx: &mut Context<Self>) {
         let record = record_of(self.owner);
+        let project = self.project_id();
         self.ws.update(cx, |ws, cx| {
-            ws.write_undoable(cx, Undo::Delete(record), None, move |store| {
-                store.restore(record, Author::Human)
+            ws.undoable(cx, project, None, move |store| {
+                store.restore(record, Author::Human)?;
+                Ok((Undo::Delete(record), ()))
             });
         });
     }
@@ -555,23 +619,38 @@ impl RecordPage {
         .detach();
     }
 
+    /// Attach `path` to `owner` (as its primary when `primary`), undoably.
+    /// The path is resolved off the store first.
+    fn attach(&mut self, owner: Owner, path: PathBuf, primary: bool, cx: &mut Context<Self>) {
+        self.folders_open = true;
+        let project = self.project_id();
+        let ws = self.ws.clone();
+        let resolved = cx
+            .background_executor()
+            .spawn(async move { acta_core::folder_path::canonical(&path).map(|_| path) });
+        cx.spawn(async move |_, cx| {
+            let Ok(path) = resolved.await else {
+                ws.update(cx, |ws, cx| ws.toast_error(Key::ErrorSave, cx));
+                return;
+            };
+            ws.update(cx, |ws, cx| {
+                ws.undoable(cx, project, None, move |store| {
+                    let id = store.add_folder(owner, &path, Author::Human)?;
+                    if primary {
+                        store.reorder(Record::Folder(id), 0, Author::Human)?;
+                    }
+                    Ok((Undo::Delete(Record::Folder(id)), ()))
+                });
+            });
+        })
+        .detach();
+    }
+
     /// "Add folder...": append to this page's own list.
     pub fn add_folder(&mut self, cx: &mut Context<Self>) {
         let owner = self.owner;
         self.pick_folder(cx, move |page, path, cx| {
-            page.folders_open = true;
-            let task = page.ws.update(cx, |ws, cx| {
-                ws.write(cx, Key::ErrorSave, move |store| {
-                    store.add_folder(owner, &path, Author::Human)
-                })
-            });
-            let ws = page.ws.clone();
-            cx.spawn(async move |_, cx| {
-                if let Some(id) = task.await {
-                    ws.update(cx, |ws, _| ws.push_undo(Undo::RemoveFolder(id)));
-                }
-            })
-            .detach();
+            page.attach(owner, path, false, cx)
         });
     }
 
@@ -580,69 +659,35 @@ impl RecordPage {
     pub fn set_folder(&mut self, cx: &mut Context<Self>) {
         let Some(data) = &self.data else { return };
         let nothing_anywhere = data.folders.effective.is_empty();
-        let own_primary = data.folders.own.first().map(|f| (f.id, f.path.clone()));
+        let own_primary = data.folders.own.first().map(|f| f.id);
         let target = if nothing_anywhere {
             Owner::Project(data.project.0)
         } else {
             self.owner
         };
-        self.pick_folder(cx, move |page, path, cx| {
-            page.folders_open = true;
-            match own_primary {
-                Some((id, old)) if !nothing_anywhere => {
-                    page.ws.update(cx, |ws, cx| {
-                        ws.write_undoable(cx, Undo::FolderPath(id, old), None, move |store| {
-                            store.set_folder_path(id, &path, Author::Human)
-                        });
-                    });
-                }
-                _ => {
-                    let task = page.ws.update(cx, |ws, cx| {
-                        ws.write(cx, Key::ErrorSave, move |store| {
-                            let id = store.add_folder(target, &path, Author::Human)?;
-                            // A folder set here becomes the primary.
-                            store.reorder(Record::Folder(id), 0, Author::Human)?;
-                            Ok(id)
-                        })
-                    });
-                    let ws = page.ws.clone();
-                    cx.spawn(async move |_, cx| {
-                        if let Some(id) = task.await {
-                            ws.update(cx, |ws, _| ws.push_undo(Undo::RemoveFolder(id)));
-                        }
-                    })
-                    .detach();
-                }
+        self.pick_folder(cx, move |page, path, cx| match own_primary {
+            // Replacing the own primary keeps its place: the same repair
+            // as Locate.
+            Some(id) if !nothing_anywhere => {
+                page.folders_open = true;
+                let project = page.project_id();
+                page.ws.update(cx, |ws, cx| {
+                    ws.locate(FolderRef::Id(id), path, project, cx).detach()
+                });
             }
+            _ => page.attach(target, path, true, cx),
         });
     }
 
-    /// "Locate...": repair the folder at `path` owned by `from`, in place.
+    /// "Locate...": repair the folder at `path` owned by `from`, in place,
+    /// through the workspace's shared Locate (undo and bulk offer).
     fn locate(&mut self, from: Owner, path: String, cx: &mut Context<Self>) {
+        let project = self.project_id();
         self.pick_folder(cx, move |page, chosen, cx| {
-            let old = path.clone();
-            let task = page.ws.update(cx, |ws, cx| {
-                ws.write(cx, Key::ErrorSave, move |store| {
-                    let folder = store
-                        .folders(from)?
-                        .into_iter()
-                        .find(|f| f.path == path)
-                        .ok_or_else(|| acta_core::Error::NotFound("folder".into()))?;
-                    store.set_folder_path(folder.id, &chosen, Author::Human)?;
-                    let new = store.folder(folder.id)?.path;
-                    Ok((folder.id, new))
-                })
+            page.ws.update(cx, |ws, cx| {
+                ws.locate(FolderRef::At(from, path), chosen, project, cx)
+                    .detach()
             });
-            let ws = page.ws.clone();
-            cx.spawn(async move |_, cx| {
-                if let Some((id, new)) = task.await {
-                    ws.update(cx, |ws, cx| {
-                        ws.push_undo(Undo::FolderPath(id, old.clone()));
-                        ws.offer_bulk_repair(old, new, cx);
-                    });
-                }
-            })
-            .detach();
         });
     }
 
@@ -661,32 +706,34 @@ impl RecordPage {
         };
         let message = tr(locale, key, &[("folder", Arg::Text(&folder))]);
         let record = Record::Folder(id);
+        let project = self.project_id();
         self.ws.update(cx, |ws, cx| {
-            ws.write_undoable(cx, Undo::Restore(record), Some(message), move |store| {
-                store.delete(record, Author::Human)
+            ws.undoable(cx, project, Some(message), move |store| {
+                store.delete(record, Author::Human)?;
+                Ok((Undo::Restore(record), ()))
             });
         });
     }
 
     fn make_primary(&mut self, id: acta_core::model::FolderId, cx: &mut Context<Self>) {
-        self.ws.update(cx, |ws, cx| {
-            ws.write_detached(cx, Key::ErrorSave, move |store| {
-                store.reorder(Record::Folder(id), 0, Author::Human)
-            });
-        });
+        let project = self.project_id();
+        self.ws
+            .update(cx, |ws, cx| ws.reorder(Record::Folder(id), 0, project, cx));
     }
 
     fn toggle_include(&mut self, cx: &mut Context<Self>) {
-        let Some(data) = &self.data else { return };
         let owner = self.owner;
-        let include = !data.folders.include_inherited;
+        let project = self.project_id();
         self.ws.update(cx, |ws, cx| {
-            ws.write_undoable(
-                cx,
-                Undo::IncludeInherited(owner, !include),
-                None,
-                move |store| store.set_include_inherited(owner, include, Author::Human),
-            );
+            ws.undoable(cx, project, None, move |store| {
+                let back = match owner {
+                    Owner::Project(_) => false,
+                    Owner::Epic(id) => store.epic(id)?.include_inherited_folders,
+                    Owner::Topic(id) => store.topic(id)?.include_inherited_folders,
+                };
+                store.set_include_inherited(owner, !back, Author::Human)?;
+                Ok((Undo::IncludeInherited { owner, back }, ()))
+            });
         });
     }
 
@@ -727,7 +774,7 @@ impl RecordPage {
 /// `{when} by {author}`, the long form: "2 h ago by Claude Code".
 fn updated_line(locale: Locale, at: i64, by: Author) -> String {
     let when = when::long_alone(locale, at);
-    let author = when::author(by);
+    let author = when::author(locale, by);
     tr(
         locale,
         Key::CommonBy,
@@ -1371,7 +1418,7 @@ impl RecordPage {
             .and_then(|t| t.state_updated_at.zip(t.state_updated_by))
             .map(|(at, by)| {
                 let when = when::long(locale, at);
-                let author = when::author(by);
+                let author = when::author(locale, by);
                 tr(
                     locale,
                     Key::StateUpdated,
@@ -1470,7 +1517,7 @@ impl RecordPage {
         let id = entry.id;
         let kind = entry.kind;
         let open = self.kb_open == Some(id);
-        let human = when::initial(&when::human_name());
+        let human = when::initial(&when::human_name(locale));
         let row = div()
             .id(("kb-row", index))
             .flex()
@@ -1757,7 +1804,7 @@ impl RecordPage {
                     .child(text(locale, Key::TimelineEmpty)),
             );
         }
-        let human = when::initial(&when::human_name());
+        let human = when::initial(&when::human_name(locale));
         // System events other than status changes have no line in the
         // catalogue yet (docs/design/data.md 11, request 10): not shown.
         let shown = data.entries.iter().filter(|e| {
@@ -1895,7 +1942,7 @@ impl RecordPage {
         }
         let (glyph, key) = entry_kind_meta(entry.kind);
         let decision = entry.kind == EntryKind::Decision;
-        let name = when::author(entry.author);
+        let name = when::author(locale, entry.author);
         let name_el = match entry.author {
             Author::Claude => type_scale::CODE.el().text_color(t.text_primary).child(name),
             Author::Human => type_scale::UI_STRONG
@@ -2290,7 +2337,7 @@ fn owner_label(owner: Owner, data: &Loaded) -> String {
 }
 
 fn system_line(entry: &Entry, locale: Locale) -> String {
-    let author = when::author(entry.author);
+    let author = when::author(locale, entry.author);
     let when = when::long(locale, entry.stamp.created_at);
     let status = entry
         .event

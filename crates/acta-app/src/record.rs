@@ -3,7 +3,6 @@
 //! then the sections; data.md 11 for where each value comes from).
 
 use std::collections::HashSet;
-use std::path::Path;
 
 use acta_core::model::{
     Author, Entry, EntryKind, EpicId, Folder, Owner, PageReq, ProjectId, Topic, TopicSummary,
@@ -82,6 +81,16 @@ impl Folders {
         self.missing.contains(path)
     }
 
+    /// Every path the page shows, for the existence check.
+    pub fn paths(&self) -> Vec<String> {
+        self.effective
+            .iter()
+            .chain(self.above.iter())
+            .map(|f| f.path.clone())
+            .chain(self.own.iter().map(|f| f.path.clone()))
+            .collect()
+    }
+
     /// Missing folders among the additional ones (not the primary).
     pub fn missing_additional(&self) -> usize {
         self.effective
@@ -147,8 +156,8 @@ fn parent_of(store: &Store, owner: Owner) -> Result<Option<Owner>> {
     })
 }
 
-/// The folders of `owner`, with existence checked on this computer (so
-/// call it off the UI thread).
+/// The folders of `owner`, as stored. `missing` is left empty: the caller
+/// checks the disk with [`Folders::paths`] once the store is released.
 pub fn load_folders(store: &Store, owner: Owner) -> Result<Folders> {
     let own = store.folders(owner)?;
     let EffectiveFolders {
@@ -173,13 +182,8 @@ pub fn load_folders(store: &Store, owner: Owner) -> Result<Folders> {
         Owner::Epic(id) => store.epic(id)?.include_inherited_folders,
         Owner::Topic(id) => store.topic(id)?.include_inherited_folders,
     };
-    let missing = effective
-        .iter()
-        .chain(above.iter())
-        .map(|f| f.path.clone())
-        .chain(own.iter().map(|f| f.path.clone()))
-        .filter(|path| !Path::new(path).is_dir())
-        .collect();
+    // Existence is checked later, off the store (`Folders::paths`).
+    let missing = HashSet::new();
     Ok(Folders {
         own,
         effective,
@@ -346,7 +350,8 @@ mod tests {
         .unwrap();
         s.add_folder(Owner::Epic(epic), dir.path(), me).unwrap();
 
-        let page = load(s, Owner::Topic(topic), EntryFilterKind::All).unwrap();
+        let mut page = load(s, Owner::Topic(topic), EntryFilterKind::All).unwrap();
+        page.folders.missing = crate::workspace::missing_paths(page.folders.paths());
         assert_eq!(page.title, "Embed the terminal");
         assert_eq!(page.project.1, "Acta");
         assert_eq!(page.epic.as_ref().unwrap().1, "Terminal");
@@ -397,7 +402,12 @@ mod tests {
         s.add_folder(Owner::Project(project), &gone, me).unwrap();
         std::fs::remove_dir(&gone).unwrap();
 
-        let page = load(s, Owner::Epic(epic), EntryFilterKind::All).unwrap();
+        let mut page = load(s, Owner::Epic(epic), EntryFilterKind::All).unwrap();
+        assert!(
+            page.folders.missing.is_empty(),
+            "nothing checked under the store"
+        );
+        page.folders.missing = crate::workspace::missing_paths(page.folders.paths());
         assert_eq!(page.topics.len(), 3);
         assert_eq!(page.progress(), (1, 2));
         let missing = page.folders.primary().unwrap().path.clone();

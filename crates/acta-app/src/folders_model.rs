@@ -46,35 +46,35 @@ fn rejoin(path: &str, segments: usize) -> String {
     path.to_owned()
 }
 
-/// The folders (as stored) the same change would resolve: not found now,
-/// under `old_root`, and existing under `new_root`. `exists` checks the
-/// disk, so call this off the UI thread.
-pub fn candidates(
-    paths: &[String],
+/// The folders the same change would resolve: not found now, under
+/// `old_root`, and existing under `new_root`, as `(id, path, new path)`.
+/// `exists` checks the disk, so call this off the UI thread and never
+/// while holding the store.
+pub fn candidates<Id: Copy>(
+    folders: &[(Id, String)],
     old_root: &str,
     new_root: &str,
     exists: impl Fn(&str) -> bool,
-) -> Vec<String> {
+) -> Vec<(Id, String, String)> {
     let os = Os::CURRENT;
     let old_root = folder_path::normalize(os, old_root);
-    paths
+    let sep = if new_root.contains('\\') { "\\" } else { "/" };
+    folders
         .iter()
-        .filter(|path| !exists(path))
-        .filter(|path| folder_path::contains(os, &old_root, path).is_some())
-        .filter(|path| {
+        .filter(|(_, path)| folder_path::contains(os, &old_root, path).is_some())
+        .filter(|(_, path)| !exists(path))
+        .filter_map(|(id, path)| {
             let rest = path
                 .get(old_root.len()..)
                 .unwrap_or("")
                 .trim_start_matches(['/', '\\']);
-            let sep = if new_root.contains('\\') { "\\" } else { "/" };
             let candidate = if rest.is_empty() {
                 new_root.to_owned()
             } else {
                 format!("{new_root}{sep}{rest}")
             };
-            exists(&candidate)
+            exists(&candidate).then(|| (*id, path.clone(), candidate))
         })
-        .cloned()
         .collect()
 }
 
@@ -99,29 +99,41 @@ mod tests {
     fn only_missing_folders_that_exist_under_the_new_root_are_offered() {
         let on_disk = ["/home/a/dev/acta-docs", "/home/a/dev/acta"];
         let exists = |p: &str| on_disk.contains(&p);
-        let paths = vec![
-            "/mnt/old/acta-docs".to_string(),
-            "/mnt/old/design".to_string(),
-            "/elsewhere/acta".to_string(),
-            "/home/a/dev/acta".to_string(),
-        ];
+        let paths: Vec<(u8, String)> = [
+            "/mnt/old/acta-docs",
+            "/mnt/old/design",
+            "/elsewhere/acta",
+            "/home/a/dev/acta",
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(i, p)| (i as u8, p.to_string()))
+        .collect();
         if cfg!(windows) {
             // Path normalisation on Windows upper-cases drive letters and
             // keeps the separators; the rule is checked with Windows paths.
             let on_disk = ["C:\\dev\\acta-docs"];
             let exists = |p: &str| on_disk.contains(&p);
             let paths = vec![
-                "D:\\work\\acta-docs".to_string(),
-                "D:\\work\\design".to_string(),
+                (1u8, "D:\\work\\acta-docs".to_string()),
+                (2u8, "D:\\work\\design".to_string()),
             ];
             assert_eq!(
                 candidates(&paths, "D:\\work", "C:\\dev", exists),
-                ["D:\\work\\acta-docs"]
+                [(
+                    1u8,
+                    "D:\\work\\acta-docs".to_string(),
+                    "C:\\dev\\acta-docs".to_string()
+                )]
             );
         } else {
             assert_eq!(
                 candidates(&paths, "/mnt/old", "/home/a/dev", exists),
-                ["/mnt/old/acta-docs"]
+                [(
+                    0u8,
+                    "/mnt/old/acta-docs".to_string(),
+                    "/home/a/dev/acta-docs".to_string()
+                )]
             );
         }
     }

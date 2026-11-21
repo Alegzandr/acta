@@ -100,14 +100,20 @@ impl TrashPage {
         });
     }
 
-    fn restore(&mut self, record: Record, cx: &mut Context<Self>) {
+    fn restore(&mut self, record: Record, project: ProjectId, cx: &mut Context<Self>) {
         let locale = settings::locale(cx);
-        let message = text(locale, Key::TopicRestored);
+        let key = if matches!(record, Record::Topic(_)) {
+            Key::TopicRestored
+        } else {
+            Key::TrashRestoredItem
+        };
+        let message = text(locale, key);
         self.items.retain(|item| item.record != record);
         cx.notify();
         self.ws.update(cx, |ws, cx| {
-            ws.write_undoable(cx, Undo::Delete(record), Some(message), move |store| {
-                store.restore(record, acta_core::model::Author::Human)
+            ws.undoable(cx, Some(project), Some(message), move |store| {
+                store.restore(record, acta_core::model::Author::Human)?;
+                Ok((Undo::Delete(record), ()))
             });
         });
     }
@@ -132,10 +138,11 @@ impl TrashPage {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let record = item.record;
+        let project = item.project;
         let by = tr(
             locale,
             Key::TrashBy,
-            &[("author", Arg::Text(&when::author(item.deleted_by)))],
+            &[("author", Arg::Text(&when::author(locale, item.deleted_by)))],
         );
         let left = tr(
             locale,
@@ -156,7 +163,7 @@ impl TrashPage {
                 let hover = t.fill_hover;
                 move |s| s.bg(hover)
             })
-            .on_click(cx.listener(move |page, _, _, cx| page.restore(record, cx)))
+            .on_click(cx.listener(move |page, _, _, cx| page.restore(record, project, cx)))
             .child(icon(kind_icon(record), 16., t.text_secondary))
             .child(
                 type_scale::UI

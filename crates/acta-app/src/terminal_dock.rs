@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use acta_core::model::{Author, Owner, ProjectId};
+use acta_core::model::{Author, Owner, ProjectId, Record};
 use acta_terminal::{Focus, LaunchError, TerminalEvent, TerminalTheme, TerminalView};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
@@ -24,7 +24,7 @@ use crate::settings;
 use crate::theme::{Appearance, Mode, RADIUS_SM, Tokens};
 use crate::type_scale;
 use crate::ui::{self, Variant};
-use crate::workspace::{ToastKind, Workspace};
+use crate::workspace::{FolderRef, ToastKind, Undo, Workspace};
 
 /// docs/design/layout.md 4.5: the right dock is 648 wide (80 columns).
 pub const WIDTH: f32 = 648.;
@@ -72,6 +72,8 @@ pub struct TerminalDock {
     panes: HashMap<ProjectId, Pane>,
     /// A folder chosen in the prompt and not saved: used until Acta quits.
     unsaved: HashMap<ProjectId, PathBuf>,
+    /// The newest launch of each project.
+    generations: HashMap<ProjectId, u64>,
     pub project: Option<ProjectId>,
     /// The page shown now, set by the shell, to mark a mismatch.
     pub active: Option<Origin>,
@@ -121,6 +123,7 @@ impl TerminalDock {
             ws,
             panes: HashMap::new(),
             unsaved: HashMap::new(),
+            generations: HashMap::new(),
             project: None,
             active: None,
             focus: cx.focus_handle(),
@@ -159,8 +162,15 @@ impl TerminalDock {
         let project = origin.project;
         let owner = origin.owner;
         let unsaved = self.unsaved.get(&project).cloned();
+        // Each launch of a project gets a number; a result that arrives
+        // after a newer launch started is dropped.
+        let generation = {
+            let n = self.generations.entry(project).or_insert(0);
+            *n += 1;
+            *n
+        };
         let ws = self.ws.read(cx);
-        let task = ws.db.run(cx, move |store| {
+        let folders = ws.db.run(cx, move |store| {
             let effective = store.effective_folders(owner)?;
             let epic = match owner {
                 Owner::Topic(id) => store.topic(id)?.epic,
@@ -176,21 +186,30 @@ impl TerminalDock {
             {
                 folders.push((path, Owner::Project(project)));
             }
-            let paths: Vec<PathBuf> = folders.iter().map(|(p, _)| p.clone()).collect();
-            let focus = focus_of(owner, project, epic);
-            let result = acta_terminal::launch_spec_for_claude(&paths, &focus);
-            let primary_from = folders.first().map(|(_, from)| *from);
-            Ok((result, primary_from))
+            Ok((folders, epic))
         });
         // The previous session (if any) ends when its view is dropped.
         let old = self.panes.insert(project, Pane::Starting);
         drop(old);
         cx.notify();
         cx.spawn_in(window, async move |dock, cx| {
-            let Ok((result, primary_from)) = task.await else {
+            let Ok((folders, epic)) = folders.await else {
                 return;
             };
+            // Existence checks and the search for `claude` read the disk:
+            // off the store.
+            let primary_from = folders.first().map(|(_, from)| *from);
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    let paths: Vec<PathBuf> = folders.iter().map(|(p, _)| p.clone()).collect();
+                    acta_terminal::launch_spec_for_claude(&paths, &focus_of(owner, project, epic))
+                })
+                .await;
             let _ = dock.update_in(cx, |dock, window, cx| {
+                if dock.generations.get(&project) != Some(&generation) {
+                    return;
+                }
                 let pane = match result {
                     Ok(launch) => {
                         if !launch.left_out.is_empty() {
@@ -314,12 +333,14 @@ impl TerminalDock {
                 let project = origin.project;
                 if save {
                     let task = dock.ws.update(cx, |ws, cx| {
-                        ws.write(cx, Key::ErrorSave, move |store| {
-                            store.add_folder(Owner::Project(project), &path, Author::Human)
+                        ws.write_undoable(cx, Some(project), None, move |store| {
+                            let id =
+                                store.add_folder(Owner::Project(project), &path, Author::Human)?;
+                            Ok((Undo::Delete(Record::Folder(id)), ()))
                         })
                     });
                     cx.spawn_in(window, async move |dock, cx| {
-                        if task.await.is_some() {
+                        if task.await.is_ok() {
                             let _ = dock
                                 .update_in(cx, |dock, window, cx| dock.launch(origin, window, cx));
                         }
@@ -355,19 +376,14 @@ impl TerminalDock {
             };
             let Some(new) = paths.pop() else { return };
             let _ = dock.update_in(cx, |dock, window, cx| {
+                // The shared Locate: undo and the bulk offer come with it.
                 let old = path.to_string_lossy().into_owned();
+                let project = origin.project;
                 let task = dock.ws.update(cx, |ws, cx| {
-                    ws.write(cx, Key::ErrorSave, move |store| {
-                        let folder = store
-                            .folders(from)?
-                            .into_iter()
-                            .find(|f| f.path == old)
-                            .ok_or_else(|| acta_core::Error::NotFound("folder".into()))?;
-                        store.set_folder_path(folder.id, &new, Author::Human)
-                    })
+                    ws.locate(FolderRef::At(from, old), new, Some(project), cx)
                 });
                 cx.spawn_in(window, async move |dock, cx| {
-                    if task.await.is_some() {
+                    if task.await {
                         let _ =
                             dock.update_in(cx, |dock, window, cx| dock.launch(origin, window, cx));
                     }

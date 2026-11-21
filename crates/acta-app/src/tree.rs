@@ -225,6 +225,61 @@ pub fn parent_index(rows: &[Row], at: usize) -> Option<usize> {
     (0..at).rev().find(|&i| rows[i].depth() < depth)
 }
 
+/// `Alt+Up` / `Alt+Down`: the index to give `Store::reorder` so that `id`
+/// passes its visible neighbour. `stored` is every sibling in the stored
+/// order (closed topics included), `visible` the siblings the tree shows,
+/// in the same order. `None` at either end.
+pub fn move_target<T: PartialEq>(stored: &[T], visible: &[T], id: &T, up: bool) -> Option<usize> {
+    let at = visible.iter().position(|v| v == id)?;
+    let neighbour = if up {
+        visible.get(at.checked_sub(1)?)?
+    } else {
+        visible.get(at + 1)?
+    };
+    stored.iter().position(|s| s == neighbour)
+}
+
+/// The stored siblings of a tree record (topics of the same group, epics of
+/// the same project, or every project), as records.
+pub fn stored_siblings(projects: &[ProjectTree], row: &Row) -> Vec<acta_core::model::Record> {
+    use acta_core::model::Record;
+    match row {
+        Row::Project { .. } => projects
+            .iter()
+            .map(|t| Record::Project(t.project.id))
+            .collect(),
+        Row::Epic { project, .. } => projects
+            .iter()
+            .find(|t| t.project.id == *project)
+            .map(|t| t.epics.iter().map(|(e, _)| Record::Epic(e.id)).collect())
+            .unwrap_or_default(),
+        Row::Topic { id, .. } => projects
+            .iter()
+            .find_map(|t| {
+                if t.loose_topics.iter().any(|x| x.id == *id) {
+                    return Some(t.loose_topics.iter().map(|x| Record::Topic(x.id)).collect());
+                }
+                t.epics
+                    .iter()
+                    .find(|(_, topics)| topics.iter().any(|x| x.id == *id))
+                    .map(|(_, topics)| topics.iter().map(|x| Record::Topic(x.id)).collect())
+            })
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
+/// The record of a row that can move or be deleted.
+pub fn row_record(row: &Row) -> Option<acta_core::model::Record> {
+    use acta_core::model::Record;
+    match row {
+        Row::Topic { id, .. } => Some(Record::Topic(*id)),
+        Row::Epic { id, .. } => Some(Record::Epic(*id)),
+        Row::Project { id, .. } => Some(Record::Project(*id)),
+        _ => None,
+    }
+}
+
 /// The project, epic and topic a page belongs to, as far as the tree knows:
 /// the breadcrumb (docs/design/layout.md 4.3) and the active project.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -417,6 +472,30 @@ mod tests {
         assert!(matches!(rows[epic], Row::Epic { .. }));
         assert_eq!(parent_index(&rows, epic), Some(0));
         assert_eq!(parent_index(&rows, 0), None);
+    }
+
+    #[test]
+    fn moving_passes_the_visible_neighbour_across_hidden_closed_topics() {
+        // Stored: a, x (closed, folded away), b, c.
+        let stored = ["a", "x", "b", "c"];
+        let visible = ["a", "b", "c"];
+        // b up passes a: index 0.
+        assert_eq!(move_target(&stored, &visible, &"b", true), Some(0));
+        // a down passes b: b's stored index (after removal, right after b).
+        assert_eq!(move_target(&stored, &visible, &"a", false), Some(2));
+        assert_eq!(move_target(&stored, &visible, &"a", true), None);
+        assert_eq!(move_target(&stored, &visible, &"c", false), None);
+        let projects = acta();
+        let rows = rows(&projects, &Folds::default());
+        let scroll = rows
+            .iter()
+            .find(|r| matches!(r, Row::Topic { id, .. } if *id == TopicId(3)))
+            .unwrap();
+        assert_eq!(
+            stored_siblings(&projects, scroll).len(),
+            4,
+            "closed included"
+        );
     }
 
     #[test]

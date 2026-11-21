@@ -104,10 +104,17 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `topic.new` | New topic | Nouveau sujet |
 | `topic.needs_title` | A topic needs a title. | Un sujet doit avoir un titre. |
 | `topic.deleted` | Topic deleted. | Sujet supprimé. |
+| `author.you` | You | Vous |
+| `kb.deleted` | Deleted from knowledge. | Supprimé des connaissances. |
+| `note.deleted` | Note deleted. | Note supprimée. |
+| `entry.deleted` | Entry deleted. | Entrée supprimée. |
+| `epic.deleted` | Epic deleted. | Epic supprimé. |
+| `project.deleted` | Project deleted. | Projet supprimé. |
 | `topic.restored` | Topic restored. | Sujet restauré. |
 | `topic.empty_project` | No topics yet. Capture notes and let Claude Code file them, or start one yourself. | Aucun sujet pour l'instant. Saisissez des notes et laissez Claude Code les classer, ou créez-en un vous-même. |
 | `error.save_entry` | Could not save the entry. The database is locked by another process. | Impossible d'enregistrer l'entrée. La base de données est verrouillée par un autre processus. |
 | `error.save` | Could not save the change. Try again. | Impossible d'enregistrer la modification. Réessayez. |
+| `undo.changed` | Not undone: it was changed since. | Non annulé : cela a été modifié depuis. |
 | `table.count` | {n} topic · {n} topics | {n} sujet · {n} sujets |
 | `table.filter.open` | Open | Ouverts |
 | `table.filter.all` | All | Tous |
@@ -437,6 +444,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `trash.by` | by {author} | par {author} |
 | `trash.project_content` | {topics}, {notes} (`count.topics`, `count.notes`) | {topics}, {notes} |
 | `trash.restored_with_epic` | Topic and its epic restored. | Sujet et son epic restaurés. |
+| `trash.restored` | Item restored. | Élément restauré. |
 | `trash.days` | {n} day left · {n} days left | {n} jour restant · {n} jours restants |
 | `trash.empty` | Trash is empty. | La corbeille est vide. |
 | `snapshot.daily` | Daily | Quotidien |
@@ -451,6 +459,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `snapshot.migration` | The update to {version} could not convert the database. Acta put back the snapshot from just before; nothing was lost. | La mise à jour vers {version} n'a pas pu convertir la base de données. Acta a restauré l'instantané pris juste avant ; rien n'a été perdu. |
 | `keyloss.title` | Acta cannot open its database | Acta ne peut pas ouvrir sa base de données |
 | `keyloss.body` | The database is on this computer and intact, but its key is missing from {keychain}. (`keychain.*`) This usually follows a system reinstall, a new user profile or a move to another machine. | La base de données est sur cet ordinateur et intacte, mais sa clé est absente {keychain}. Cela arrive généralement après une réinstallation du système, la création d'un nouveau profil utilisateur ou un changement de machine. |
+| `keyloss.body.m` | The database is on this computer and intact, but its key file is missing from Acta's data folder. This usually follows a restore from a backup that left it out, a new user profile or a move to another machine. | La base de données est sur cet ordinateur et intacte, mais son fichier de clé manque dans le dossier de données d'Acta. Cela suit en général une restauration de sauvegarde qui l'a omis, un nouveau profil utilisateur ou un changement de machine. |
 | `keychain.w` | Windows Credential Manager | du Gestionnaire d'identification Windows |
 | `keychain.m` | the macOS Keychain | du trousseau macOS |
 | `keychain.l` | the Secret Service keyring | du service Secret Service |
@@ -458,6 +467,9 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `keyloss.import` | Import an export... | Importer un export... |
 | `keyloss.limit` | Without the key or an export, the content cannot be read. You can start empty; the file is kept as {file}. | Sans la clé ni export, le contenu ne peut pas être lu. Vous pouvez repartir de zéro ; le fichier est conservé sous le nom {file}. |
 | `keyloss.start_empty` | Start empty | Repartir de zéro |
+| `openfail.title` | Acta could not open its database | Acta n'a pas pu ouvrir sa base de données |
+| `openfail.body` | Something on this computer kept Acta from reading its data. Nothing was changed. Try again; if it keeps failing, the log in the data folder says what failed. | Quelque chose sur cet ordinateur empêche Acta de lire ses données. Rien n'a été modifié. Réessayez ; si l'échec se répète, le journal du dossier de données indique la cause. |
+| `openfail.nodir` | Acta could not find where to keep its data on this computer. | Acta ne trouve pas où conserver ses données sur cet ordinateur. |
 | `firstrun.title` | Start with a project | Commencez par un projet |
 | `firstrun.body` | A project is a folder you work on with Claude Code. Acta keeps its topics, decisions and notes next to the work. | Un projet est un dossier sur lequel vous travaillez avec Claude Code. Acta garde ses sujets, ses décisions et ses notes à côté du travail. |
 | `firstrun.choose` | Choose a folder | Choisir un dossier |

@@ -136,7 +136,11 @@ fn key_bindings() -> Vec<KeyBinding> {
     // static keystrokes, so both spellings are written out.
     let mac = cfg!(target_os = "macos");
     let m = |macos: &'static str, other: &'static str| if mac { macos } else { other };
-    let app = Some("!Terminal");
+    // interaction.md 6.1: on Windows and Linux every Ctrl+letter goes to
+    // the focused terminal (readline keys), so app keys stop at it; on
+    // macOS Acta keeps every Cmd shortcut there except undo and redo
+    // (`plain` below) and the terminal's own copy, paste and text size.
+    let app = if mac { None } else { Some("!Terminal") };
     let plain = Some("!Terminal && !Input");
     let mut out = vec![
         KeyBinding::new(m("cmd-b", "ctrl-b"), ToggleSidebar, app),
@@ -248,6 +252,9 @@ struct Bench {
     /// Where focus returns when the overlay closes.
     return_focus: Option<FocusHandle>,
     capture_draft: String,
+    /// After a reorder, the row the keyboard cursor follows once the tree
+    /// reloads.
+    pending_cursor: Option<Route>,
     toast: Option<Toast>,
     toast_timer: Task<()>,
     dock: Entity<TerminalDock>,
@@ -259,7 +266,15 @@ struct Bench {
 enum Content {
     /// The store is opening (never shown for long; nothing is drawn).
     Opening,
+    /// The database exists and no key Acta has opens it (8.9).
     KeyLoss {
+        db: PathBuf,
+        /// The import preview, before anything is set aside.
+        dialog: Option<Entity<Dialog>>,
+    },
+    /// The database could not be opened for another reason (or there is no
+    /// data directory): nothing is set aside, only Try again is offered.
+    OpenFailed {
         db: Option<PathBuf>,
     },
     Workbench(Box<Bench>),
@@ -326,8 +341,8 @@ impl Shell {
             let _ = shell.update_in(cx, |shell, window, cx| {
                 match opened {
                     Opened::Ready(store) => shell.start_workbench(Db::new(store), window, cx),
-                    Opened::KeyLoss { db } => shell.content = Content::KeyLoss { db: Some(db) },
-                    Opened::Failed { db } => shell.content = Content::KeyLoss { db },
+                    Opened::KeyLoss { db } => shell.content = Content::KeyLoss { db, dialog: None },
+                    Opened::Failed { db } => shell.content = Content::OpenFailed { db },
                 }
                 cx.notify();
             });
@@ -372,6 +387,7 @@ impl Shell {
             overlay: None,
             return_focus: None,
             capture_draft: String::new(),
+            pending_cursor: None,
             toast: None,
             toast_timer: Task::ready(()),
             dock,
@@ -438,7 +454,19 @@ impl Shell {
         {
             self.navigate(Route::Inbox(id), true, window, cx);
         }
+        self.follow_cursor(cx);
         self.clamp_cursor(cx);
+    }
+
+    /// Put the keyboard cursor back on the row that moved.
+    fn follow_cursor(&mut self, cx: &mut Context<Self>) {
+        let rows = self.rows(cx);
+        let Some(bench) = self.bench() else { return };
+        if let Some(route) = bench.pending_cursor.take()
+            && let Some(at) = rows.iter().position(|r| r.route() == Some(route))
+        {
+            bench.cursor = at;
+        }
     }
 
     /// Debug builds: `ACTA_DEV_OVERLAY=palette|capture|terminal|export|snapshots`
@@ -762,6 +790,11 @@ impl Shell {
     }
 
     fn close_overlay(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Content::KeyLoss { dialog, .. } = &mut self.content {
+            *dialog = None;
+            cx.notify();
+            return;
+        }
         let Some(bench) = self.bench() else { return };
         bench.overlay = None;
         if let Some(handle) = bench.return_focus.take() {
@@ -814,27 +847,33 @@ impl Shell {
             return;
         };
         let ws = bench.ws.clone();
+        // Undoable: undo sends the new record to the trash.
         let task = ws.update(cx, |ws, cx| {
-            ws.write(cx, Key::ErrorSave, move |store| match kind {
-                CreateKind::Topic => store
-                    .create_topic(
-                        acta_core::store::NewTopic {
-                            project,
-                            epic,
-                            title,
-                            description: String::new(),
-                            status: Status::Planned,
-                        },
-                        Author::Human,
-                    )
-                    .map(Route::Topic),
-                CreateKind::Epic => store
-                    .create_epic(project, &title, "", Author::Human)
-                    .map(Route::Epic),
+            ws.write_undoable(cx, Some(project), None, move |store| {
+                let (record, route) = match kind {
+                    CreateKind::Topic => {
+                        let id = store.create_topic(
+                            acta_core::store::NewTopic {
+                                project,
+                                epic,
+                                title,
+                                description: String::new(),
+                                status: Status::Planned,
+                            },
+                            Author::Human,
+                        )?;
+                        (Record::Topic(id), Route::Topic(id))
+                    }
+                    CreateKind::Epic => {
+                        let id = store.create_epic(project, &title, "", Author::Human)?;
+                        (Record::Epic(id), Route::Epic(id))
+                    }
+                };
+                Ok((crate::workspace::Undo::Delete(record), route))
             })
         });
         cx.spawn_in(window, async move |shell, cx| {
-            if let Some(route) = task.await {
+            if let Ok(route) = task.await {
                 let _ = shell.update_in(cx, |shell, window, cx| {
                     shell.navigate(route, true, window, cx)
                 });
@@ -899,23 +938,11 @@ impl Shell {
                 self.with_record(cx, |page, _, cx| page.new_kb(KbKind::Memory, cx), window)
             }
             Command::SetStatus(status) => {
-                if let Some(Route::Topic(id)) = self.bench().and_then(|b| b.history.current()) {
-                    let old = self.topic_status(id, cx);
-                    let Some(bench) = self.bench() else { return };
-                    bench.ws.update(cx, |ws, cx| {
-                        let undo =
-                            crate::workspace::Undo::Status(id, old.unwrap_or(Status::Planned));
-                        ws.write_undoable(cx, undo, None, move |store| {
-                            store.update_topic(
-                                id,
-                                acta_core::store::TopicPatch {
-                                    status: Some(status),
-                                    ..Default::default()
-                                },
-                                Author::Human,
-                            )
-                        });
-                    });
+                if let Some(Route::Topic(id)) = self.bench().and_then(|b| b.history.current())
+                    && let Some(bench) = self.bench()
+                {
+                    // The previous status is read in the write itself.
+                    bench.ws.update(cx, |ws, cx| ws.set_status(id, status, cx));
                 }
             }
             Command::Back => self.back(window, cx),
@@ -939,18 +966,6 @@ impl Shell {
             Command::Theme(setting) => settings::set_theme(setting, cx),
             Command::Language(locale) => settings::set_language(locale, cx),
         }
-    }
-
-    fn topic_status(&mut self, id: TopicId, cx: &mut Context<Self>) -> Option<Status> {
-        let bench = self.bench()?;
-        let projects = &bench.ws.read(cx).projects;
-        projects.iter().find_map(|t| {
-            t.loose_topics
-                .iter()
-                .chain(t.epics.iter().flat_map(|(_, x)| x))
-                .find(|x| x.id == id)
-                .map(|x| x.status)
-        })
     }
 
     fn with_record(
@@ -1004,9 +1019,8 @@ impl Shell {
     }
 
     fn open_dialog(&mut self, kind: DialogKind, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(bench) = self.bench() else { return };
-        bench.return_focus = window.focused(cx);
-        let ws = bench.ws.clone();
+        let ws = self.bench().map(|bench| bench.ws.clone());
+        let return_focus = window.focused(cx);
         let dialog = cx.new(|cx| Dialog::new(ws, kind, window, cx));
         let sub = cx.subscribe_in(
             &dialog,
@@ -1017,11 +1031,25 @@ impl Shell {
                     shell.close_overlay(window, cx);
                     shell.do_restart_terminal(window, cx);
                 }
+                DialogEvent::Recover(file) => {
+                    let file = std::sync::Arc::clone(file);
+                    shell.close_overlay(window, cx);
+                    shell.start_empty(Some(file), window, cx);
+                }
             },
         );
-        let Some(bench) = self.bench() else { return };
-        bench._subs.push(sub);
-        bench.overlay = Some(Overlay::Dialog(dialog));
+        match &mut self.content {
+            Content::Workbench(bench) => {
+                bench.return_focus = return_focus;
+                bench._subs.push(sub);
+                bench.overlay = Some(Overlay::Dialog(dialog));
+            }
+            Content::KeyLoss { dialog: slot, .. } => {
+                sub.detach();
+                *slot = Some(dialog);
+            }
+            _ => {}
+        }
         cx.notify();
     }
 
@@ -1047,9 +1075,11 @@ impl Shell {
     }
 
     /// "Import...": the system open dialog, then the preview.
+    /// "Import...": the system open dialog, then the preview. On the
+    /// key-loss screen (no database open) the preview shows what an empty
+    /// database would get, and nothing is set aside before Import.
     pub fn import(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(bench) = self.bench() else { return };
-        let db = bench.ws.read(cx).db.clone();
+        let db = self.bench().map(|bench| bench.ws.read(cx).db.clone());
         let chosen = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: false,
@@ -1065,11 +1095,24 @@ impl Shell {
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default();
+            let recovery = db.is_none();
             let parsed = cx
                 .background_spawn(async move {
+                    // The file is read before the store is taken.
                     let text = std::fs::read_to_string(&path).map_err(acta_core::Error::Io)?;
                     let file = ExportFile::from_json(&text)?;
-                    let report = db.lock().import(&file, true)?;
+                    let report = match db {
+                        Some(db) => db.lock().import(&file, true)?,
+                        None => {
+                            if file.version > acta_core::store::FORMAT_VERSION {
+                                return Err(acta_core::Error::FormatTooNew {
+                                    found: file.version,
+                                    supported: acta_core::store::FORMAT_VERSION,
+                                });
+                            }
+                            crate::dialogs::report_into_empty(&file)
+                        }
+                    };
                     Ok::<_, acta_core::Error>((file, report))
                 })
                 .await;
@@ -1080,6 +1123,7 @@ impl Shell {
                         file_name,
                         file: std::sync::Arc::new(file),
                         report,
+                        recovery,
                     },
                     Err(acta_core::Error::FormatTooNew { found, .. }) => {
                         DialogKind::ImportRefused {
@@ -1124,7 +1168,7 @@ impl Shell {
     }
 
     /// "New project...": the folder picker; the project is named after the
-    /// folder, which becomes its primary working folder (8.5).
+    /// folder, which becomes its primary working folder (8.5). Undoable.
     pub fn new_project(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(bench) = self.bench() else { return };
         let ws = bench.ws.clone();
@@ -1142,13 +1186,13 @@ impl Shell {
             let Some(path) = paths.pop() else { return };
             let name = crate::paths_view::last_segment(&path.to_string_lossy()).to_owned();
             let task = ws.update(cx, |ws, cx| {
-                ws.write(cx, Key::ErrorSave, move |store| {
+                ws.write_undoable(cx, None, None, move |store| {
                     let id = store.create_project(&name, "", Author::Human)?;
                     store.add_folder(Owner::Project(id), &path, Author::Human)?;
-                    Ok(id)
+                    Ok((crate::workspace::Undo::Delete(Record::Project(id)), id))
                 })
             });
-            if let Some(id) = task.await {
+            if let Ok(id) = task.await {
                 let _ = shell.update_in(cx, |shell, window, cx| {
                     shell.navigate(Route::Inbox(id), true, window, cx)
                 });
@@ -1239,10 +1283,13 @@ impl Shell {
         cx.notify();
     }
 
+    /// `Mod+Z`: the active project's stack (pages of no project, such as
+    /// Settings, keep the project of the page before them).
     fn undo(&mut self, cx: &mut Context<Self>) {
         let Some(bench) = self.bench() else { return };
         bench.toast = None;
-        bench.ws.update(cx, |ws, cx| ws.undo(cx));
+        let project = bench.active_project;
+        bench.ws.update(cx, |ws, cx| ws.undo_active(project, cx));
         cx.notify();
     }
 
@@ -1309,54 +1356,40 @@ impl Shell {
                 }
             },
             TreeKey::Delete => {
-                let record = match row {
-                    Row::Topic { id, .. } => Some(Record::Topic(id)),
-                    Row::Epic { id, .. } => Some(Record::Epic(id)),
-                    Row::Project { id, .. } => Some(Record::Project(id)),
-                    _ => None,
-                };
-                if let Some(record) = record {
-                    let locale = settings::locale(cx);
-                    let message = text(locale, Key::TopicDeleted);
-                    bench.ws.update(cx, |ws, cx| {
-                        ws.write_undoable(
-                            cx,
-                            crate::workspace::Undo::Restore(record),
-                            Some(message),
-                            move |store| store.delete(record, Author::Human),
-                        );
-                    });
+                if let Some(record) = tree::row_record(&row) {
+                    let projects = bench.ws.read(cx).projects.clone();
+                    let project = row_project(&projects, &row);
+                    bench.ws.update(cx, |ws, cx| ws.delete(record, project, cx));
                 }
             }
             TreeKey::MoveUp | TreeKey::MoveDown => {
                 let up = key == TreeKey::MoveUp;
-                let sibling = |r: &Row| match (r, &row) {
-                    (Row::Topic { depth: a, .. }, Row::Topic { depth: b, .. }) => a == b,
-                    (Row::Epic { .. }, Row::Epic { .. })
-                    | (Row::Project { .. }, Row::Project { .. }) => true,
+                let projects = bench.ws.read(cx).projects.clone();
+                let Some(record) = tree::row_record(&row) else {
+                    return;
+                };
+                // The siblings shown, in order: same kind and depth, inside
+                // the same parent row.
+                let start = tree::parent_index(&rows, at).map_or(0, |p| p + 1);
+                let same = |r: &Row| match (r, &row) {
+                    (Row::Topic { .. }, Row::Topic { .. })
+                    | (Row::Epic { .. }, Row::Epic { .. })
+                    | (Row::Project { .. }, Row::Project { .. }) => r.depth() == row.depth(),
                     _ => false,
                 };
-                // The index among the siblings above it in its group.
-                let start = tree::parent_index(&rows, at).map_or(0, |p| p + 1);
-                let index = rows[start..at].iter().filter(|r| sibling(r)).count();
-                let target = if up {
-                    index.checked_sub(1)
-                } else {
-                    Some(index + 1)
-                };
-                let record = match row {
-                    Row::Topic { id, .. } => Some(Record::Topic(id)),
-                    Row::Epic { id, .. } => Some(Record::Epic(id)),
-                    Row::Project { id, .. } => Some(Record::Project(id)),
-                    _ => None,
-                };
-                if let (Some(record), Some(target)) = (record, target) {
-                    bench.ws.update(cx, |ws, cx| {
-                        ws.write_detached(cx, Key::ErrorSave, move |store| {
-                            store.reorder(record, target, Author::Human)
-                        });
-                    });
-                    bench.cursor = if up { at.saturating_sub(1) } else { at + 1 };
+                let visible: Vec<Record> = rows[start..]
+                    .iter()
+                    .take_while(|r| r.depth() >= row.depth())
+                    .filter(|r| same(r))
+                    .filter_map(tree::row_record)
+                    .collect();
+                let stored = tree::stored_siblings(&projects, &row);
+                if let Some(target) = tree::move_target(&stored, &visible, &record, up) {
+                    let project = row_project(&projects, &row);
+                    bench.pending_cursor = row.route();
+                    bench
+                        .ws
+                        .update(cx, |ws, cx| ws.reorder(record, target, project, cx));
                 }
             }
         }
@@ -1618,7 +1651,7 @@ impl Shell {
 
     // ---- key loss ----
 
-    fn key_loss(&mut self, db: Option<PathBuf>, cx: &mut Context<Self>) -> AnyElement {
+    fn key_loss(&mut self, db: PathBuf, cx: &mut Context<Self>) -> AnyElement {
         let t = cx.global::<Tokens>().clone();
         let locale = settings::locale(cx);
         let keychain = text(
@@ -1635,10 +1668,18 @@ impl Shell {
             "acta.unreadable-{}.db",
             acta_core::time::file_stamp(acta_core::time::now_ms())
         );
-        let path = db
-            .as_ref()
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_default();
+        let path = db.to_string_lossy().into_owned();
+        // macOS keeps the key in a file in the data folder (ADR 0003), so
+        // its copy names the file, not a keychain.
+        let body = if cfg!(target_os = "macos") {
+            text(locale, Key::KeylossBodyM)
+        } else {
+            tr(
+                locale,
+                Key::KeylossBody,
+                &[("keychain", Arg::Text(&keychain))],
+            )
+        };
         ui::page_scroll("key-loss")
             .child(
                 div()
@@ -1658,11 +1699,7 @@ impl Shell {
                             .el()
                             .mt(px(12.))
                             .text_color(t.text_secondary)
-                            .child(tr(
-                                locale,
-                                Key::KeylossBody,
-                                &[("keychain", Arg::Text(&keychain))],
-                            )),
+                            .child(body),
                     )
                     .child(
                         type_scale::READING
@@ -1692,9 +1729,9 @@ impl Shell {
                                     false,
                                     &t,
                                 )
-                                .on_click(cx.listener(
-                                    |shell, _, window, cx| shell.start_empty(true, window, cx),
-                                )),
+                                .on_click(
+                                    cx.listener(|shell, _, window, cx| shell.import(window, cx)),
+                                ),
                             )
                             .child(
                                 ui::button(
@@ -1730,7 +1767,7 @@ impl Shell {
                                 &t,
                             )
                             .on_click(cx.listener(
-                                |shell, _, window, cx| shell.start_empty(false, window, cx),
+                                |shell, _, window, cx| shell.start_empty(None, window, cx),
                             )),
                         ),
                     ),
@@ -1738,42 +1775,135 @@ impl Shell {
             .into_any_element()
     }
 
-    /// "Start empty" (and "Import an export...", which starts empty first):
-    /// the unreadable file is renamed and kept, never deleted, and a new
-    /// database is created next to it.
-    fn start_empty(&mut self, then_import: bool, window: &mut Window, cx: &mut Context<Self>) {
+    /// "Start empty", and the confirmed key-loss import: the unreadable
+    /// file is renamed and kept, never deleted, a new database is created
+    /// next to it, and `file` (if any) is imported into it.
+    fn start_empty(
+        &mut self,
+        file: Option<std::sync::Arc<ExportFile>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(config) = db::config() else { return };
         let dir = config.data_dir.clone();
         let opening = cx.background_spawn(async move {
-            match acta_core::db::set_aside_unreadable(&dir) {
-                Ok(_) => db::open(Some(config)),
-                Err(err) => {
-                    crate::log::line(&format!(
-                        "key loss: could not set the file aside: {:?}",
-                        err.kind()
-                    ));
+            if let Err(err) = acta_core::db::set_aside_unreadable(&dir) {
+                crate::log::line(&format!(
+                    "key loss: could not set the file aside: {:?}",
+                    err.kind()
+                ));
+                return (
                     db::Opened::Failed {
                         db: Some(dir.join(acta_core::store::DB_FILE)),
-                    }
-                }
+                    },
+                    None,
+                );
             }
+            let mut opened = db::open(Some(config));
+            let mut imported = None;
+            if let (Opened::Ready(store), Some(file)) = (&mut opened, file) {
+                let report = store.import(&file, false);
+                let paths: Vec<String> = file.folders.iter().map(|f| f.path.clone()).collect();
+                imported = Some((report.ok(), paths));
+            }
+            (opened, imported)
         });
         self._open = cx.spawn_in(window, async move |shell, cx| {
-            let opened = opening.await;
+            let (opened, imported) = opening.await;
+            let missing = match &imported {
+                Some((_, paths)) => {
+                    let paths = paths.clone();
+                    cx.background_executor()
+                        .spawn(async move { crate::workspace::missing_paths(paths).len() as u64 })
+                        .await
+                }
+                None => 0,
+            };
             let _ = shell.update_in(cx, |shell, window, cx| {
                 match opened {
                     Opened::Ready(store) => {
                         shell.start_workbench(Db::new(store), window, cx);
-                        if then_import {
-                            shell.import(window, cx);
+                        let locale = settings::locale(cx);
+                        if let Some((report, _)) = imported {
+                            let toast = match report {
+                                Some(report) => Toast {
+                                    message: crate::dialogs::import_done(locale, &report, missing),
+                                    kind: ToastKind::Done,
+                                },
+                                None => Toast {
+                                    message: text(locale, Key::ErrorSave),
+                                    kind: ToastKind::Error,
+                                },
+                            };
+                            shell.show_toast(toast, cx);
                         }
                     }
-                    Opened::KeyLoss { db } => shell.content = Content::KeyLoss { db: Some(db) },
-                    Opened::Failed { db } => shell.content = Content::KeyLoss { db },
+                    Opened::KeyLoss { db } => shell.content = Content::KeyLoss { db, dialog: None },
+                    Opened::Failed { db } => shell.content = Content::OpenFailed { db },
                 }
                 cx.notify();
             });
         });
+    }
+
+    /// The screen when the database cannot be opened and the key is not the
+    /// reason: what happened, nothing changed, Try again.
+    fn open_failed(&mut self, db: Option<PathBuf>, cx: &mut Context<Self>) -> AnyElement {
+        let t = cx.global::<Tokens>().clone();
+        let locale = settings::locale(cx);
+        let body = if db.is_some() {
+            text(locale, Key::OpenfailBody)
+        } else {
+            text(locale, Key::OpenfailNodir)
+        };
+        ui::page_scroll("open-failed")
+            .child(
+                div()
+                    .w_full()
+                    .max_w(px(ui::COLUMN_MAX))
+                    .pt(px(96.))
+                    .flex()
+                    .flex_col()
+                    .child(
+                        type_scale::TITLE
+                            .el()
+                            .text_color(t.text_primary)
+                            .child(text(locale, Key::OpenfailTitle)),
+                    )
+                    .child(
+                        type_scale::READING
+                            .el()
+                            .mt(px(12.))
+                            .text_color(t.text_secondary)
+                            .child(body),
+                    )
+                    .children(db.map(|db| {
+                        type_scale::CODE
+                            .el()
+                            .mt(px(12.))
+                            .text_color(t.text_primary)
+                            .child(db.to_string_lossy().into_owned())
+                    }))
+                    .child(
+                        div().mt(px(24.)).flex().child(
+                            ui::button(
+                                "openfail-retry",
+                                text(locale, Key::CommonTryAgain),
+                                Variant::Secondary,
+                                false,
+                                &t,
+                            )
+                            .on_click(cx.listener(
+                                |shell, _, window, cx| {
+                                    shell.content = Content::Opening;
+                                    shell.open_store(window, cx);
+                                    cx.notify();
+                                },
+                            )),
+                        ),
+                    ),
+            )
+            .into_any_element()
     }
 
     /// The palette and quick capture: 96 below the window top, centred,
@@ -1865,7 +1995,7 @@ impl Shell {
         let locale = settings::locale(cx);
         let bench = self.bench()?;
         let offer = bench.ws.read(cx).bulk.clone()?;
-        let n = offer.count as u64;
+        let n = offer.changes.len() as u64;
         Some(
             div()
                 .px(px(32.))
@@ -1890,7 +2020,8 @@ impl Shell {
                         )
                         .on_click(cx.listener(|shell, _, _, cx| {
                             if let Some(bench) = shell.bench() {
-                                bench.ws.update(cx, |ws, cx| ws.apply_bulk(cx));
+                                let project = bench.active_project;
+                                bench.ws.update(cx, |ws, cx| ws.apply_bulk(project, cx));
                             }
                         })),
                     )
@@ -1926,6 +2057,19 @@ fn seed_if_asked(store: &mut acta_core::Store) {
             "dev seed failed: {}",
             crate::workspace::err_kind(&err)
         ));
+    }
+}
+
+/// The project of a tree row.
+fn row_project(projects: &[acta_core::model::ProjectTree], row: &Row) -> Option<ProjectId> {
+    match row {
+        Row::Project { id, .. } => Some(*id),
+        Row::Epic { project, .. } => Some(*project),
+        Row::Topic { id, .. } => {
+            tree::locate_topic(projects, *id).and_then(|l| l.project.map(|p| p.0))
+        }
+        Row::Inbox { project, .. } | Row::Knowledge { project, .. } => Some(*project),
+        Row::Closed { .. } => None,
     }
 }
 
@@ -2174,12 +2318,22 @@ impl Render for Shell {
 
         let body: AnyElement = match &self.content {
             Content::Opening => div().flex_1().into_any_element(),
-            Content::KeyLoss { db } => {
+            Content::KeyLoss { db, dialog } => {
+                let (db, dialog) = (db.clone(), dialog.clone());
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .child(self.key_loss(db, cx))
+                    .children(dialog.map(|d| deferred(d).into_any_element()))
+                    .into_any_element()
+            }
+            Content::OpenFailed { db } => {
                 let db = db.clone();
                 div()
                     .flex_1()
                     .min_h_0()
-                    .child(self.key_loss(db, cx))
+                    .child(self.open_failed(db, cx))
                     .into_any_element()
             }
             Content::Specimen(view) => div()

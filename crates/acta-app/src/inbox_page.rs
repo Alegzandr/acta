@@ -157,7 +157,7 @@ impl InboxPage {
             })
         });
         cx.spawn_in(window, async move |page, cx| {
-            if task.await.is_none() {
+            if task.await.is_err() {
                 let _ = page.update_in(cx, |page, window, cx| {
                     page.capture
                         .update(cx, |state, cx| state.set_value(restore, window, cx));
@@ -169,15 +169,10 @@ impl InboxPage {
 
     fn delete(&mut self, id: NoteId, cx: &mut Context<Self>) {
         let record = Record::Note(id);
-        let locale = settings::locale(cx);
-        let message = text(locale, Key::CommonDelete);
+        let project = Some(self.project);
         self.notes.retain(|n| n.id != id);
         cx.notify();
-        self.ws.update(cx, |ws, cx| {
-            ws.write_undoable(cx, Undo::Restore(record), Some(message), move |store| {
-                store.delete(record, Author::Human)
-            });
-        });
+        self.ws.update(cx, |ws, cx| ws.delete(record, project, cx));
     }
 
     /// File a note by hand: a Draft topic titled from its first line, with
@@ -187,9 +182,12 @@ impl InboxPage {
         let id = note.id;
         let title = title_from_note(&note.text);
         let description = note.text.clone();
+        // One transaction (acta-core `note_to_topic`); undo deletes the
+        // topic and puts the note back in the inbox, as one step.
         let task = self.ws.update(cx, |ws, cx| {
-            ws.write(cx, Key::ErrorSave, move |store| {
-                let topic = store.create_topic(
+            ws.write_undoable(cx, Some(project), None, move |store| {
+                let topic = store.note_to_topic(
+                    id,
                     NewTopic {
                         project,
                         epic: None,
@@ -199,12 +197,14 @@ impl InboxPage {
                     },
                     Author::Human,
                 )?;
-                store.file_notes(&[id], topic, Author::Human)?;
-                Ok(topic)
+                Ok((
+                    Undo::Many(vec![Undo::Unfile(id), Undo::Delete(Record::Topic(topic))]),
+                    topic,
+                ))
             })
         });
         cx.spawn(async move |page, cx| {
-            if let Some(topic) = task.await {
+            if let Ok(topic) = task.await {
                 let _ = page.update(cx, |_, cx| cx.emit(PageEvent::Open(Route::Topic(topic))));
             }
         })

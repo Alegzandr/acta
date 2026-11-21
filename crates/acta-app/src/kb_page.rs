@@ -29,7 +29,7 @@ use crate::theme::{RADIUS_SM, Tokens};
 use crate::type_scale;
 use crate::ui::{self, Variant};
 use crate::when;
-use crate::workspace::{Undo, Workspace};
+use crate::workspace::{Undo, Workspace, WriteError};
 
 /// The name of an owner, from the loaded tree.
 fn owner_name(ws: &Workspace, owner: Owner) -> String {
@@ -82,7 +82,7 @@ fn kb_row(
     locale: Locale,
     t: &Tokens,
 ) -> gpui_kit::Stateful<gpui_kit::Div> {
-    let human = when::initial(&when::human_name());
+    let human = when::initial(&when::human_name(locale));
     let summary: AnyElement = match excerpt {
         Some(snippet) => {
             let runs = kb_model::excerpt_runs(snippet);
@@ -316,7 +316,7 @@ impl KnowledgePage {
                 Key::KbFilterAuthor,
                 match self.filters.author {
                     None => text(locale, Key::KbValueAll),
-                    Some(author) => when::author(author),
+                    Some(author) => when::author(locale, author),
                 },
                 self.filters.author.is_some(),
             ),
@@ -384,11 +384,11 @@ impl KnowledgePage {
                         Box::new(|f: &mut Filters| f.author = None),
                     ),
                     (
-                        when::human_name(),
+                        when::human_name(locale),
                         Box::new(|f: &mut Filters| f.author = Some(Author::Human)),
                     ),
                     (
-                        when::author(Author::Claude),
+                        when::author(locale, Author::Claude),
                         Box::new(|f: &mut Filters| f.author = Some(Author::Claude)),
                     ),
                 ],
@@ -700,6 +700,13 @@ pub struct DocPage {
     /// The selected revision, with its text and the text before it.
     selected: Option<(i64, String, String)>,
     show_changes: bool,
+    /// The project of the entry (for its undo stack), once known.
+    project: Option<acta_core::model::ProjectId>,
+    saving: bool,
+    /// Someone else's revision that a save ran into, and whether it is
+    /// shown beside the editor.
+    conflict: Option<KbEntry>,
+    show_theirs: bool,
     seen_revision: u64,
     _load: Task<()>,
     _subs: Vec<Subscription>,
@@ -732,6 +739,7 @@ impl DocPage {
         draft: Option<Draft>,
         cx: &mut Context<Self>,
     ) -> Self {
+        let project = draft.and_then(|d| crate::workspace::project_of(&ws, d.owner, cx));
         let sub = cx.observe(&ws, |page, ws, cx| {
             let revision = ws.read(cx).revision;
             if revision != page.seen_revision {
@@ -754,6 +762,10 @@ impl DocPage {
             history: Vec::new(),
             selected: None,
             show_changes: false,
+            project,
+            saving: false,
+            conflict: None,
+            show_theirs: false,
             seen_revision: 0,
             _load: Task::ready(()),
             _subs: vec![sub],
@@ -775,6 +787,7 @@ impl DocPage {
             let _ = page.update(cx, |page, cx| {
                 if let Ok((entry, history)) = loaded {
                     cx.emit(PageEvent::Located(entry.project));
+                    page.project = Some(entry.project);
                     page.entry = Some(entry);
                     page.history = history;
                 }
@@ -864,8 +877,14 @@ impl DocPage {
         cx.notify();
     }
 
-    fn save(&mut self, _: &mut Window, cx: &mut Context<Self>) {
-        if !self.can_save(cx) {
+    /// Save the editor. It stays open with the typed text until the write
+    /// succeeds. A revision written meanwhile by someone else (Claude Code)
+    /// stops the save and shows the conflict notice (interaction.md 6.5
+    /// rule 4): the human's text stays in the editor, theirs can be shown,
+    /// and saving again ("Keep mine") writes over it as a new revision, so
+    /// both stay in the history.
+    fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.can_save(cx) || self.saving {
             return;
         }
         let read = |s: &Option<Entity<InputState>>, cx: &Context<Self>| {
@@ -880,44 +899,48 @@ impl DocPage {
             .as_ref()
             .map(|b| b.read(cx).value().to_string())
             .unwrap_or_default();
-        self.mode = Mode::Read;
+        self.saving = true;
         cx.notify();
+        let project = self.project;
         if let Some(id) = self.id {
-            let rev = self.entry.as_ref().map(|e| e.rev);
-            if let Some(entry) = self.entry.as_mut() {
-                entry.title = title.clone();
-                entry.summary = summary.clone();
-                entry.body = body.clone();
-            }
-            let undo = rev.map(|rev| Undo::KbRevision(id, rev));
-            self.ws.update(cx, |ws, cx| {
-                let f = move |store: &mut acta_core::Store| {
-                    store
-                        .kb_update(
-                            id,
-                            KbUpdate {
-                                expected_rev: rev,
-                                title: Some(title),
-                                summary: Some(summary),
-                                edit: KbEdit::Body(body),
-                            },
-                            Author::Human,
-                        )
-                        .map(|_| ())
-                };
-                match undo {
-                    Some(undo) => {
-                        ws.write_undoable(cx, undo, None, f);
-                    }
-                    None => {
-                        ws.write_detached(cx, Key::ErrorSave, f);
-                    }
-                }
+            let rev = self
+                .conflict
+                .as_ref()
+                .map(|theirs| theirs.rev)
+                .or(self.entry.as_ref().map(|e| e.rev));
+            let task = self.ws.update(cx, |ws, cx| {
+                ws.write_undoable(cx, project, None, move |store| {
+                    let back = store.kb_entry(id)?.rev;
+                    let expect = store.kb_update(
+                        id,
+                        KbUpdate {
+                            expected_rev: rev,
+                            title: Some(title),
+                            summary: Some(summary),
+                            edit: KbEdit::Body(body),
+                        },
+                        Author::Human,
+                    )?;
+                    Ok((Undo::KbRevision { id, back, expect }, ()))
+                })
             });
+            cx.spawn_in(window, async move |page, cx| {
+                let result = task.await;
+                let _ = page.update_in(cx, |page, _, cx| {
+                    page.saving = false;
+                    match result {
+                        Ok(()) => page.close_editor(cx),
+                        Err(WriteError::Stale) => page.load_conflict(cx),
+                        Err(WriteError::Failed) => {}
+                    }
+                    cx.notify();
+                });
+            })
+            .detach();
         } else if let Some(draft) = self.draft {
             let task = self.ws.update(cx, |ws, cx| {
-                ws.write(cx, Key::ErrorSave, move |store| {
-                    store.kb_create(
+                ws.write_undoable(cx, project, None, move |store| {
+                    let id = store.kb_create(
                         NewKb {
                             owner: draft.owner,
                             kind: draft.kind,
@@ -927,21 +950,51 @@ impl DocPage {
                             from_file: false,
                         },
                         Author::Human,
-                    )
+                    )?;
+                    Ok((Undo::Delete(Record::Kb(id)), id))
                 })
             });
-            cx.spawn(async move |page, cx| {
-                if let Some(id) = task.await {
-                    let _ = page.update(cx, |page, cx| {
+            cx.spawn_in(window, async move |page, cx| {
+                let result = task.await;
+                let _ = page.update_in(cx, |page, _, cx| {
+                    page.saving = false;
+                    if let Ok(id) = result {
                         page.id = Some(id);
                         page.draft = None;
+                        page.close_editor(cx);
                         page.reload(cx);
                         cx.emit(PageEvent::Replace(Route::Kb(id)));
-                    });
-                }
+                    }
+                    cx.notify();
+                });
             })
             .detach();
         }
+    }
+
+    fn close_editor(&mut self, cx: &mut Context<Self>) {
+        self.mode = Mode::Read;
+        self.title = None;
+        self.summary = None;
+        self.body = None;
+        self.conflict = None;
+        self.show_theirs = false;
+        self.reload(cx);
+    }
+
+    /// Someone else saved first: keep the editor, fetch their version.
+    fn load_conflict(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.id else { return };
+        let task = self.ws.read(cx).db.run(cx, move |store| store.kb_entry(id));
+        cx.spawn(async move |page, cx| {
+            if let Ok(theirs) = task.await {
+                let _ = page.update(cx, |page, cx| {
+                    page.conflict = Some(theirs);
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
     }
 
     fn select_revision(&mut self, rev: i64, cx: &mut Context<Self>) {
@@ -970,12 +1023,10 @@ impl DocPage {
     }
 
     fn restore_selected(&mut self, cx: &mut Context<Self>) {
-        let (Some(id), Some((rev, _, _)), Some(entry)) = (self.id, &self.selected, &self.entry)
-        else {
+        let (Some(id), Some((rev, _, _))) = (self.id, &self.selected) else {
             return;
         };
         let rev = *rev;
-        let current = entry.rev;
         let locale = settings::locale(cx);
         let at = self
             .history
@@ -989,17 +1040,13 @@ impl DocPage {
             &[("datetime", Arg::Text(&when::datetime(locale, at)))],
         );
         self.mode = Mode::Read;
+        let project = self.project;
         self.ws.update(cx, |ws, cx| {
-            ws.write_undoable(
-                cx,
-                Undo::KbRevision(id, current),
-                Some(message),
-                move |store| {
-                    store
-                        .kb_restore_revision(id, rev, Author::Human)
-                        .map(|_| ())
-                },
-            );
+            ws.undoable(cx, project, Some(message), move |store| {
+                let back = store.kb_entry(id)?.rev;
+                let expect = store.kb_restore_revision(id, rev, Author::Human)?;
+                Ok((Undo::KbRevision { id, back, expect }, ()))
+            });
         });
         cx.notify();
     }
@@ -1009,14 +1056,9 @@ impl DocPage {
             return;
         };
         let owner = entry.owner;
-        let record = Record::Kb(id);
-        let locale = settings::locale(cx);
-        let message = text(locale, Key::CommonDelete);
-        self.ws.update(cx, |ws, cx| {
-            ws.write_undoable(cx, Undo::Restore(record), Some(message), move |store| {
-                store.delete(record, Author::Human)
-            });
-        });
+        let project = self.project;
+        self.ws
+            .update(cx, |ws, cx| ws.delete(Record::Kb(id), project, cx));
         cx.emit(PageEvent::Open(owner_route(owner)));
     }
 
@@ -1056,7 +1098,7 @@ impl DocPage {
         t: &Tokens,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let human = when::initial(&when::human_name());
+        let human = when::initial(&when::human_name(locale));
         let rows = self.history.iter().enumerate().map(|(i, h)| {
             let rev = h.rev;
             let selected = self.selected.as_ref().is_some_and(|s| s.0 == rev);
@@ -1080,7 +1122,7 @@ impl DocPage {
                     type_scale::UI
                         .el()
                         .text_color(t.text_primary)
-                        .child(when::author(h.author)),
+                        .child(when::author(locale, h.author)),
                 )
                 .child(
                     type_scale::UI
@@ -1120,7 +1162,7 @@ impl DocPage {
                         Key::HistoryVersion,
                         &[
                             ("datetime", Arg::Text(&when::datetime(locale, h.created_at))),
-                            ("author", Arg::Text(&when::author(h.author))),
+                            ("author", Arg::Text(&when::author(locale, h.author))),
                         ],
                     )
                 })
@@ -1210,6 +1252,56 @@ impl Render for DocPage {
                 .as_ref()
                 .map(|s| s.read(cx).value().chars().count())
                 .unwrap_or(0);
+            if let Some(theirs) = &self.conflict {
+                let theirs_body = theirs.body.clone();
+                column = column.child(
+                    div().mb(px(16.)).child(
+                        ui::notice(
+                            Some((Icon::TriangleAlert, t.warning)),
+                            text(locale, Key::ConflictNotice),
+                            &t,
+                        )
+                        .child(
+                            ui::button(
+                                "conflict-theirs",
+                                text(locale, Key::ConflictTheirs),
+                                Variant::Ghost,
+                                false,
+                                &t,
+                            )
+                            .on_click(cx.listener(|page, _, _, cx| {
+                                page.show_theirs = !page.show_theirs;
+                                cx.notify();
+                            })),
+                        )
+                        .child(
+                            ui::button(
+                                "conflict-mine",
+                                text(locale, Key::ConflictMine),
+                                Variant::Ghost,
+                                false,
+                                &t,
+                            )
+                            .on_click(cx.listener(|page, _, window, cx| page.save(window, cx))),
+                        ),
+                    ),
+                );
+                if self.show_theirs {
+                    column = column.child(
+                        div()
+                            .mb(px(16.))
+                            .p(px(12.))
+                            .rounded(px(crate::theme::RADIUS_MD))
+                            .border_1()
+                            .border_color(t.border_subtle)
+                            .child(markdown_view::document(
+                                "conflict-theirs-body",
+                                theirs_body,
+                                &t,
+                            )),
+                    );
+                }
+            }
             if let (Some(title), Some(summary), Some(body)) =
                 (&self.title, &self.summary, &self.body)
             {
@@ -1260,7 +1352,7 @@ impl Render for DocPage {
             );
             let updated = {
                 let when = when::long_alone(locale, entry.stamp.updated_at);
-                let author = when::author(entry.stamp.updated_by);
+                let author = when::author(locale, entry.stamp.updated_by);
                 tr(
                     locale,
                     Key::CommonBy,
