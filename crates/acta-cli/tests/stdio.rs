@@ -182,6 +182,7 @@ fn tools_list_and_instructions_fit_their_budgets() {
         .collect()
     );
     let list_size = init_again["result"].to_string().len();
+    println!("tools/list: {list_size} chars");
     assert!(list_size < 7_000, "tools/list is {list_size} chars");
     for t in tools {
         let always = t["_meta"]["anthropic/alwaysLoad"] == json!(true);
@@ -1116,4 +1117,114 @@ fn commit_modes_and_the_pre_git_guard() {
     let (ok, out, err) = cli(&data, &repo, &["link", "--remove"], "");
     assert!(ok, "{out}{err}");
     assert!(!repo.join(".claude").exists());
+}
+
+/// ADR 0011: `acta folders list|active`, and the session-start briefing's
+/// folders and commit lines, driven through the binary.
+#[test]
+fn folders_list_active_and_the_briefing_lines() {
+    let tmp = tempfile::tempdir().unwrap();
+    let data = tmp.path().join("data");
+    let repo = tmp.path().join("repo");
+    let docs = tmp.path().join("docs");
+    std::fs::create_dir_all(&repo).unwrap();
+    std::fs::create_dir_all(&docs).unwrap();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    git(
+        &repo,
+        &[
+            "-c",
+            "user.name=Alexandre",
+            "-c",
+            "user.email=alexandre@example.com",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "First",
+        ],
+    );
+    git(&repo, &["switch", "-q", "-c", "feature"]);
+    for (dir, args) in [(&repo, vec!["link"]), (&docs, vec!["link", "--add"])] {
+        let (ok, out, err) = cli(&data, dir, &args, "");
+        assert!(ok, "{out}{err}");
+    }
+    let (ok, out, err) = cli(&data, &repo, &["folders", "commit", "commit"], "");
+    assert!(ok, "{out}{err}");
+
+    let briefing = || {
+        let input = json!({
+            "session_id": "s1", "cwd": repo, "hook_event_name": "SessionStart",
+            "source": "startup"
+        })
+        .to_string();
+        let (ok, out, err) = cli(&data, &repo, &["hook", "session-start"], &input);
+        assert!(ok && err.is_empty(), "{err}");
+        let v: Value = serde_json::from_str(out.trim()).unwrap();
+        let text = v["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert!(chars(&text) <= 1_200, "{text}");
+        text
+    };
+    let b = briefing();
+    let commit = b.lines().nth(1).unwrap();
+    assert_eq!(
+        commit,
+        "Commits here: commit each finished change without being asked (the user's standing request); not on main."
+    );
+    assert!(
+        b.contains("\nFolders: work in repo (active). Also attached: docs.\n"),
+        "{b}"
+    );
+
+    let (ok, out, err) = cli(&data, &repo, &["folders", "list"], "");
+    assert!(ok, "{err}");
+    assert!(out.starts_with("P-1 sees 2 folders (* active)."), "{out}");
+    assert!(
+        out.contains("* 1 repo · git feature · commit automatically · "),
+        "{out}"
+    );
+    assert!(out.contains("  2 docs · "), "{out}");
+    assert!(chars(&out) <= 4_000);
+
+    // Claude Code cannot switch the active folder, nor read titles as JSON.
+    for args in [vec!["folders", "active", "2"], vec!["find", "--json"]] {
+        let out = base_cmd(&data)
+            .args(&args)
+            .env("CLAUDECODE", "1")
+            .current_dir(&repo)
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        assert!(!out.status.success(), "{args:?}");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            err.contains("set by the user in Acta") || err.contains("find --json is for scripts"),
+            "{err}"
+        );
+    }
+    let (ok, out, err) = cli(&data, &repo, &["folders", "active", "docs"], "");
+    assert!(ok, "{err}");
+    assert!(out.starts_with("ok P-1 active folder: docs."), "{out}");
+    let (ok, out, _) = cli(&data, &repo, &["folders", "active"], "");
+    assert!(
+        ok && out.starts_with("P-1 active folder:\n") && out.contains("2 docs · "),
+        "{out}"
+    );
+    let (ok, out, _) = cli(&data, &repo, &["folders", "active", "nope"], "");
+    assert!(!ok, "{out}");
+    let b = briefing();
+    assert!(
+        b.contains(
+            "Folders: work in repo (the page's active folder is docs). Also attached: docs."
+        ),
+        "{b}"
+    );
+    let (ok, out, err) = cli(&data, &repo, &["folders", "active", "default"], "");
+    assert!(
+        ok && out.contains("active folder: repo (default)"),
+        "{out}{err}"
+    );
 }
