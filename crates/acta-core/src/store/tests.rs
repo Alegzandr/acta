@@ -777,6 +777,10 @@ fn populate(store: &mut Store, dir: &std::path::Path) -> ProjectId {
     let n = store.add_note(p, "Note from Alexandre", H).unwrap();
     store.add_note(p, "Unfiled", C).unwrap();
     store.file_notes(&[n], t, H).unwrap();
+    let as_epic = store.add_note(p, "Sync between laptops", H).unwrap();
+    store.file_notes_in_epic(&[as_epic], e, C).unwrap();
+    let noise = store.add_note(p, "Duplicate", H).unwrap();
+    store.dismiss_notes(&[noise], C).unwrap();
     let k = store
         .kb_create(kb(Owner::Topic(t), KbKind::Document, "Spec", "# A\nx\n"), H)
         .unwrap();
@@ -1208,7 +1212,7 @@ fn search_reports_whether_the_total_is_capped() {
 #[test]
 fn a_fresh_database_has_entry_numbers_unique_and_trash_batches() {
     let t = open();
-    assert_eq!(crate::schema::SCHEMA_VERSION, 1);
+    assert_eq!(crate::schema::SCHEMA_VERSION, 2);
     let count = |sql: &str| -> i64 { t.store.conn.query_row(sql, [], |r| r.get(0)).unwrap() };
     assert_eq!(
         count("SELECT count(*) FROM sqlite_master WHERE name = 'entries_topic_seq'"),
@@ -1314,6 +1318,37 @@ fn a_note_becomes_a_topic_in_one_step_and_can_go_back_to_the_inbox() {
     assert_eq!(s.note(note).unwrap().filed_topic, Some(topic));
     s.unfile_note(note, H).unwrap();
     assert_eq!(s.note(note).unwrap().filed_topic, None);
+}
+
+#[test]
+fn notes_leave_the_inbox_for_a_topic_an_epic_or_nowhere_and_come_back() {
+    let mut t = open();
+    let s = &mut t.store;
+    let p = s.create_project("Acta", "", H).unwrap();
+    let e = s.create_epic(p, "Sync", "", H).unwrap();
+    let k = topic(s, p, Some(e), "Keys");
+    let n: Vec<_> = (0..3)
+        .map(|i| s.add_note(p, &format!("Note {i} by Alexandre"), H).unwrap())
+        .collect();
+    s.file_notes(&[n[0]], k, C).unwrap();
+    s.file_notes_in_epic(&[n[1]], e, C).unwrap();
+    s.dismiss_notes(&[n[2]], H).unwrap();
+    assert_eq!(s.inbox(p, all()).unwrap().total, 0);
+    assert_eq!(s.projects().unwrap()[0].inbox, 0);
+    let filed = s.filed_notes(p, all()).unwrap();
+    let fates: Vec<_> = filed.items.iter().map(|n| n.fate()).collect();
+    assert_eq!(fates.len(), 3);
+    assert!(fates.contains(&NoteFate::Topic(k)));
+    assert!(fates.contains(&NoteFate::Epic(e)));
+    assert!(fates.contains(&NoteFate::Dismissed));
+    assert_eq!(s.note(n[1]).unwrap().filed_by, Some(C));
+    for id in &n {
+        s.unfile_note(*id, H).unwrap();
+        let note = s.note(*id).unwrap();
+        assert!(note.is_open() && note.filed_by.is_none());
+    }
+    assert_eq!(s.inbox(p, all()).unwrap().total, 3);
+    assert_eq!(s.filed_notes(p, all()).unwrap().total, 0);
 }
 
 #[test]
