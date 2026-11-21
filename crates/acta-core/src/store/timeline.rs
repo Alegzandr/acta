@@ -185,6 +185,7 @@ impl Store {
             items,
             total,
             offset,
+            capped: false,
         })
     }
 
@@ -192,8 +193,8 @@ impl Store {
 
     pub fn add_note(&mut self, project: ProjectId, text: &str, author: Author) -> Result<NoteId> {
         let text = required("text", text)?;
-        self.project(project)?;
         let tx = self.write()?;
+        super::records::read_project(&tx, project)?;
         let now = now_ms();
         tx.execute(
             "INSERT INTO notes (uuid, project_id, text, author, created_at, updated_at, updated_by)
@@ -206,20 +207,13 @@ impl Store {
     }
 
     pub fn note(&self, id: NoteId) -> Result<Note> {
-        self.conn
-            .query_row(
-                &format!("SELECT {NOTE_COLS}, {STAMP_COLS} FROM notes WHERE id = ?1 AND deleted_at IS NULL"),
-                [id.0],
-                note_row,
-            )
-            .optional()?
-            .ok_or_else(|| Error::NotFound(id.to_string()))
+        read_note(&self.conn, id)
     }
 
     pub fn update_note(&mut self, id: NoteId, text: &str, author: Author) -> Result<()> {
         let text = required("text", text)?;
-        self.note(id)?;
         let tx = self.write()?;
+        read_note(&tx, id)?;
         tx.execute(
             "UPDATE notes SET text = ?2, updated_at = ?3, updated_by = ?4 WHERE id = ?1",
             params![id.0, text, now_ms(), author],
@@ -248,20 +242,21 @@ impl Store {
             items,
             total,
             offset,
+            capped: false,
         })
     }
 
     /// Marks notes as turned into, or filed under, a topic of their project.
     pub fn file_notes(&mut self, notes: &[NoteId], topic: TopicId, author: Author) -> Result<()> {
-        let project = self.topic(topic)?.project;
+        let tx = self.write()?;
+        let project = super::records::read_topic(&tx, topic)?.project;
         for id in notes {
-            if self.note(*id)?.project != project {
+            if read_note(&tx, *id)?.project != project {
                 return Err(Error::Invalid(format!(
                     "{id} belongs to another project than {topic}"
                 )));
             }
         }
-        let tx = self.write()?;
         let now = now_ms();
         for id in notes {
             tx.execute(
@@ -272,4 +267,16 @@ impl Store {
         tx.commit()?;
         Ok(())
     }
+}
+
+fn read_note(conn: &rusqlite::Connection, id: NoteId) -> Result<Note> {
+    conn.query_row(
+        &format!(
+            "SELECT {NOTE_COLS}, {STAMP_COLS} FROM notes WHERE id = ?1 AND deleted_at IS NULL"
+        ),
+        [id.0],
+        note_row,
+    )
+    .optional()?
+    .ok_or_else(|| Error::NotFound(id.to_string()))
 }

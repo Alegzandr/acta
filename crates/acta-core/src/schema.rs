@@ -6,7 +6,8 @@
 //!
 //! Every table: `id INTEGER PRIMARY KEY` (local; feeds short ids and FTS
 //! rowids), `uuid` (UUIDv7, the identity across export and import),
-//! `created_at`, `updated_at`, `updated_by`, `deleted_at`, `deleted_by`
+//! `created_at`, `updated_at`, `updated_by`, `deleted_at`, `deleted_by`,
+//! `deleted_batch` (the delete that trashed it; local, not exported)
 //! (integer Unix ms; null `deleted_at` means live). Knowledge entries and
 //! folders belong to exactly one owner: a project, or an epic, or a topic;
 //! `project_id` is always set so roll-up queries need no join.
@@ -33,7 +34,8 @@ CREATE TABLE projects (
     updated_at INTEGER NOT NULL,
     updated_by TEXT NOT NULL,
     deleted_at INTEGER,
-    deleted_by TEXT
+    deleted_by TEXT,
+    deleted_batch TEXT
 ) STRICT;
 
 CREATE TABLE epics (
@@ -49,7 +51,8 @@ CREATE TABLE epics (
     updated_at INTEGER NOT NULL,
     updated_by TEXT NOT NULL,
     deleted_at INTEGER,
-    deleted_by TEXT
+    deleted_by TEXT,
+    deleted_batch TEXT
 ) STRICT;
 CREATE INDEX epics_project ON epics(project_id, position);
 
@@ -70,7 +73,8 @@ CREATE TABLE topics (
     updated_at INTEGER NOT NULL,
     updated_by TEXT NOT NULL,
     deleted_at INTEGER,
-    deleted_by TEXT
+    deleted_by TEXT,
+    deleted_batch TEXT
 ) STRICT;
 CREATE INDEX topics_project ON topics(project_id, epic_id, position);
 
@@ -89,9 +93,12 @@ CREATE TABLE entries (
     updated_at INTEGER NOT NULL,
     updated_by TEXT NOT NULL,
     deleted_at INTEGER,
-    deleted_by TEXT
+    deleted_by TEXT,
+    deleted_batch TEXT
 ) STRICT;
 CREATE INDEX entries_topic ON entries(topic_id, created_at);
+-- One number per entry in a topic, even after a merge import.
+CREATE UNIQUE INDEX entries_topic_seq ON entries(topic_id, seq) WHERE seq IS NOT NULL;
 
 CREATE TABLE notes (
     id INTEGER PRIMARY KEY,
@@ -105,7 +112,8 @@ CREATE TABLE notes (
     updated_at INTEGER NOT NULL,
     updated_by TEXT NOT NULL,
     deleted_at INTEGER,
-    deleted_by TEXT
+    deleted_by TEXT,
+    deleted_batch TEXT
 ) STRICT;
 CREATE INDEX notes_project ON notes(project_id, created_at);
 
@@ -126,6 +134,7 @@ CREATE TABLE kb_entries (
     updated_by TEXT NOT NULL,
     deleted_at INTEGER,
     deleted_by TEXT,
+    deleted_batch TEXT,
     CHECK (epic_id IS NULL OR topic_id IS NULL)
 ) STRICT;
 CREATE INDEX kb_project ON kb_entries(project_id);
@@ -160,6 +169,7 @@ CREATE TABLE folders (
     updated_by TEXT NOT NULL,
     deleted_at INTEGER,
     deleted_by TEXT,
+    deleted_batch TEXT,
     CHECK (epic_id IS NULL OR topic_id IS NULL)
 ) STRICT;
 CREATE INDEX folders_owner ON folders(project_id, epic_id, topic_id, position);

@@ -1,7 +1,7 @@
 //! Soft delete, the trash and restore (ADR 0006).
 //!
 //! Deleting marks the record and everything under it with the same
-//! `deleted_at` and `deleted_by`; nothing is erased. Records keep their
+//! `deleted_at`, `deleted_by` and batch id; nothing is erased. Records keep their
 //! parent and position, so a restore puts them back where they were, with
 //! everything that was deleted together with them. The trash lists what was
 //! deleted on its own, not the descendants that went with it. Records stay
@@ -15,6 +15,10 @@ use crate::model::{
 };
 use crate::time::{MS_PER_DAY, now_ms};
 use rusqlite::{OptionalExtension, Transaction, params};
+
+/// What identifies one delete: its batch id, or for records trashed
+/// before batches existed (or imported trashed) their deletion time.
+const BATCH: &str = "coalesce(deleted_batch, CAST(deleted_at AS TEXT))";
 
 /// How long a record stays in the trash before a future purge may erase it.
 pub const TRASH_RETENTION_MS: i64 = 30 * MS_PER_DAY;
@@ -150,10 +154,16 @@ impl Store {
             return Err(Error::NotFound(record.to_string()));
         }
         let now = now_ms();
+        // Everything this delete trashes shares one batch id, so a restore
+        // brings back exactly that set, even within the same millisecond.
+        let batch = super::new_uuid();
         for (t, cond) in cascade(record) {
             tx.execute(
-                &format!("UPDATE {t} SET deleted_at = ?1, deleted_by = ?2 WHERE ({cond}) AND deleted_at IS NULL"),
-                params![now, author],
+                &format!(
+                    "UPDATE {t} SET deleted_at = ?1, deleted_by = ?2, deleted_batch = ?3
+                     WHERE ({cond}) AND deleted_at IS NULL"
+                ),
+                params![now, author, batch],
             )?;
         }
         tx.commit()?;
@@ -165,15 +175,15 @@ impl Store {
     pub fn restore(&mut self, record: Record, author: Author) -> Result<()> {
         let (table, id) = table_of(record);
         let tx = self.write()?;
-        let deleted_at: Option<i64> = tx
+        let batch: Option<String> = tx
             .query_row(
-                &format!("SELECT deleted_at FROM {table} WHERE id = ?1"),
+                &format!("SELECT {BATCH} FROM {table} WHERE id = ?1"),
                 [id],
                 |r| r.get(0),
             )
             .optional()?
             .ok_or_else(|| Error::NotFound(record.to_string()))?;
-        let Some(deleted_at) = deleted_at else {
+        let Some(batch) = batch else {
             return Ok(());
         };
         if let Some((ptable, pid, name)) = parent_of(&tx, record)? {
@@ -190,10 +200,11 @@ impl Store {
         for (t, cond) in cascade(record) {
             tx.execute(
                 &format!(
-                    "UPDATE {t} SET deleted_at = NULL, deleted_by = NULL, updated_at = ?2, updated_by = ?3
-                     WHERE ({cond}) AND deleted_at = ?1"
+                    "UPDATE {t} SET deleted_at = NULL, deleted_by = NULL, deleted_batch = NULL,
+                            updated_at = ?2, updated_by = ?3
+                     WHERE ({cond}) AND deleted_at IS NOT NULL AND {BATCH} = ?1"
                 ),
-                params![deleted_at, now, author],
+                params![batch, now, author],
             )?;
         }
         if let Record::Topic(t) = record {
@@ -213,33 +224,33 @@ impl Store {
             UNION ALL
             SELECT 'epic', x.id, x.project_id, x.title, x.deleted_at, x.deleted_by FROM epics x
              JOIN projects p ON p.id = x.project_id
-             WHERE x.deleted_at IS NOT NULL AND p.deleted_at IS NOT x.deleted_at
+             WHERE x.deleted_at IS NOT NULL AND coalesce(p.deleted_batch, CAST(p.deleted_at AS TEXT)) IS NOT coalesce(x.deleted_batch, CAST(x.deleted_at AS TEXT))
             UNION ALL
             SELECT 'topic', x.id, x.project_id, x.title, x.deleted_at, x.deleted_by FROM topics x
              JOIN projects p ON p.id = x.project_id LEFT JOIN epics e ON e.id = x.epic_id
-             WHERE x.deleted_at IS NOT NULL AND p.deleted_at IS NOT x.deleted_at
-               AND e.deleted_at IS NOT x.deleted_at
+             WHERE x.deleted_at IS NOT NULL AND coalesce(p.deleted_batch, CAST(p.deleted_at AS TEXT)) IS NOT coalesce(x.deleted_batch, CAST(x.deleted_at AS TEXT))
+               AND coalesce(e.deleted_batch, CAST(e.deleted_at AS TEXT)) IS NOT coalesce(x.deleted_batch, CAST(x.deleted_at AS TEXT))
             UNION ALL
             SELECT 'entry', x.id, t.project_id, substr(x.text, 1, 80), x.deleted_at, x.deleted_by FROM entries x
              JOIN topics t ON t.id = x.topic_id
-             WHERE x.deleted_at IS NOT NULL AND t.deleted_at IS NOT x.deleted_at
+             WHERE x.deleted_at IS NOT NULL AND coalesce(t.deleted_batch, CAST(t.deleted_at AS TEXT)) IS NOT coalesce(x.deleted_batch, CAST(x.deleted_at AS TEXT))
             UNION ALL
             SELECT 'note', x.id, x.project_id, substr(x.text, 1, 80), x.deleted_at, x.deleted_by FROM notes x
              JOIN projects p ON p.id = x.project_id
-             WHERE x.deleted_at IS NOT NULL AND p.deleted_at IS NOT x.deleted_at
+             WHERE x.deleted_at IS NOT NULL AND coalesce(p.deleted_batch, CAST(p.deleted_at AS TEXT)) IS NOT coalesce(x.deleted_batch, CAST(x.deleted_at AS TEXT))
             UNION ALL
             SELECT 'kb', x.id, x.project_id, x.title, x.deleted_at, x.deleted_by FROM kb_entries x
              JOIN projects p ON p.id = x.project_id LEFT JOIN epics e ON e.id = x.epic_id
              LEFT JOIN topics t ON t.id = x.topic_id
-             WHERE x.deleted_at IS NOT NULL AND (CASE WHEN x.topic_id IS NOT NULL THEN t.deleted_at
-                   WHEN x.epic_id IS NOT NULL THEN e.deleted_at ELSE p.deleted_at END) IS NOT x.deleted_at
+             WHERE x.deleted_at IS NOT NULL AND (CASE WHEN x.topic_id IS NOT NULL THEN coalesce(t.deleted_batch, CAST(t.deleted_at AS TEXT))
+                   WHEN x.epic_id IS NOT NULL THEN coalesce(e.deleted_batch, CAST(e.deleted_at AS TEXT)) ELSE coalesce(p.deleted_batch, CAST(p.deleted_at AS TEXT)) END) IS NOT coalesce(x.deleted_batch, CAST(x.deleted_at AS TEXT))
             UNION ALL
             SELECT 'folder', x.id, x.project_id, x.path, x.deleted_at, x.deleted_by FROM folders x
              JOIN projects p ON p.id = x.project_id LEFT JOIN epics e ON e.id = x.epic_id
              LEFT JOIN topics t ON t.id = x.topic_id
-             WHERE x.deleted_at IS NOT NULL AND (CASE WHEN x.topic_id IS NOT NULL THEN t.deleted_at
-                   WHEN x.epic_id IS NOT NULL THEN e.deleted_at ELSE p.deleted_at END) IS NOT x.deleted_at
-            ORDER BY 5 DESC, 2 DESC";
+             WHERE x.deleted_at IS NOT NULL AND (CASE WHEN x.topic_id IS NOT NULL THEN coalesce(t.deleted_batch, CAST(t.deleted_at AS TEXT))
+                   WHEN x.epic_id IS NOT NULL THEN coalesce(e.deleted_batch, CAST(e.deleted_at AS TEXT)) ELSE coalesce(p.deleted_batch, CAST(p.deleted_at AS TEXT)) END) IS NOT coalesce(x.deleted_batch, CAST(x.deleted_at AS TEXT))
+            ORDER BY 5 DESC, 1, 2 DESC";
         let mut stmt = self.conn.prepare(sql)?;
         let all: Vec<TrashItem> = stmt
             .query_map([], |r| {
@@ -275,6 +286,7 @@ impl Store {
             items,
             total,
             offset,
+            capped: false,
         })
     }
 }
