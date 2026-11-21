@@ -1202,3 +1202,51 @@ fn search_reports_whether_the_total_is_capped() {
     let page = store.search(&q, all()).unwrap();
     assert_eq!((page.total, page.capped), (3, false));
 }
+
+#[test]
+fn a_fresh_database_has_entry_numbers_unique_and_trash_batches() {
+    let t = open();
+    assert_eq!(crate::schema::SCHEMA_VERSION, 1);
+    let count = |sql: &str| -> i64 { t.store.conn.query_row(sql, [], |r| r.get(0)).unwrap() };
+    assert_eq!(
+        count("SELECT count(*) FROM sqlite_master WHERE name = 'entries_topic_seq'"),
+        1
+    );
+    for table in [
+        "projects",
+        "epics",
+        "topics",
+        "entries",
+        "notes",
+        "kb_entries",
+        "folders",
+    ] {
+        let sql = format!(
+            "SELECT count(*) FROM pragma_table_info('{table}') WHERE name = 'deleted_batch'"
+        );
+        assert_eq!(count(&sql), 1, "{table}");
+    }
+}
+
+#[test]
+fn an_import_that_changes_the_trash_state_clears_the_batch() {
+    let mut a = open();
+    let p = a.store.create_project("Acta", "", H).unwrap();
+    let t = topic(&mut a.store, p, None, "Keys");
+    let mut file = a.store.export(None).unwrap();
+    a.store.delete(Record::Topic(t), H).unwrap();
+    // A newer, live version revives the topic; no batch is left behind.
+    file.topics[0].stamp.updated_at += 60_000;
+    a.store.import(&file, false).unwrap();
+    assert!(a.store.topic(t).is_ok());
+    let batch: Option<String> = a
+        .store
+        .conn
+        .query_row(
+            "SELECT deleted_batch FROM topics WHERE id = ?1",
+            [t.0],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(batch, None);
+}

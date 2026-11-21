@@ -606,7 +606,8 @@ fn merge(tx: &Transaction<'_>, f: &ExportFile) -> Result<ImportReport> {
                 let (d, db) = merged_deleted(&l, s);
                 tx.execute(
                     "UPDATE projects SET title = ?2, description = ?3, position = ?4, updated_at = ?5, updated_by = ?6,
-                            deleted_at = ?7, deleted_by = ?8 WHERE id = ?1",
+                            deleted_at = ?7, deleted_by = ?8,
+                            deleted_batch = CASE WHEN deleted_at IS ?7 THEN deleted_batch ELSE NULL END WHERE id = ?1",
                     params![l.id, x.title, x.description, x.position, s.updated_at, s.updated_by, d, db],
                 )?;
             }
@@ -633,7 +634,8 @@ fn merge(tx: &Transaction<'_>, f: &ExportFile) -> Result<ImportReport> {
                 let (d, db) = merged_deleted(&l, s);
                 tx.execute(
                     "UPDATE epics SET project_id = ?2, title = ?3, description = ?4, state = ?5, position = ?6,
-                            include_inherited_folders = ?7, updated_at = ?8, updated_by = ?9, deleted_at = ?10, deleted_by = ?11
+                            include_inherited_folders = ?7, updated_at = ?8, updated_by = ?9, deleted_at = ?10, deleted_by = ?11,
+                            deleted_batch = CASE WHEN deleted_at IS ?10 THEN deleted_batch ELSE NULL END
                      WHERE id = ?1",
                     params![l.id, project, x.title, x.description, x.state, x.position, x.include_inherited_folders,
                             s.updated_at, s.updated_by, d, db],
@@ -666,7 +668,8 @@ fn merge(tx: &Transaction<'_>, f: &ExportFile) -> Result<ImportReport> {
                 tx.execute(
                     "UPDATE topics SET project_id = ?2, epic_id = ?3, title = ?4, description = ?5, status = ?6, state = ?7,
                             state_updated_at = ?8, state_updated_by = ?9, position = ?10, include_inherited_folders = ?11,
-                            updated_at = ?12, updated_by = ?13, deleted_at = ?14, deleted_by = ?15
+                            updated_at = ?12, updated_by = ?13, deleted_at = ?14, deleted_by = ?15,
+                            deleted_batch = CASE WHEN deleted_at IS ?14 THEN deleted_batch ELSE NULL END
                      WHERE id = ?1",
                     params![l.id, project, epic, x.title, x.description, x.status, x.state, x.state_updated_at,
                             x.state_updated_by, x.position, x.include_inherited_folders,
@@ -716,7 +719,8 @@ fn merge(tx: &Transaction<'_>, f: &ExportFile) -> Result<ImportReport> {
             Action::Update(l) => {
                 let (d, db) = merged_deleted(&l, s);
                 tx.execute(
-                    "UPDATE entries SET text = ?2, updated_at = ?3, updated_by = ?4, deleted_at = ?5, deleted_by = ?6
+                    "UPDATE entries SET text = ?2, updated_at = ?3, updated_by = ?4, deleted_at = ?5, deleted_by = ?6,
+                            deleted_batch = CASE WHEN deleted_at IS ?5 THEN deleted_batch ELSE NULL END
                      WHERE id = ?1",
                     params![l.id, x.text, s.updated_at, s.updated_by, d, db],
                 )?;
@@ -756,7 +760,8 @@ fn merge(tx: &Transaction<'_>, f: &ExportFile) -> Result<ImportReport> {
                 let (d, db) = merged_deleted(&l, s);
                 tx.execute(
                     "UPDATE notes SET text = ?2, filed_topic_id = ?3, filed_at = ?4, updated_at = ?5, updated_by = ?6,
-                            deleted_at = ?7, deleted_by = ?8 WHERE id = ?1",
+                            deleted_at = ?7, deleted_by = ?8,
+                            deleted_batch = CASE WHEN deleted_at IS ?7 THEN deleted_batch ELSE NULL END WHERE id = ?1",
                     params![l.id, x.text, filed, x.filed_at, s.updated_at, s.updated_by, d, db],
                 )?;
             }
@@ -786,7 +791,8 @@ fn merge(tx: &Transaction<'_>, f: &ExportFile) -> Result<ImportReport> {
                 let (d, db) = merged_deleted(&l, s);
                 tx.execute(
                     "UPDATE kb_entries SET project_id = ?2, epic_id = ?3, topic_id = ?4, kind = ?5, title = ?6, summary = ?7,
-                            body = ?8, rev = ?9, updated_at = ?10, updated_by = ?11, deleted_at = ?12, deleted_by = ?13
+                            body = ?8, rev = ?9, updated_at = ?10, updated_by = ?11, deleted_at = ?12, deleted_by = ?13,
+                            deleted_batch = CASE WHEN deleted_at IS ?12 THEN deleted_batch ELSE NULL END
                      WHERE id = ?1",
                     params![l.id, project, epic, topic, x.kind, x.title, x.summary, x.body, x.rev,
                             s.updated_at, s.updated_by, d, db],
@@ -850,7 +856,8 @@ fn merge(tx: &Transaction<'_>, f: &ExportFile) -> Result<ImportReport> {
                 let (d, db) = merged_deleted(&l, s);
                 tx.execute(
                     "UPDATE folders SET project_id = ?2, epic_id = ?3, topic_id = ?4, path = ?5, position = ?6,
-                            updated_at = ?7, updated_by = ?8, deleted_at = ?9, deleted_by = ?10 WHERE id = ?1",
+                            updated_at = ?7, updated_by = ?8, deleted_at = ?9, deleted_by = ?10,
+                            deleted_batch = CASE WHEN deleted_at IS ?9 THEN deleted_batch ELSE NULL END WHERE id = ?1",
                     params![l.id, project, epic, topic, x.path, x.position, s.updated_at, s.updated_by, d, db],
                 )?;
             }
