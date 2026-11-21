@@ -426,7 +426,8 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `settings.about` | About | À propos |
 | `settings.release_notes` | Release notes | Notes de version |
 | `settings.licences` | Licences | Licences |
-| `settings.licences.hint` | Inter and JetBrains Mono under the SIL Open Font License, Lucide under ISC. | Inter et JetBrains Mono sous licence SIL Open Font License, Lucide sous licence ISC. |
+| `settings.licences.hint` | JetBrains Mono under the SIL Open Font License, Lucide under ISC. | JetBrains Mono sous licence SIL Open Font License, Lucide sous licence ISC. |
+| `settings.licences.hint_linux` | Inter and JetBrains Mono under the SIL Open Font License, Lucide under ISC. | Inter et JetBrains Mono sous licence SIL Open Font License, Lucide sous licence ISC. |
 | `statusbar.not_set_up` | Claude Code: not set up | Claude Code : non configuré |
 | `statusbar.not_found` | Claude Code: not found | Claude Code : introuvable |
 | `statusbar.no_folder` | Claude Code: no folder for this project | Claude Code : aucun dossier pour ce projet |

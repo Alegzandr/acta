@@ -1674,6 +1674,10 @@ catalogue! {
         fr: t("Licences"),
     }
     SettingsLicencesHint "settings.licences.hint" {
+        en: t("JetBrains Mono under the SIL Open Font License, Lucide under ISC."),
+        fr: t("JetBrains Mono sous licence SIL Open Font License, Lucide sous licence ISC."),
+    }
+    SettingsLicencesHintLinux "settings.licences.hint_linux" {
         en: t("Inter and JetBrains Mono under the SIL Open Font License, Lucide under ISC."),
         fr: t("Inter et JetBrains Mono sous licence SIL Open Font License, Lucide sous licence ISC."),
     }

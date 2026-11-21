@@ -1160,7 +1160,15 @@ fn about_section(locale: Locale, t: &Tokens) -> Vec<gpui_kit::AnyElement> {
         .into_any_element(),
         setting_row(
             text(locale, Key::SettingsLicences),
-            text(locale, Key::SettingsLicencesHint),
+            // Only the fonts this build ships (typography.md 3.1).
+            text(
+                locale,
+                if cfg!(any(target_os = "windows", target_os = "macos")) {
+                    Key::SettingsLicencesHint
+                } else {
+                    Key::SettingsLicencesHintLinux
+                },
+            ),
             div(),
             t,
         )

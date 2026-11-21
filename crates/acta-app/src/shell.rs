@@ -3364,7 +3364,7 @@ fn tree_row(
             project,
         } => el
             .child(chevron(*expanded, eid.to_string(), cx))
-            .child(title(type_scale::LABEL, name.clone(), rest))
+            .child(title(type_scale::UI_STRONG, name.clone(), rest))
             .child(plus(*project, Some(*eid), cx)),
         Row::Topic {
             title: name,

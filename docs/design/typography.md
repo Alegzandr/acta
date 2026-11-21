@@ -29,9 +29,9 @@ Two weights of the sans: 400 and 600 (Segoe UI Variable's Regular and Semibold i
 | `type.reading` | Sans | 16 / 26 (Text size: 15 / 24, 16 / 26, 18 / 28) | 400 | Current state, description, timeline bodies, notes |
 | `type.document` | Sans | 17 / 28 (Text size: 16 / 26, 17 / 28, 19 / 30) | 400 | Document body, in the reading view and in its editor |
 | `type.ui` | Sans | 14 / 20 | 400 | Everything else: rows, buttons, inputs, menus, property values |
-| `type.ui-strong` | Sans | 14 / 20 | 600 | Author names, selected segment, primary button, project rows, Markdown h3 |
+| `type.ui-strong` | Sans | 14 / 20 | 600 | Author names, selected segment, primary button, project and epic rows, Markdown h3 |
 | `type.small` | Sans | 12 / 16 | 400 | Timestamps, counts, breadcrumb, tooltips, hints, status bar, kbd hints |
-| `type.label` | Sans | 12 / 16 | 600 | Section labels ("Current state", "Timeline"), epic rows, table and tool window headers |
+| `type.label` | Sans | 12 / 16 | 600 | Section labels ("Current state", "Timeline"), table and tool window headers |
 | `type.code` | Mono | 13 / 20 | 400 | Inline code, code blocks, paths, ids, "Claude Code" author name |
 | `type.terminal` | Mono | 13 / 17 | 400 / 700 | Terminal grid (cell 7.8 x 17); size adjustable 11 to 18 with `Ctrl+Alt+=` / `Ctrl+Alt+-` (`Cmd+Shift+=` / `Cmd+Shift+-` on macOS) and from the palette |
 
