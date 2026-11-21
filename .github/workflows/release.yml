@@ -269,14 +269,14 @@ jobs:
               while read -r file; do
                 (cd "$dir" && sha256sum "$file") >> "$sums"
               done
-            # The update feed of the channel is a release asset too.
-            feed=releases.$channel.json
-            if [ ! -f "$dir/$feed" ]; then
-              echo "::error::the $channel build produced no $feed"
+            # vpk upload needs the build's feed, but it does not upload that file: it
+            # writes releases.<channel>.json anew from this version's packages only
+            # (the build's feed also lists the previous full package that pack
+            # fetched). So the feeds are not hashed here; publish checks the feeds
+            # GitHub serves against the packages and appends their hashes.
+            if [ ! -f "$dir/releases.$channel.json" ]; then
+              echo "::error::the $channel build produced no releases.$channel.json"
               exit 1
-            fi
-            if ! awk '{ print $2 }' "$sums" | grep -qxF "$feed"; then
-              (cd "$dir" && sha256sum "$feed") >> "$sums"
             fi
           done
           (cd extras && sha256sum install.sh install.ps1) >> "$sums"
@@ -438,30 +438,94 @@ jobs:
               --outputDir "releases/$channel" --merge --tag "$TAG" \
               --releaseName "Acta $VERSION"
           done
-          gh release upload "$TAG" extras/SHA256SUMS extras/install.sh extras/install.ps1
-      - name: Check the draft, then publish it
+          # SHA256SUMS goes up last, once it also lists the feeds vpk wrote.
+          gh release upload "$TAG" extras/install.sh extras/install.ps1
+      - name: Check the draft and complete SHA256SUMS
         run: |
-          gh release view "$TAG" --json assets --jq '.assets[].name' | sort > uploaded.txt
+          fail() {
+            echo "::error::$1; the release stays a draft"
+            exit 1
+          }
+          # Names: what collect hashed plus one feed per channel, nothing else.
+          gh release view "$TAG" --json assets \
+            --jq '.assets[] | "\(.digest // "none") \(.name)"' | sort -k 2 > served.txt
           {
             awk '{ print $2 }' extras/SHA256SUMS
-            echo SHA256SUMS
+            for channel in $CHANNELS; do echo "releases.$channel.json"; done
           } | sort > expected.txt
-          if ! diff expected.txt uploaded.txt; then
-            echo "::error::the draft release does not hold exactly the expected assets (see the diff above); it stays a draft"
-            exit 1
+          if ! awk '{ print $2 }' served.txt | diff expected.txt -; then
+            fail "the draft does not hold exactly the expected assets (see the diff above)"
           fi
-          # vpk uploads the feeds itself: make sure it uploaded the files that were
-          # hashed and attested, not rewritten ones.
-          gh release download "$TAG" --pattern 'releases.*.json' --dir uploaded-feeds
+          # Bytes: GitHub's digest of every hashed asset is the one collect computed.
+          while read -r hash name; do
+            served=$(awk -v name="$name" '$2 == name { print $1 }' served.txt)
+            if [ "$served" != "sha256:$hash" ]; then
+              fail "$name is served with digest '$served', SHA256SUMS has $hash"
+            fi
+          done < extras/SHA256SUMS
+
+          # Feeds: vpk writes them on upload, so check what is served. Each must list
+          # exactly the full and delta packages of this version that the channel
+          # built, with the size, SHA-1 and SHA-256 of the files verified above.
+          gh release download "$TAG" --pattern 'releases.*.json' --dir feeds
           for channel in $CHANNELS; do
             feed=releases.$channel.json
-            listed=$(awk -v name="$feed" '$2 == name { print $1 }' extras/SHA256SUMS)
-            actual=$(sha256sum "uploaded-feeds/$feed" | cut -d ' ' -f 1)
-            if [ "$actual" != "$listed" ]; then
-              echo "::error::$feed in the draft differs from the one in SHA256SUMS; it stays a draft"
-              exit 1
+            dir=releases/$channel
+            served=$(awk -v name="$feed" '$2 == name { print $1 }' served.txt)
+            actual=$(sha256sum "feeds/$feed" | cut -d ' ' -f 1)
+            if [ "$served" != "sha256:$actual" ]; then
+              fail "$feed downloaded with digest $actual, GitHub reports '$served'"
             fi
+            # The feed format of vpk 1.2.161, nothing more: an unknown field could
+            # change what a client does without failing any check below.
+            if ! jq -e 'keys == ["Assets"] and (.Assets | type == "array" and length > 0)
+                and all(.Assets[]; keys == ["FileName", "PackageId", "SHA1", "SHA256", "Size", "Type", "Version"])' \
+                "feeds/$feed" > /dev/null; then
+              fail "$feed is not a list of assets with exactly the known fields"
+            fi
+            # Type and name together: a full package listed as a delta must fail.
+            jq -r '.[] | select(.Type == "Full" or .Type == "Delta") | "\(.Type) \(.RelativeFileName)"' \
+              "$dir/assets.$channel.json" | tr -d '\r' | sort > packages.txt
+            if ! jq -r '.Assets[] | "\(.Type) \(.FileName)"' "feeds/$feed" | sort | diff packages.txt -; then
+              fail "$feed does not list exactly the packages the $channel build made, with their types"
+            fi
+            if [ "$(jq '[.Assets[] | select(.Type == "Full")] | length' "feeds/$feed")" != 1 ]; then
+              fail "$feed does not list exactly one full package"
+            fi
+            jq -r '.Assets[] | [.PackageId, .Version, .Type, .FileName, .Size, .SHA1, .SHA256] | @tsv' \
+              "feeds/$feed" > entries.tsv
+            while IFS=$(printf '\t') read -r id version type file size sha1 sha256; do
+              if [ "$id" != Acta ] || [ "$version" != "$VERSION" ]; then
+                fail "$feed lists $file as $id $version, not Acta $VERSION"
+              fi
+              listed=$(awk -v name="$file" '$2 == name { print $1 }' extras/SHA256SUMS)
+              if [ -z "$listed" ]; then
+                fail "$feed lists $file, which is not in SHA256SUMS"
+              fi
+              want_sha1=$(sha1sum "$dir/$file" | cut -d ' ' -f 1)
+              want_size=$(stat -c %s "$dir/$file")
+              lower256=$(echo "$sha256" | tr 'A-F' 'a-f')
+              lower1=$(echo "$sha1" | tr 'A-F' 'a-f')
+              if [ "$lower256" != "$listed" ] || [ "$lower1" != "$want_sha1" ] || [ "$size" != "$want_size" ]; then
+                fail "$feed records $file ($type) with size $size, SHA-1 $sha1, SHA-256 $sha256, which is not the file in SHA256SUMS"
+              fi
+            done < entries.tsv
+            echo "ok: $feed lists $(wc -l < entries.tsv) packages of Acta $VERSION, all verified"
+            (cd feeds && sha256sum "$feed") >> extras/SHA256SUMS
           done
+          cat extras/SHA256SUMS
+      - name: Attest the feeds
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: feeds/releases.*.json
+      - name: Upload SHA256SUMS, then publish
+        run: |
+          gh release upload "$TAG" extras/SHA256SUMS
+          served=$(gh release view "$TAG" --json assets --jq '.assets[] | select(.name == "SHA256SUMS") | .digest')
+          if [ "$served" != "sha256:$(sha256sum extras/SHA256SUMS | cut -d ' ' -f 1)" ]; then
+            echo "::error::SHA256SUMS is served with digest '$served', not the file just written; the release stays a draft"
+            exit 1
+          fi
 
           {
             echo "Install or update on Windows (PowerShell):"

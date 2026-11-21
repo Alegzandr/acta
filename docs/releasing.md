@@ -32,16 +32,19 @@ install scripts ignore.
    installer or portable package, the full update package and a delta from the previous
    version. A tag build restores no cargo cache: everything that ships is compiled in
    that run.
-3. `collect`, read-only: writes `SHA256SUMS` over the packages and update feeds of the
-   four channels and the two install scripts.
+3. `collect`, read-only: writes `SHA256SUMS` over the packages of the four channels
+   and the two install scripts.
 4. `publish`, the only job with write permissions, in the `release` environment, with no
    checkout: checks that `SHA256SUMS` is the file `collect` wrote and every file against
    it, attests build provenance,
    creates a draft release on the existing tag with `gh release create --verify-tag
    --draft` and no target, uploads the four channels into it with
-   `vpk upload github --merge`, adds
-   `SHA256SUMS`, `install.sh` and `install.ps1`, checks that the draft holds exactly the
-   expected assets, then publishes it as the latest release.
+   `vpk upload github --merge`, adds `install.sh` and `install.ps1`, then checks the
+   draft: exactly the expected assets, GitHub's digest of each one equal to
+   `SHA256SUMS`, and each `releases.<channel>.json` feed listing exactly this version's
+   full and delta packages with their verified size, SHA-1 and SHA-256. It appends the
+   feeds' hashes to `SHA256SUMS`, attests the feeds, uploads `SHA256SUMS` last and
+   publishes the release as the latest.
 
 Splitting `collect` from `publish` keeps the write token away from everything but the
 upload. It does not make the content more trustworthy: a release contains what the
@@ -295,9 +298,11 @@ First tag (`v0.1.0`):
 - [ ] `vpk upload github --merge` called four times from one job, with no checkout,
       fills a single draft; `--targetCommitish` is accepted for an existing tag.
 - [ ] `publish` receives the digest of `SHA256SUMS` from `collect` and accepts it.
-- [ ] The `releases.<channel>.json` feeds vpk uploads are byte-identical to the ones
-      the build wrote (the check step fails and the release stays a draft otherwise;
-      if vpk rewrites them on upload, take them out of `SHA256SUMS` again).
+- [x] The `releases.<channel>.json` feeds vpk uploads are byte-identical to the ones
+      the build wrote. Wrong as soon as a previous release exists (v0.1.2): vpk writes
+      each feed anew from the version's own packages, without the previous full
+      package that `vpk pack` fetched. The feeds are now out of the `collect`
+      `SHA256SUMS`; `publish` checks the served ones and appends their hashes.
 - [ ] The draft holds exactly the expected assets (the check step prints the
       difference otherwise). In particular: vpk uploads `Acta-win-x64-Portable.zip`
       and neither `assets.*.json` nor `RELEASES-*`.
