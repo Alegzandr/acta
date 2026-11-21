@@ -15,7 +15,9 @@
 #   *                      the files of scripts/licenses/third-party: notices for things
 #                          that are neither a crate of their own nor an asset directory
 #                          (the Lucide icons in assets/icons/lucide, copied from the
-#                          gpui-kit-assets crate; their directory has no licence file).
+#                          gpui-kit-assets crate; their directory has no licence file;
+#                          the WebView2 loader that webview2-com-sys links statically,
+#                          whose crate carries only its own MIT licence).
 #
 # Requires cargo-about 0.9.3: `cargo install cargo-about --locked --version 0.9.3`, or
 # scripts/ci/install-cargo-about.sh on Linux x86_64. Downloads the crates of every
