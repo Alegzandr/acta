@@ -86,6 +86,7 @@ dependencies = [
 name = "acta-app"
 version = "0.3.0"
 dependencies = [
+ "acta-browser",
  "acta-core",
  "acta-terminal",
  "async-channel",
@@ -104,12 +105,28 @@ dependencies = [
  "windows-sys 0.61.2",
  "winreg 0.55.0",
  "winresource",
+ "zeroize",
+]
+
+[[package]]
+name = "acta-browser"
+version = "0.3.0"
+dependencies = [
+ "getrandom 0.4.3",
+ "hmac 0.12.1",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "url",
+ "windows 0.61.3",
 ]
 
 [[package]]
 name = "acta-cli"
 version = "0.3.0"
 dependencies = [
+ "acta-browser",
  "acta-core",
  "clap",
  "rmcp",
@@ -125,6 +142,7 @@ name = "acta-core"
 version = "0.3.0"
 dependencies = [
  "getrandom 0.4.3",
+ "hmac 0.12.1",
  "keyring",
  "rusqlite",
  "schemars",

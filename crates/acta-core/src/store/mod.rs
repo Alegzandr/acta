@@ -140,6 +140,15 @@ impl Store {
         Ok((version, provider))
     }
 
+    /// A 32-byte secret for another purpose, derived from the database key:
+    /// `HMAC-SHA256(key, label)`. Every process that can open the database
+    /// derives the same value, so nothing new is stored (ADR 0010: the agent
+    /// browser's pipe key, label `acta agent-browser ipc v1`). The key
+    /// itself never leaves the store; the result is wiped when dropped.
+    pub fn derive_secret(&self, label: &[u8]) -> zeroize::Zeroizing<[u8; 32]> {
+        self.key.derive(label)
+    }
+
     // ---- snapshots (ADR 0006) ----
 
     pub fn snapshot(&self, kind: SnapshotKind) -> Result<Snapshot> {

@@ -17,6 +17,7 @@ rusqlite = { version = "0.43.0", default-features = false, features = ["bundled-
 
 [dependencies]
 getrandom = "0.4"
+hmac = "0.12"
 keyring = "4.2.0"
 schemars = "1"
 serde = { version = "1", features = ["derive"] }

@@ -41,6 +41,16 @@ impl Key {
         Key(bytes)
     }
 
+    /// `HMAC-SHA256(self, label)`: a secret for another purpose that reveals
+    /// nothing of the key.
+    pub fn derive(&self, label: &[u8]) -> Zeroizing<[u8; 32]> {
+        use hmac::{Hmac, Mac};
+        let mut mac = <Hmac<sha2::Sha256> as Mac>::new_from_slice(&self.0)
+            .expect("HMAC takes a key of any length");
+        mac.update(label);
+        Zeroizing::new(mac.finalize().into_bytes().into())
+    }
+
     /// The stored form: 64 lower-case hex characters, wiped when dropped.
     pub fn to_hex(&self) -> Zeroizing<String> {
         let mut s = Zeroizing::new(String::with_capacity(64));
@@ -292,6 +302,22 @@ impl KeyStore for MemoryKeyStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn derived_secrets_depend_on_key_and_label() {
+        let key = Key::from_bytes([7; 32]);
+        let a = key.derive(b"acta agent-browser ipc v1");
+        assert_eq!(
+            *a,
+            *Key::from_bytes([7; 32]).derive(b"acta agent-browser ipc v1")
+        );
+        assert_ne!(*a, *key.derive(b"another purpose"));
+        assert_ne!(
+            *a,
+            *Key::from_bytes([8; 32]).derive(b"acta agent-browser ipc v1")
+        );
+        assert_ne!(&a[..], &[7u8; 32][..]);
+    }
 
     #[test]
     fn hex_round_trip_and_redacted_debug() {
