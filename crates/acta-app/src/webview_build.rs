@@ -83,9 +83,12 @@ mod tests {
                 // Spelled in two parts so this file does not match itself.
                 let direct = ["WebView::", "build("].concat();
                 let child = ["build_as", "_child("].concat();
+                // wry's own `WebViewBuilder::build(&window)`.
+                let wry = [".build(", "&"].concat();
                 assert!(!text.contains(&direct), "{name} builds a web view in place");
                 if name != "webview_build.rs" {
                     assert!(!text.contains(&child), "{name} builds a web view in place");
+                    assert!(!text.contains(&wry), "{name} builds a web view in place");
                 }
                 checked += 1;
             }
