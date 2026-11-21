@@ -348,3 +348,62 @@ fn the_deepest_ledger_decides_the_commit_settings() {
     assert_eq!(at(s, &inner.join("x")), Some(CommitMode::Manual));
     assert_eq!(at(s, tmp.path()), None);
 }
+
+#[test]
+fn an_entry_the_user_removed_is_not_added_again() {
+    let mut t = open();
+    let tmp = tempfile::tempdir().unwrap();
+    let s = &mut t.store;
+    let f = tmp.path();
+    apply(s, f, mode(CommitMode::Push, true)).unwrap();
+    let mut v = read(f);
+    v.as_object_mut().unwrap().remove("attribution");
+    v["permissions"]["allow"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|r| r != "Bash(git push)");
+    fs::write(f.join(LOCAL_SETTINGS), v.to_string()).unwrap();
+    let o = apply(s, f, mode(CommitMode::Push, true)).unwrap();
+    assert_eq!(o, Outcome::default(), "nothing added back");
+    assert_eq!(read(f), v);
+    // Not wanted any more, then wanted again: added again.
+    apply(s, f, mode(CommitMode::Commit, false)).unwrap();
+    let o = apply(s, f, mode(CommitMode::Push, true)).unwrap();
+    assert!(o.added.contains(&"attribution".to_owned()), "{o:?}");
+    assert!(
+        o.added.contains(&"allow:Bash(git push)".to_owned()),
+        "{o:?}"
+    );
+    // A file the user deleted is not made again for the same wishes.
+    fs::remove_file(f.join(LOCAL_SETTINGS)).unwrap();
+    let o = apply(s, f, mode(CommitMode::Push, true)).unwrap();
+    assert_eq!(o, Outcome::default());
+    assert!(!f.join(LOCAL_SETTINGS).exists());
+    apply(s, f, mode(CommitMode::Manual, false)).unwrap();
+    assert!(s.local_values(LEDGER_PREFIX).unwrap().is_empty());
+}
+
+#[test]
+fn the_exclude_line_uses_canonical_paths() {
+    let mut t = open();
+    let tmp = tempfile::tempdir().unwrap();
+    let r = tmp.path().join("Repo");
+    repo(&r);
+    let sub = r.join("crates").join("core");
+    fs::create_dir_all(&sub).unwrap();
+    // A non-canonical spelling of the same folder.
+    let spelled = PathBuf::from(format!(
+        "{}{}crates{}.{}core",
+        r.display(),
+        std::path::MAIN_SEPARATOR,
+        std::path::MAIN_SEPARATOR,
+        std::path::MAIN_SEPARATOR
+    ));
+    let o = apply(&mut t.store, &spelled, mode(CommitMode::Commit, false)).unwrap();
+    assert!(!o.exclude_failed);
+    let exclude = fs::read_to_string(r.join(".git").join("info").join("exclude")).unwrap();
+    assert!(
+        exclude.contains("/crates/core/.claude/settings.local.json"),
+        "{exclude}"
+    );
+}

@@ -124,6 +124,9 @@ pub struct Outcome {
     /// The file is tracked by git: nothing was written ("Claude Code will
     /// ask before each commit").
     pub tracked: bool,
+    /// The file was created but its line could not be added to the
+    /// repository's `info/exclude`: it may show as an untracked file.
+    pub exclude_failed: bool,
 }
 
 impl Outcome {
@@ -153,6 +156,10 @@ struct Ledger {
     /// `permissions.deny`, `env`; taken out again once empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     made: Vec<String>,
+    /// Entries Acta added that the user took out of the file: not added
+    /// again while they stay wanted.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    user_removed: Vec<String>,
     /// Wanted state.
     #[serde(default)]
     auto_memory_off: bool,
@@ -320,12 +327,9 @@ pub fn apply(store: &mut Store, folder: &Path, wanted: Wanted) -> Result<Outcome
         Err(e) => return Err(format!("cannot read {LOCAL_SETTINGS}: {}", e.kind())),
     };
     if !existed {
-        // A ledger may survive a file the user deleted: start afresh.
+        // The user deleted the file: what Acta had there counts as taken out
+        // by the user (`take_out`), and a new file would be Acta's again.
         ledger.created = false;
-        ledger.keys.clear();
-        ledger.allow.clear();
-        ledger.deny.clear();
-        ledger.env.clear();
         ledger.made.clear();
     }
     let before = obj.clone();
@@ -352,7 +356,7 @@ pub fn apply(store: &mut Store, folder: &Path, wanted: Wanted) -> Result<Outcome
             write_atomic(&file, &text).map_err(|e| e.kind().to_string())?;
             if !existed {
                 ledger.created = true;
-                exclude_from_git(folder);
+                outcome.exclude_failed = !exclude_from_git(folder);
             }
         }
     }
@@ -397,10 +401,13 @@ fn take_out(
         want.iter()
             .any(|e| matches!(e, Entry::Key(w, _) if *w == k))
     };
+    let mut gone = Vec::new();
     for k in std::mem::take(&mut ledger.keys) {
         let acta = key_value(&k);
         if wanted_key(&k) && obj.get(&k) == acta.as_ref() {
             ledger.keys.push(k);
+        } else if wanted_key(&k) && obj.get(&k).is_none() {
+            gone.push(k);
         } else if !wanted_key(&k) && obj.get(&k).is_some() && obj.get(&k) == acta.as_ref() {
             obj.remove(&k);
             outcome.removed.push(k);
@@ -423,7 +430,9 @@ fn take_out(
             let present = arr.is_some_and(|a| a.iter().any(|v| v.as_str() == Some(&rule)));
             if still && present {
                 keep.push(rule);
-            } else if !still && present {
+            } else if still {
+                gone.push(format!("{field}:{rule}"));
+            } else if present {
                 if let Some(a) = permission_list_mut(obj, field) {
                     a.retain(|v| v.as_str() != Some(&rule));
                 }
@@ -443,6 +452,9 @@ fn take_out(
         let env = obj.get("env").and_then(Value::as_object);
         let cur = env.and_then(|e| e.get(&name)).and_then(Value::as_str);
         let acta = env_value(&name);
+        if cur.is_none() && still {
+            gone.push(format!("env.{name}"));
+        }
         if cur.is_none() || cur != acta {
             continue;
         }
@@ -455,6 +467,11 @@ fn take_out(
             outcome.removed.push(format!("env.{name}"));
         }
     }
+    // Remembered only while still wanted.
+    let labels: Vec<String> = want.iter().map(entry_label).collect();
+    ledger.user_removed.extend(gone);
+    ledger.user_removed.retain(|l| labels.contains(l));
+    ledger.user_removed.dedup();
     Ok(())
 }
 
@@ -499,6 +516,9 @@ fn put_in(
         return Err(format!("env in {LOCAL_SETTINGS} is not an object"));
     }
     for e in want {
+        if ledger.user_removed.contains(&entry_label(e)) {
+            continue;
+        }
         match e {
             Entry::Key(k, v) => {
                 if ledger.keys.iter().any(|x| x == k) {
@@ -653,15 +673,24 @@ pub fn remove_all(store: &mut Store) -> crate::Result<(usize, usize)> {
 
 /// Keeps a settings file Acta created out of commits: a line in the
 /// repository's local `info/exclude`, never in a tracked `.gitignore` or
-/// the global excludes. Appended only, read as bytes.
-fn exclude_from_git(folder: &Path) {
+/// the global excludes. Appended only, read as bytes. Paths are compared
+/// in their canonical form (8.3 names, case, `\\?\\`). Returns whether the
+/// line is there (or nothing is needed: not in a repository).
+fn exclude_from_git(folder: &Path) -> bool {
     let Some(info) = git::inspect(folder) else {
-        return;
+        return true;
     };
-    let Ok(rel) = folder.strip_prefix(&info.root) else {
-        return;
+    let (Ok(f), Ok(r)) = (
+        folder_path::canonical(folder),
+        folder_path::canonical(&info.root),
+    ) else {
+        return false;
     };
-    let mut line = rel.to_string_lossy().replace('\\', "/");
+    if folder_path::contains(Os::CURRENT, &r, &f).is_none() {
+        return false;
+    }
+    let rel = f.get(r.len()..).unwrap_or("").trim_matches(['/', '\\']);
+    let mut line = rel.replace('\\', "/");
     if !line.is_empty() {
         line.push('/');
     }
@@ -670,13 +699,13 @@ fn exclude_from_git(folder: &Path) {
     let cur = match fs::read(&exclude) {
         Ok(b) => b,
         Err(e) if e.kind() == io::ErrorKind::NotFound => Vec::new(),
-        Err(_) => return,
+        Err(_) => return false,
     };
     if cur
         .split(|b| *b == b'\n')
         .any(|l| l.trim_ascii() == line.as_bytes())
     {
-        return;
+        return true;
     }
     let mut add = Vec::new();
     if !cur.is_empty() && !cur.ends_with(b"\n") {
@@ -685,14 +714,15 @@ fn exclude_from_git(folder: &Path) {
     add.extend_from_slice(line.as_bytes());
     add.push(b'\n');
     let _ = fs::create_dir_all(exclude.parent().expect("parent"));
-    if let Ok(mut f) = fs::OpenOptions::new()
+    fs::OpenOptions::new()
         .append(true)
         .create(true)
         .open(&exclude)
-    {
-        use std::io::Write;
-        let _ = f.write_all(&add);
-    }
+        .and_then(|mut f| {
+            use std::io::Write;
+            f.write_all(&add)
+        })
+        .is_ok()
 }
 
 /// Replaces a file atomically (a temporary file beside it, then a rename),
