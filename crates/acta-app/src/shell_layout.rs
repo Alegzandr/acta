@@ -60,6 +60,8 @@ pub(super) struct Geometry {
     body: Rect,
     /// Each page group's width in the frame before, for its padding.
     page_widths: [f32; 3],
+    /// Every group's width in the frame before (the view tabs that fit).
+    group_widths: HashMap<(PlaceKey, usize), f32>,
 }
 
 /// `Place` as a map key (it is `Hash`, but a tuple keeps the code short).
@@ -82,6 +84,7 @@ impl Geometry {
                 .get(&(place_key(Place::Page), g))
                 .map_or(f32::MAX, |r| r.w);
         }
+        self.group_widths = self.groups.iter().map(|(k, r)| (*k, r.w)).collect();
         self.groups.clear();
         self.headers.clear();
         self.tabs.clear();
@@ -188,6 +191,47 @@ pub(crate) enum LayoutMenu {
     Folded,
     /// The header's list of a folded second group's views.
     FoldedSide(Side),
+    /// The view tabs of an area group that do not fit (4.8.4): every view
+    /// of the group, the active one checked.
+    ViewTabs(Place, usize),
+}
+
+/// Width of the header's chevron that replaces the tabs that do not fit.
+const OVERFLOW_CHEVRON: f32 = 24.;
+
+/// A view tab's width: padding 8 a side around its name in `type.label`
+/// (12), counted generously so a tab never clips.
+fn view_tab_width(name: &str) -> f32 {
+    16. + 7.5 * name.chars().count() as f32
+}
+
+/// Which view tabs of a header fit in `available` (4.8.4), in order: as
+/// many as fit from the first, the active one always, with room left for
+/// the chevron when some are left out. `None` when all fit.
+fn fitting_tabs(widths: &[f32], active: usize, available: f32) -> Option<Vec<usize>> {
+    const GAP: f32 = 4.;
+    let total: f32 = widths.iter().sum::<f32>() + GAP * widths.len().saturating_sub(1) as f32;
+    if total <= available {
+        return None;
+    }
+    let mut room = available - OVERFLOW_CHEVRON - GAP;
+    if let Some(w) = widths.get(active) {
+        room -= w + GAP;
+    }
+    let mut shown = Vec::new();
+    for (i, w) in widths.iter().enumerate() {
+        if i == active {
+            shown.push(i);
+            continue;
+        }
+        if room >= w + GAP {
+            room -= w + GAP;
+            shown.push(i);
+        } else {
+            room = f32::MIN;
+        }
+    }
+    Some(shown)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1838,8 +1882,33 @@ impl Shell {
                 }));
             left = left.child(name);
         } else {
+            // 4.8.4: the tabs that do not fit give way to a chevron. The
+            // room is the group's width less the padding and the buttons.
+            // The view's own buttons, its menu, and the area's `minus`.
+            let own = match active {
+                ViewId::Terminal => 1,
+                ViewId::Chat | ViewId::AgentBrowser => 2,
+                _ => 0,
+            };
+            let buttons_n = own + 1 + usize::from(matches!(place, Place::Side(_)));
+            let fit = self.bench().and_then(|bench| {
+                let width = *bench.ui.geometry.borrow().group_widths.get(&(key, group))?;
+                let available = width - 16. - buttons_n as f32 * 32. - 8.;
+                let widths: Vec<f32> = g
+                    .tabs
+                    .iter()
+                    .map(|tab| match tab {
+                        Tab::View(v) => view_tab_width(&text(locale, view_name(*v))),
+                        Tab::Page(_) => 0.,
+                    })
+                    .collect();
+                fitting_tabs(&widths, g.active, available)
+            });
             for (i, tab) in g.tabs.iter().enumerate() {
                 let Tab::View(v) = *tab else { continue };
+                if fit.as_ref().is_some_and(|shown| !shown.contains(&i)) {
+                    continue;
+                }
                 left = left.child(self.view_tab(
                     place,
                     group,
@@ -1850,6 +1919,31 @@ impl Shell {
                     &t,
                     cx,
                 ));
+            }
+            if fit.is_some() {
+                left = left.child(
+                    ui::ghost_icon_button(
+                        format!("view-tabs-more-{key}-{group}"),
+                        Icon::ChevronDown,
+                        OVERFLOW_CHEVRON,
+                        false,
+                        false,
+                        true,
+                        &t,
+                    )
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(cx.listener(
+                        move |shell, e: &gpui_kit::ClickEvent, _, cx| {
+                            let p = e.position();
+                            shell.open_menu(
+                                LayoutMenu::ViewTabs(place, group),
+                                f32::from(p.x) - 12.,
+                                f32::from(p.y) + 12.,
+                                cx,
+                            )
+                        },
+                    )),
+                );
             }
         }
         let context = self.view_context(active, &t, cx);
@@ -3054,6 +3148,29 @@ impl Shell {
                     }
                 }
             }
+            LayoutMenu::ViewTabs(place, gi) => {
+                if let Some(g) = layout.area(place).groups.get(gi) {
+                    for (i, tab) in g.tabs.iter().enumerate() {
+                        let Tab::View(v) = *tab else { continue };
+                        panel = panel.child(
+                            menu_row(
+                                SharedString::from(format!("view-tabs-{i}")),
+                                text(locale, view_name(v)),
+                                i == g.active,
+                                None,
+                                true,
+                                &t,
+                            )
+                            .on_click(cx.listener(
+                                move |shell, _, window, cx| {
+                                    shell.close_menu(cx);
+                                    shell.activate_tab(place, gi, i, window, cx)
+                                },
+                            )),
+                        );
+                    }
+                }
+            }
             LayoutMenu::FoldedSide(side) => {
                 for (gi, g) in layout.side(side).groups.iter().enumerate() {
                     for (i, tab) in g.tabs.iter().enumerate() {
@@ -3268,3 +3385,29 @@ pub(super) fn body_size(window: &Window) -> (f32, f32) {
 /// The entity of a page or view, for the type checker in closures.
 #[allow(dead_code)]
 fn _entity_of<T: 'static>(_: &Entity<T>) {}
+
+#[cfg(test)]
+mod overflow_tests {
+    use super::*;
+
+    #[test]
+    fn view_tabs_that_do_not_fit_give_way_to_the_chevron_and_the_active_stays() {
+        let widths = [70., 70., 70., 70.];
+        // All fit: no chevron.
+        assert_eq!(fitting_tabs(&widths, 0, 400.), None);
+        // Room for two besides the chevron: the first ones, in order.
+        assert_eq!(fitting_tabs(&widths, 0, 200.), Some(vec![0, 1]));
+        // The active tab is always shown, whatever its place.
+        assert_eq!(fitting_tabs(&widths, 3, 200.), Some(vec![0, 3]));
+        // Hardly any room: the active one alone.
+        assert_eq!(fitting_tabs(&widths, 2, 60.), Some(vec![2]));
+        assert!(view_tab_width("Knowledge") > view_tab_width("Chat"));
+    }
+
+    #[test]
+    fn a_view_or_tab_drag_starts_after_4_px() {
+        // 4.8.7: GPUI's own drag starts at 2; view and tab drags use
+        // their own press and move tracking.
+        assert_eq!(DRAG_START, 4.);
+    }
+}
