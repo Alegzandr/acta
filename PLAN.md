@@ -9,10 +9,10 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 | M2 | Data model and core UI | v0.3.0 | done |
 | M3 | MCP server, CLI, Claude Code setup; Acta tracks itself | v0.3.0 | done (dogfooding pending) |
 | M4 | Integrated terminal running Claude Code | v0.3.0 | doing (docked; live Claude Code session to verify) |
-| M5 | Claude chat panel beside the work (Windows and macOS; link on Linux; ADR 0009) | v0.5.0 | doing |
-| M6 | Notes inbox and notes-to-topics flow | v0.6.0 | todo |
-| M8 | VS Code-style docking layout; agent browser for Claude Code (ADR 0010) | v0.5.0 | doing |
-| M7 | Polish | v1.0.0 | doing |
+| M5 | Claude chat panel beside the work (Windows and macOS; link on Linux; ADR 0009) | v0.3.x | done on Windows (user checks pending: keyboard in the page, a real sign-in) |
+| M6 | Notes inbox and notes-to-topics flow | v0.3.x | done |
+| M8 | VS Code-style docking layout; agent browser for Claude Code (ADR 0010) | v0.4.0 | done |
+| M7 | Polish | v0.4.0 | doing (hands-on QA of drag and drop, agent browser Stop/Done, live Claude Code in the terminal) |
 
 ## M0 - Research and spikes
 - [x] ADR 0001: UI stack - gpui-kit 0.10.0 (GPUI snapshot gpui-pre 0.3.12), proven on Windows; macOS/Linux to prove in M1 CI
@@ -93,3 +93,4 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 - 2026-11-20: no spending at all. No code-signing certificate, no Apple Developer membership, no paid runners or services. Builds are unsigned; only free tooling.
 
 - 2026-11-21: v0.3.0 released (M2 store + UI, M3 MCP/CLI/setup, docked terminal). Self-update through the API-free source proven on Windows, macOS and Linux (update-e2e run 44870763799, 0.1.4 -> 0.3.0). Items the M2 UI simplified (memory editing in place, pane resize handles, folder drag reorder, persistent palette recents, revision line counts) move to M7.
+- 2026-11-21: v0.4.0 released (workbench layout, agent browser, visual polish, QA fixes). Self-update 0.3.0 -> 0.4.0 proven on Windows, macOS and Linux (update-e2e run 44919159521).
