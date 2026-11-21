@@ -157,8 +157,7 @@ fn tools_list_and_instructions_fit_their_budgets() {
             .copied()
             .collect::<std::collections::BTreeSet<_>>(),
         [
-            "brief", "create", "entries", "find", "hook", "kb", "kb_read", "kb_write", "log",
-            "update"
+            "brief", "create", "entries", "find", "kb", "kb_read", "kb_write", "log", "update"
         ]
         .into_iter()
         .collect()
@@ -176,7 +175,7 @@ fn tools_list_and_instructions_fit_their_budgets() {
         let read_only = t["annotations"]["readOnlyHint"] == json!(true);
         let expect_ro = matches!(
             t["name"].as_str(),
-            Some("brief" | "entries" | "find" | "kb" | "kb_read" | "hook")
+            Some("brief" | "entries" | "find" | "kb" | "kb_read")
         );
         assert_eq!(read_only, expect_ro, "{t}");
     }
@@ -350,11 +349,41 @@ fn hooks_exit_fast_and_silently_outside_linked_folders() {
     );
 
     // Unrelated folder: silent, and fast because the database is not opened.
-    let start = Instant::now();
-    let (ok, out, _) = cli(&data, &other, &["hook", "session-start"], &input(&other));
-    let miss = start.elapsed();
+    // Generous bounds for CI runners; one warm-up run each.
+    let timed = |dir: &Path| {
+        let _ = cli(&data, dir, &["hook", "session-start"], &input(dir));
+        let start = Instant::now();
+        let r = cli(&data, dir, &["hook", "session-start"], &input(dir));
+        (r, start.elapsed())
+    };
+    let ((ok, out, _), miss) = timed(&other);
     assert!(ok && out.is_empty(), "{out}");
-    assert!(miss < Duration::from_secs(2), "{miss:?}");
+    assert!(miss < Duration::from_millis(500), "miss path took {miss:?}");
+    let ((ok, out, _), hit) = timed(&repo);
+    assert!(ok && out.contains("Hook topic"), "{out}");
+    assert!(hit < Duration::from_millis(500), "hit path took {hit:?}");
+
+    // A hook never fails the session, whatever it is given.
+    for args in [
+        vec!["hook", "no-such-event"],
+        vec!["hook"],
+        vec!["hook", "session-start", "--bogus"],
+    ] {
+        let mut c = base_cmd(&data);
+        let out = c
+            .args(&args)
+            .current_dir(&other)
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{args:?}");
+        assert!(out.stdout.is_empty() && out.stderr.is_empty(), "{args:?}");
+    }
+    let (ok, out, _) = cli(&data, &repo, &["hook", "session-start"], "not json");
+    assert!(
+        ok && out.contains("Hook topic"),
+        "bad stdin falls back to the cwd: {out}"
+    );
 
     // A subfolder of the linked repository gets the briefing.
     let sub = repo.join("src");
@@ -386,12 +415,18 @@ fn link_remove_restores_auto_memory_and_export_import_round_trip() {
     let repo = tmp.path().join("repo");
     std::fs::create_dir_all(repo.join(".git").join("info")).unwrap();
     std::fs::write(repo.join(".git").join("HEAD"), "ref: refs/heads/main\n").unwrap();
+    // An existing exclude file, not UTF-8 and without a final newline, is
+    // appended to, never rewritten.
+    let before: &[u8] = b"# user rules\n/build\n\xff\xfe-latin1";
+    std::fs::write(repo.join(".git/info/exclude"), before).unwrap();
     let (ok, out, err) = cli(&data, &repo, &["link"], "");
     assert!(ok, "{out}{err}");
-    let exclude = std::fs::read_to_string(repo.join(".git/info/exclude")).unwrap();
+    let exclude = std::fs::read(repo.join(".git/info/exclude")).unwrap();
+    assert!(exclude.starts_with(before));
     assert!(
-        exclude.contains("/.claude/settings.local.json"),
-        "{exclude}"
+        exclude.ends_with(b"\n/.claude/settings.local.json\n"),
+        "{}",
+        String::from_utf8_lossy(&exclude)
     );
     let (ok, out, _) = cli(&data, &repo, &["link"], "");
     assert!(ok && out.contains("already linked"), "{out}");
@@ -406,6 +441,11 @@ fn link_remove_restores_auto_memory_and_export_import_round_trip() {
     let file = tmp.path().join("out.acta.json");
     let (ok, out, err) = cli(&data, &repo, &["export", file.to_str().unwrap()], "");
     assert!(ok && out.contains("plaintext"), "{out}{err}");
+    let (ok, _, err) = cli(&data, &repo, &["export", file.to_str().unwrap()], "");
+    assert!(
+        !ok && err.contains("exists"),
+        "an export never overwrites: {err}"
+    );
     let (ok, out, _) = cli(
         &data,
         &repo,
@@ -415,4 +455,13 @@ fn link_remove_restores_auto_memory_and_export_import_round_trip() {
     assert!(ok && out.contains("0 created"), "{out}");
     let (ok, out, _) = cli(&data, &repo, &["snapshot", "list"], "");
     assert!(ok, "{out}");
+}
+
+#[test]
+fn setup_with_a_dev_data_dir_needs_a_claude_config_dir() {
+    let tmp = tempfile::tempdir().unwrap();
+    let data = tmp.path().join("data");
+    let (ok, _, err) = cli(&data, tmp.path(), &["setup"], "");
+    assert!(!ok && err.contains("CLAUDE_CONFIG_DIR"), "{err}");
+    assert!(!data.join("claude").exists(), "nothing written");
 }

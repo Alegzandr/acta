@@ -170,8 +170,11 @@ fn unlink(store: &mut Store, a: &LinkArgs, stored: &str) -> Result<String, Strin
     Ok(msg)
 }
 
+/// Local-value prefix of the folders where Acta turned auto memory off.
+pub const AUTO_MEMORY_PREFIX: &str = "automemory.";
+
 fn marker_key(folder: &Path) -> String {
-    format!("automemory.{}", folder.to_string_lossy())
+    format!("{AUTO_MEMORY_PREFIX}{}", folder.to_string_lossy())
 }
 
 /// Writes `"autoMemoryEnabled": false` into the folder's local settings,
@@ -225,18 +228,34 @@ fn exclude_from_git(folder: &Path) {
     }
     let line = format!("/{line}{LOCAL_SETTINGS}");
     let exclude = info.common_dir.join("info").join("exclude");
-    let cur = fs::read_to_string(&exclude).unwrap_or_default();
-    if cur.lines().any(|l| l.trim() == line) {
+    // Read as bytes (the file may not be UTF-8). Any read error other than
+    // "not there" leaves the file alone; the line is only ever appended.
+    let cur = match fs::read(&exclude) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(_) => return,
+    };
+    if cur
+        .split(|b| *b == b'\n')
+        .any(|l| l.trim_ascii() == line.as_bytes())
+    {
         return;
     }
-    let mut next = cur;
-    if !next.is_empty() && !next.ends_with('\n') {
-        next.push('\n');
+    let mut add = Vec::new();
+    if !cur.is_empty() && !cur.ends_with(b"\n") {
+        add.push(b'\n');
     }
-    next.push_str(&line);
-    next.push('\n');
+    add.extend_from_slice(line.as_bytes());
+    add.push(b'\n');
     let _ = fs::create_dir_all(exclude.parent().expect("parent"));
-    let _ = fs::write(&exclude, next);
+    if let Ok(mut f) = fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(&exclude)
+    {
+        use std::io::Write;
+        let _ = f.write_all(&add);
+    }
 }
 
 fn auto_memory_restore(store: &mut Store, folder: &Path) -> acta_core::Result<bool> {

@@ -5,6 +5,8 @@
 //! undoes only what setup wrote, using a record it keeps next to the plugin.
 //! It never rewrites a settings file it cannot parse.
 
+use acta_core::folder_path;
+use acta_core::paths::Os;
 use serde_json::{Map, Value, json};
 use std::fs;
 use std::io;
@@ -222,18 +224,46 @@ impl Setup<'_> {
         Ok(written)
     }
 
-    fn marketplace_added(&self) -> Result<bool, String> {
+    /// Where Claude Code's `acta` marketplace points, from
+    /// `claude plugin marketplace list --json`
+    /// (`[{"name", "source", "path", "installLocation"}]`).
+    fn marketplace_state(&self) -> Result<Reg, String> {
         let out = self
             .claude
             .run(&["plugin", "marketplace", "list", "--json"])?;
-        Ok(json_names(&out).iter().any(|n| n == MARKETPLACE))
+        let items = json_items(&out)?;
+        let Some(m) = items.iter().find(|m| m["name"] == MARKETPLACE) else {
+            return Ok(Reg::Absent);
+        };
+        let path = m["path"]
+            .as_str()
+            .or_else(|| m["installLocation"].as_str())
+            .unwrap_or_default();
+        Ok(if same_dir(path, &self.plugin_root) {
+            Reg::Ours
+        } else {
+            Reg::Elsewhere
+        })
     }
 
-    fn plugin_installed(&self) -> Result<bool, String> {
+    /// Whether `acta@acta` is installed at user scope and loads from this
+    /// plugin directory, from `claude plugin list --json`
+    /// (`[{"id", "scope", "readFromFolder", ...}]`).
+    fn plugin_state(&self) -> Result<Reg, String> {
         let out = self.claude.run(&["plugin", "list", "--json"])?;
-        Ok(json_names(&out)
+        let items = json_items(&out)?;
+        let Some(p) = items
             .iter()
-            .any(|n| n == PLUGIN_ID || n == PLUGIN))
+            .find(|p| p["id"] == PLUGIN_ID && p["scope"].as_str().is_none_or(|s| s == "user"))
+        else {
+            return Ok(Reg::Absent);
+        };
+        let from = p["readFromFolder"].as_str().unwrap_or_default();
+        Ok(if same_dir(from, &self.plugin_dir()) {
+            Reg::Ours
+        } else {
+            Reg::Elsewhere
+        })
     }
 
     fn record(&self) -> Value {
@@ -251,7 +281,8 @@ impl Setup<'_> {
         )
     }
 
-    /// Runs every step. Each one is skipped when already done.
+    /// Runs every step. Each one is skipped when already done; a
+    /// registration pointing at another folder is replaced.
     pub fn install(&self, allow: bool) -> Vec<Step> {
         let mut steps = Vec::new();
         let mut record = self.record();
@@ -268,32 +299,57 @@ impl Setup<'_> {
             }
         }
         let root = self.plugin_root.to_string_lossy().into_owned();
-        match self.marketplace_added() {
-            Ok(true) => steps.push(Step::new("marketplace", true, "already added")),
-            _ => match self.claude.run(&["plugin", "marketplace", "add", &root]) {
-                Ok(_) => {
-                    record["marketplace_added"] = json!(true);
-                    steps.push(Step::new("marketplace", true, "added"));
+        let add = |detail: &str| match self.claude.run(&["plugin", "marketplace", "add", &root]) {
+            Ok(_) => Step::new("marketplace", true, detail),
+            Err(e) => Step::new("marketplace", false, one_line(&e)),
+        };
+        let market = match self.marketplace_state() {
+            Ok(Reg::Ours) => Step::new("marketplace", true, "already added"),
+            Ok(Reg::Elsewhere) => {
+                match self
+                    .claude
+                    .run(&["plugin", "marketplace", "remove", MARKETPLACE])
+                {
+                    Ok(_) => add("re-added here (it pointed to another folder)"),
+                    Err(e) => Step::new("marketplace", false, one_line(&e)),
                 }
-                Err(e) => steps.push(Step::new("marketplace", false, one_line(&e))),
-            },
+            }
+            _ => add("added"),
+        };
+        if market.ok {
+            record["marketplace_added"] = json!(true);
         }
-        match self.plugin_installed() {
-            Ok(true) => steps.push(Step::new("plugin", true, "already installed")),
-            _ => match self
-                .claude
-                .run(&["plugin", "install", PLUGIN_ID, "--scope", "user"])
-            {
-                Ok(_) => {
-                    record["plugin_installed"] = json!(true);
-                    steps.push(Step::new("plugin", true, "installed (user scope)"));
+        steps.push(market);
+        let install = |detail: &str| match self
+            .claude
+            .run(&["plugin", "install", PLUGIN_ID, "--scope", "user"])
+        {
+            Ok(_) => Step::new("plugin", true, detail),
+            Err(e) => Step::new("plugin", false, one_line(&e)),
+        };
+        let plugin = match self.plugin_state() {
+            Ok(Reg::Ours) => Step::new("plugin", true, "already installed"),
+            Ok(Reg::Elsewhere) => {
+                match self
+                    .claude
+                    .run(&["plugin", "uninstall", PLUGIN_ID, "--scope", "user"])
+                {
+                    Ok(_) => install("reinstalled from here (it loaded from another folder)"),
+                    Err(e) => Step::new("plugin", false, one_line(&e)),
                 }
-                Err(e) => steps.push(Step::new("plugin", false, one_line(&e))),
-            },
+            }
+            _ => install("installed (user scope)"),
+        };
+        if plugin.ok {
+            record["plugin_installed"] = json!(true);
         }
+        steps.push(plugin);
         if allow {
-            match edit_allow_rule(&self.settings_path(), true) {
-                Ok(Edit::Changed) => {
+            match edit_allow_rule(&self.settings_path(), true, &record) {
+                Ok(Edit::Added(made)) => {
+                    for (k, v) in made {
+                        record[k] = json!(v);
+                    }
                     record["allow_rule_added"] = json!(true);
                     steps.push(Step::new(
                         "allow rule",
@@ -301,7 +357,7 @@ impl Setup<'_> {
                         format!("added {ALLOW_RULE} to settings.json (a backup was kept)"),
                     ));
                 }
-                Ok(Edit::Unchanged) => steps.push(Step::new("allow rule", true, "already present")),
+                Ok(_) => steps.push(Step::new("allow rule", true, "already present")),
                 Err(e) => steps.push(Step::new("allow rule", false, e)),
             }
         } else {
@@ -319,6 +375,7 @@ impl Setup<'_> {
 
     pub fn check(&self) -> Vec<Step> {
         let exe_ok = self.exe.is_file();
+        let files_ok = self.files_current();
         let mut steps = vec![
             Step::new(
                 "executable",
@@ -331,22 +388,23 @@ impl Setup<'_> {
             ),
             Step::new(
                 "plugin files",
-                self.files_current(),
-                if self.files_current() {
+                files_ok,
+                if files_ok {
                     "up to date"
                 } else {
                     "missing or outdated"
                 },
             ),
         ];
-        let state = |r: Result<bool, String>, yes: &str, no: &str| match r {
-            Ok(true) => (true, yes.to_owned()),
-            Ok(false) => (false, no.to_owned()),
+        let state = |r: Result<Reg, String>, yes: &str, no: &str| match r {
+            Ok(Reg::Ours) => (true, yes.to_owned()),
+            Ok(Reg::Elsewhere) => (false, "points to another folder: run acta setup".to_owned()),
+            Ok(Reg::Absent) => (false, no.to_owned()),
             Err(e) => (false, one_line(&e)),
         };
-        let (ok, d) = state(self.marketplace_added(), "added", "not added");
+        let (ok, d) = state(self.marketplace_state(), "added", "not added");
         steps.push(Step::new("marketplace", ok, d));
-        let (ok, d) = state(self.plugin_installed(), "installed", "not installed");
+        let (ok, d) = state(self.plugin_state(), "installed", "not installed");
         steps.push(Step::new("plugin", ok, d));
         let allow = read_settings(&self.settings_path())
             .ok()
@@ -364,13 +422,13 @@ impl Setup<'_> {
         steps
     }
 
-    /// Undoes what setup did: the plugin, the marketplace, the allow rule if
-    /// setup added it, and the plugin directory.
+    /// Undoes what setup did: the plugin, the marketplace, the allow rule
+    /// and the settings it created, its backup, and the plugin directory.
     pub fn remove(&self) -> Vec<Step> {
         let record = self.record();
         let mut steps = Vec::new();
-        match self.plugin_installed() {
-            Ok(false) => steps.push(Step::new("plugin", true, "not installed")),
+        match self.plugin_state() {
+            Ok(Reg::Absent) => steps.push(Step::new("plugin", true, "not installed")),
             _ => match self
                 .claude
                 .run(&["plugin", "uninstall", PLUGIN_ID, "--scope", "user"])
@@ -379,8 +437,8 @@ impl Setup<'_> {
                 Err(e) => steps.push(Step::new("plugin", false, one_line(&e))),
             },
         }
-        match self.marketplace_added() {
-            Ok(false) => steps.push(Step::new("marketplace", true, "not added")),
+        match self.marketplace_state() {
+            Ok(Reg::Absent) => steps.push(Step::new("marketplace", true, "not added")),
             _ => match self
                 .claude
                 .run(&["plugin", "marketplace", "remove", MARKETPLACE])
@@ -390,9 +448,9 @@ impl Setup<'_> {
             },
         }
         if record["allow_rule_added"] == json!(true) {
-            match edit_allow_rule(&self.settings_path(), false) {
-                Ok(Edit::Changed) => steps.push(Step::new("allow rule", true, "removed")),
-                Ok(Edit::Unchanged) => steps.push(Step::new("allow rule", true, "already absent")),
+            match edit_allow_rule(&self.settings_path(), false, &record) {
+                Ok(Edit::Removed) => steps.push(Step::new("allow rule", true, "removed")),
+                Ok(_) => steps.push(Step::new("allow rule", true, "already absent")),
                 Err(e) => steps.push(Step::new("allow rule", false, e)),
             }
         } else {
@@ -402,8 +460,18 @@ impl Setup<'_> {
                 "left as is (not added by setup)",
             ));
         }
-        let files_ok = steps.iter().all(|s| s.ok);
-        if files_ok {
+        if record["backup_created"] == json!(true) {
+            match fs::remove_file(backup_path(&self.settings_path())) {
+                Ok(()) => steps.push(Step::new("backup", true, "settings backup removed")),
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+                Err(e) => steps.push(Step::new(
+                    "backup",
+                    false,
+                    format!("cannot remove the settings backup: {}", e.kind()),
+                )),
+            }
+        }
+        if steps.iter().all(|s| s.ok) {
             match fs::remove_dir_all(&self.plugin_root) {
                 Ok(()) => steps.push(Step::new("plugin files", true, "removed")),
                 Err(e) if e.kind() == io::ErrorKind::NotFound => {
@@ -426,6 +494,29 @@ impl Setup<'_> {
     }
 }
 
+/// What Claude Code's registration of the marketplace or the plugin is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Reg {
+    Absent,
+    /// Registered, from this plugin directory.
+    Ours,
+    /// Registered under Acta's name, from another directory (an old data
+    /// directory, or a development build).
+    Elsewhere,
+}
+
+/// Whether a path printed by Claude Code is this directory.
+fn same_dir(printed: &str, dir: &Path) -> bool {
+    if printed.is_empty() {
+        return false;
+    }
+    let form = |p: &Path| {
+        folder_path::canonical(p)
+            .unwrap_or_else(|_| folder_path::normalize(Os::CURRENT, &p.to_string_lossy()))
+    };
+    folder_path::same(Os::CURRENT, &form(Path::new(printed)), &form(dir))
+}
+
 fn one_line(text: &str) -> String {
     let t = text.split_whitespace().collect::<Vec<_>>().join(" ");
     if t.chars().count() > 160 {
@@ -435,40 +526,18 @@ fn one_line(text: &str) -> String {
     }
 }
 
-/// Names found in `claude plugin list --json` / `marketplace list --json`
-/// output: every `name` or `id` string of the top-level items. Lenient on
-/// purpose: the format is Claude Code's, not ours.
-fn json_names(text: &str) -> Vec<String> {
-    let Ok(v) = serde_json::from_str::<Value>(text.trim()) else {
-        return Vec::new();
-    };
-    let items: Vec<&Value> = match &v {
-        Value::Array(a) => a.iter().collect(),
-        Value::Object(o) => o
-            .values()
-            .flat_map(|x| match x {
-                Value::Array(a) => a.iter().collect::<Vec<_>>(),
-                other => vec![other],
-            })
-            .collect(),
-        _ => Vec::new(),
-    };
-    let mut out = Vec::new();
-    for it in items {
-        for key in ["name", "id", "plugin"] {
-            if let Some(s) = it.get(key).and_then(Value::as_str) {
-                out.push(s.to_owned());
-            }
-        }
+/// The top-level array of a `claude ... --json` listing.
+fn json_items(text: &str) -> Result<Vec<Value>, String> {
+    match serde_json::from_str::<Value>(text.trim()) {
+        Ok(Value::Array(a)) => Ok(a),
+        _ => Err("unexpected output from the claude CLI; update Claude Code".into()),
     }
-    if let Value::Object(o) = &v {
-        out.extend(o.keys().cloned());
-    }
-    out
 }
 
 pub enum Edit {
-    Changed,
+    /// Added, with what setup created to hold it (record keys).
+    Added(Vec<(&'static str, bool)>),
+    Removed,
     Unchanged,
 }
 
@@ -494,61 +563,112 @@ fn has_allow_rule(v: &Value) -> bool {
         .is_some_and(|a| a.iter().any(|x| x == ALLOW_RULE))
 }
 
+fn backup_path(settings: &Path) -> PathBuf {
+    settings.with_extension("json.acta-backup")
+}
+
 /// Adds or removes the single allow rule, keeping everything else as it was
-/// (key order included). A backup of the previous file is kept once.
-pub fn edit_allow_rule(path: &Path, add: bool) -> Result<Edit, String> {
+/// (key order included). Adding keeps a backup of the previous file once and
+/// reports what it created; removing takes out an `allow` list, a
+/// `permissions` object or a whole file that setup created and that are
+/// empty again (`record` says which).
+pub fn edit_allow_rule(path: &Path, add: bool, record: &Value) -> Result<Edit, String> {
     let existing = read_settings(path)?;
     let mut v = existing.clone().unwrap_or_else(|| json!({}));
     if has_allow_rule(&v) == add {
         return Ok(Edit::Unchanged);
     }
     let obj = v.as_object_mut().expect("object");
+    let mut made = Vec::new();
     if add {
+        made.push(("created_settings", existing.is_none()));
+        made.push(("created_permissions", !obj.contains_key("permissions")));
         let perms = obj
             .entry("permissions")
             .or_insert_with(|| Value::Object(Map::new()));
         let Some(perms) = perms.as_object_mut() else {
             return Err("settings.json has a permissions value that is not an object".into());
         };
+        made.push(("created_allow", !perms.contains_key("allow")));
         let allow = perms.entry("allow").or_insert_with(|| json!([]));
         let Some(allow) = allow.as_array_mut() else {
             return Err("settings.json has a permissions.allow value that is not a list".into());
         };
         allow.push(json!(ALLOW_RULE));
-    } else if let Some(allow) = obj
-        .get_mut("permissions")
-        .and_then(|p| p.get_mut("allow"))
-        .and_then(Value::as_array_mut)
-    {
-        allow.retain(|x| x != ALLOW_RULE);
+    } else {
+        let created = |k: &str| record[k] == json!(true);
+        if let Some(perms) = obj.get_mut("permissions").and_then(Value::as_object_mut) {
+            if let Some(allow) = perms.get_mut("allow").and_then(Value::as_array_mut) {
+                allow.retain(|x| x != ALLOW_RULE);
+            }
+            if created("created_allow")
+                && perms
+                    .get("allow")
+                    .and_then(Value::as_array)
+                    .is_some_and(Vec::is_empty)
+            {
+                perms.remove("allow");
+            }
+        }
+        if created("created_permissions")
+            && obj
+                .get("permissions")
+                .and_then(Value::as_object)
+                .is_some_and(Map::is_empty)
+        {
+            obj.remove("permissions");
+        }
+        if created("created_settings") && obj.is_empty() {
+            fs::remove_file(path)
+                .map_err(|e| format!("cannot remove settings.json: {}", e.kind()))?;
+            return Ok(Edit::Removed);
+        }
     }
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)
             .map_err(|e| format!("cannot create the settings folder: {}", e.kind()))?;
     }
-    if existing.is_some() {
-        let backup = path.with_extension("json.acta-backup");
+    if add && existing.is_some() {
+        let backup = backup_path(path);
         if !backup.exists() {
             fs::copy(path, &backup)
                 .map_err(|e| format!("cannot back up settings.json: {}", e.kind()))?;
+            made.push(("backup_created", true));
         }
     }
     let text = serde_json::to_string_pretty(&v).expect("json") + "\n";
     write_atomic(path, &text).map_err(|e| format!("cannot write settings.json: {}", e.kind()))?;
-    Ok(Edit::Changed)
+    Ok(if add {
+        Edit::Added(made)
+    } else {
+        Edit::Removed
+    })
 }
 
-/// Write to a sibling temporary file, then rename over the target.
+/// Writes to a temporary file next to the real target, then renames it over
+/// the target. A symlink is followed (its target is replaced and the link
+/// stays) and the target's permissions are kept.
 pub fn write_atomic(path: &Path, text: &str) -> io::Result<()> {
-    let name = path
+    let target = match fs::symlink_metadata(path) {
+        Ok(m) if m.file_type().is_symlink() => fs::canonicalize(path)?,
+        _ => path.to_path_buf(),
+    };
+    let permissions = fs::metadata(&target).ok().map(|m| m.permissions());
+    let name = target
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let tmp = path.with_file_name(format!(".{name}.acta-tmp-{}", std::process::id()));
-    fs::write(&tmp, text)?;
-    fs::rename(&tmp, path).inspect_err(|_| {
+    let tmp = target.with_file_name(format!(".{name}.acta-tmp-{}", std::process::id()));
+    let result = fs::write(&tmp, text)
+        .and_then(|()| match permissions {
+            Some(p) => fs::set_permissions(&tmp, p),
+            None => Ok(()),
+        })
+        .and_then(|()| fs::rename(&tmp, &target));
+    if result.is_err() {
         let _ = fs::remove_file(&tmp);
-    })
+    }
+    result
 }
 
 #[cfg(test)]
@@ -556,43 +676,61 @@ mod tests {
     use super::*;
     use std::cell::RefCell;
 
-    /// A fake `claude` that keeps the marketplace and plugin state in memory.
+    /// A fake `claude` that keeps the marketplace and plugin state in memory
+    /// and prints the listings in the shape the real CLI prints them
+    /// (checked against Claude Code 2.1.330 with a temporary config dir).
     #[derive(Default)]
     struct FakeClaude {
         calls: RefCell<Vec<String>>,
-        marketplaces: RefCell<Vec<String>>,
-        plugins: RefCell<Vec<String>>,
+        /// The marketplace's directory, when added.
+        marketplace: RefCell<Option<PathBuf>>,
+        /// The plugin's `readFromFolder`, when installed.
+        plugin: RefCell<Option<PathBuf>>,
     }
 
     impl ClaudeCli for FakeClaude {
         fn run(&self, args: &[&str]) -> Result<String, String> {
             self.calls.borrow_mut().push(args.join(" "));
-            let list = |v: &RefCell<Vec<String>>| {
-                serde_json::to_string(
-                    &v.borrow()
-                        .iter()
-                        .map(|n| json!({"name": n}))
-                        .collect::<Vec<_>>(),
-                )
-                .unwrap()
-            };
             match args {
-                ["plugin", "marketplace", "list", "--json"] => Ok(list(&self.marketplaces)),
-                ["plugin", "list", "--json"] => Ok(list(&self.plugins)),
-                ["plugin", "marketplace", "add", _] => {
-                    self.marketplaces.borrow_mut().push(MARKETPLACE.into());
+                ["plugin", "marketplace", "list", "--json"] => {
+                    let items: Vec<Value> = self
+                        .marketplace
+                        .borrow()
+                        .iter()
+                        .map(|p| {
+                            json!({"name": MARKETPLACE, "source": "directory",
+                                   "path": p, "installLocation": p})
+                        })
+                        .collect();
+                    Ok(serde_json::to_string_pretty(&items).unwrap())
+                }
+                ["plugin", "list", "--json"] => {
+                    let items: Vec<Value> = self
+                        .plugin
+                        .borrow()
+                        .iter()
+                        .map(|p| {
+                            json!({"id": PLUGIN_ID, "version": "0.1.4", "scope": "user",
+                                   "enabled": true, "readFromFolder": p})
+                        })
+                        .collect();
+                    Ok(serde_json::to_string_pretty(&items).unwrap())
+                }
+                ["plugin", "marketplace", "add", path] => {
+                    *self.marketplace.borrow_mut() = Some(PathBuf::from(path));
                     Ok(String::new())
                 }
-                ["plugin", "install", id, ..] => {
-                    self.plugins.borrow_mut().push((*id).into());
+                ["plugin", "install", _, ..] => {
+                    let m = self.marketplace.borrow().clone().ok_or("no marketplace")?;
+                    *self.plugin.borrow_mut() = Some(m.join("plugins").join(PLUGIN));
                     Ok(String::new())
                 }
                 ["plugin", "uninstall", ..] => {
-                    self.plugins.borrow_mut().clear();
+                    *self.plugin.borrow_mut() = None;
                     Ok(String::new())
                 }
                 ["plugin", "marketplace", "remove", _] => {
-                    self.marketplaces.borrow_mut().clear();
+                    *self.marketplace.borrow_mut() = None;
                     Ok(String::new())
                 }
                 _ => Err(format!("unexpected: {}", args.join(" "))),
@@ -641,10 +779,8 @@ mod tests {
         // Key order and other keys are kept.
         let keys: Vec<&String> = v.as_object().unwrap().keys().collect();
         assert_eq!(keys, ["theme", "permissions", "model"]);
-        assert_eq!(
-            fs::read_to_string(s.settings_path().with_extension("json.acta-backup")).unwrap(),
-            user
-        );
+        let backup = backup_path(&s.settings_path());
+        assert_eq!(fs::read_to_string(&backup).unwrap(), user);
 
         // Second run: nothing changes, no install command repeated.
         let calls_before = claude.calls.borrow().len();
@@ -675,8 +811,45 @@ mod tests {
         let restored: Value =
             serde_json::from_str(&fs::read_to_string(s.settings_path()).unwrap()).unwrap();
         assert_eq!(restored, serde_json::from_str::<Value>(user).unwrap());
+        assert!(!backup.exists(), "the backup setup made is removed");
         assert!(!s.plugin_root.exists());
-        assert!(claude.plugins.borrow().is_empty() && claude.marketplaces.borrow().is_empty());
+        assert!(claude.plugin.borrow().is_none() && claude.marketplace.borrow().is_none());
+    }
+
+    #[test]
+    fn a_registration_from_another_folder_is_replaced() {
+        let tmp = tempfile::tempdir().unwrap();
+        let claude = FakeClaude::default();
+        let s = setup(tmp.path(), &claude);
+        let old = tmp.path().join("old-data").join("claude");
+        fs::create_dir_all(&old).unwrap();
+        *claude.marketplace.borrow_mut() = Some(old.clone());
+        *claude.plugin.borrow_mut() = Some(old.join("plugins").join(PLUGIN));
+        let check = s.check();
+        let market = check.iter().find(|x| x.name == "marketplace").unwrap();
+        assert!(
+            !market.ok && market.detail.contains("another folder"),
+            "{market:?}"
+        );
+
+        let steps = s.install(false);
+        assert!(steps.iter().all(|x| x.ok), "{steps:?}");
+        assert!(steps.iter().any(|x| x.detail.starts_with("re-added here")));
+        assert!(
+            steps
+                .iter()
+                .any(|x| x.detail.starts_with("reinstalled from here"))
+        );
+        assert!(same_dir(
+            &claude
+                .marketplace
+                .borrow()
+                .clone()
+                .unwrap()
+                .to_string_lossy(),
+            &s.plugin_root
+        ));
+        assert!(s.check().iter().all(|x| x.ok || x.name == "allow rule"));
     }
 
     #[test]
@@ -694,7 +867,7 @@ mod tests {
     }
 
     #[test]
-    fn unreadable_settings_are_left_alone_and_missing_ones_are_created() {
+    fn what_setup_created_is_removed_and_unreadable_settings_are_left_alone() {
         let tmp = tempfile::tempdir().unwrap();
         let claude = FakeClaude::default();
         let s = setup(tmp.path(), &claude);
@@ -708,11 +881,23 @@ mod tests {
             "{ // comment\n}"
         );
 
+        // A settings file setup creates is removed again.
         fs::remove_file(s.settings_path()).unwrap();
         assert!(s.install(true).iter().all(|x| x.ok));
         let v: Value =
             serde_json::from_str(&fs::read_to_string(s.settings_path()).unwrap()).unwrap();
         assert_eq!(v, json!({"permissions": {"allow": [ALLOW_RULE]}}));
+        assert!(s.remove().iter().all(|x| x.ok));
+        assert!(!s.settings_path().exists());
+
+        // An empty permissions object setup created is removed; the user's
+        // other keys stay.
+        fs::write(s.settings_path(), "{\"theme\": \"dark\"}").unwrap();
+        assert!(s.install(true).iter().all(|x| x.ok));
+        assert!(s.remove().iter().all(|x| x.ok));
+        let v: Value =
+            serde_json::from_str(&fs::read_to_string(s.settings_path()).unwrap()).unwrap();
+        assert_eq!(v, json!({"theme": "dark"}));
     }
 
     #[test]
@@ -730,12 +915,43 @@ mod tests {
     }
 
     #[test]
-    fn json_names_reads_lists_and_maps() {
-        assert_eq!(json_names(r#"[{"name":"acta"}]"#), ["acta"]);
+    fn listings_must_be_arrays() {
+        assert_eq!(json_items(r#"[{"name":"acta"}]"#).unwrap().len(), 1);
+        assert!(json_items(r#"{"acta":{}}"#).is_err());
+        assert!(json_items("not json").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_atomic_follows_symlinks_and_keeps_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let real = tmp.path().join("real.json");
+        fs::write(&real, "{}").unwrap();
+        fs::set_permissions(&real, fs::Permissions::from_mode(0o600)).unwrap();
+        let link = tmp.path().join("settings.json");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        write_atomic(&link, "{\"a\":1}").unwrap();
         assert!(
-            json_names(r#"[{"id":"acta@acta","scope":"user"}]"#).contains(&"acta@acta".to_string())
+            fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink()
         );
-        assert!(json_names(r#"{"acta":{"source":"x"}}"#).contains(&"acta".to_string()));
-        assert!(json_names("not json").is_empty());
+        assert_eq!(fs::read_to_string(&real).unwrap(), "{\"a\":1}");
+        assert_eq!(
+            fs::metadata(&real).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+
+    #[test]
+    fn write_atomic_replaces_a_plain_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let f = tmp.path().join("settings.json");
+        fs::write(&f, "old").unwrap();
+        write_atomic(&f, "new").unwrap();
+        assert_eq!(fs::read_to_string(&f).unwrap(), "new");
+        assert_eq!(fs::read_dir(tmp.path()).unwrap().count(), 1);
     }
 }

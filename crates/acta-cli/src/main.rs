@@ -243,6 +243,16 @@ enum SnapshotAction {
 }
 
 fn main() -> ExitCode {
+    // A hook never fails or disturbs a Claude Code session: whatever goes
+    // wrong, `acta hook ...` exits 0 and prints nothing.
+    if std::env::args_os().nth(1).is_some_and(|a| a == "hook") {
+        return match Cli::try_parse() {
+            Ok(Cli {
+                command: Some(command @ Command::Hook { .. }),
+            }) => run(command),
+            _ => ExitCode::SUCCESS,
+        };
+    }
     match Cli::try_parse() {
         Ok(Cli {
             command: Some(command),
@@ -312,8 +322,7 @@ fn run(command: Command) -> ExitCode {
         Command::Mcp => finish(mcp::serve(opener).map(|_| String::new())),
         Command::Hook { event } => {
             let Some(event) = hook::Event::parse(&event) else {
-                eprintln!("acta hook: unknown event; use session-start or pre-compact");
-                return ExitCode::from(2);
+                return ExitCode::SUCCESS;
             };
             let stdin = hook::read_stdin();
             // A hook never fails the session: errors print nothing.
@@ -341,6 +350,13 @@ fn run_setup(opener: &Opener, check: bool, remove: bool, no_allow: bool, json: b
     let claude_env = std::env::var_os("CLAUDE_CONFIG_DIR")
         .filter(|v| !v.is_empty())
         .map(PathBuf::from);
+    if opener.dev && claude_env.is_none() {
+        eprintln!(
+            "acta setup with {} needs CLAUDE_CONFIG_DIR, so a development data directory is never registered in the real Claude Code configuration.",
+            open::DEV_DATA_DIR
+        );
+        return ExitCode::FAILURE;
+    }
     let Some(claude_dir) = claude_env
         .clone()
         .or_else(|| base.home.as_ref().map(|h| h.join(".claude")))
@@ -351,7 +367,7 @@ fn run_setup(opener: &Opener, check: bool, remove: bool, no_allow: bool, json: b
     // Prefer the exported CLI (ADR 0004): its path is stable across updates.
     let exported = paths::cli_export_dir(Os::CURRENT, &base)
         .map(|d| d.join(paths::exported_cli_name(Os::CURRENT)))
-        .filter(|p| p.is_file() && std::env::var_os(open::DEV_DATA_DIR).is_none());
+        .filter(|p| p.is_file() && !opener.dev);
     let Some(exe) = exported.or_else(|| std::env::current_exe().ok()) else {
         eprintln!("Cannot find the acta executable.");
         return ExitCode::FAILURE;
@@ -365,13 +381,19 @@ fn run_setup(opener: &Opener, check: bool, remove: bool, no_allow: bool, json: b
         exe,
         claude: &claude,
     };
-    let steps = if check {
+    let mut steps = if check {
         s.check()
     } else if remove {
         s.remove()
     } else {
         s.install(!no_allow)
     };
+    if check {
+        steps.push(link_index_step(opener));
+    }
+    if remove && let Some(step) = auto_memory_step(opener) {
+        steps.push(step);
+    }
     println!("{}", setup::render_steps(&steps, json));
     let ok = steps.iter().all(|x| x.ok);
     if ok && !json && !check && !remove {
@@ -386,6 +408,53 @@ fn run_setup(opener: &Opener, check: bool, remove: bool, no_allow: bool, json: b
     }
 }
 
+/// `setup --check`: the hooks' pre-check file can be written from the
+/// current folders.
+fn link_index_step(opener: &Opener) -> setup::Step {
+    let (ok, detail) = match opener.open() {
+        Ok(store) => match store.refresh_link_index() {
+            Ok(()) => (true, "up to date".to_owned()),
+            Err(e) => (
+                false,
+                format!(
+                    "cannot write the pre-check file ({}): hooks may miss linked folders",
+                    e.kind()
+                ),
+            ),
+        },
+        Err(e) => (false, e),
+    };
+    setup::Step {
+        name: "link index",
+        ok,
+        detail,
+    }
+}
+
+/// `setup --remove`: the linked folders where `acta link` turned Claude
+/// Code's auto memory off stay that way until unlinked; say where.
+fn auto_memory_step(opener: &Opener) -> Option<setup::Step> {
+    let store = opener.open().ok()?;
+    let folders: Vec<String> = store
+        .local_values(link::AUTO_MEMORY_PREFIX)
+        .ok()?
+        .into_iter()
+        .map(|(k, _)| k[link::AUTO_MEMORY_PREFIX.len()..].to_owned())
+        .collect();
+    if folders.is_empty() {
+        return None;
+    }
+    Some(setup::Step {
+        name: "auto memory",
+        ok: true,
+        detail: format!(
+            "still off in {} linked folder(s): {}. Run `acta link --remove` in each to turn it back on.",
+            folders.len(),
+            folders.join(", ")
+        ),
+    })
+}
+
 fn launch() -> Launch {
     let mut l = Launch::from_env();
     // The CLI runs where the user is; CLAUDE_PROJECT_DIR is for the server.
@@ -395,8 +464,18 @@ fn launch() -> Launch {
 
 fn with_store(opener: &Opener, command: Command) -> Result<String, String> {
     let mut store = opener.open()?;
+    let result = run_on(&mut store, command);
+    if store.link_index_failed() {
+        eprintln!(
+            "warning: the hooks' pre-check file could not be updated; run `acta setup --check`"
+        );
+    }
+    result
+}
+
+fn run_on(store: &mut acta_core::Store, command: Command) -> Result<String, String> {
     let launch = launch();
-    let mut session = Session::resolve(&store, &launch, author());
+    let mut session = Session::resolve(store, &launch, author());
     let command = match command {
         Command::Link {
             path,
@@ -417,15 +496,15 @@ fn with_store(opener: &Opener, command: Command) -> Result<String, String> {
                 remove,
                 keep_auto_memory,
             };
-            return link::run(&mut store, args, &cwd, session.author);
+            return link::run(store, args, &cwd, session.author);
         }
-        Command::Export { path, project } => return export(&mut store, &path, project),
-        Command::Import { path, dry_run } => return import(&mut store, &path, dry_run),
-        Command::Snapshot { action } => return snapshot(&mut store, action),
+        Command::Export { path, project } => return export(store, &path, project),
+        Command::Import { path, dry_run } => return import(store, &path, dry_run),
+        Command::Snapshot { action } => return snapshot(store, action),
         other => other,
     };
     let mut ag = Agent {
-        store: &mut store,
+        store,
         session: &mut session,
     };
     match command {
@@ -644,11 +723,25 @@ fn kb_import(
 fn kb_export(ag: &mut Agent<'_>, id: &str, path: &Path) -> Result<String, String> {
     let k = acta_core::model::KbId::parse(id).ok_or("id must be K-n")?;
     let e = ag.store.kb_entry(k).map_err(|e| e.to_string())?;
-    if path.exists() {
-        return Err("the file exists; choose a new path".into());
-    }
-    std::fs::write(path, &e.body).map_err(|e| format!("cannot write: {}", e.kind()))?;
+    write_new(path, &e.body)?;
     Ok(format!("ok {k} rev {} saved", e.rev))
+}
+
+/// Writes a file that must not exist yet: the check and the creation are
+/// one operation (`create_new`), so nothing already there is overwritten.
+fn write_new(path: &Path, text: &str) -> Result<(), String> {
+    use std::io::Write;
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|e| match e.kind() {
+            std::io::ErrorKind::AlreadyExists => "the file exists; choose a new path".to_owned(),
+            k => format!("cannot write: {k}"),
+        })?;
+    f.write_all(text.as_bytes())
+        .and_then(|()| f.sync_all())
+        .map_err(|e| format!("cannot write: {}", e.kind()))
 }
 
 fn export(
@@ -659,12 +752,9 @@ fn export(
     let project = project
         .map(|p| ProjectId::parse(&p).ok_or("--project takes P-n"))
         .transpose()?;
-    if path.exists() {
-        return Err("the file exists; choose a new path".into());
-    }
     let file = store.export(project).map_err(|e| e.to_string())?;
     let text = file.to_json().map_err(|e| e.to_string())?;
-    std::fs::write(path, text).map_err(|e| format!("cannot write: {}", e.kind()))?;
+    write_new(path, &text)?;
     store.record_export().map_err(|e| e.to_string())?;
     Ok(format!(
         "ok exported {} projects, {} topics, {} entries, {} knowledge entries. The file is plaintext: keep it somewhere private.",

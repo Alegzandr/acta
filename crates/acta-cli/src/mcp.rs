@@ -69,6 +69,9 @@ fn compact_schema(v: &mut serde_json::Value) {
     }
 }
 
+/// The tool only hooks call (ADR 0005, `hook`).
+const HOOK_TOOL: &str = "hook";
+
 fn always_load() -> MetaObject {
     let mut m = MetaObject::new();
     m.0.insert("anthropic/alwaysLoad".into(), serde_json::Value::Bool(true));
@@ -215,7 +218,7 @@ impl ActaServer {
     #[tool(
         name = "hook",
         description = "Internal: called by Acta's hooks. Never call it yourself.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = false, idempotent_hint = false)
     )]
     fn hook(&self, Parameters(a): Parameters<HookArgs>) -> CallToolResult {
         self.run(|ag| ag.hook(a))
@@ -224,6 +227,29 @@ impl ActaServer {
 
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for ActaServer {
+    /// Every tool except `hook`: the model is never offered it, so it cannot
+    /// call it; `mcp_tool` hooks call it by name.
+    async fn list_tools(
+        &self,
+        _request: Option<rmcp::model::PaginatedRequestParams>,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<rmcp::model::ListToolsResult, rmcp::ErrorData> {
+        let tools = self
+            .tool_router
+            .list_all()
+            .into_iter()
+            .filter(|t| t.name != HOOK_TOOL)
+            .collect();
+        // As the generated handler does: cache hints for 2026-07-28 peers.
+        let hints = context
+            .protocol_version()
+            .is_some_and(|v| v >= rmcp::model::ProtocolVersion::V_2026_07_28);
+        let mut result = rmcp::model::ListToolsResult::with_all_items(tools);
+        result.ttl_ms = hints.then_some(0);
+        result.cache_scope = hints.then_some(rmcp::model::CacheScope::Public);
+        Ok(result)
+    }
+
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("acta", acta_core::VERSION))
