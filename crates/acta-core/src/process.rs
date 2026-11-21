@@ -25,20 +25,7 @@ pub fn output_within(command: &mut Command, limit: Duration) -> io::Result<Optio
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt as _;
-        // CREATE_NO_WINDOW | CREATE_SUSPENDED: the child runs only once it
-        // is in its job (`Tree::of`), so nothing it starts escapes.
-        command.creation_flags(0x0800_0000 | 0x0000_0004);
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt as _;
-        command.process_group(0);
-    }
-    let mut child = command.spawn()?;
-    let tree = Tree::of(&child);
+    let (mut child, tree) = spawn_in_tree(command)?;
     // The pipes are drained on their own threads, so a chatty child never
     // blocks on a full pipe while we wait.
     let stdout = drain(child.stdout.take());
@@ -92,6 +79,44 @@ fn drain<R: Read + Send + 'static>(pipe: Option<R>) -> mpsc::Receiver<Vec<u8>> {
 
 pub use tree::Tree;
 
+/// Spawns `command` in its own tree: on Windows inside a job object, with
+/// no console window, started suspended so nothing it starts escapes the
+/// job; elsewhere as the leader of a new process group. If the suspended
+/// child cannot be resumed (the thread snapshot failed), it is killed
+/// before it ran and started again outside any job.
+///
+/// When the returned [`Tree`] is dropped, the job is closed and every
+/// process still in it is killed (`KILL_ON_JOB_CLOSE`): a helper the child
+/// left running (a credential helper, git's fsmonitor daemon) does not
+/// outlive the run.
+pub fn spawn_in_tree(command: &mut Command) -> io::Result<(Child, Tree)> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        const CREATE_SUSPENDED: u32 = 0x0000_0004;
+        command.creation_flags(CREATE_NO_WINDOW | CREATE_SUSPENDED);
+        let mut child = command.spawn()?;
+        let (tree, resumed) = Tree::of(&child);
+        if resumed {
+            return Ok((child, tree));
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+        drop(tree);
+        command.creation_flags(CREATE_NO_WINDOW);
+        Ok((command.spawn()?, Tree::none()))
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt as _;
+        command.process_group(0);
+        let child = command.spawn()?;
+        let tree = Tree::of(&child);
+        Ok((child, tree))
+    }
+}
+
 /// The process tree of a child: what a timeout kills.
 mod tree {
     use std::process::Child;
@@ -101,9 +126,15 @@ mod tree {
 
     #[cfg(windows)]
     impl Tree {
+        /// No job: `kill` ends the child alone.
+        pub(super) fn none() -> Tree {
+            Tree(None)
+        }
+
         /// A job object holding the child (and everything it starts),
-        /// closed with the job (`KILL_ON_JOB_CLOSE`).
-        pub fn of(child: &Child) -> Tree {
+        /// closed with the job (`KILL_ON_JOB_CLOSE`), and whether the
+        /// suspended child was resumed.
+        pub(super) fn of(child: &Child) -> (Tree, bool) {
             use std::os::windows::io::AsRawHandle as _;
             use windows_sys::Win32::System::JobObjects::{
                 AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
@@ -135,8 +166,8 @@ mod tree {
                     }
                 }
             };
-            resume(child.id());
-            tree
+            let resumed = resume(child.id());
+            (tree, resumed)
         }
 
         pub fn kill(&self, child: &mut Child) {
@@ -154,9 +185,10 @@ mod tree {
     }
 
     /// Resumes the threads of a process started suspended (std has no
-    /// handle to its first thread; there is one at this point).
+    /// handle to its first thread; there is one at this point). `false`
+    /// when none could be resumed.
     #[cfg(windows)]
-    fn resume(pid: u32) {
+    fn resume(pid: u32) -> bool {
         use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
         use windows_sys::Win32::System::Diagnostics::ToolHelp::{
             CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
@@ -169,8 +201,9 @@ mod tree {
         unsafe {
             let snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
             if snap == INVALID_HANDLE_VALUE {
-                return;
+                return false;
             }
+            let mut resumed = false;
             let mut entry: THREADENTRY32 = std::mem::zeroed();
             entry.dwSize = std::mem::size_of::<THREADENTRY32>() as u32;
             let mut more = Thread32First(snap, &mut entry) != 0;
@@ -178,13 +211,14 @@ mod tree {
                 if entry.th32OwnerProcessID == pid {
                     let thread = OpenThread(THREAD_SUSPEND_RESUME, 0, entry.th32ThreadID);
                     if !thread.is_null() {
-                        ResumeThread(thread);
+                        resumed |= ResumeThread(thread) != u32::MAX;
                         CloseHandle(thread);
                     }
                 }
                 more = Thread32Next(snap, &mut entry) != 0;
             }
             CloseHandle(snap);
+            resumed
         }
     }
 
@@ -206,7 +240,7 @@ mod tree {
     #[cfg(unix)]
     impl Tree {
         /// The child leads its own process group (`process_group(0)`).
-        pub fn of(child: &Child) -> Tree {
+        pub(super) fn of(child: &Child) -> Tree {
             Tree(child.id())
         }
 

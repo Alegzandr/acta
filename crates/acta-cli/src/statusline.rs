@@ -10,7 +10,7 @@
 //! segment: the user's line is never lost. Fast path only: no database, no
 //! keychain.
 
-use acta_core::process::Tree;
+use acta_core::process::spawn_in_tree;
 use acta_core::usage;
 use std::io::{Read, Write};
 use std::path::Path;
@@ -188,20 +188,8 @@ pub fn run_original(command: &Command, input: &str, limit: Duration) -> Option<S
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt as _;
-        // CREATE_NO_WINDOW | CREATE_SUSPENDED: the child runs only once it
-        // is in its job (`tree::Tree::of`), so nothing it starts escapes.
-        cmd.creation_flags(0x0800_0000 | 0x0000_0004);
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt as _;
-        cmd.process_group(0);
-    }
-    let mut child = cmd.spawn().ok()?;
-    let tree = Tree::of(&child);
+    // Its own tree, so nothing it starts outlives a timeout.
+    let (mut child, tree) = spawn_in_tree(&mut cmd).ok()?;
     let mut stdin = child.stdin.take()?;
     let input = input.to_owned();
     std::thread::spawn(move || {
