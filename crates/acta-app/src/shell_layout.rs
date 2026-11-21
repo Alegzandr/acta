@@ -1446,14 +1446,17 @@ impl Shell {
             Target::Into { place, .. } | Target::Split { place, .. } => place,
             Target::Area(side) => Place::Side(side),
         };
-        // A page tab moved within the page area is a tab move: no toast.
-        let is_view_move = matches!(drag.dragged.tab, Tab::View(_)) || place != Place::Page;
+        // A tab moved or split within the page area, page or view, is a tab
+        // move: no toast (4.8.11).
+        let from = bench.layout.locate(drag.dragged.tab).map(|s| s.place);
+        let is_view_move = from != Some(Place::Page) || place != Place::Page;
         let dropped = self.drop_view(drag.dragged, zone.target, window, cx);
         // The web views return at their new bounds once the layout settled.
         self.set_rearranging(false, window, cx);
         if dropped {
             match (view, is_view_move) {
                 (Some(view), true) => self.after_move(view, place, window, cx),
+                (Some(view), false) if !view.is_page_kind() => self.focus_view(view, window, cx),
                 _ => self.focus_page(window, cx),
             }
         }
@@ -2826,9 +2829,6 @@ impl Shell {
         });
         let chip = type_scale::SMALL
             .el()
-            .absolute()
-            .left(px(drag.x - ox + 12.))
-            .top(px(drag.y - oy + 12.))
             .flex()
             .flex_row()
             .items_center()
@@ -2844,6 +2844,11 @@ impl Shell {
             .whitespace_nowrap()
             .child(icon(glyph, 14., t.text_primary))
             .child(name);
+        // 12 right and 12 below the pointer, kept inside the window.
+        let chip = anchored()
+            .position(point(px(drag.x + 12.), px(drag.y + 12.)))
+            .snap_to_window()
+            .child(chip);
         Some(
             deferred(
                 div()
@@ -2913,6 +2918,11 @@ impl Shell {
             self.can_split_page(Direction::Row, window),
             self.can_split_page(Direction::Column, window),
         );
+        // Inbox and Knowledge while pages: checked when the focused group
+        // shows that page, as their toggles are selected (4.8.5).
+        let page_shown: Vec<ViewId> = views()
+            .filter(|v| v.is_page_kind() && self.view_selected(*v, window))
+            .collect();
         let bench = self.bench()?;
         let menu = bench.ui.menu?;
         let layout = bench.layout.clone();
@@ -2923,7 +2933,7 @@ impl Shell {
         match menu.kind {
             LayoutMenu::Layout => {
                 for view in views() {
-                    let visible = layout.is_visible(view);
+                    let visible = layout.is_visible(view) || page_shown.contains(&view);
                     panel = panel.child(
                         menu_row(
                             SharedString::from(format!("lm-{}", view.key())),
