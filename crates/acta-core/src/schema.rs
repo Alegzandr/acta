@@ -13,7 +13,7 @@
 //! `project_id` is always set so roll-up queries need no join.
 
 /// Step `i` takes `user_version` from `i` to `i + 1`.
-pub const MIGRATIONS: &[&str] = &[V1, V2, V3];
+pub const MIGRATIONS: &[&str] = &[V1, V2, V3, V4];
 
 /// The version this build writes.
 pub const SCHEMA_VERSION: i64 = MIGRATIONS.len() as i64;
@@ -267,4 +267,41 @@ INSERT INTO read_markers (kind, record_id, last_seen_at)
     SELECT 'topic', id, updated_at FROM topics;
 INSERT INTO read_markers (kind, record_id, last_seen_at)
     SELECT 'kb', id, updated_at FROM kb_entries;
+"#;
+
+/// Folder sets and commit modes (ADR 0011), due dates (data.md request 16)
+/// and the Overview's index (request 17), in one additive step.
+///
+/// - Folders get a name (`''` = the last segment of the path), an icon
+///   (`''` = automatic), a commit mode and its two options
+///   (`commit_as_user` NULL = the Settings default).
+/// - Projects, epics and topics get an optional pointer to their active
+///   folder. No pointer is set: the default rule (the first own folder, else
+///   the parent's active folder) gives every page its old primary folder.
+///   `include_inherited_folders` stays, no longer read or written.
+/// - Projects, epics and topics get an optional due day, `YYYY-MM-DD` in
+///   2000 to 2099. No backfill.
+/// - `entries_recent` holds only the Overview's "last 7 days" rows.
+const V4: &str = r#"
+ALTER TABLE folders ADD COLUMN name TEXT NOT NULL DEFAULT '';
+ALTER TABLE folders ADD COLUMN icon TEXT NOT NULL DEFAULT '';
+ALTER TABLE folders ADD COLUMN commit_mode TEXT NOT NULL DEFAULT 'manual'
+    CHECK (commit_mode IN ('manual', 'commit', 'push'));
+ALTER TABLE folders ADD COLUMN commit_as_user INTEGER;
+ALTER TABLE folders ADD COLUMN commit_on_default INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE projects ADD COLUMN active_folder_id INTEGER REFERENCES folders(id);
+ALTER TABLE epics ADD COLUMN active_folder_id INTEGER REFERENCES folders(id);
+ALTER TABLE topics ADD COLUMN active_folder_id INTEGER REFERENCES folders(id);
+
+ALTER TABLE projects ADD COLUMN due_on TEXT
+    CHECK (due_on IS NULL OR due_on GLOB '20[0-9][0-9]-[01][0-9]-[0-3][0-9]');
+ALTER TABLE epics ADD COLUMN due_on TEXT
+    CHECK (due_on IS NULL OR due_on GLOB '20[0-9][0-9]-[01][0-9]-[0-3][0-9]');
+ALTER TABLE topics ADD COLUMN due_on TEXT
+    CHECK (due_on IS NULL OR due_on GLOB '20[0-9][0-9]-[01][0-9]-[0-3][0-9]');
+CREATE INDEX topics_due ON topics(project_id, due_on) WHERE due_on IS NOT NULL;
+CREATE INDEX epics_due ON epics(project_id, due_on) WHERE due_on IS NOT NULL;
+
+CREATE INDEX entries_recent ON entries(created_at)
+    WHERE deleted_at IS NULL AND (kind = 'decision' OR (kind = 'system' AND event = 'status'));
 "#;

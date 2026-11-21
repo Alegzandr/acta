@@ -229,8 +229,17 @@ mod tests {
             keys: keys.stores(),
         };
         // A database written by 0.4.0: schema 2, a topic by Claude Code.
-        let mut v2 = Store::open_with(&config, &crate::schema::MIGRATIONS[..2]).unwrap();
-        let t = topic(&mut v2, Author::Claude);
+        let v2 = Store::open_with(&config, &crate::schema::MIGRATIONS[..2]).unwrap();
+        // Raw rows: this build reads columns schema 2 does not have.
+        v2.conn
+            .execute_batch(
+                "INSERT INTO projects (id, uuid, title, position, created_at, updated_at, updated_by)
+                     VALUES (1, 'p', 'Acta', 0, 1, 1, 'human');
+                 INSERT INTO topics (id, uuid, project_id, title, status, position, created_at, updated_at, updated_by)
+                     VALUES (1, 't', 1, 'Alexandre''s topic', 'draft', 0, 1, 1, 'claude');",
+            )
+            .unwrap();
+        let t = TopicId(1);
         drop(v2);
         let s = Store::open(&config).unwrap();
         assert!(!s.unread().unwrap().topics.contains(&t));

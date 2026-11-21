@@ -821,22 +821,6 @@ impl RecordPage {
             .update(cx, |ws, cx| ws.reorder(Record::Folder(id), 0, project, cx));
     }
 
-    fn toggle_include(&mut self, cx: &mut Context<Self>) {
-        let owner = self.owner;
-        let project = self.project_id();
-        self.ws.update(cx, |ws, cx| {
-            ws.undoable(cx, project, None, move |store| {
-                let back = match owner {
-                    Owner::Project(_) => false,
-                    Owner::Epic(id) => store.epic(id)?.include_inherited_folders,
-                    Owner::Topic(id) => store.topic(id)?.include_inherited_folders,
-                };
-                store.set_include_inherited(owner, !back, Author::Human)?;
-                Ok((Undo::IncludeInherited { owner, back }, ()))
-            });
-        });
-    }
-
     // ---- keys ----
 
     fn on_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -1367,50 +1351,9 @@ impl RecordPage {
             );
         }
         let has_own = !folders.own.is_empty();
-        let above_name = folders
-            .above_from
-            .as_ref()
-            .map(|(_, n)| n.clone())
-            .unwrap_or_default();
-        if has_own && !folders.above.is_empty() {
-            let checked = folders.include_inherited;
-            list = list.child(
-                div()
-                    .id("include-inherited")
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(8.))
-                    .h(px(28.))
-                    .on_click(cx.listener(|page, _, _, cx| page.toggle_include(cx)))
-                    .child(checkbox(checked, t))
-                    .child(
-                        type_scale::UI
-                            .el()
-                            .text_color(t.text_primary)
-                            .child(text(locale, Key::FoldersInclude)),
-                    ),
-            );
-            if !checked {
-                list = list.child(type_scale::SMALL.el().text_color(t.text_tertiary).child(tr(
-                    locale,
-                    Key::FoldersNotUsed,
-                    &[
-                        ("n", Arg::Count(folders.above.len() as u64)),
-                        ("name", Arg::Text(&above_name)),
-                    ],
-                )));
-            }
-        }
-        let inherited: Vec<_> = if has_own {
-            if folders.include_inherited {
-                folders.above.clone()
-            } else {
-                Vec::new()
-            }
-        } else {
-            folders.effective.clone()
-        };
+        // Always inherited (ADR 0011); the grouped list with the active
+        // mark is the folder-sets UI step.
+        let inherited: Vec<_> = folders.above.clone();
         if !inherited.is_empty() {
             let group = folders
                 .inherited_from
@@ -2826,22 +2769,6 @@ fn link(
         .text_color(t.accent)
         .hover(|s| s.underline())
         .child(label)
-}
-
-fn checkbox(checked: bool, t: &Tokens) -> gpui_kit::Div {
-    div()
-        .size(px(16.))
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(px(RADIUS_XS))
-        .when(checked, |this| {
-            this.bg(t.accent)
-                .child(icon(Icon::Check, 12., t.text_on_accent))
-        })
-        .when(!checked, |this| {
-            this.border_1().border_color(t.border_strong)
-        })
 }
 
 /// A multi-line editor in its box (docs/design/components.md 5), with the

@@ -13,10 +13,19 @@
 //!
 //! Folder paths are machine-specific; they are exported marked `local` and
 //! imported as they are, shown as not found when they do not exist here.
+//!
+//! Versions: 1 (0.3.0 to 0.4.x); 2 adds a folder's name, icon and commit
+//! settings, the active folder of projects, epics and topics (as the
+//! folder's UUID, ADR 0011) and their due day (`YYYY-MM-DD`, data.md
+//! request 16), and drops `include_inherited_folders`. A version 1 file
+//! imports with the defaults: no active folder, no due day, Manual.
 
 use super::Store;
+use crate::date::Date;
 use crate::error::{Error, Result};
-use crate::model::{Author, ChangeKind, EntryKind, EventKind, KbId, KbKind, ProjectId, Status};
+use crate::model::{
+    Author, ChangeKind, CommitMode, EntryKind, EventKind, KbId, KbKind, ProjectId, Status,
+};
 use crate::snapshots::SnapshotKind;
 use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
@@ -24,7 +33,7 @@ use serde::{Deserialize, Serialize};
 /// The format name written in every file.
 pub const FORMAT_NAME: &str = "acta";
 /// The format version this build writes and the newest it reads.
-pub const FORMAT_VERSION: i64 = 1;
+pub const FORMAT_VERSION: i64 = 2;
 /// The file extension, without the leading dot.
 pub const FILE_EXTENSION: &str = "acta.json";
 
@@ -61,6 +70,12 @@ pub struct XProject {
     pub title: String,
     pub description: String,
     pub position: i64,
+    /// Version 2: the UUID of the active folder, absent for the default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_folder: Option<String>,
+    /// Version 2: `YYYY-MM-DD`, absent for no date.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub due_on: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -72,7 +87,10 @@ pub struct XEpic {
     pub description: String,
     pub state: String,
     pub position: i64,
-    pub include_inherited_folders: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_folder: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub due_on: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -88,7 +106,10 @@ pub struct XTopic {
     pub state_updated_at: Option<i64>,
     pub state_updated_by: Option<Author>,
     pub position: i64,
-    pub include_inherited_folders: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_folder: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub due_on: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -161,6 +182,17 @@ pub struct XFolder {
     pub position: i64,
     /// Always true: a path only means something on the machine it came from.
     pub local: bool,
+    /// Version 2 (ADR 0011); defaults for older files.
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub icon: String,
+    #[serde(default)]
+    pub commit_mode: CommitMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit_as_user: Option<bool>,
+    #[serde(default)]
+    pub commit_on_default: bool,
 }
 
 impl ExportFile {
@@ -277,7 +309,9 @@ impl Store {
         let projects = collect(
             conn,
             &format!(
-                "SELECT {STAMP_SQL}, x.title, x.description, x.position FROM projects x WHERE 1 = 1{} ORDER BY x.uuid",
+                "SELECT {STAMP_SQL}, x.title, x.description, x.position, f.uuid, x.due_on
+                 FROM projects x LEFT JOIN folders f ON f.id = x.active_folder_id
+                 WHERE 1 = 1{} ORDER BY x.uuid",
                 only("x.id")
             ),
             |r| {
@@ -286,14 +320,18 @@ impl Store {
                     title: r.get(6)?,
                     description: r.get(7)?,
                     position: r.get(8)?,
+                    active_folder: r.get(9)?,
+                    due_on: r.get(10)?,
                 })
             },
         )?;
         let epics = collect(
             conn,
             &format!(
-                "SELECT {STAMP_SQL}, p.uuid, x.title, x.description, x.state, x.position, x.include_inherited_folders
-                 FROM epics x JOIN projects p ON p.id = x.project_id WHERE 1 = 1{} ORDER BY x.uuid",
+                "SELECT {STAMP_SQL}, p.uuid, x.title, x.description, x.state, x.position, f.uuid, x.due_on
+                 FROM epics x JOIN projects p ON p.id = x.project_id
+                 LEFT JOIN folders f ON f.id = x.active_folder_id
+                 WHERE 1 = 1{} ORDER BY x.uuid",
                 only("x.project_id")
             ),
             |r| {
@@ -304,7 +342,8 @@ impl Store {
                     description: r.get(8)?,
                     state: r.get(9)?,
                     position: r.get(10)?,
-                    include_inherited_folders: r.get(11)?,
+                    active_folder: r.get(11)?,
+                    due_on: r.get(12)?,
                 })
             },
         )?;
@@ -312,8 +351,9 @@ impl Store {
             conn,
             &format!(
                 "SELECT {STAMP_SQL}, p.uuid, e.uuid, x.title, x.description, x.status, x.state,
-                        x.state_updated_at, x.state_updated_by, x.position, x.include_inherited_folders
+                        x.state_updated_at, x.state_updated_by, x.position, f.uuid, x.due_on
                  FROM topics x JOIN projects p ON p.id = x.project_id LEFT JOIN epics e ON e.id = x.epic_id
+                 LEFT JOIN folders f ON f.id = x.active_folder_id
                  WHERE 1 = 1{} ORDER BY x.uuid",
                 only("x.project_id")
             ),
@@ -329,7 +369,8 @@ impl Store {
                     state_updated_at: r.get(12)?,
                     state_updated_by: r.get(13)?,
                     position: r.get(14)?,
-                    include_inherited_folders: r.get(15)?,
+                    active_folder: r.get(15)?,
+                    due_on: r.get(16)?,
                 })
             },
         )?;
@@ -429,7 +470,8 @@ impl Store {
         let folders = collect(
             conn,
             &format!(
-                "SELECT {STAMP_SQL}, p.uuid, e.uuid, t.uuid, x.path, x.position
+                "SELECT {STAMP_SQL}, p.uuid, e.uuid, t.uuid, x.path, x.position,
+                        x.name, x.icon, x.commit_mode, x.commit_as_user, x.commit_on_default
                  FROM folders x JOIN projects p ON p.id = x.project_id
                  LEFT JOIN epics e ON e.id = x.epic_id LEFT JOIN topics t ON t.id = x.topic_id
                  WHERE 1 = 1{} ORDER BY x.uuid",
@@ -444,6 +486,11 @@ impl Store {
                     path: r.get(9)?,
                     position: r.get(10)?,
                     local: true,
+                    name: r.get(11)?,
+                    icon: r.get(12)?,
+                    commit_mode: r.get(13)?,
+                    commit_as_user: r.get(14)?,
+                    commit_on_default: r.get(15)?,
                 })
             },
         )?;
@@ -600,6 +647,25 @@ fn opt_id(tx: &rusqlite::Connection, table: &str, uuid: &Option<String>) -> Resu
     uuid.as_deref().map(|u| local_id(tx, table, u)).transpose()
 }
 
+/// A due day from a file: the ISO form or absent.
+fn due(uuid: &str, text: &Option<String>) -> Result<Option<Date>> {
+    match text {
+        None => Ok(None),
+        Some(t) => Date::parse_iso(t)
+            .map(Some)
+            .ok_or_else(|| Error::Invalid(format!("{uuid} has an invalid due date"))),
+    }
+}
+
+/// A folder icon from a file: one of the known names, else automatic.
+fn icon(name: &str) -> &str {
+    if crate::model::FOLDER_ICONS.contains(&name) {
+        name
+    } else {
+        ""
+    }
+}
+
 fn count(c: &mut ImportCounts, action: &Action) {
     match action {
         Action::Insert => c.created += 1,
@@ -610,6 +676,9 @@ fn count(c: &mut ImportCounts, action: &Action) {
 
 fn merge(tx: &rusqlite::Connection, f: &ExportFile) -> Result<ImportReport> {
     let mut rep = ImportReport::default();
+    // Active folders are set once the folders exist: (table, local id,
+    // folder UUID) of every project, epic and topic the merge wrote.
+    let mut pointers: Vec<(&str, i64, Option<&str>)> = Vec::new();
 
     for x in &f.projects {
         let s = &x.stamp;
@@ -618,19 +687,28 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile) -> Result<ImportReport> {
         match action {
             Action::Insert => {
                 tx.execute(
-                    "INSERT INTO projects (uuid, title, description, position, created_at, updated_at, updated_by, deleted_at, deleted_by)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-                    params![s.uuid, x.title, x.description, x.position, s.created_at, s.updated_at, s.updated_by, s.deleted_at, s.deleted_by],
+                    "INSERT INTO projects (uuid, title, description, position, due_on, created_at, updated_at, updated_by, deleted_at, deleted_by)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                    params![s.uuid, x.title, x.description, x.position, due(&s.uuid, &x.due_on)?,
+                            s.created_at, s.updated_at, s.updated_by, s.deleted_at, s.deleted_by],
                 )?;
+                pointers.push((
+                    "projects",
+                    tx.last_insert_rowid(),
+                    x.active_folder.as_deref(),
+                ));
             }
             Action::Update(l) => {
                 let (d, db) = merged_deleted(&l, s);
                 tx.execute(
                     "UPDATE projects SET title = ?2, description = ?3, position = ?4, updated_at = ?5, updated_by = ?6,
                             deleted_at = ?7, deleted_by = ?8,
-                            deleted_batch = CASE WHEN deleted_at IS ?7 THEN deleted_batch ELSE NULL END WHERE id = ?1",
-                    params![l.id, x.title, x.description, x.position, s.updated_at, s.updated_by, d, db],
+                            deleted_batch = CASE WHEN deleted_at IS ?7 THEN deleted_batch ELSE NULL END,
+                            due_on = ?9 WHERE id = ?1",
+                    params![l.id, x.title, x.description, x.position, s.updated_at, s.updated_by, d, db,
+                            due(&s.uuid, &x.due_on)?],
                 )?;
+                pointers.push(("projects", l.id, x.active_folder.as_deref()));
             }
             Action::Skip => {}
         }
@@ -644,23 +722,25 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile) -> Result<ImportReport> {
         match action {
             Action::Insert => {
                 tx.execute(
-                    "INSERT INTO epics (uuid, project_id, title, description, state, position, include_inherited_folders,
+                    "INSERT INTO epics (uuid, project_id, title, description, state, position, due_on,
                                         created_at, updated_at, updated_by, deleted_at, deleted_by)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-                    params![s.uuid, project, x.title, x.description, x.state, x.position, x.include_inherited_folders,
+                    params![s.uuid, project, x.title, x.description, x.state, x.position, due(&s.uuid, &x.due_on)?,
                             s.created_at, s.updated_at, s.updated_by, s.deleted_at, s.deleted_by],
                 )?;
+                pointers.push(("epics", tx.last_insert_rowid(), x.active_folder.as_deref()));
             }
             Action::Update(l) => {
                 let (d, db) = merged_deleted(&l, s);
                 tx.execute(
                     "UPDATE epics SET project_id = ?2, title = ?3, description = ?4, state = ?5, position = ?6,
-                            include_inherited_folders = ?7, updated_at = ?8, updated_by = ?9, deleted_at = ?10, deleted_by = ?11,
+                            due_on = ?7, updated_at = ?8, updated_by = ?9, deleted_at = ?10, deleted_by = ?11,
                             deleted_batch = CASE WHEN deleted_at IS ?10 THEN deleted_batch ELSE NULL END
                      WHERE id = ?1",
-                    params![l.id, project, x.title, x.description, x.state, x.position, x.include_inherited_folders,
+                    params![l.id, project, x.title, x.description, x.state, x.position, due(&s.uuid, &x.due_on)?,
                             s.updated_at, s.updated_by, d, db],
                 )?;
+                pointers.push(("epics", l.id, x.active_folder.as_deref()));
             }
             Action::Skip => {}
         }
@@ -676,27 +756,30 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile) -> Result<ImportReport> {
             Action::Insert => {
                 tx.execute(
                     "INSERT INTO topics (uuid, project_id, epic_id, title, description, status, state, state_updated_at,
-                                         state_updated_by, position, include_inherited_folders,
+                                         state_updated_by, position, due_on,
                                          created_at, updated_at, updated_by, deleted_at, deleted_by)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
                     params![s.uuid, project, epic, x.title, x.description, x.status, x.state, x.state_updated_at,
-                            x.state_updated_by, x.position, x.include_inherited_folders,
+                            x.state_updated_by, x.position, due(&s.uuid, &x.due_on)?,
                             s.created_at, s.updated_at, s.updated_by, s.deleted_at, s.deleted_by],
                 )?;
-                seen_on_import(tx, "topic", tx.last_insert_rowid(), s.updated_at)?;
+                let id = tx.last_insert_rowid();
+                pointers.push(("topics", id, x.active_folder.as_deref()));
+                seen_on_import(tx, "topic", id, s.updated_at)?;
             }
             Action::Update(l) => {
                 let (d, db) = merged_deleted(&l, s);
                 tx.execute(
                     "UPDATE topics SET project_id = ?2, epic_id = ?3, title = ?4, description = ?5, status = ?6, state = ?7,
-                            state_updated_at = ?8, state_updated_by = ?9, position = ?10, include_inherited_folders = ?11,
+                            state_updated_at = ?8, state_updated_by = ?9, position = ?10, due_on = ?11,
                             updated_at = ?12, updated_by = ?13, deleted_at = ?14, deleted_by = ?15,
                             deleted_batch = CASE WHEN deleted_at IS ?14 THEN deleted_batch ELSE NULL END
                      WHERE id = ?1",
                     params![l.id, project, epic, x.title, x.description, x.status, x.state, x.state_updated_at,
-                            x.state_updated_by, x.position, x.include_inherited_folders,
+                            x.state_updated_by, x.position, due(&s.uuid, &x.due_on)?,
                             s.updated_at, s.updated_by, d, db],
                 )?;
+                pointers.push(("topics", l.id, x.active_folder.as_deref()));
                 seen_on_import(tx, "topic", l.id, s.updated_at)?;
             }
             Action::Skip => {}
@@ -877,9 +960,11 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile) -> Result<ImportReport> {
             Action::Insert => {
                 tx.execute(
                     "INSERT INTO folders (uuid, project_id, epic_id, topic_id, path, position,
+                                          name, icon, commit_mode, commit_as_user, commit_on_default,
                                           created_at, updated_at, updated_by, deleted_at, deleted_by)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
                     params![s.uuid, project, epic, topic, x.path, x.position,
+                            x.name, icon(&x.icon), x.commit_mode, x.commit_as_user, x.commit_on_default,
                             s.created_at, s.updated_at, s.updated_by, s.deleted_at, s.deleted_by],
                 )?;
                 super::folders::forget_identity(
@@ -892,12 +977,32 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile) -> Result<ImportReport> {
                 tx.execute(
                     "UPDATE folders SET project_id = ?2, epic_id = ?3, topic_id = ?4, path = ?5, position = ?6,
                             updated_at = ?7, updated_by = ?8, deleted_at = ?9, deleted_by = ?10,
-                            deleted_batch = CASE WHEN deleted_at IS ?9 THEN deleted_batch ELSE NULL END WHERE id = ?1",
-                    params![l.id, project, epic, topic, x.path, x.position, s.updated_at, s.updated_by, d, db],
+                            deleted_batch = CASE WHEN deleted_at IS ?9 THEN deleted_batch ELSE NULL END,
+                            name = ?11, icon = ?12, commit_mode = ?13, commit_as_user = ?14, commit_on_default = ?15
+                     WHERE id = ?1",
+                    params![l.id, project, epic, topic, x.path, x.position, s.updated_at, s.updated_by, d, db,
+                            x.name, icon(&x.icon), x.commit_mode, x.commit_as_user, x.commit_on_default],
                 )?;
             }
             Action::Skip => {}
         }
+    }
+
+    // A pointer to a folder this database does not have is dropped: the
+    // default rule applies, as it does to a pointer nobody can see.
+    for (table, id, folder) in pointers {
+        let folder: Option<i64> = match folder {
+            Some(uuid) => tx
+                .query_row("SELECT id FROM folders WHERE uuid = ?1", [uuid], |r| {
+                    r.get(0)
+                })
+                .optional()?,
+            None => None,
+        };
+        tx.execute(
+            &format!("UPDATE {table} SET active_folder_id = ?2 WHERE id = ?1"),
+            params![id, folder],
+        )?;
     }
 
     Ok(rep)

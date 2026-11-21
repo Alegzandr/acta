@@ -20,7 +20,7 @@ pub use exchange::{
     ExportFile, FILE_EXTENSION, FORMAT_NAME, FORMAT_VERSION, ImportCounts, ImportReport, XEntry,
     XEpic, XFolder, XKb, XNote, XProject, XRevision, XStamp, XTopic,
 };
-pub use folders::{AUTO_MEMORY_PREFIX, EffectiveFolder, EffectiveFolders, FolderResolution};
+pub use folders::{AUTO_MEMORY_PREFIX, FolderResolution, VisibleFolder, VisibleFolders};
 pub use kb::{KbCounts, KbEdit, KbFilter, KbRevisionSummary, KbUpdate, NewKb};
 pub use records::{EpicPatch, NewTopic, ProjectPatch, TopicFilter, TopicPatch};
 pub use search::{SNIPPET_CLOSE, SNIPPET_OPEN, SearchHit, SearchKind, SearchQuery};

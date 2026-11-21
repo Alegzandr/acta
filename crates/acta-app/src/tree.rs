@@ -578,6 +578,7 @@ pub mod sample {
             status,
             position: id,
             entries: 0,
+            due_on: None,
             updated_at: 0,
             updated_by: Author::Human,
         }
@@ -589,6 +590,7 @@ pub mod sample {
             title: title.into(),
             position: id,
             progress: Progress::default(),
+            due_on: None,
             updated_at: 0,
         }
     }

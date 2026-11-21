@@ -79,10 +79,6 @@ pub enum Undo {
         back: String,
         expect: String,
     },
-    IncludeInherited {
-        owner: Owner,
-        back: bool,
-    },
     KbRevision {
         id: KbId,
         back: i64,
@@ -150,14 +146,6 @@ impl Undo {
             Undo::TopicEpic { id, expect, .. } => store.topic(*id)?.epic == *expect,
             Undo::ProjectTitle { id, expect, .. } => store.project(*id)?.title == *expect,
             Undo::FolderPath { id, expect, .. } => store.folder(*id)?.path == *expect,
-            Undo::IncludeInherited { owner, back } => {
-                let current = match owner {
-                    Owner::Project(_) => false,
-                    Owner::Epic(id) => store.epic(*id)?.include_inherited_folders,
-                    Owner::Topic(id) => store.topic(*id)?.include_inherited_folders,
-                };
-                current == !*back
-            }
             Undo::KbRevision { id, expect, .. } => store.kb_entry(*id)?.rev == *expect,
             Undo::KbOwner { id, expect, .. } => store.kb_entry(*id)?.owner == *expect,
             Undo::Reorder { record, expect, .. } => store.order_index(*record)? == *expect,
@@ -274,13 +262,6 @@ impl Undo {
                     id: *id,
                     back: expect.clone(),
                     expect: store.folder(*id)?.path,
-                }
-            }
-            Undo::IncludeInherited { owner, back } => {
-                store.set_include_inherited(*owner, *back, me)?;
-                Undo::IncludeInherited {
-                    owner: *owner,
-                    back: !*back,
                 }
             }
             Undo::KbRevision { id, back, expect } => {
