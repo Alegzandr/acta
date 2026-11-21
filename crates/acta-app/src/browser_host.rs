@@ -20,11 +20,12 @@ use webview2_com::Microsoft::Web::WebView2::Win32::{
     COREWEBVIEW2_PERMISSION_STATE_DENY, COREWEBVIEW2_SCRIPT_DIALOG_KIND,
     COREWEBVIEW2_SCRIPT_DIALOG_KIND_ALERT, COREWEBVIEW2_SCRIPT_DIALOG_KIND_BEFOREUNLOAD,
     COREWEBVIEW2_SCRIPT_DIALOG_KIND_CONFIRM, COREWEBVIEW2_SCRIPT_DIALOG_KIND_PROMPT, ICoreWebView2,
-    ICoreWebView2_10, ICoreWebView2DevToolsProtocolEventReceiver,
+    ICoreWebView2_10, ICoreWebView2_18, ICoreWebView2DevToolsProtocolEventReceiver,
 };
 use webview2_com::{
     BasicAuthenticationRequestedEventHandler, CallDevToolsProtocolMethodCompletedHandler,
-    DevToolsProtocolEventReceivedEventHandler, PermissionRequestedEventHandler,
+    DevToolsProtocolEventReceivedEventHandler, LaunchingExternalUriSchemeEventHandler,
+    NavigationStartingEventHandler, PermissionRequestedEventHandler,
     ScriptDialogOpeningEventHandler, take_pwstr,
 };
 use windows::core::{HSTRING, Interface as _, PWSTR};
@@ -79,7 +80,9 @@ pub struct Hooks {
     receivers: Vec<(ICoreWebView2DevToolsProtocolEventReceiver, i64)>,
     dialog: i64,
     permission: i64,
+    frame: i64,
     auth: Option<(ICoreWebView2_10, i64)>,
+    external: Option<(ICoreWebView2_18, i64)>,
 }
 
 impl Drop for Hooks {
@@ -92,6 +95,10 @@ impl Drop for Hooks {
             }
             let _ = self.webview.remove_ScriptDialogOpening(self.dialog);
             let _ = self.webview.remove_PermissionRequested(self.permission);
+            let _ = self.webview.remove_FrameNavigationStarting(self.frame);
+            if let Some((w, token)) = &self.external {
+                let _ = w.remove_LaunchingExternalUriScheme(*token);
+            }
             if let Some((w, token)) = &self.auth {
                 let _ = w.remove_BasicAuthenticationRequested(*token);
             }
@@ -122,7 +129,18 @@ fn permission_kind(kind: COREWEBVIEW2_PERMISSION_KIND) -> &'static str {
 
 /// Subscribes to the DevTools events `acta-browser` reads and to the
 /// WebView2 events of the policy, and turns off the page's own dialogs.
-pub fn install(webview: &ICoreWebView2, events: Arc<Events>) -> windows::core::Result<Hooks> {
+/// What a frame may load: `about:` and the page's own `blob:` documents,
+/// and whatever the navigation policy allows.
+fn frame_allowed(url: &str, allowed: &dyn Fn(&str) -> bool) -> bool {
+    url.starts_with("about:") || url.starts_with("blob:") || allowed(url)
+}
+
+/// `allowed` is the navigation policy, applied to frames too.
+pub fn install(
+    webview: &ICoreWebView2,
+    events: Arc<Events>,
+    allowed: Arc<dyn Fn(&str) -> bool + Send + Sync>,
+) -> windows::core::Result<Hooks> {
     let mut receivers = Vec::new();
     for name in SUBSCRIBED {
         let sink = events.clone();
@@ -180,12 +198,53 @@ pub fn install(webview: &ICoreWebView2, events: Arc<Events>) -> windows::core::R
         }
         Ok(())
     }));
-    let (mut dialog, mut permission) = (0i64, 0i64);
+    let sink = events.clone();
+    let frame_handler = NavigationStartingEventHandler::create(Box::new(move |_, args| {
+        if let Some(args) = args {
+            let mut uri = PWSTR::null();
+            // SAFETY: the event's own arguments.
+            unsafe { args.Uri(&mut uri)? };
+            let uri = take_pwstr(uri);
+            if !frame_allowed(&uri, &*allowed) {
+                // SAFETY: as above.
+                unsafe { args.SetCancel(true)? };
+                sink.notice(Notice::Navigation(origin_of(&uri)));
+            }
+        }
+        Ok(())
+    }));
+    let (mut dialog, mut permission, mut frame) = (0i64, 0i64, 0i64);
     // SAFETY: COM calls on the live web view; tokens kept for Drop.
     unsafe {
         webview.add_ScriptDialogOpening(&dialog_handler, &mut dialog)?;
         webview.add_PermissionRequested(&permission_handler, &mut permission)?;
+        webview.add_FrameNavigationStarting(&frame_handler, &mut frame)?;
     }
+    let external = match webview.cast::<ICoreWebView2_18>() {
+        Ok(w18) => {
+            let sink = events.clone();
+            let handler =
+                LaunchingExternalUriSchemeEventHandler::create(Box::new(move |_, args| {
+                    if let Some(args) = args {
+                        let mut uri = PWSTR::null();
+                        // SAFETY: the event's own arguments.
+                        unsafe {
+                            args.Uri(&mut uri)?;
+                            args.SetCancel(true)?;
+                        }
+                        let uri = take_pwstr(uri);
+                        let scheme = uri.split(':').next().unwrap_or("").to_string();
+                        sink.notice(Notice::ExternalApp(scheme));
+                    }
+                    Ok(())
+                }));
+            let mut token = 0i64;
+            // SAFETY: as above.
+            unsafe { w18.add_LaunchingExternalUriScheme(&handler, &mut token)? };
+            Some((w18, token))
+        }
+        Err(_) => None,
+    };
     let auth = match webview.cast::<ICoreWebView2_10>() {
         Ok(w10) => {
             let sink = events.clone();
@@ -214,21 +273,47 @@ pub fn install(webview: &ICoreWebView2, events: Arc<Events>) -> windows::core::R
         receivers,
         dialog,
         permission,
+        frame,
         auth,
+        external,
     })
+}
+
+/// Holds `Local\acta-<SID>-app-<data dir tag>` for the life of the app, so
+/// `acta mcp browser` knows it runs (or is starting) and never starts a
+/// second one. `None` when the user or the data directory is unknown.
+pub fn hold_app_mutex() -> Option<acta_browser::pipe::AppMutex> {
+    let data_dir = crate::db::config()?.data_dir;
+    let sid = acta_browser::pipe::user_sid().ok()?;
+    acta_browser::pipe::AppMutex::hold(&acta_browser::pipe::mutex_name(&sid, &data_dir)).ok()
 }
 
 // ---- the debugging-port check (ADR 0010, decision 3) ----
 
-const POLICY_KEY: &str = r"Software\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments";
+/// The WebView2 policies whose values (named after an executable) change
+/// what runs inside Acta's web views: extra browser arguments (a debugging
+/// port), another runtime, another user data folder.
+const POLICY_KEYS: &[&str] = &[
+    r"Software\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments",
+    r"Software\Policies\Microsoft\Edge\WebView2\BrowserExecutableFolder",
+    r"Software\Policies\Microsoft\Edge\WebView2\UserDataFolder",
+];
 const ARGS_ENV: &str = "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS";
+/// Set at all, these environment variables replace the runtime, the user
+/// data folder, or open a script debugger pipe.
+const OVERRIDE_ENVS: &[&str] = &[
+    "WEBVIEW2_BROWSER_EXECUTABLE_FOLDER",
+    "WEBVIEW2_USER_DATA_FOLDER",
+    "WEBVIEW2_PIPE_FOR_SCRIPT_DEBUGGER",
+];
 
-/// Why a debugging port may be open, if one may.
+/// Why a debugging port, or another WebView2 override, may be in effect.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DebugPort {
-    /// An `AdditionalBrowserArguments` policy value names Acta.
+    /// A WebView2 policy value names Acta (or every application).
     Policy,
-    /// `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` asks for one.
+    /// `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` asks for a debugging port,
+    /// or another `WEBVIEW2_*` override is set.
     Environment,
     /// A `DevToolsActivePort` file exists in a profile.
     PortFile,
@@ -249,12 +334,15 @@ fn names_exe(name: &str, exe: &Path) -> bool {
 fn debug_port_from(
     policy_names: &[String],
     exe: &Path,
-    env: Option<&str>,
+    env: &dyn Fn(&str) -> Option<String>,
     port_file: bool,
 ) -> Option<DebugPort> {
+    let set = |name: &str| env(name).is_some_and(|v| !v.trim().is_empty());
     if policy_names.iter().any(|n| names_exe(n, exe)) {
         Some(DebugPort::Policy)
-    } else if env.is_some_and(|v| v.to_ascii_lowercase().contains("remote-debugging")) {
+    } else if env(ARGS_ENV).is_some_and(|v| v.to_ascii_lowercase().contains("remote-debugging"))
+        || OVERRIDE_ENVS.iter().any(|n| set(n))
+    {
         Some(DebugPort::Environment)
     } else if port_file {
         Some(DebugPort::PortFile)
@@ -270,18 +358,20 @@ pub fn debug_port(data_dir: &Path) -> Option<DebugPort> {
     use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
     let mut names = Vec::new();
     for root in [HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE] {
-        if let Ok(key) = RegKey::predef(root).open_subkey(POLICY_KEY) {
-            names.extend(key.enum_values().flatten().map(|(name, _)| name));
+        for path in POLICY_KEYS {
+            if let Ok(key) = RegKey::predef(root).open_subkey(path) {
+                names.extend(key.enum_values().flatten().map(|(name, _)| name));
+            }
         }
     }
     let exe = std::env::current_exe().unwrap_or_default();
-    let env = std::env::var(ARGS_ENV).ok();
+    let env = |name: &str| std::env::var(name).ok();
     let port_file = ["agent-browser", "webview"].iter().any(|p| {
         let dir = data_dir.join(p);
         dir.join("DevToolsActivePort").exists()
             || dir.join("EBWebView").join("DevToolsActivePort").exists()
     });
-    debug_port_from(&names, &exe, env.as_deref(), port_file)
+    debug_port_from(&names, &exe, &env, port_file)
 }
 
 #[cfg(test)]
@@ -292,31 +382,56 @@ mod tests {
     fn a_policy_naming_acta_or_everyone_refuses() {
         let exe = Path::new(r"C:\Users\Alexandre\AppData\Local\Acta\current\Acta.exe");
         let names = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let none = |_: &str| None;
         assert_eq!(
-            debug_port_from(&names(&["acta.exe"]), exe, None, false),
+            debug_port_from(&names(&["acta.exe"]), exe, &none, false),
             Some(DebugPort::Policy)
         );
         assert_eq!(
-            debug_port_from(&names(&["*"]), exe, None, false),
+            debug_port_from(&names(&["*"]), exe, &none, false),
             Some(DebugPort::Policy)
         );
         assert_eq!(
-            debug_port_from(&names(&[&exe.to_string_lossy()]), exe, None, false),
+            debug_port_from(&names(&[&exe.to_string_lossy()]), exe, &none, false),
             Some(DebugPort::Policy)
         );
         assert_eq!(
-            debug_port_from(&names(&["other.exe"]), exe, None, false),
+            debug_port_from(&names(&["other.exe"]), exe, &none, false),
             None
         );
+        let only = |key: &'static str, value: &'static str| {
+            move |name: &str| (name == key).then(|| value.to_string())
+        };
         assert_eq!(
-            debug_port_from(&[], exe, Some("--remote-debugging-port=0"), false),
+            debug_port_from(
+                &[],
+                exe,
+                &only(ARGS_ENV, "--remote-debugging-port=0"),
+                false
+            ),
             Some(DebugPort::Environment)
         );
-        assert_eq!(debug_port_from(&[], exe, Some("--lang=fr"), false), None);
         assert_eq!(
-            debug_port_from(&[], exe, None, true),
+            debug_port_from(&[], exe, &only(ARGS_ENV, "--remote-debugging-pipe"), false),
+            Some(DebugPort::Environment)
+        );
+        assert_eq!(
+            debug_port_from(&[], exe, &only(ARGS_ENV, "--lang=fr"), false),
+            None
+        );
+        for name in OVERRIDE_ENVS {
+            assert_eq!(
+                debug_port_from(&[], exe, &only(name, r"C:\other"), false),
+                Some(DebugPort::Environment),
+                "{name}"
+            );
+            assert_eq!(debug_port_from(&[], exe, &only(name, " "), false), None);
+        }
+        assert_eq!(
+            debug_port_from(&[], exe, &none, true),
             Some(DebugPort::PortFile)
         );
+        assert_eq!(POLICY_KEYS.len(), 3);
     }
 
     #[test]
@@ -330,6 +445,23 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("DevToolsActivePort"), "9222\n/devtools/browser/x").unwrap();
         assert_eq!(debug_port(tmp.path()), Some(DebugPort::PortFile));
+    }
+
+    #[test]
+    fn frames_follow_the_policy() {
+        let policy = acta_browser::policy::Policy::default();
+        let allowed = |u: &str| policy.check(u).is_ok();
+        assert!(frame_allowed("about:srcdoc", &allowed));
+        assert!(frame_allowed("blob:http://127.0.0.1/x", &allowed));
+        assert!(frame_allowed("https://example.com/embed", &allowed));
+        for u in [
+            "https://claude.ai/",
+            "file:///C:/x",
+            "data:text/html,x",
+            "javascript:1",
+        ] {
+            assert!(!frame_allowed(u, &allowed), "{u}");
+        }
     }
 
     #[test]

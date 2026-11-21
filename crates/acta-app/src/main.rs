@@ -166,6 +166,9 @@ fn main() {
         }
     }
 
+    // The agent browser's "Acta runs here" mark (ADR 0010), held until exit.
+    #[cfg(windows)]
+    let _app_mutex = browser_host::hold_app_mutex();
     run_app(options, pending, launched);
 }
 

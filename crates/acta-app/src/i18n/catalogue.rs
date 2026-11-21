@@ -2418,8 +2418,8 @@ catalogue! {
         fr: t("Acta n\u{2019}a pas démarré son navigateur"),
     }
     BrowserRefusedBody "browser.refused.body" {
-        en: t("A debugging port is configured for Acta (a WebView2 policy, an environment variable or a DevToolsActivePort file). It would let any program on this computer control the browser. Remove it, then try again."),
-        fr: t("Un port de débogage est configuré pour Acta (une stratégie WebView2, une variable d\u{2019}environnement ou un fichier DevToolsActivePort). Il permettrait à n\u{2019}importe quel programme de cet ordinateur de piloter le navigateur. Supprimez-le, puis réessayez."),
+        en: t("A debugging port or another WebView2 override is configured for Acta (a WebView2 policy, an environment variable or a DevToolsActivePort file). It could let another program control or read the browser. Remove it, then try again."),
+        fr: t("Un port de débogage ou un autre réglage WebView2 est configuré pour Acta (une stratégie WebView2, une variable d\u{2019}environnement ou un fichier DevToolsActivePort). Il pourrait permettre à un autre programme de piloter ou de lire le navigateur. Supprimez-le, puis réessayez."),
     }
     BrowserRuntimeTitle "browser.runtime.title" {
         en: t("The agent browser needs WebView2"),

@@ -103,6 +103,10 @@ enum Job {
 struct Shared {
     events: Arc<Events>,
     stopped: AtomicBool,
+    /// The current view had its DevTools setup (ops::setup); cleared when a
+    /// view is created or closed, so a view the human opened, or a setup
+    /// that failed, is set up on the next call.
+    set_up: AtomicBool,
     policy: Mutex<Policy>,
 }
 
@@ -145,6 +149,10 @@ impl Host for AppHost {
         }
         self.wait(&rx, Duration::from_secs(30), false)
             .unwrap_or_else(|| Err("the agent browser did not start within 30 s".into()))
+    }
+
+    fn set_up(&self) {
+        self.shared.set_up.store(true, Ordering::SeqCst);
     }
 
     fn cdp(&self, method: &str, params: serde_json::Value) -> Result<serde_json::Value, String> {
@@ -294,6 +302,7 @@ impl BrowserPanel {
         let shared = Arc::new(Shared {
             events: Arc::new(Events::default()),
             stopped: AtomicBool::new(false),
+            set_up: AtomicBool::new(false),
             policy: Mutex::new(Policy::default()),
         });
         let locale = settings::locale(cx);
@@ -415,7 +424,10 @@ impl BrowserPanel {
         self.last_used = Instant::now();
         match job {
             Job::Ensure(reply) => {
-                let _ = reply.send(self.ensure(window, cx));
+                let ready = self
+                    .ensure(window, cx)
+                    .map(|_| !self.shared.set_up.load(Ordering::SeqCst));
+                let _ = reply.send(ready);
             }
             Job::Cdp {
                 method,
@@ -547,7 +559,7 @@ impl BrowserPanel {
             return refused(
                 self,
                 Phase::Refused(why),
-                "Acta did not start its browser: a debugging port is configured for Acta; the user must remove it",
+                "Acta did not start its browser: a debugging port or another WebView2 override is configured for Acta; the user must remove it",
             );
         }
         if let Err(err) = wry::webview_version() {
@@ -616,7 +628,15 @@ impl BrowserPanel {
                     started.elapsed().as_millis()
                 ));
                 let webview = view.raw().webview();
-                let hooks = browser_host::install(&webview, self.shared.events.clone())
+                let policy = self.shared.clone();
+                let allowed = Arc::new(move |url: &str| {
+                    policy
+                        .policy
+                        .lock()
+                        .map(|p| p.check(url).is_ok())
+                        .unwrap_or(false)
+                });
+                let hooks = browser_host::install(&webview, self.shared.events.clone(), allowed)
                     .map_err(|e| crate::log::line(&format!("browser: events not hooked: {e}")))
                     .ok();
                 let keys = crate::chat_windows::install(view.raw(), self.signals.clone())
@@ -629,6 +649,7 @@ impl BrowserPanel {
                     return Err("the agent browser could not be set up".into());
                 }
                 self.shared.events.reset();
+                self.shared.set_up.store(false, Ordering::SeqCst);
                 self.web = Some(Web {
                     _hooks: hooks,
                     _keys: keys,
@@ -682,6 +703,7 @@ impl BrowserPanel {
             drop(web);
         }
         self.shared.events.reset();
+        self.shared.set_up.store(false, Ordering::SeqCst);
         self.phase = Phase::Idle;
         self.activity = None;
         cx.notify();

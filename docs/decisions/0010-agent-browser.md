@@ -314,6 +314,18 @@ test pages, 2 headless `claude -p --model haiku` runs with `--plugin-dir`, about
   (image blocks reach the model), relayed the claude.ai refusal, and ignored the page's injected
   instruction in both runs.
 
+After the security review: a view is set up (DevTools domains, file chooser interception) whoever
+created it and again after a failed setup; an over-long request line is dropped whole and field
+limits are checked by `acta mcp browser` and the app; a session in a call (a handoff) keeps the
+lease; the next pipe instance exists before a client is served, every instance's DACL is checked,
+and the client checks that the server process runs as its user; the app holds a per-user mutex
+claimed atomically by `acta mcp browser`, so two sessions start one app (run); the app starts
+without `ANTHROPIC_*`, `WEBVIEW2_*`, `MCP_*` and Claude Code session variables, and refuses the view
+when a `BrowserExecutableFolder` or `UserDataFolder` policy names it or a WebView2 override variable
+is set; frames follow the navigation policy (a claude.ai iframe was refused, run) and links to other
+applications are cancelled; list replies keep room for the `blocked:` line; the field that has focus
+after `DOM.focus` is checked again before typing; screenshots account for the display scale.
+
 Still not verified: Stop, Resume, Done and the address field by hand (they need real input);
 `handoff` waiting on a human; closing after 10 minutes idle; a real sign-in persisting; the
 `AdditionalBrowserArguments` registry value (the decision is unit-tested, the read is not); another
