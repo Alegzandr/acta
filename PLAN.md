@@ -62,7 +62,7 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 ## M5 - Claude chat panel
 - [x] ADR 0009 accepted with conditions: claude.ai in the system web view, Windows proven by the spike, macOS unproven, Linux gets a link; M5 opens with the keyboard handoff check, a real sign-in by the user and a macOS build
 - [ ] First: keyboard handoff while the page has focus, a real sign-in by the user, a macOS build (the three things the spike could not check)
-- [ ] DESIGN.md: specify the chat panel (placement, toggle, placeholder under overlays, failure and sign-in help states)
+- [x] DESIGN.md: specify the chat panel (placement, toggle, placeholder under overlays, failure and sign-in help states) - `docs/design/components-app.md`, `docs/design/screens.md` 8.13
 - [ ] Side panel with a persistent session, toggled from the keyboard
 
 ## M6 - Notes

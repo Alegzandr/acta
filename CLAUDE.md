@@ -4,7 +4,7 @@ Local-first desktop app that complements Claude Code: a project tracker for the 
 
 ## Where things are
 - `PLAN.md` - milestones and status. Update it when a milestone moves.
-- `DESIGN.md` - design system. UI code must conform to it.
+- `DESIGN.md` - design system index (principles, never-list, review checklist, map); the specs are in `docs/design/`, load only the part a task needs. UI code must conform to them.
 - `docs/decisions/` - ADRs. One short file per decision; read the relevant ones before changing architecture.
 - `.claude/agents/` - the team: product-designer, gpui-engineer, integration-engineer, release-engineer, reviewer.
 - `spikes/` - throwaway experiments backing the ADRs. Not part of the workspace, never depended upon.

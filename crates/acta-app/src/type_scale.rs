@@ -1,4 +1,4 @@
-//! DESIGN.md section 3.2: the type roles. Text is always set through a role.
+//! docs/design/typography.md 3.2: the type roles. Text is always set through a role.
 //! No role asks for letter-spacing (the pinned GPUI has none).
 
 use std::sync::Arc;
@@ -9,7 +9,7 @@ use crate::theme::{FONT_MONO, FONT_SANS};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TypeRole {
-    /// The DESIGN.md token, e.g. `type.title`.
+    /// The docs/design/typography.md token, e.g. `type.title`.
     pub name: &'static str,
     pub mono: bool,
     pub size: f32,
@@ -55,7 +55,7 @@ pub const SANS_ROLES: [TypeRole; 9] = [
 ];
 
 /// Tabular figures (`tnum`), for digits that align or tick: timestamps,
-/// counts, ids, versions, shortcut hints (DESIGN.md 3.1).
+/// counts, ids, versions, shortcut hints (docs/design/typography.md 3.1).
 pub fn tabular() -> FontFeatures {
     FontFeatures(Arc::new(vec![("tnum".into(), 1)]))
 }
@@ -63,7 +63,7 @@ pub fn tabular() -> FontFeatures {
 pub const MONO_ROLES: [TypeRole; 2] = [CODE, TERMINAL];
 
 impl TypeRole {
-    /// The family DESIGN.md assigns to this role.
+    /// The family docs/design/typography.md assigns to this role.
     pub fn family(&self) -> &'static str {
         if self.mono { FONT_MONO } else { FONT_SANS }
     }

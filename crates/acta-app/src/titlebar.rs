@@ -1,4 +1,4 @@
-//! Client-side titlebar, DESIGN.md 4.3: 36 high, `bg.sunken`, bottom border
+//! Client-side titlebar, docs/design/layout.md 4.3: 36 high, `bg.sunken`, bottom border
 //! `border.subtle`, the whole bar a drag region except its controls.
 //!
 //! Left to right: sidebar toggle, back and forward, the breadcrumb, the drag
@@ -42,7 +42,7 @@ const MACOS_CONTENT_START: f32 = 76.;
 const CONTENT_START: f32 = 12.;
 const GLYPH: f32 = 10.;
 
-/// Size of the titlebar's icon buttons: compact on macOS (DESIGN.md 4.1).
+/// Size of the titlebar's icon buttons: compact on macOS (docs/design/layout.md 4.1).
 const BUTTON: f32 = if cfg!(target_os = "macos") { 24. } else { 28. };
 
 #[derive(Clone, Copy, PartialEq, Eq)]

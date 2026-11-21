@@ -1,4 +1,4 @@
-//! Bundled fonts (DESIGN.md 3.1), embedded in the executable. Static files
+//! Bundled fonts (docs/design/typography.md 3.1), embedded in the executable. Static files
 //! only; licences are next to the files in `assets/fonts`.
 
 use std::borrow::Cow;

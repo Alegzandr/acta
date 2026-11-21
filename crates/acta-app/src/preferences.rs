@@ -1,4 +1,4 @@
-//! `preferences.json` (DESIGN.md 4.7): settings that must be readable before
+//! `preferences.json` (docs/design/layout.md 4.7): settings that must be readable before
 //! the database opens, so that first run comes up in the user's theme and
 //! language.
 //!

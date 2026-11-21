@@ -1,6 +1,6 @@
 //! The settings in force while the app runs: what `preferences.json` holds,
 //! as a GPUI global. Every change applies at once, repaints every window and
-//! is saved in the background (DESIGN.md: no Save button anywhere).
+//! is saved in the background (docs/design/interaction.md: no Save button anywhere).
 
 use gpui_kit::{App, Global, actions};
 
@@ -88,7 +88,7 @@ pub fn locale(cx: &App) -> Locale {
 }
 
 /// Change the language: every window repaints in the new language at once,
-/// without a restart (DESIGN.md 10).
+/// without a restart (docs/design/copy.md 10).
 pub fn set_language(locale: Locale, cx: &mut App) {
     if current(cx).language == locale {
         return;

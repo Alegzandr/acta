@@ -1,13 +1,13 @@
-//! The Settings page (DESIGN.md 5, Settings page; 8.12), as far as M1 goes:
+//! The Settings page (docs/design/components-app.md 5, Settings page; 8.12), as far as M1 goes:
 //! the Appearance section with Theme and Language. Everything applies the
 //! moment it changes; there is no Save button.
 //!
-//! Left out until they can work, since DESIGN.md defines no "not available"
+//! Left out until they can work, since docs/design/components-app.md defines no "not available"
 //! state for a setting: Terminal text size (no terminal), and the Working
 //! folders, Claude Code, Data, Chat and About sections.
 //!
 //! Both controls take keyboard focus (`Tab`), with the focus ring of
-//! DESIGN.md 5 shown for keyboard focus only. On the theme control `Left` /
+//! docs/design/components.md 5 shown for keyboard focus only. On the theme control `Left` /
 //! `Right` move between segments; on the language dropdown `Enter`, `Space`
 //! or `Down` open the menu, `Up` / `Down` move in it, `Enter` / `Space`
 //! choose and `Esc` closes.
@@ -120,7 +120,7 @@ impl SettingsPage {
     }
 }
 
-/// The focus ring of DESIGN.md 5 around a control of radius `radius`: 2px
+/// The focus ring of docs/design/components.md 5 around a control of radius `radius`: 2px
 /// `focus.ring`, 1px outside the control's edge, radius plus 1 outside it,
 /// shown for keyboard focus only. It takes no layout space.
 fn focus_ring(id: &'static str, handle: &FocusHandle, radius: f32, t: &Tokens) -> Stateful<Div> {
@@ -175,7 +175,7 @@ fn theme_label(setting: ThemeSetting) -> Key {
 }
 
 impl SettingsPage {
-    /// The segmented control (DESIGN.md 5): 28 high, a 1px `border.strong`
+    /// The segmented control (docs/design/components.md 5): 28 high, a 1px `border.strong`
     /// outline, segments sized to their label.
     fn theme_control(&self, locale: Locale, current: ThemeSetting, t: &Tokens) -> impl IntoElement {
         let segments = THEMES.into_iter().map(|setting| {
@@ -232,7 +232,7 @@ impl SettingsPage {
     }
 
     /// The language dropdown: a secondary button showing the current value,
-    /// opening a menu of the two languages (DESIGN.md 5, menus).
+    /// opening a menu of the two languages (docs/design/components.md 5, menus).
     fn language_control(&self, locale: Locale, t: &Tokens, cx: &mut Context<Self>) -> Div {
         let hover = t.fill_hover;
         let selected = Locale::ALL.iter().position(|l| *l == locale).unwrap_or(0);

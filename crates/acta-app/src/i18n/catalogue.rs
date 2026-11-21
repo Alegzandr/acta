@@ -1,5 +1,5 @@
-//! Generated from the copy catalogue of DESIGN.md 10.4 (every row, in
-//! table order). Edit DESIGN.md first, then this file; the tests in
+//! Generated from the copy catalogue of docs/design/catalogue.md 10.4 (every row, in
+//! table order). Edit docs/design/catalogue.md first, then this file; the tests in
 //! `i18n` check the two agree.
 //!
 //! Typography is applied here, not in the table: U+2026 for "...", the

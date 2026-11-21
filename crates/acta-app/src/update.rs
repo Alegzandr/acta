@@ -12,7 +12,7 @@
 //!
 //! The wait runs off the UI thread while GPUI is already up: when the main
 //! window is not ready [`UPDATER_WINDOW_DELAY`] after launch, the updater
-//! window (DESIGN.md 5 and 8.16) shows [`LaunchState`] until the decision,
+//! window (docs/design/components-app.md 5 and 8.16) shows [`LaunchState`] until the decision,
 //! and closes in the frame the main window opens.
 //!
 //! The worker never applies itself: Velopack's apply ends the process with
@@ -49,10 +49,10 @@ pub const DOWNLOAD_BUDGET: Duration = Duration::from_secs(5);
 pub const APPLY_BUDGET: Duration = Duration::from_secs(1);
 
 /// The updater window appears when the main window is not ready this long
-/// after launch (DESIGN.md 6.3).
+/// after launch (docs/design/interaction.md 6.3).
 pub const UPDATER_WINDOW_DELAY: Duration = Duration::from_millis(300);
 
-/// What the updater window says (DESIGN.md 5, Updater window).
+/// What the updater window says (docs/design/components-app.md 5, Updater window).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Status {
     /// "Checking for updates...", no bar.

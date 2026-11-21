@@ -28,7 +28,7 @@ use gpui_webview::WebView;
 
 use allow::{Decision, classify};
 
-// DESIGN.md 2.1, dark.
+// docs/design/color.md 2.1, dark.
 const BG_SUNKEN: u32 = 0x141210;
 const BG_BASE: u32 = 0x1a1816;
 const BG_OVERLAY: u32 = 0x292622;
@@ -38,7 +38,7 @@ const TEXT_PRIMARY: u32 = 0xe9e3d8;
 const TEXT_SECONDARY: u32 = 0xb5ad9f;
 const ACCENT: u32 = 0x72b5a2;
 
-// DESIGN.md 4.2: the right dock is 648 wide by default, 400 to 60% of the window.
+// docs/design/layout.md 4.2: the right dock is 648 wide by default, 400 to 60% of the window.
 const PANEL_DEFAULT: f32 = 648.;
 const PANEL_MIN: f32 = 400.;
 

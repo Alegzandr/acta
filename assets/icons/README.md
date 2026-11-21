@@ -1,6 +1,6 @@
 # Acta app icon
 
-The icon is Companion: an ivory planet with a thin brass ring tilted around it, and a small verdigris moon beyond the ring at the upper right, on a dark ink plate. The ring passes in front of the planet's lower half and behind its upper half, and casts a thin shadow on it. Nothing touches anything else. The verdigris is the dark-theme `accent` of DESIGN.md (`#72B5A2`).
+The icon is Companion: an ivory planet with a thin brass ring tilted around it, and a small verdigris moon beyond the ring at the upper right, on a dark ink plate. The ring passes in front of the planet's lower half and behind its upper half, and casts a thin shadow on it. Nothing touches anything else. The verdigris is the dark-theme `accent` of `docs/design/color.md` (`#72B5A2`).
 
 ## Files
 

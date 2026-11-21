@@ -1,4 +1,4 @@
-//! First run, DESIGN.md 8.5, as far as M1 goes.
+//! First run, docs/design/screens.md 8.5, as far as M1 goes.
 //!
 //! Left out on purpose until they can work: the "Choose a folder" primary
 //! button (no projects before M2) and the three "Then" steps (`acta setup`,
@@ -14,7 +14,7 @@ use crate::settings;
 use crate::theme::Tokens;
 use crate::type_scale;
 
-/// DESIGN.md 3.3: the content column is at most 680 wide.
+/// docs/design/typography.md 3.3: the content column is at most 680 wide.
 pub const COLUMN_MAX: f32 = 680.;
 
 pub struct FirstRun;

@@ -18,60 +18,34 @@ install scripts ignore.
 
 ## What the workflow does
 
-`.github/workflows/release.yml`, on a `v*` tag:
+`.github/workflows/release.yml`, on a `v*` tag; the job design and its reasons are in
+ADR 0004 (Decision, Release workflow).
 
-1. `check`: fails unless the tagged commit is an ancestor of `origin/main`, unless the
-   tag is `v` + the workspace version, and unless the `velopack` crate in `Cargo.lock`
-   has the same version as the `vpk` tool the workflow installs. It then collects the
-   third-party licence notices with `scripts/licenses.sh`, which fails if a dependency
-   has a licence that `about.toml` does not accept.
+1. `check`: the tagged commit is an ancestor of `origin/main`, the tag is `v` + the
+   workspace version, the `velopack` crate in `Cargo.lock` matches the `vpk` the
+   workflow installs, and every dependency licence is accepted by `about.toml`
+   (`scripts/licenses.sh`).
 2. `build`, one job per channel (`win-x64`, `osx-arm64`, `osx-x64`, `linux-x64`):
-   `cargo build --release --locked`, then `scripts/package.ps1` or `scripts/package.sh`,
-   which stage `Acta`, `acta-cli` and the `licenses` directory (on macOS inside an
-   ad-hoc signed `Acta.app`), download the previous release of the channel and run `vpk pack`. That produces the
-   installer or portable package, the full update package and a delta from the previous
-   version. A tag build restores no cargo cache: everything that ships is compiled in
-   that run.
-3. `collect`, read-only: writes `SHA256SUMS` over the packages of the four channels
-   and the two install scripts.
-4. `publish`, the only job with write permissions, in the `release` environment, with no
-   checkout: checks that `SHA256SUMS` is the file `collect` wrote and every file against
-   it, attests build provenance,
-   creates a draft release on the existing tag with `gh release create --verify-tag
-   --draft` and no target, uploads the four channels into it with
-   `vpk upload github --merge`, adds `install.sh` and `install.ps1`, then checks the
-   draft: exactly the expected assets, GitHub's digest of each one equal to
-   `SHA256SUMS`, and each `releases.<channel>.json` feed listing exactly this version's
-   full and delta packages with their verified size, SHA-1 and SHA-256. It appends the
-   feeds' hashes to `SHA256SUMS`, attests the feeds, uploads `SHA256SUMS` last and
-   publishes the release as the latest.
+   `cargo build --release --locked` with no cargo cache, then `scripts/package.ps1` or
+   `scripts/package.sh` (stage, fetch the previous release for the delta, `vpk pack`).
+3. `collect`, read-only: `SHA256SUMS` over the packages and the two install scripts.
+4. `publish`, the only job with write permissions, in the `release` environment:
+   verifies against `SHA256SUMS`, attests, creates the draft on the existing tag with
+   no target, uploads the four channels and the install scripts, checks what GitHub
+   serves (assets and feeds), uploads `SHA256SUMS` last and publishes the release as
+   the latest.
 
-Splitting `collect` from `publish` keeps the write token away from everything but the
-upload. It does not make the content more trustworthy: a release contains what the
-build jobs produced from the tagged commit.
-
-It uses the workflow's `GITHUB_TOKEN` only. Every action is pinned to a commit SHA
-(ADR 0004). If a run fails before the last step, the release stays a draft, invisible to
-users and to installed apps: fix the cause and re-run the failed jobs from the Actions
-page. A draft left behind is replaced. Once a release is published it is never
-modified: a problem found afterwards is fixed by the next version.
-
-The draft is never created with a target commit. GitHub refuses to create or edit a
-release whose target commit differs from the default branch under `.github/workflows/`
-unless the token may write workflows, and `GITHUB_TOKEN` never may: it answers 403
-"Resource not accessible by integration". A tag's commit differs that way as soon as
-`main` gets a workflow change after the tag, which is how v0.1.1 failed to publish. With
-no target, GitHub checks the default branch against itself, and the release still
-belongs to the tag that started the run, since the target is ignored for a tag that
-exists. Do not add `--target` or vpk's `--targetCommitish` back.
+If a run fails before the last step, the release stays a draft, invisible to users and
+to installed apps: fix the cause and re-run the failed jobs from the Actions page. A
+draft left behind is replaced. Once a release is published it is never modified: a
+problem found afterwards is fixed by the next version. Never add `--target` or vpk's
+`--targetCommitish` back (ADR 0004, v0.1.1).
 
 ## Repository settings
 
-Set once, by the repository owner, in the GitHub web interface. All of it is free on a
-public repository. The workflow runs without these settings; they are what keeps a
-release from being produced or altered outside the procedure above. The workflow file
-that runs for a tag is the one in the tagged commit, so the checks inside the workflow
-only protect against mistakes; these settings are the actual barrier.
+Set once, by the repository owner, in the GitHub web interface; all free on a public
+repository. The workflow runs without them, but its own checks only catch mistakes:
+these settings are the actual barrier (ADR 0004, Consequences).
 
 - **Tag ruleset.** Settings > Rules > Rulesets > New ruleset > New tag ruleset. Name
   `release tags`, enforcement `Active`, target tags matching `v*`, empty bypass list.
@@ -139,8 +113,8 @@ gh attestation verify Acta-win-x64-Setup.exe --repo Alegzandr/acta
 
 Then on a machine with the previous version installed: start Acta, it restarts as the
 new version within a few seconds (an ordinary start may wait up to about 7 seconds for
-the window: 2 for the check, 5 for the download). On a clean machine: run the install one-liner from the
-README. Both are what the update end-to-end workflow below does on GitHub's runners.
+the window: 2 for the check, 5 for the download). On a clean machine: run the install one-liner from
+`docs/install.md`. Both are what the update end-to-end workflow below does on GitHub's runners.
 
 ## Update end to end
 
@@ -236,11 +210,10 @@ take the full package.
 
 ## To confirm on the first run
 
-No workflow of this repository has run on GitHub yet and no release exists. Everything
-below is written from documentation, from the vpk 1.2.161 source and from a local
-Windows pack, and has to be observed once. Tick an item only after seeing it; when one
-turns out wrong, fix it and record the finding in ADR 0004. Keep this list until every
-item is ticked.
+Written from documentation, from the vpk 1.2.161 source and from a local Windows pack;
+each item has to be observed once. Tick an item only after seeing it; when one turns
+out wrong, fix it and record the finding in ADR 0004. Keep this list until every item
+is ticked.
 
 First push (`ci.yml`):
 
@@ -319,10 +292,10 @@ First tag (`v0.1.0`):
       `~/.local/share/icons/hicolor/512x512/apps`.
 - [ ] On macOS and Linux `~/.local/bin/acta` exists after the first start and runs;
       an unrelated `acta` already there is left untouched.
-- [ ] The log is where the README says on each system, and a Windows uninstall leaves
+- [ ] The log is where `docs/install.md` says on each system, and a Windows uninstall leaves
       `%LOCALAPPDATA%\ActaData` in place.
-- [ ] A `Setup.exe` downloaded with a browser shows SmartScreen as the README says; a
-      zip downloaded with a browser on macOS is blocked as the README says.
+- [ ] A `Setup.exe` downloaded with a browser shows SmartScreen as `docs/install.md` says; a
+      zip downloaded with a browser on macOS is blocked as `docs/install.md` says.
 
 Second tag (`v0.1.1`):
 

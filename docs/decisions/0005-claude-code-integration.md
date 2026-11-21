@@ -174,9 +174,8 @@ Slash commands are skills; the plugin ships three, in `plugins/acta/skills/<name
 
 ## Consequences
 - One direct edit of user settings remains (the allow rule). It is a single string and reversible; setup must say so.
-- The plugin tree holds an absolute executable path: ADR 0004 must give a stable path or the app rewrites the tree on update (planned anyway).
-- Settled by ADR 0004: the CLI and MCP server are a separate console executable exported as `acta` to a stable per-user path outside the install root. The plugin tree references that path, never the install directory.
-- Hook latency depends on ADR 0003: opening the database must not run a slow KDF. Target 50 ms for `acta hook session-start`, measured in CI.
+- The plugin tree holds an absolute executable path. ADR 0004 makes it stable: the CLI and MCP server are a separate console executable exported as `acta` to a per-user path outside the install root, and the plugin tree references that path, never the install directory.
+- Hook latency depends on ADR 0003: opening the database must not run a slow KDF (0003 uses a raw key, no KDF). Target 50 ms for `acta hook session-start`, measured in CI.
 - `rmcp` moves weekly and the MCP revision is four months old: pin with `Cargo.lock`, keep the transport behind our own trait, cover it with the stdio end-to-end test.
 - Revisit when plugins can declare permissions, when Claude Code exposes the caller (subagent) to servers, or if dogfooding shows agents not logging without a nudge.
 

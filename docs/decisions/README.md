@@ -22,6 +22,10 @@ What we rejected and why, one line each.
 ## Consequences
 What this costs us, what to watch, when to revisit.
 
+## Changelog
+Optional. One dated line per later change; the change itself is folded into Decision and Consequences,
+which always state the current truth.
+
 ## Evidence
 Spike location and what it actually proved (and on which OS).
 ```

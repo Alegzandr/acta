@@ -1,4 +1,4 @@
-//! The time forms of DESIGN.md 10.2. Both languages use the 24-hour clock
+//! The time forms of docs/design/copy.md 10.2. Both languages use the 24-hour clock
 //! and day-month-year order, whatever the OS region.
 //!
 //! Every function takes local wall-clock times ([`LocalTime`]) and, where

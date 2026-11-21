@@ -540,7 +540,7 @@ jobs:
             echo "curl -fsSL $REPO_URL/releases/latest/download/install.sh | sh"
             echo '```'
             echo
-            echo "An installed Acta updates itself at its next launch. Builds are unsigned: see the README."
+            echo "An installed Acta updates itself at its next launch. Builds are unsigned: see $REPO_URL/blob/main/docs/install.md#unsigned-builds."
             echo
             gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" -f tag_name="$TAG" --jq .body ||
               echo "::warning::could not generate the change list" >&2

@@ -1,8 +1,8 @@
-//! The workbench window (DESIGN.md 4.2): titlebar, the tree sidebar, the page
+//! The workbench window (docs/design/layout.md 4.2): titlebar, the tree sidebar, the page
 //! area, the docks and the status bar.
 //!
 //! As far as M1 goes: there are no projects yet, so the tree is empty and,
-//! as on first run (DESIGN.md 8.5), the sidebar starts hidden; `Mod+B` or the
+//! as on first run (docs/design/screens.md 8.5), the sidebar starts hidden; `Mod+B` or the
 //! titlebar toggle shows it with its pinned Trash and Settings rows. The
 //! page is the first-run page or Settings. The docks have no tool window to
 //! hold yet and are not drawn. The status bar has no active project, and
@@ -28,12 +28,12 @@ use crate::titlebar;
 use crate::type_scale;
 use crate::ui;
 
-/// DESIGN.md 4.2: default 1440 x 900, minimum 880 x 560.
+/// docs/design/layout.md 4.2: default 1440 x 900, minimum 880 x 560.
 pub const DEFAULT_SIZE: (f32, f32) = (1440., 900.);
 pub const MIN_SIZE: (f32, f32) = (880., 560.);
-/// DESIGN.md 4.2: the sidebar is 260 wide.
+/// docs/design/layout.md 4.2: the sidebar is 260 wide.
 const SIDEBAR_WIDTH: f32 = 260.;
-/// DESIGN.md 4.6: the status bar is 24 high.
+/// docs/design/layout.md 4.6: the status bar is 24 high.
 const STATUS_BAR_HEIGHT: f32 = 24.;
 
 actions!(
@@ -50,7 +50,7 @@ actions!(
     ]
 );
 
-/// The keys of the shell (DESIGN.md 6.1).
+/// The keys of the shell (docs/design/interaction.md 6.1).
 pub fn bind_keys(cx: &mut App) {
     cx.bind_keys(key_bindings());
 }
@@ -130,7 +130,7 @@ impl Shell {
     }
 
     fn new(content: Content, sidebar: bool, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        // System follows the OS live (DESIGN.md 2).
+        // System follows the OS live (docs/design/color.md 2).
         let appearance = cx.observe_window_appearance(window, |_, window, cx| {
             theme::os_appearance_changed(window.appearance(), cx);
         });
@@ -189,7 +189,7 @@ impl Shell {
         let tokens = cx.global::<Tokens>().clone();
         let locale = settings::locale(cx);
         let on_settings = self.page() == Some(Page::Settings);
-        // Pinned under the tree, outside its scroll (DESIGN.md 4.2). Trash
+        // Pinned under the tree, outside its scroll (docs/design/layout.md 4.2). Trash
         // has no page yet, so its row is inert.
         let pinned = div()
             .flex()
@@ -252,7 +252,7 @@ impl Shell {
             .border_color(tokens.border_subtle)
             .text_color(tokens.text_tertiary)
             .child(
-                // No project item: there is no project (DESIGN.md 4.6).
+                // No project item: there is no project (docs/design/layout.md 4.6).
                 ui::bar_item("status-claude", &tokens)
                     .child(
                         icon(Icon::CircleDashed, 14., tokens.text_tertiary).group_hover(
@@ -283,7 +283,7 @@ impl Shell {
     }
 }
 
-/// A pinned row of the sidebar (DESIGN.md 5, list / tree row).
+/// A pinned row of the sidebar (docs/design/components.md 5, list / tree row).
 fn sidebar_row(
     id: &'static str,
     glyph: Icon,
@@ -328,7 +328,7 @@ fn sidebar_row(
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let tokens = cx.global::<Tokens>().clone();
-        // Windows: 1px outline when not maximized (DESIGN.md 4.3).
+        // Windows: 1px outline when not maximized (docs/design/layout.md 4.3).
         let outlined = cfg!(target_os = "windows") && !window.is_maximized();
         let breadcrumb = self.breadcrumb(cx);
         let titlebar = titlebar::render(self, breadcrumb, window, cx);

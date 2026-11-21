@@ -1,4 +1,4 @@
-//! The updater window (DESIGN.md 5 and 8.16): shown when the main window is
+//! The updater window (docs/design/components-app.md 5 and 8.16): shown when the main window is
 //! not ready 300 ms after launch because an update is being checked or
 //! downloaded. 360 x 132, no caption buttons, draggable anywhere, nothing to
 //! press. It is the one place the app mark is shown.
@@ -29,7 +29,7 @@ pub struct UpdaterWindow {
 impl UpdaterWindow {
     pub fn new(state: Arc<LaunchState>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         // In the theme of the preferences file, System following the OS
-        // (DESIGN.md 5), also when the OS answered before this window.
+        // (docs/design/components-app.md 5), also when the OS answered before this window.
         let appearance = cx.observe_window_appearance(window, |_, window, cx| {
             theme::os_appearance_changed(window.appearance(), cx);
         });
