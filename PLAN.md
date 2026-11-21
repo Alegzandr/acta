@@ -11,6 +11,7 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 | M4 | Integrated terminal running Claude Code | v0.3.0 | doing (docked; live Claude Code session to verify) |
 | M5 | Claude chat panel beside the work (Windows and macOS; link on Linux; ADR 0009) | v0.5.0 | doing |
 | M6 | Notes inbox and notes-to-topics flow | v0.6.0 | todo |
+| M8 | VS Code-style docking layout; agent browser for Claude Code (ADR 0010) | v0.5.0 | todo |
 | M7 | Polish | v1.0.0 | doing |
 
 ## M0 - Research and spikes

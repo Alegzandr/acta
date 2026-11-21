@@ -1,6 +1,6 @@
 # 0010 - Agent browser (browser tools for Claude Code inside Acta)
 
-Status: proposed
+Status: accepted (2026-11-21); built after the docking layout lands. Unverified items in Evidence are checked when it is built.
 Date: 2026-11-21
 
 ## Context
