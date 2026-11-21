@@ -330,6 +330,48 @@ pub fn resolve_claude() -> Option<ClaudeProgram> {
     }
 }
 
+/// The variables of a Claude Code session among `names` (an environment's
+/// variable names): what a Claude Code sets for the programs it starts.
+/// An Acta started from a Claude Code shell inherits them, and a `claude`
+/// started in Acta's terminal would then take itself for a child of that
+/// session (no transcript, a nested session). Only when the environment is
+/// such a session's (`CLAUDECODE` set), since a user may set `CLAUDE_CODE_*`
+/// options in their own environment.
+pub fn claude_session_vars<S: AsRef<str>>(names: &[S]) -> Vec<String> {
+    let is = |name: &str, want: &str| name.eq_ignore_ascii_case(want);
+    let in_session = names.iter().any(|n| is(n.as_ref(), "CLAUDECODE"));
+    if !in_session {
+        return Vec::new();
+    }
+    names
+        .iter()
+        .map(AsRef::as_ref)
+        .filter(|name| {
+            let upper = name.to_ascii_uppercase();
+            upper == "CLAUDECODE" || upper == "CLAUDE_PID" || upper.starts_with("CLAUDE_CODE_")
+        })
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Remove [`claude_session_vars`] from this process's environment, so
+/// every program Acta starts (the terminal's shell and `claude`) begins a
+/// session of its own.
+///
+/// # Safety
+///
+/// Call it first in `main`, before any thread exists: changing the
+/// environment while another thread reads it is undefined behaviour.
+pub unsafe fn scrub_claude_session() {
+    let names: Vec<String> = std::env::vars_os()
+        .filter_map(|(name, _)| name.into_string().ok())
+        .collect();
+    for name in claude_session_vars(&names) {
+        // SAFETY: the caller guarantees no other thread runs yet.
+        unsafe { std::env::remove_var(name) };
+    }
+}
+
 /// `claude.exe` anywhere on the search path wins over a `claude.cmd` shim.
 pub fn resolve_windows(
     dirs: &[PathBuf],
@@ -382,6 +424,37 @@ pub fn resolve_unix(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_claude_code_session_is_not_passed_on() {
+        let names = [
+            "PATH",
+            "CLAUDECODE",
+            "CLAUDE_CODE_ENTRYPOINT",
+            "CLAUDE_CODE_CHILD_SESSION",
+            "CLAUDE_CODE_SESSION_ID",
+            "CLAUDE_PID",
+            "ACTA_PROJECT",
+            "ANTHROPIC_MODEL",
+        ];
+        assert_eq!(
+            claude_session_vars(&names),
+            [
+                "CLAUDECODE",
+                "CLAUDE_CODE_ENTRYPOINT",
+                "CLAUDE_CODE_CHILD_SESSION",
+                "CLAUDE_CODE_SESSION_ID",
+                "CLAUDE_PID",
+            ]
+        );
+        // Outside a session, a user's own `CLAUDE_CODE_*` options stay.
+        assert!(claude_session_vars(&["PATH", "CLAUDE_CODE_USE_BEDROCK"]).is_empty());
+        // Windows names are case-insensitive.
+        assert_eq!(
+            claude_session_vars(&["ClaudeCode", "claude_code_sse_port"]),
+            ["ClaudeCode", "claude_code_sse_port"]
+        );
+    }
 
     fn focus() -> Focus {
         Focus {

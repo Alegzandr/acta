@@ -328,6 +328,9 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `layout.moved.page` | View moved to the page area: {view} | Vue déplacée dans la zone des pages : {view} |
 | `layout.hidden` | View hidden: {view} | Vue masquée : {view} |
 | `layout.reset_done` | Layout reset. | Disposition réinitialisée. |
+| `layout.no_room` | Not enough room: {reason} | Pas assez de place : {reason} |
+| `layout.no_room.left` | the window is too narrow for both sidebars. | la fenêtre est trop étroite pour les deux barres latérales. |
+| `layout.no_room.hide_right` | Hide the right sidebar and move | Masquer la barre latérale droite et déplacer |
 | `palette.recent` | Recent | Récents |
 | `palette.topics` | Topics | Sujets |
 | `palette.commands` | Commands | Commandes |

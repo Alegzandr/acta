@@ -252,6 +252,9 @@ pub(super) struct LayoutUi {
     pub left_overlay: bool,
     /// "Maximize focused area": that group fills the body until toggled.
     pub zoomed: Option<(Place, usize)>,
+    /// The move the no-room toast offers to make with the right sidebar
+    /// hidden.
+    pub no_room: Option<(Dragged, Target)>,
     /// The views the shell last made visible (terminal started, chat
     /// shown).
     pub terminal_shown: bool,
@@ -270,6 +273,7 @@ impl LayoutUi {
             menu: None,
             left_overlay: false,
             zoomed: None,
+            no_room: None,
             terminal_shown: false,
             #[cfg(windows)]
             chat_shown: false,
@@ -490,7 +494,35 @@ impl Shell {
         self.sync_tool_views(window, cx);
         self.mark_shown_seen(cx);
         self.save_layout(cx);
+        self.refocus_lost_view(window, cx);
         cx.notify();
+    }
+
+    /// Keyboard focus left in a view the change took off screen returns to
+    /// the page, so the next key acts (a web view gives the keyboard back
+    /// to the window first).
+    fn refocus_lost_view(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(lost) =
+            views().find(|v| self.view_has_focus(*v, window, cx) && !self.view_drawn(*v, window))
+        else {
+            return;
+        };
+        #[cfg(windows)]
+        if let Some(bench) = self.bench() {
+            match lost {
+                ViewId::Chat => bench.chat.read(cx).release_keyboard(cx),
+                ViewId::AgentBrowser => bench.browser.read(cx).release_keyboard(cx),
+                _ => {}
+            }
+        }
+        self.focus_page(window, cx);
+        // A page that keeps no focus of its own: its group takes it.
+        if self.view_has_focus(lost, window, cx)
+            && let Some(bench) = self.bench()
+        {
+            let handle = bench.group_focus[bench.layout.focused.min(2)].clone();
+            window.focus(&handle, cx);
+        }
     }
 
     /// Make `tab` the page the window acts on (the focused group's page):
@@ -815,31 +847,19 @@ impl Shell {
                 }
             }
             ViewAction::MoveTo(place) => {
-                let moved = match place {
-                    Place::Side(side) => self.change_layout(None, window, cx, |l| {
-                        l.move_tab(Tab::View(view), Target::Area(side)).is_ok()
-                    }),
-                    Place::Page => {
-                        let group = self.bench().map_or(0, |b| b.layout.focused);
-                        let target = Target::Into {
-                            place: Place::Page,
-                            group,
-                            index: None,
-                        };
-                        self.drop_view(
-                            Dragged {
-                                tab: Tab::View(view),
-                                as_view: None,
-                            },
-                            target,
-                            window,
-                            cx,
-                        )
-                    }
+                let target = match place {
+                    Place::Side(side) => Target::Area(side),
+                    Place::Page => Target::Into {
+                        place: Place::Page,
+                        group: self.bench().map_or(0, |b| b.layout.focused),
+                        index: None,
+                    },
                 };
-                if moved {
-                    self.after_move(view, place, window, cx);
-                }
+                let dragged = Dragged {
+                    tab: Tab::View(view),
+                    as_view: None,
+                };
+                self.move_by_command(dragged, target, window, cx);
             }
             ViewAction::SplitOff => {
                 if self.change_layout(None, window, cx, |l| l.split_off(view).is_ok()) {
@@ -850,7 +870,111 @@ impl Shell {
         let _ = name;
     }
 
-    /// After a view moved: focused, and the move toast.
+    /// A move by the view menu, a page tab's menu or the palette (4.8.7):
+    /// the view lands as the last tab of the target area, on screen. When
+    /// the target cannot be shown beside what is there, nothing moves and
+    /// the toast offers the move with the right sidebar hidden, as one
+    /// step.
+    fn move_by_command(
+        &mut self,
+        dragged: Dragged,
+        target: Target,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let view = match dragged.tab {
+            Tab::View(v) => v,
+            Tab::Page(_) => match dragged.as_view {
+                Some(v) => v,
+                None => return,
+            },
+        };
+        let place = match target {
+            Target::Into { place, .. } | Target::Split { place, .. } => place,
+            Target::Area(side) => Place::Side(side),
+        };
+        if self.drop_view(dragged, target, window, cx) {
+            self.after_move(view, place, window, cx);
+            return;
+        }
+        // Refused for want of room only: the same move, room or not, works.
+        let no_room = place == Place::Side(Side::Left)
+            && self.bench().is_some_and(|b| {
+                layout_frame::place(&b.layout, dragged, target, None, TabId(u64::MAX)).is_some()
+            });
+        if !no_room {
+            return;
+        }
+        let locale = settings::locale(cx);
+        let reason = text(locale, Key::LayoutNoRoomLeft);
+        let message = tr(locale, Key::LayoutNoRoom, &[("reason", Arg::Text(&reason))]);
+        if let Some(bench) = self.bench() {
+            bench.ui.no_room = Some((dragged, target));
+        }
+        self.show_toast(
+            Toast {
+                message,
+                kind: ToastKind::LayoutNoRoom,
+            },
+            cx,
+        );
+    }
+
+    /// The no-room toast's action: the right sidebar hidden and the move
+    /// made, as one undo step.
+    pub(super) fn hide_right_and_move(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let width = self.body_width(window);
+        let Some(bench) = self.bench() else { return };
+        bench.toast = None;
+        let Some((dragged, target)) = bench.ui.no_room.take() else {
+            return;
+        };
+        let view = match dragged.tab {
+            Tab::View(v) => Some(v),
+            Tab::Page(_) => dragged.as_view,
+        };
+        let had_focus = self
+            .bench()
+            .map(|b| {
+                b.layout
+                    .side(Side::Right)
+                    .active_views()
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+            .into_iter()
+            .any(|v| self.view_has_focus(v, window, cx));
+        let done = self.change_layout(None, window, cx, |l| {
+            let mut hidden = l.clone();
+            hidden.set_area_shown(Side::Right, false);
+            match layout_frame::simulate(&hidden, dragged, target, None, TabId(u64::MAX), width) {
+                Some((after, _)) => {
+                    *l = after;
+                    true
+                }
+                None => false,
+            }
+        });
+        if had_focus {
+            self.focus_page(window, cx);
+        }
+        if done && let Some(view) = view {
+            self.after_move(view, Place::Side(Side::Left), window, cx);
+        }
+        cx.notify();
+    }
+
+    /// The width the layout lays out in: the body as last drawn.
+    fn body_width(&mut self, window: &Window) -> f32 {
+        let drawn = self.bench().map_or(0., |b| b.ui.geometry.borrow().body.w);
+        if drawn > 0. {
+            drawn
+        } else {
+            body_size(window).0
+        }
+    }
+
+    /// After a view moved: on screen, focused, and the move toast.
     fn after_move(
         &mut self,
         view: ViewId,
@@ -858,6 +982,16 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // A maximized other group gives way to what just moved.
+        if let Some(bench) = self.bench()
+            && let Some(spot) = bench.layout.locate(Tab::View(view))
+            && bench
+                .ui
+                .zoomed
+                .is_some_and(|z| z != (spot.place, spot.group))
+        {
+            bench.ui.zoomed = None;
+        }
         if !(view.is_page_kind() && place == Place::Page) {
             self.focus_view(view, window, cx);
         }
@@ -916,9 +1050,10 @@ impl Shell {
         }
         let id = new_tab.map_or(TabId(u64::MAX), |(id, _)| id);
         let closing = new_tab.and_then(|(_, open)| open);
+        let width = self.body_width(window);
         // The very simulation the preview showed (4.8.11, rule 6).
         let done = self.change_layout(None, window, cx, |l| {
-            match layout_frame::simulate(l, dragged, target, closing, id) {
+            match layout_frame::simulate(l, dragged, target, closing, id, width) {
                 Some((after, _)) => {
                     *l = after;
                     true
@@ -963,7 +1098,13 @@ impl Shell {
             true
         }) {
             let message = text(settings::locale(cx), Key::LayoutResetDone);
-            self.layout_toast(message, cx);
+            self.show_toast(
+                Toast {
+                    message,
+                    kind: ToastKind::LayoutReset,
+                },
+                cx,
+            );
         }
     }
 
@@ -1373,14 +1514,17 @@ impl Shell {
             Target::Into { place, .. } | Target::Split { place, .. } => place,
             Target::Area(side) => Place::Side(side),
         };
-        // A page tab moved within the page area is a tab move: no toast.
-        let is_view_move = matches!(drag.dragged.tab, Tab::View(_)) || place != Place::Page;
+        // A tab moved or split within the page area, page or view, is a tab
+        // move: no toast (4.8.11).
+        let from = bench.layout.locate(drag.dragged.tab).map(|s| s.place);
+        let is_view_move = from != Some(Place::Page) || place != Place::Page;
         let dropped = self.drop_view(drag.dragged, zone.target, window, cx);
         // The web views return at their new bounds once the layout settled.
         self.set_rearranging(false, window, cx);
         if dropped {
             match (view, is_view_move) {
                 (Some(view), true) => self.after_move(view, place, window, cx),
+                (Some(view), false) if !view.is_page_kind() => self.focus_view(view, window, cx),
                 _ => self.focus_page(window, cx),
             }
         }
@@ -2851,9 +2995,6 @@ impl Shell {
         });
         let chip = type_scale::SMALL
             .el()
-            .absolute()
-            .left(px(drag.x - ox + 12.))
-            .top(px(drag.y - oy + 12.))
             .flex()
             .flex_row()
             .items_center()
@@ -2869,6 +3010,11 @@ impl Shell {
             .whitespace_nowrap()
             .child(icon(glyph, 14., t.text_primary))
             .child(name);
+        // 12 right and 12 below the pointer, kept inside the window.
+        let chip = anchored()
+            .position(point(px(drag.x + 12.), px(drag.y + 12.)))
+            .snap_to_window()
+            .child(chip);
         Some(
             deferred(
                 div()
@@ -2938,6 +3084,11 @@ impl Shell {
             self.can_split_page(Direction::Row, window),
             self.can_split_page(Direction::Column, window),
         );
+        // Inbox and Knowledge while pages: checked when the focused group
+        // shows that page, as their toggles are selected (4.8.5).
+        let page_shown: Vec<ViewId> = views()
+            .filter(|v| v.is_page_kind() && self.view_selected(*v, window))
+            .collect();
         let bench = self.bench()?;
         let menu = bench.ui.menu?;
         let layout = bench.layout.clone();
@@ -2948,7 +3099,7 @@ impl Shell {
         match menu.kind {
             LayoutMenu::Layout => {
                 for view in views() {
-                    let visible = layout.is_visible(view);
+                    let visible = layout.is_visible(view) || page_shown.contains(&view);
                     panel = panel.child(
                         menu_row(
                             SharedString::from(format!("lm-{}", view.key())),
@@ -3270,9 +3421,7 @@ impl Shell {
                     tab: Tab::Page(tab),
                     as_view: Some(view),
                 };
-                if self.drop_view(dragged, target, window, cx) {
-                    self.after_move(view, place, window, cx);
-                }
+                self.move_by_command(dragged, target, window, cx);
             }
             None => self.view_action(view, ViewAction::MoveTo(place), window, cx),
         }

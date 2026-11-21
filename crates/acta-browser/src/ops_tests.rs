@@ -650,3 +650,79 @@ fn nothing_is_typed_when_focus_cannot_be_confirmed() {
     // Focus confirmed on the field: typed.
     assert!(typed(&Fake::new(big_tree(1))).ok);
 }
+
+#[test]
+fn a_cut_snapshot_never_suggests_what_is_set() {
+    let fake = Fake::new(big_tree(3_000));
+    let snapshot = |args: SnapshotArgs| run(&fake, &Request::Snapshot(args)).text;
+    let plain = snapshot(SnapshotArgs::default());
+    assert!(plain.contains("or filter=interactive"), "{plain}");
+    assert!(plain.contains("or max=8000"), "{plain}");
+    let interactive = snapshot(SnapshotArgs {
+        filter: Some(SnapshotFilter::Interactive),
+        max: Some(500),
+        ..Default::default()
+    });
+    if interactive.contains("more lines") {
+        assert!(!interactive.contains("filter=interactive"), "{interactive}");
+    }
+    let raised = snapshot(SnapshotArgs {
+        max: Some(8_000),
+        ..Default::default()
+    });
+    assert!(
+        raised.contains("more lines; narrow with within=<ref>"),
+        "{raised}"
+    );
+    assert!(!raised.contains("max="), "{raised}");
+}
+
+#[test]
+fn a_snapshot_returns_every_line_that_fits() {
+    // A snapshot whose lines all fit its budget is never cut to make room
+    // for a line saying it was cut.
+    for n in 0..40 {
+        let fake = Fake::new(big_tree(n));
+        let full = run(
+            &fake,
+            &Request::Snapshot(SnapshotArgs {
+                max: Some(8_000),
+                ..Default::default()
+            }),
+        )
+        .text;
+        if full.contains("more lines") {
+            break;
+        }
+        // Exactly the room it needs: every line, no cut.
+        let exact = run(
+            &fake,
+            &Request::Snapshot(SnapshotArgs {
+                max: Some((full.len() + NOTICE_ROOM).max(500) as u32),
+                ..Default::default()
+            }),
+        )
+        .text;
+        assert!(!exact.contains("more lines"), "{n}: {exact}");
+        let default = run(&fake, &Request::Snapshot(SnapshotArgs::default())).text;
+        if full.len() + NOTICE_ROOM <= budget::SNAPSHOT {
+            assert!(!default.contains("more lines"), "{n}: {default}");
+        }
+        // And a cut one holds as many lines as fit beside its last line.
+        for max in [500, 1_000, 2_000] {
+            let cut = run(
+                &fake,
+                &Request::Snapshot(SnapshotArgs {
+                    max: Some(max),
+                    ..Default::default()
+                }),
+            )
+            .text;
+            assert!(cut.len() + NOTICE_ROOM <= max as usize, "{n} {max}: {cut}");
+            if !cut.contains("more lines") {
+                // The same lines (each fence has its own nonce).
+                assert_eq!(cut.lines().count(), full.lines().count(), "{n} {max}");
+            }
+        }
+    }
+}

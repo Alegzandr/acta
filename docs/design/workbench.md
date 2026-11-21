@@ -124,6 +124,8 @@ An edge may split only if: in the page area, fewer than three groups exist and t
 
 **By menu and palette** (the keyboard path; principle 4). The view menu (4.8.4). The palette has, for each view, "{view}: Show", "{view}: Hide", "{view}: Move to left sidebar", "{view}: Move to right sidebar", "{view}: Move to bottom panel", "{view}: Move to page area" and "{view}: Split from group"; with a view focused, its commands rank first. A move by command puts the view as the last tab of the target area's last group, shows that area, focuses the view, and toasts like a drop.
 
+**A move or a drop never lands out of sight.** Only the left sidebar can lack room (4.8.10, step 1): when what lands there would make it auto-hide, the right sidebar narrows to make room, down to its active view's minimum, in the same undo step. With no room even so, a drop there is not a zone (rule 5 of 4.8.11), and a move by command changes nothing and toasts "Not enough room: the window is too narrow for both sidebars." with one ghost action, "Hide the right sidebar and move", which does both as one undo step. The last page of the window moved out as Inbox or Knowledge (its tab menu, a drag) stays open, since the page area keeps a page (4.8.8): the view lands beside it, as the palette's move does.
+
 #### 4.8.8 Page area: groups and tabs
 
 Everything in 4.4 holds, per group: each group has its own tabs, its own active tab and each tab its own history. Additions:
@@ -150,7 +152,7 @@ The chat and the agent browser are native child windows drawn above everything A
 
 The window minimum stays 880 x 560. When the areas no longer fit, they give way in this order, each step undone in reverse as space returns, and none of it is saved (the remembered layout is what the user chose, not what the window allowed):
 
-1. **The left sidebar auto-hides** (4.2's rule, unchanged): its toggle and `Mod+B` show it as an overlay on top of the page area at its remembered width (at most the window width minus 48), with `shadow.overlay` and a 1px `border.default` edge, dismissed by `Esc`, by a click outside or by opening something.
+1. **The left sidebar auto-hides** (4.2's rule, unchanged): its toggle and `Mod+B` show it as an overlay on top of the page area at its remembered width (at most the window width minus 48), with `shadow.overlay` and a 1px `border.default` edge, dismissed by `Esc` (wherever the keyboard is, except in a terminal, a field, a menu or a dialog), by a click outside or by opening something. A web view in it is shown in it, the overlay being its host; a web view under it is hidden (4.8.9).
 2. **The page area folds its groups** when it cannot give every group 400: only the focused group is shown, its tab bar stays, and the bar's `chevron-down` menu lists every group's tabs under `type.label` headings "Group 1", "Group 2"; choosing a tab of another group shows that group in place of the first. `F6` reaches only the shown group. The split returns when the width does.
 3. **The right sidebar** clamps between its active view's minimum and the room the page area leaves; it never auto-hides (at 880 it gets 460 against the page's 420, as today).
 4. **The bottom panel** clamps so the page area keeps 200 of height; at the 560 minimum the body is 500, so the panel always keeps at least 160.

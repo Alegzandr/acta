@@ -82,6 +82,9 @@ pub const MIN_SIZE: (f32, f32) = (880., 560.);
 const STATUS_BAR_HEIGHT: f32 = 24.;
 /// docs/design/components.md 5, Toast: 6 s.
 const TOAST_TIME: Duration = Duration::from_secs(6);
+/// Deferred layers paint by priority: the sidebar over the page 1, the
+/// layout toast 2, menus 3, a drag 4, the palette and dialogs above all.
+const OVERLAY_PRIORITY: usize = 10;
 /// Type-ahead in the tree: keys typed within this of each other extend
 /// the same search.
 const TYPE_AHEAD_PAUSE: Duration = Duration::from_secs(1);
@@ -297,6 +300,11 @@ fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("home", TreeHome, Some("Tree")),
         KeyBinding::new("end", TreeEnd, Some("Tree")),
         KeyBinding::new("escape", DismissSidebar, Some("Tree")),
+        // 4.8.10: `Esc` dismisses the sidebar shown over the page wherever
+        // the keyboard is, except where `Esc` means something (a terminal,
+        // a field, a dialog, a menu: deeper contexts, or key handlers that
+        // run when the sidebar is not shown).
+        KeyBinding::new("escape", DismissSidebar, Some("Workbench && !Terminal")),
     ];
     // interaction.md 6.1: only Windows has a chat panel to focus.
     if cfg!(windows) {
@@ -2532,10 +2540,16 @@ impl Shell {
                 .knowledge_view
                 .as_ref()
                 .is_some_and(|v| v.read(cx).menu_open());
-        // The move toast sits at the bottom left of the page area.
+        let place = bench.layout.locate(Tab::View(view)).map(|s| s.place);
+        // The move toast sits at the bottom left of the page area, over the
+        // sidebar shown over the page.
         let toast_over = bench.toast.is_some()
-            && bench.layout.locate(Tab::View(view)).map(|s| s.place) == Some(Place::Page);
-        bench.ui.left_overlay
+            && (place == Some(Place::Page)
+                || (bench.ui.left_overlay && place == Some(Place::Side(Side::Left))));
+        // The sidebar shown over the page covers what is under it, and
+        // hosts what is in it (workbench.md 4.8.10).
+        let left_over = bench.ui.left_overlay && place != Some(Place::Side(Side::Left));
+        left_over
             || bench.ui.menu.is_some()
             || bench.tree_menu.is_some()
             || toast_over
@@ -2557,8 +2571,19 @@ impl Shell {
 
     fn show_toast(&mut self, toast: Toast, cx: &mut Context<Self>) {
         let Some(bench) = self.bench() else { return };
-        let stays = toast.kind == ToastKind::Error;
         bench.toast = Some(toast);
+        self.arm_toast_timer(cx);
+        cx.notify();
+    }
+
+    /// The toast goes 6 s after it shows, or after the pointer leaves it
+    /// (components.md 5, Toast); an error stays until dismissed.
+    fn arm_toast_timer(&mut self, cx: &mut Context<Self>) {
+        let Some(bench) = self.bench() else { return };
+        let stays = bench
+            .toast
+            .as_ref()
+            .is_none_or(|t| t.kind == ToastKind::Error);
         bench.toast_timer = if stays {
             Task::ready(())
         } else {
@@ -2572,7 +2597,18 @@ impl Shell {
                 });
             })
         };
-        cx.notify();
+    }
+
+    /// The toast is paused while the pointer is on it: a slow reader or a
+    /// pointer on its way to Undo never sees it go.
+    fn hover_toast(&mut self, hovered: bool, cx: &mut Context<Self>) {
+        if hovered {
+            if let Some(bench) = self.bench() {
+                bench.toast_timer = Task::ready(());
+            }
+        } else {
+            self.arm_toast_timer(cx);
+        }
     }
 
     /// `Mod+Z`: the newest undo step of the window, a layout change
@@ -3015,12 +3051,14 @@ impl Shell {
         .detach();
     }
 
-    /// Close the inline edit. The keyboard goes back to the tree only if
-    /// the edit had it: a click elsewhere that ended it keeps its focus.
+    /// Close the inline edit. The keyboard goes back to the tree if the
+    /// edit had it or nothing has it (the field gave it up on `Enter`): a
+    /// click elsewhere that ended it keeps its focus.
     fn cancel_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let nowhere = window.focused(cx).is_none();
         let Some(bench) = self.bench() else { return };
         if let Some(rename) = bench.rename.take()
-            && rename.state.focus_handle(cx).is_focused(window)
+            && (nowhere || rename.state.focus_handle(cx).is_focused(window))
         {
             let handle = bench.tree_focus.clone();
             window.focus(&handle, cx);
@@ -3804,7 +3842,8 @@ impl Shell {
     }
 
     /// The palette and quick capture: 96 below the window top, centred,
-    /// no scrim; dialogs draw their own scrim.
+    /// no scrim; dialogs draw their own scrim. Above every other layer (the
+    /// sidebar over the page, the toast, menus, a drag).
     fn overlay_element(&mut self) -> Option<AnyElement> {
         let bench = self.bench()?;
         let top = |child: AnyElement| {
@@ -3818,12 +3857,15 @@ impl Shell {
                     .justify_center()
                     .child(child),
             )
+            .with_priority(OVERLAY_PRIORITY)
             .into_any_element()
         };
         Some(match bench.overlay.as_ref()? {
             Overlay::Palette(palette) => top(palette.clone().into_any_element()),
             Overlay::Capture(capture) => top(capture.clone().into_any_element()),
-            Overlay::Dialog(dialog) => deferred(dialog.clone()).into_any_element(),
+            Overlay::Dialog(dialog) => deferred(dialog.clone())
+                .with_priority(OVERLAY_PRIORITY)
+                .into_any_element(),
         })
     }
 
@@ -3832,16 +3874,23 @@ impl Shell {
         let locale = settings::locale(cx);
         let bench = self.bench()?;
         let toast = bench.toast.clone()?;
-        if toast.kind == ToastKind::Layout {
+        if matches!(
+            toast.kind,
+            ToastKind::Layout | ToastKind::LayoutReset | ToastKind::LayoutNoRoom
+        ) {
             return Some(self.layout_toast_element(toast, &t, locale, cx));
         }
         let glyph = match toast.kind {
             ToastKind::Error => Some(icon(Icon::TriangleAlert, 16., t.danger)),
             ToastKind::Done => Some(icon(Icon::Check, 16., t.success)),
-            ToastKind::Undo | ToastKind::Layout => None,
+            _ => None,
         };
         Some(
             div()
+                .id("toast")
+                .on_hover(
+                    cx.listener(|shell, hovered: &bool, _, cx| shell.hover_toast(*hovered, cx)),
+                )
                 .absolute()
                 .left(px(16.))
                 .bottom(px(16.))
@@ -3892,6 +3941,9 @@ impl Shell {
 
     /// The move toast (4.8.11): the message on its own line, wrapping to
     /// two at most, then Undo, Reset layout and the `x` on a line under it.
+    /// "Layout reset." has Undo only; the no-room toast its one action. It
+    /// is drawn above the sidebar shown over the page, which would
+    /// otherwise cover it.
     fn layout_toast_element(
         &mut self,
         toast: Toast,
@@ -3900,9 +3952,14 @@ impl Shell {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let macos = cfg!(target_os = "macos");
-        div()
+        let kind = toast.kind;
+        let undo = kind != ToastKind::LayoutNoRoom;
+        let reset = kind == ToastKind::Layout;
+        let room = kind == ToastKind::LayoutNoRoom;
+        let element = div()
             .id("layout-toast")
             .occlude()
+            .on_hover(cx.listener(|shell, hovered: &bool, _, cx| shell.hover_toast(*hovered, cx)))
             .absolute()
             .left(px(16.))
             .bottom(px(16.))
@@ -3930,34 +3987,52 @@ impl Shell {
                     .flex_row()
                     .items_center()
                     .gap(px(4.))
-                    .child(
-                        ui::button(
-                            "toast-layout-undo",
-                            text(locale, Key::CommonUndo),
-                            Variant::Ghost,
-                            false,
-                            t,
+                    .when(undo, |this| {
+                        this.child(
+                            ui::button(
+                                "toast-layout-undo",
+                                text(locale, Key::CommonUndo),
+                                Variant::Ghost,
+                                false,
+                                t,
+                            )
+                            .child(ui::kbd(
+                                &[crate::i18n::KeyName::Mod.label(locale, macos), "Z"],
+                                t,
+                            ))
+                            .on_click(
+                                cx.listener(|shell, _, window, cx| shell.undo_layout(window, cx)),
+                            ),
                         )
-                        .child(ui::kbd(
-                            &[crate::i18n::KeyName::Mod.label(locale, macos), "Z"],
-                            t,
-                        ))
-                        .on_click(
-                            cx.listener(|shell, _, window, cx| shell.undo_layout(window, cx)),
-                        ),
-                    )
-                    .child(
-                        ui::button(
-                            "toast-layout-reset",
-                            text(locale, Key::CmdLayoutReset),
-                            Variant::Ghost,
-                            false,
-                            t,
+                    })
+                    .when(reset, |this| {
+                        this.child(
+                            ui::button(
+                                "toast-layout-reset",
+                                text(locale, Key::CmdLayoutReset),
+                                Variant::Ghost,
+                                false,
+                                t,
+                            )
+                            .on_click(
+                                cx.listener(|shell, _, window, cx| shell.reset_layout(window, cx)),
+                            ),
                         )
-                        .on_click(
-                            cx.listener(|shell, _, window, cx| shell.reset_layout(window, cx)),
-                        ),
-                    )
+                    })
+                    .when(room, |this| {
+                        this.child(
+                            ui::button(
+                                "toast-layout-room",
+                                text(locale, Key::LayoutNoRoomHideRight),
+                                Variant::Ghost,
+                                false,
+                                t,
+                            )
+                            .on_click(cx.listener(
+                                |shell, _, window, cx| shell.hide_right_and_move(window, cx),
+                            )),
+                        )
+                    })
                     .child(div().flex_1())
                     .child(
                         ui::ghost_icon_button("toast-close", Icon::X, 24., false, false, true, t)
@@ -3968,8 +4043,8 @@ impl Shell {
                                 cx.notify();
                             })),
                     ),
-            )
-            .into_any_element()
+            );
+        deferred(element).with_priority(2).into_any_element()
     }
 
     fn bulk_notice(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -4672,6 +4747,16 @@ impl Render for Shell {
             .on_action(cx.listener(|s, _: &CancelDrag, w, cx| {
                 s.cancel_drag(w, cx);
             }))
+            .on_action(cx.listener(|s, _: &DismissSidebar, w, cx| {
+                let over = s.bench().is_some_and(|b| {
+                    b.ui.left_overlay && b.overlay.is_none() && b.ui.menu.is_none()
+                });
+                if over {
+                    s.dismiss_sidebar(w, cx);
+                } else {
+                    cx.propagate();
+                }
+            }))
             .on_action(cx.listener(|s, _: &ToggleSidebar, w, cx| s.toggle_sidebar(w, cx)))
             .on_action(cx.listener(|s, _: &ResetLayout, w, cx| s.reset_layout(w, cx)))
             .on_action(cx.listener(|s, _: &ToggleRight, w, cx| s.toggle_area(Side::Right, w, cx)))
@@ -4851,5 +4936,47 @@ mod tests {
     fn the_key_bindings_parse() {
         // `KeyBinding::new` panics on a keystroke the pinned GPUI rejects.
         assert!(key_bindings().len() > 30);
+    }
+
+    /// The action GPUI dispatches for `key` with focus in the innermost of
+    /// `contexts` (outermost first), as the window resolves it.
+    fn action_for(key: &'static str, contexts: &[&str]) -> Option<Box<dyn gpui_kit::Action>> {
+        let keymap = gpui_kit::Keymap::new(key_bindings());
+        let stack: Vec<gpui_kit::KeyContext> = contexts
+            .iter()
+            .map(|c| gpui_kit::KeyContext::parse(c).expect("a context"))
+            .collect();
+        let keystroke = gpui_kit::Keystroke::parse(key).expect("a keystroke");
+        let (bindings, pending) = keymap.bindings_for_input(&[keystroke], &stack);
+        assert!(!pending, "{key} waits for more keys");
+        bindings.first().map(|b| b.action().boxed_clone())
+    }
+
+    fn is<A: gpui_kit::Action + Default>(action: Option<Box<dyn gpui_kit::Action>>) -> bool {
+        action.is_some_and(|a| a.partial_eq(&A::default()))
+    }
+
+    #[test]
+    fn alt_up_and_alt_down_reorder_in_the_tree() {
+        let tree = ["Workbench", "Tree"];
+        assert!(is::<TreeMoveUp>(action_for("alt-up", &tree)));
+        assert!(is::<TreeMoveDown>(action_for("alt-down", &tree)));
+        assert!(is::<TreeUp>(action_for("up", &tree)));
+        // Outside the tree they mean nothing.
+        assert!(action_for("alt-up", &["Workbench"]).is_none());
+    }
+
+    #[test]
+    fn escape_dismisses_the_sidebar_over_the_page_except_in_a_terminal() {
+        assert!(is::<DismissSidebar>(action_for("escape", &["Workbench"])));
+        assert!(is::<DismissSidebar>(action_for(
+            "escape",
+            &["Workbench", "RecordPage"]
+        )));
+        assert!(action_for("escape", &["Workbench", "Terminal"]).is_none());
+        assert!(is::<crate::dialogs::CancelDialog>(action_for(
+            "escape",
+            &["Workbench", "Dialog"]
+        )));
     }
 }

@@ -110,6 +110,8 @@ pub struct ChatPanel {
     _listen: Task<()>,
     starting_task: Task<()>,
     build_task: Task<()>,
+    /// The web view being created (crate::webview_build).
+    web_task: Task<()>,
     clear_task: Task<()>,
     tip_task: Task<()>,
     _activation: gpui_kit::Subscription,
@@ -164,6 +166,7 @@ impl ChatPanel {
             _listen: listen,
             starting_task: Task::ready(()),
             build_task: Task::ready(()),
+            web_task: Task::ready(()),
             clear_task: Task::ready(()),
             tip_task: Task::ready(()),
             _activation: activation,
@@ -342,11 +345,7 @@ impl ChatPanel {
             cx.background_executor()
                 .timer(Duration::from_millis(50))
                 .await;
-            let _ = panel.update_in(cx, |panel, window, cx| {
-                panel.build(window, cx);
-                panel.sync(cx);
-                cx.notify();
-            });
+            let _ = panel.update_in(cx, |panel, window, cx| panel.build(window, cx));
         });
     }
 
@@ -365,48 +364,51 @@ impl ChatPanel {
             self.state.built(Built::Failed);
             return;
         };
-        let mut context = Box::new(wry::WebContext::new(Some(profile)));
         let to_browser = self.signals.clone();
         let new_window = self.signals.clone();
         let surface = gpui_kit::Rgba::from(cx.global::<Tokens>().bg_sunken);
         let channel = |v: f32| (v.clamp(0., 1.) * 255.).round() as u8;
-        let builder = wry::WebViewBuilder::new_with_web_context(&mut context)
-            .with_url(chat::HOME)
-            .with_background_color((
-                channel(surface.r),
-                channel(surface.g),
-                channel(surface.b),
-                255,
-            ))
-            .with_devtools(false)
-            .with_navigation_handler(move |url| match chat::classify(&url) {
-                Decision::InPanel => true,
-                Decision::Browser => {
-                    let _ = to_browser.try_send(Signal::OpenInBrowser(url));
-                    false
-                }
-                Decision::Block => {
-                    crate::log::line(&format!(
-                        "chat: navigation dropped: {}",
-                        chat::for_log(&url)
-                    ));
-                    false
-                }
-            })
-            .with_new_window_req_handler(move |url, _| {
-                if chat::new_window(&url) == Decision::Browser {
-                    let _ = new_window.try_send(Signal::OpenInBrowser(url));
-                }
-                wry::NewWindowResponse::Deny
-            })
-            .with_download_started_handler(|_, _| false);
-        let started = Instant::now();
-        match gpui_webview::WebView::build(builder, window, cx) {
-            Ok(view) => {
+        let background = (
+            channel(surface.r),
+            channel(surface.g),
+            channel(surface.b),
+            255,
+        );
+        // Created after this update, outside it (crate::webview_build).
+        self.web_task = crate::webview_build::build_later(
+            window,
+            cx,
+            move |parent| {
+                let mut context = Box::new(wry::WebContext::new(Some(profile)));
+                let started = Instant::now();
+                let view = crate::webview_build::build(
+                    chat_builder(&mut context, background, to_browser, new_window),
+                    parent,
+                )?;
                 crate::log::line(&format!(
                     "chat: web view created in {} ms",
                     started.elapsed().as_millis()
                 ));
+                Ok((view, context))
+            },
+            |panel, built, window, cx| {
+                panel.built(built, window, cx);
+                panel.sync(cx);
+                cx.notify();
+            },
+        );
+    }
+
+    /// The web view created, or not.
+    fn built(
+        &mut self,
+        built: wry::Result<(wry::WebView, Box<wry::WebContext>)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match built {
+            Ok((view, context)) => {
+                let view = gpui_webview::WebView::new(view, window, cx);
                 let hooks = match crate::chat_windows::install(view.raw(), self.signals.clone()) {
                     Ok(hooks) => Some(hooks),
                     Err(err) => {
@@ -928,4 +930,39 @@ impl Render for ChatPanel {
             .bg(t.bg_sunken)
             .child(div().flex().flex_col().flex_1().min_h_0().child(body))
     }
+}
+
+/// The chat's web view: claude.ai, the allow-list, new windows and
+/// downloads to the system browser.
+fn chat_builder<'a>(
+    context: &'a mut wry::WebContext,
+    background: (u8, u8, u8, u8),
+    to_browser: Sender<Signal>,
+    new_window: Sender<Signal>,
+) -> wry::WebViewBuilder<'a> {
+    wry::WebViewBuilder::new_with_web_context(context)
+        .with_url(chat::HOME)
+        .with_background_color(background)
+        .with_devtools(false)
+        .with_navigation_handler(move |url| match chat::classify(&url) {
+            Decision::InPanel => true,
+            Decision::Browser => {
+                let _ = to_browser.try_send(Signal::OpenInBrowser(url));
+                false
+            }
+            Decision::Block => {
+                crate::log::line(&format!(
+                    "chat: navigation dropped: {}",
+                    chat::for_log(&url)
+                ));
+                false
+            }
+        })
+        .with_new_window_req_handler(move |url, _| {
+            if chat::new_window(&url) == Decision::Browser {
+                let _ = new_window.try_send(Signal::OpenInBrowser(url));
+            }
+            wry::NewWindowResponse::Deny
+        })
+        .with_download_started_handler(|_, _| false)
 }
