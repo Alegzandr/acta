@@ -113,6 +113,12 @@ pub struct Session {
     pub zone: Zone,
     /// A fixed "today" for tests; `None` reads the clock at each call.
     pub today: Option<Date>,
+    /// The launch directory: where Claude Code runs, so whose commit mode
+    /// applies (ADR 0011).
+    pub dir: Option<PathBuf>,
+    /// Started by Acta's terminal (`ACTA_LAUNCH`), so with the launch
+    /// plan's `--add-dir` folders.
+    pub in_acta: bool,
 }
 
 const SESSION_KEY: &str = "focus.session.";
@@ -130,6 +136,8 @@ impl Session {
             candidates: Vec::new(),
             zone: Zone::system(),
             today: None,
+            dir: None,
+            in_acta: false,
         }
     }
 
@@ -142,6 +150,8 @@ impl Session {
     pub fn resolve(store: &Store, launch: &Launch, author: Author) -> Session {
         let mut s = Session::unbound(author);
         s.session_id = launch.session_id.clone();
+        s.dir = launch.dir.clone();
+        s.in_acta = launch.token.is_some();
 
         // 1. The environment.
         if let Some(t) = launch.topic.as_deref().and_then(TopicId::parse)

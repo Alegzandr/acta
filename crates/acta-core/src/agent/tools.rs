@@ -1961,19 +1961,36 @@ impl Agent<'_> {
         }
         let tail_len: usize = tail.iter().map(|t| render::chars(t) + 1).sum();
         let head = "Acta briefing (project tracker and memory; see the acta:using-acta skill).";
+        // ADR 0011: the folders line (names: stored text, in the fence) and
+        // the commit line (Acta's instruction, outside it), both before the
+        // memory titles, so the titles give way first.
+        let lines = super::folders::briefing(
+            self.store,
+            scope,
+            self.session.dir.as_deref(),
+            self.session.in_acta,
+        );
+        let line_len = |l: &Option<String>| l.as_deref().map_or(0, |l| render::chars(l) + 1);
+        let folders_len = line_len(&lines.folders) + line_len(&lines.commit);
         let brief = self
             .render_brief(
                 scope,
-                max - tail_len - head.len() - render::FENCE_COST - 120,
+                max - tail_len - head.len() - render::FENCE_COST - folders_len - 120,
             )
             .ok()?;
         // The tail is Acta's own text, after the fence: hold its room back.
         let mut out = Text::new(max - tail_len);
         out.line(head);
+        if let Some(commit) = &lines.commit {
+            out.line(commit);
+        }
         // The whole body is stored text: one fence around it, every line
         // (memory titles included) defused by the fence.
         out.open_fence(&Fence::new());
         out.lines_of(&brief);
+        if let Some(f) = &lines.folders {
+            out.line(f);
+        }
         // Memory titles: topic, then epic, then project; newest first.
         let memories = self
             .store

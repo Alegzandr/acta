@@ -1013,6 +1013,16 @@ mod tests {
         }
     }
 
+    /// ADR 0011, Consequences: the skill has its Commits section and stays
+    /// under 80 lines.
+    #[test]
+    fn using_acta_stays_short_and_has_the_commit_rules() {
+        let (_, text) = SKILLS.iter().find(|(n, _)| *n == "using-acta").unwrap();
+        assert!(text.lines().count() < 80, "{}", text.lines().count());
+        assert!(text.contains("\n## Commits\n"));
+        assert!(text.contains("exactly `git push`"));
+    }
+
     #[test]
     fn install_is_idempotent_and_remove_restores_user_settings() {
         let tmp = tempfile::tempdir().unwrap();
