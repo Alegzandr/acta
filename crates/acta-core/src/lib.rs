@@ -1,6 +1,24 @@
-//! Acta's shared, UI-free layer. For now: app identity and per-OS paths.
+//! Acta's shared, UI-free layer: app identity and per-OS paths, the
+//! encrypted store (ADR 0003) and the domain model (ADR 0005 to 0008). No
+//! GPUI type appears here, so the app, the CLI and the MCP server share it.
 
+pub mod db;
+pub mod error;
+pub mod folder_path;
+mod fsutil;
+pub mod keys;
+pub mod markdown;
+pub mod model;
 pub mod paths;
+pub mod schema;
+pub mod snapshots;
+mod sql;
+pub mod store;
+pub mod time;
+
+pub use db::ChangeWatcher;
+pub use error::{Error, OpenError, Result};
+pub use store::{Store, StoreConfig};
 
 /// Display name of the application.
 pub const APP_NAME: &str = "Acta";
