@@ -1,5 +1,6 @@
 //! `acta setup` (ADR 0005, section 1): the generated local plugin, its
-//! registration through the `claude` CLI, and one allow rule.
+//! registration through the `claude` CLI, and the allow rules of its two
+//! servers (ADR 0005; ADR 0010 added the agent browser's).
 //!
 //! Idempotent: every step checks before it writes. Reversible: `--remove`
 //! undoes only what setup wrote, using a record it keeps next to the plugin.
@@ -16,7 +17,12 @@ pub const MARKETPLACE: &str = "acta";
 pub const PLUGIN: &str = "acta";
 pub const PLUGIN_ID: &str = "acta@acta";
 pub const SERVER: &str = "acta";
+/// The agent browser's server (ADR 0010, decision 7).
+pub const BROWSER_SERVER: &str = "browser";
 pub const ALLOW_RULE: &str = "mcp__plugin_acta_acta__*";
+pub const BROWSER_ALLOW_RULE: &str = "mcp__plugin_acta_browser__*";
+/// Every rule setup adds, in order.
+pub const ALLOW_RULES: [&str; 2] = [ALLOW_RULE, BROWSER_ALLOW_RULE];
 /// How a failure to start the `claude` CLI begins: the check reports
 /// Claude Code as not found rather than as a setup step to do.
 const NOT_RUN: &str = "cannot run claude";
@@ -178,7 +184,10 @@ impl Setup<'_> {
             ),
             (
                 p.join(".mcp.json"),
-                pretty(json!({"mcpServers": {SERVER: {"command": exe, "args": ["mcp"]}}})),
+                pretty(json!({"mcpServers": {
+                    SERVER: {"command": exe, "args": ["mcp"]},
+                    BROWSER_SERVER: {"command": exe, "args": ["mcp", "browser"]}
+                }})),
             ),
             (
                 p.join("hooks").join("hooks.json"),
@@ -349,15 +358,27 @@ impl Setup<'_> {
         steps.push(plugin);
         if allow {
             match edit_allow_rule(&self.settings_path(), true, &record) {
-                Ok(Edit::Added(made)) => {
+                Ok(Edit::Added(made, rules)) => {
                     for (k, v) in made {
-                        record[k] = json!(v);
+                        // What an earlier setup created stays recorded.
+                        if v || record[k].is_null() {
+                            record[k] = json!(v);
+                        }
                     }
-                    record["allow_rule_added"] = json!(true);
+                    let mut added = recorded_rules(&record);
+                    for r in &rules {
+                        if !added.contains(r) {
+                            added.push(r.clone());
+                        }
+                    }
+                    record["allow_rules_added"] = json!(added);
                     steps.push(Step::new(
                         "allow rule",
                         true,
-                        format!("added {ALLOW_RULE} to settings.json (a backup was kept)"),
+                        format!(
+                            "added {} to settings.json (a backup was kept)",
+                            rules.join(" and ")
+                        ),
                     ));
                 }
                 Ok(_) => steps.push(Step::new("allow rule", true, "already present")),
@@ -423,7 +444,7 @@ impl Setup<'_> {
         let allow = read_settings(&self.settings_path())
             .ok()
             .flatten()
-            .is_some_and(|v| has_allow_rule(&v));
+            .is_some_and(|v| has_allow_rules(&v));
         steps.push(Step::new(
             "allow rule",
             allow,
@@ -461,7 +482,7 @@ impl Setup<'_> {
                 Err(e) => steps.push(Step::new("marketplace", false, one_line(&e))),
             },
         }
-        if record["allow_rule_added"] == json!(true) {
+        if !recorded_rules(&record).is_empty() {
             match edit_allow_rule(&self.settings_path(), false, &record) {
                 Ok(Edit::Removed) => steps.push(Step::new("allow rule", true, "removed")),
                 Ok(_) => steps.push(Step::new("allow rule", true, "already absent")),
@@ -549,8 +570,9 @@ fn json_items(text: &str) -> Result<Vec<Value>, String> {
 }
 
 pub enum Edit {
-    /// Added, with what setup created to hold it (record keys).
-    Added(Vec<(&'static str, bool)>),
+    /// Added, with what setup created to hold them (record keys) and the
+    /// rules added.
+    Added(Vec<(&'static str, bool)>, Vec<String>),
     Removed,
     Unchanged,
 }
@@ -571,25 +593,51 @@ pub fn read_settings(path: &Path) -> Result<Option<Value>, String> {
     }
 }
 
-fn has_allow_rule(v: &Value) -> bool {
+fn has_rule(v: &Value, rule: &str) -> bool {
     v.pointer("/permissions/allow")
         .and_then(Value::as_array)
-        .is_some_and(|a| a.iter().any(|x| x == ALLOW_RULE))
+        .is_some_and(|a| a.iter().any(|x| x == rule))
+}
+
+fn has_allow_rules(v: &Value) -> bool {
+    ALLOW_RULES.iter().all(|r| has_rule(v, r))
+}
+
+/// The rules setup added, from its record: `allow_rules_added`, or the one
+/// rule of a record written before the agent browser.
+fn recorded_rules(record: &Value) -> Vec<String> {
+    let mut out: Vec<String> = record["allow_rules_added"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|r| r.as_str())
+        .filter(|r| ALLOW_RULES.contains(r))
+        .map(str::to_owned)
+        .collect();
+    if record["allow_rule_added"] == json!(true) && !out.iter().any(|r| r == ALLOW_RULE) {
+        out.insert(0, ALLOW_RULE.to_owned());
+    }
+    out
 }
 
 fn backup_path(settings: &Path) -> PathBuf {
     settings.with_extension("json.acta-backup")
 }
 
-/// Adds or removes the single allow rule, keeping everything else as it was
-/// (key order included). Adding keeps a backup of the previous file once and
+/// Adds the missing allow rules, or removes the ones setup added, keeping
+/// everything else as it was (key order included). Adding keeps a backup of the previous file once and
 /// reports what it created; removing takes out an `allow` list, a
 /// `permissions` object or a whole file that setup created and that are
 /// empty again (`record` says which).
 pub fn edit_allow_rule(path: &Path, add: bool, record: &Value) -> Result<Edit, String> {
     let existing = read_settings(path)?;
     let mut v = existing.clone().unwrap_or_else(|| json!({}));
-    if has_allow_rule(&v) == add {
+    let missing: Vec<&str> = ALLOW_RULES
+        .into_iter()
+        .filter(|r| !has_rule(&v, r))
+        .collect();
+    let ours = recorded_rules(record);
+    if add && missing.is_empty() || !add && !ours.iter().any(|r| has_rule(&v, r)) {
         return Ok(Edit::Unchanged);
     }
     let obj = v.as_object_mut().expect("object");
@@ -608,12 +656,14 @@ pub fn edit_allow_rule(path: &Path, add: bool, record: &Value) -> Result<Edit, S
         let Some(allow) = allow.as_array_mut() else {
             return Err("settings.json has a permissions.allow value that is not a list".into());
         };
-        allow.push(json!(ALLOW_RULE));
+        for r in &missing {
+            allow.push(json!(r));
+        }
     } else {
         let created = |k: &str| record[k] == json!(true);
         if let Some(perms) = obj.get_mut("permissions").and_then(Value::as_object_mut) {
             if let Some(allow) = perms.get_mut("allow").and_then(Value::as_array_mut) {
-                allow.retain(|x| x != ALLOW_RULE);
+                allow.retain(|x| !ours.iter().any(|r| x == r));
             }
             if created("created_allow")
                 && perms
@@ -653,7 +703,7 @@ pub fn edit_allow_rule(path: &Path, add: bool, record: &Value) -> Result<Edit, S
     let text = serde_json::to_string_pretty(&v).expect("json") + "\n";
     write_atomic(path, &text).map_err(|e| format!("cannot write settings.json: {}", e.kind()))?;
     Ok(if add {
-        Edit::Added(made)
+        Edit::Added(made, missing.iter().map(|r| r.to_string()).collect())
     } else {
         Edit::Removed
     })
@@ -788,7 +838,7 @@ mod tests {
         let v: Value = serde_json::from_str(&after).unwrap();
         assert_eq!(
             v["permissions"]["allow"],
-            json!(["Bash(git status)", ALLOW_RULE])
+            json!(["Bash(git status)", ALLOW_RULE, BROWSER_ALLOW_RULE])
         );
         // Key order and other keys are kept.
         let keys: Vec<&String> = v.as_object().unwrap().keys().collect();
@@ -875,9 +925,51 @@ mod tests {
         let user = format!("{{\"permissions\":{{\"allow\":[\"{ALLOW_RULE}\"]}}}}");
         fs::write(s.settings_path(), &user).unwrap();
         s.install(true);
-        assert_eq!(fs::read_to_string(s.settings_path()).unwrap(), user);
+        let v: Value =
+            serde_json::from_str(&fs::read_to_string(s.settings_path()).unwrap()).unwrap();
+        assert_eq!(v["permissions"]["allow"], json!(ALLOW_RULES));
         s.remove();
-        assert_eq!(fs::read_to_string(s.settings_path()).unwrap(), user);
+        let v: Value =
+            serde_json::from_str(&fs::read_to_string(s.settings_path()).unwrap()).unwrap();
+        assert_eq!(v, serde_json::from_str::<Value>(&user).unwrap());
+    }
+
+    #[test]
+    fn a_setup_from_before_the_agent_browser_adds_its_rule_and_removes_both() {
+        let tmp = tempfile::tempdir().unwrap();
+        let claude = FakeClaude::default();
+        let s = setup(tmp.path(), &claude);
+        fs::create_dir_all(&s.claude_dir).unwrap();
+        fs::write(
+            s.settings_path(),
+            format!("{{\"permissions\":{{\"allow\":[\"{ALLOW_RULE}\"]}}}}"),
+        )
+        .unwrap();
+        fs::create_dir_all(&s.plugin_root).unwrap();
+        fs::write(
+            s.plugin_root.join(RECORD),
+            r#"{"allow_rule_added": true, "created_settings": true, "created_permissions": true, "created_allow": true}"#,
+        )
+        .unwrap();
+        let steps = s.install(true);
+        let rule = steps.iter().find(|x| x.name == "allow rule").unwrap();
+        assert!(
+            rule.detail.contains(BROWSER_ALLOW_RULE) && !rule.detail.contains(ALLOW_RULE),
+            "{rule:?}"
+        );
+        assert!(s.check().iter().all(|x| x.ok), "{:?}", s.check());
+        let mcp: Value =
+            serde_json::from_str(&fs::read_to_string(s.plugin_dir().join(".mcp.json")).unwrap())
+                .unwrap();
+        assert_eq!(
+            mcp["mcpServers"]["browser"]["args"],
+            json!(["mcp", "browser"])
+        );
+        assert!(s.remove().iter().all(|x| x.ok));
+        assert!(
+            !s.settings_path().exists(),
+            "both rules and the file setup made are gone"
+        );
     }
 
     #[test]
@@ -900,7 +992,7 @@ mod tests {
         assert!(s.install(true).iter().all(|x| x.ok));
         let v: Value =
             serde_json::from_str(&fs::read_to_string(s.settings_path()).unwrap()).unwrap();
-        assert_eq!(v, json!({"permissions": {"allow": [ALLOW_RULE]}}));
+        assert_eq!(v, json!({"permissions": {"allow": ALLOW_RULES}}));
         assert!(s.remove().iter().all(|x| x.ok));
         assert!(!s.settings_path().exists());
 
