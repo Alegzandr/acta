@@ -2,21 +2,43 @@
 //! installs, updates or uninstalls anything (ADR 0004).
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+mod capture;
 mod cli_export;
+mod commands;
+mod db;
 #[cfg(any(target_os = "linux", test))]
 mod desktop_entry;
+mod dev_seed;
+mod dialogs;
+mod diff;
 mod first_run;
+mod folders_model;
 mod fonts;
 mod i18n;
 mod icons;
+mod inbox_page;
+mod kb_model;
+mod kb_page;
 mod log;
+mod markdown_view;
+mod menu;
+mod palette;
+mod palette_model;
+mod paths_view;
 mod preferences;
+mod record;
+mod record_page;
+mod route;
 mod settings;
 mod settings_page;
 mod shell;
 mod specimen;
+mod table;
+mod terminal_dock;
 mod theme;
 mod titlebar;
+mod trash_page;
+mod tree;
 mod type_scale;
 mod ui;
 #[cfg(any(windows, test))]
@@ -25,6 +47,8 @@ mod update;
 mod update_source;
 mod updater_window;
 mod user_path;
+mod when;
+mod workspace;
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};

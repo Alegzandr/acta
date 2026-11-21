@@ -68,7 +68,7 @@ pub fn current(cx: &App) -> &Preferences {
 }
 
 /// Change something, apply nothing: the caller applies.
-fn change(cx: &mut App, edit: impl FnOnce(&mut Preferences)) {
+pub fn change(cx: &mut App, edit: impl FnOnce(&mut Preferences)) {
     let settings = cx.global_mut::<Settings>();
     edit(&mut settings.current);
     settings.writer.save(settings.current.clone());

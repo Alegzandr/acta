@@ -397,6 +397,10 @@ catalogue! {
         en: t("Could not save the entry. The database is locked by another process."),
         fr: t("Impossible d\u{2019}enregistrer l\u{2019}entrée. La base de données est verrouillée par un autre processus."),
     }
+    ErrorSave "error.save" {
+        en: t("Could not save the change. Try again."),
+        fr: t("Impossible d\u{2019}enregistrer la modification. Réessayez."),
+    }
     TableCount "table.count" {
         en: p("{n} topic", "{n} topics"),
         fr: p("{n} sujet", "{n} sujets"),
@@ -1136,6 +1140,10 @@ catalogue! {
     CmdNewProject "cmd.new_project" {
         en: t("New project\u{2026}"),
         fr: t("Nouveau projet\u{2026}"),
+    }
+    CmdNewEpic "cmd.new_epic" {
+        en: t("New epic\u{2026}"),
+        fr: t("Nouvel epic\u{2026}"),
     }
     CmdSwitchProject "cmd.switch_project" {
         en: t("Switch project"),

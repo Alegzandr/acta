@@ -107,6 +107,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `topic.restored` | Topic restored. | Sujet restauré. |
 | `topic.empty_project` | No topics yet. Capture notes and let Claude Code file them, or start one yourself. | Aucun sujet pour l'instant. Saisissez des notes et laissez Claude Code les classer, ou créez-en un vous-même. |
 | `error.save_entry` | Could not save the entry. The database is locked by another process. | Impossible d'enregistrer l'entrée. La base de données est verrouillée par un autre processus. |
+| `error.save` | Could not save the change. Try again. | Impossible d'enregistrer la modification. Réessayez. |
 | `table.count` | {n} topic · {n} topics | {n} sujet · {n} sujets |
 | `table.filter.open` | Open | Ouverts |
 | `table.filter.all` | All | Tous |
@@ -292,6 +293,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `cmd.theme` | Theme: {value} | Thème : {value} |
 | `cmd.language` | Language: {value} | Langue : {value} |
 | `cmd.new_project` | New project... | Nouveau projet... |
+| `cmd.new_epic` | New epic... | Nouvel epic... |
 | `cmd.switch_project` | Switch project | Changer de projet |
 | `cmd.toggle_sidebar` | Toggle sidebar | Afficher ou masquer la barre latérale |
 | `cmd.toggle_terminal` | Toggle terminal | Afficher ou masquer le terminal |

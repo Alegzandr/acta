@@ -1,28 +1,59 @@
-//! First run, docs/design/screens.md 8.5, as far as M1 goes.
-//!
-//! Left out on purpose until they can work: the "Choose a folder" primary
-//! button (no projects before M2) and the three "Then" steps (`acta setup`,
-//! note capture and the terminal arrive in M3 to M5).
+//! First run, docs/design/screens.md 8.5: no sidebar until a project exists;
+//! "Choose a folder" creates the project named after the folder, attaches
+//! the folder as its primary working folder and opens its inbox. The three
+//! "Then" steps are plain text rows, not a checklist.
 
 use gpui_kit::{
-    Context, InteractiveElement, IntoElement, ParentElement, Render, StatefulInteractiveElement,
-    Styled, Window, div, px,
+    Context, EventEmitter, InteractiveElement, IntoElement, ParentElement, Render,
+    StatefulInteractiveElement, Styled, Window, div, px,
 };
 
-use crate::i18n::{Key, text};
+use crate::i18n::{Key, KeyName, text};
 use crate::settings;
 use crate::theme::Tokens;
 use crate::type_scale;
+use crate::ui::{self, Variant};
 
-/// docs/design/typography.md 3.3: the content column is at most 680 wide.
-pub const COLUMN_MAX: f32 = 680.;
+pub use crate::ui::COLUMN_MAX;
+
+pub enum FirstRunEvent {
+    ChooseFolder,
+}
 
 pub struct FirstRun;
 
+impl EventEmitter<FirstRunEvent> for FirstRun {}
+
 impl Render for FirstRun {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let tokens = cx.global::<Tokens>();
+        let t = cx.global::<Tokens>().clone();
         let locale = settings::locale(cx);
+        let macos = cfg!(target_os = "macos");
+        let m = KeyName::Mod.label(locale, macos);
+        let ctrl = KeyName::Ctrl.label(locale, macos);
+        let step = |n: &'static str, key: Key, hint: gpui_kit::AnyElement| {
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(12.))
+                .h(px(24.))
+                .child(
+                    type_scale::UI
+                        .el()
+                        .w(px(12.))
+                        .text_color(t.text_tertiary)
+                        .child(n),
+                )
+                .child(
+                    type_scale::UI
+                        .el()
+                        .w(px(200.))
+                        .text_color(t.text_secondary)
+                        .child(text(locale, key)),
+                )
+                .child(hint)
+        };
         div()
             .id("first-run")
             .size_full()
@@ -40,20 +71,61 @@ impl Render for FirstRun {
                     .pb(px(48.))
                     .flex()
                     .flex_col()
-                    .gap(px(12.))
                     .child(
                         type_scale::TITLE
                             .el()
-                            .text_color(tokens.text_primary)
+                            .text_color(t.text_primary)
                             .child(text(locale, Key::FirstrunTitle)),
                     )
                     .child(
                         type_scale::READING
                             .el()
+                            .mt(px(12.))
                             .max_w(px(480.))
-                            .text_color(tokens.text_secondary)
+                            .text_color(t.text_secondary)
                             .child(text(locale, Key::FirstrunBody)),
-                    ),
+                    )
+                    .child(
+                        div().mt(px(24.)).flex().flex_row().child(
+                            ui::button(
+                                "first-run-choose",
+                                text(locale, Key::FirstrunChoose),
+                                Variant::Primary,
+                                false,
+                                &t,
+                            )
+                            .on_click(
+                                cx.listener(|_, _, _, cx| cx.emit(FirstRunEvent::ChooseFolder)),
+                            ),
+                        ),
+                    )
+                    .child(
+                        type_scale::LABEL
+                            .el()
+                            .mt(px(32.))
+                            .mb(px(8.))
+                            .text_color(t.text_secondary)
+                            .child(text(locale, Key::FirstrunThen)),
+                    )
+                    .child(step(
+                        "1",
+                        Key::FirstrunStep1,
+                        type_scale::CODE
+                            .el()
+                            .text_color(t.text_secondary)
+                            .child("acta setup")
+                            .into_any_element(),
+                    ))
+                    .child(step(
+                        "2",
+                        Key::FirstrunStep2,
+                        ui::kbd(&[m, "N"], &t).into_any_element(),
+                    ))
+                    .child(step(
+                        "3",
+                        Key::FirstrunStep3,
+                        ui::kbd(&[ctrl, "`"], &t).into_any_element(),
+                    )),
             )
     }
 }

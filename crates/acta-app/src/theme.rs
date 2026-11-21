@@ -189,7 +189,7 @@ impl Tokens {
 }
 
 /// The Appearance setting of docs/design/color.md 2. System is the default.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum ThemeSetting {
     #[default]
     System,

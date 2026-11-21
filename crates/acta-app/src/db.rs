@@ -1,0 +1,168 @@
+//! The open store, shared with background work.
+//!
+//! `acta_core::Store` is `Send`, not `Sync`, and every call may wait on the
+//! disk or on another process's write lock, so the UI thread never touches
+//! it: each query or command runs on GPUI's background executor, one at a
+//! time behind a mutex.
+
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex, MutexGuard};
+
+use acta_core::{OpenError, Result, Store, StoreConfig};
+use gpui_kit::{App, Task};
+
+#[derive(Clone)]
+pub struct Db(Arc<Mutex<Store>>);
+
+impl Db {
+    pub fn new(store: Store) -> Self {
+        Self(Arc::new(Mutex::new(store)))
+    }
+
+    /// The store, for code already off the UI thread (and for tests).
+    pub fn lock(&self) -> MutexGuard<'_, Store> {
+        self.0.lock().unwrap_or_else(|poison| poison.into_inner())
+    }
+
+    /// Run `f` against the store on a background thread.
+    pub fn run<R: Send + 'static>(
+        &self,
+        cx: &App,
+        f: impl FnOnce(&mut Store) -> Result<R> + Send + 'static,
+    ) -> Task<Result<R>> {
+        let db = self.clone();
+        cx.background_executor()
+            .spawn(async move { f(&mut db.lock()) })
+    }
+}
+
+/// How the database came up at launch.
+pub enum Opened {
+    Ready(Store),
+    /// The file exists and cannot be read with any key Acta has: the
+    /// key-loss recovery screen (docs/design/components-app.md 5, 8.9). The
+    /// file is never touched.
+    KeyLoss {
+        db: PathBuf,
+    },
+    /// Anything else: no data directory, a key store that failed, a damaged
+    /// file after a failed migration. Logged by kind; the window shows the
+    /// key-loss screen too, since its actions are the safe ones.
+    Failed {
+        db: Option<PathBuf>,
+    },
+}
+
+/// The configuration of this run: the OS location and key stores, except in
+/// a debug build started with `ACTA_DEV_KEY_FILE=1`, which keeps the key in a
+/// file next to the database so that captures and manual checks never write
+/// to the system keychain of the machine they run on.
+pub fn config() -> Option<StoreConfig> {
+    let mut config = StoreConfig::os_default()?;
+    if cfg!(debug_assertions) && std::env::var_os("ACTA_DEV_KEY_FILE").is_some_and(|v| v == "1") {
+        let file = acta_core::keys::KeyFile::new(config.data_dir.join(acta_core::keys::KEY_FILE));
+        config.keys = acta_core::keys::KeyStores(vec![Arc::new(file)]);
+    }
+    Some(config)
+}
+
+/// Open the store (blocking: call it off the UI thread).
+pub fn open(config: Option<StoreConfig>) -> Opened {
+    let Some(config) = config else {
+        crate::log::line("store: no data directory");
+        return Opened::Failed { db: None };
+    };
+    let db = config.data_dir.join(acta_core::store::DB_FILE);
+    match Store::open(&config) {
+        Ok(store) => Opened::Ready(store),
+        Err(OpenError::KeyMissing { db, .. } | OpenError::KeyWrongOrCorrupt { db }) => {
+            crate::log::line("store: the database exists but cannot be decrypted");
+            Opened::KeyLoss { db }
+        }
+        Err(err) => {
+            crate::log::line(&format!("store: could not open: {}", open_error_kind(&err)));
+            Opened::Failed { db: Some(db) }
+        }
+    }
+}
+
+/// The kind of an open error, for the log: never a path or a message that
+/// could carry user text.
+fn open_error_kind(err: &OpenError) -> &'static str {
+    match err {
+        OpenError::KeyMissing { .. } => "key missing",
+        OpenError::KeyWrongOrCorrupt { .. } => "wrong key or damaged file",
+        OpenError::KeyStore(_) => "key store failed",
+        OpenError::MigrationFailed { .. } => "migration failed",
+        OpenError::Io(_) => "i/o",
+        OpenError::Db(_) => "database",
+    }
+}
+
+#[cfg(test)]
+pub mod test_support {
+    use super::*;
+    use acta_core::keys::MemoryKeyStore;
+
+    /// A store in a temporary directory with an in-memory key: never the
+    /// real keychain or data directory.
+    pub struct TempStore {
+        pub store: Store,
+        pub keys: MemoryKeyStore,
+        pub dir: tempfile::TempDir,
+    }
+
+    impl TempStore {
+        pub fn config(&self) -> StoreConfig {
+            StoreConfig {
+                data_dir: self.dir.path().to_path_buf(),
+                keys: self.keys.stores(),
+            }
+        }
+    }
+
+    pub fn temp_store() -> TempStore {
+        let dir = tempfile::tempdir().unwrap();
+        let keys = MemoryKeyStore::new();
+        let config = StoreConfig {
+            data_dir: dir.path().to_path_buf(),
+            keys: keys.stores(),
+        };
+        let store = Store::open(&config).unwrap();
+        TempStore { store, keys, dir }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::test_support::temp_store;
+    use super::*;
+
+    #[test]
+    fn a_lost_key_is_key_loss_and_the_file_is_left_alone() {
+        let temp = temp_store();
+        let config = temp.config();
+        let db_path = temp.store.db_path();
+        drop(temp.store);
+        let before = std::fs::read(&db_path).unwrap();
+        temp.keys.forget();
+        match open(Some(config)) {
+            Opened::KeyLoss { db } => assert_eq!(db, db_path),
+            _ => panic!("expected key loss"),
+        }
+        assert_eq!(std::fs::read(&db_path).unwrap(), before);
+    }
+
+    #[test]
+    fn no_data_directory_is_a_failure_not_a_panic() {
+        assert!(matches!(open(None), Opened::Failed { db: None }));
+    }
+
+    #[test]
+    fn an_existing_database_opens_again() {
+        let temp = temp_store();
+        let config = temp.config();
+        drop(temp.store);
+        assert!(matches!(open(Some(config)), Opened::Ready(_)));
+    }
+}

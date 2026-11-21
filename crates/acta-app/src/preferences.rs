@@ -35,6 +35,17 @@ pub const VERSION: u32 = 1;
 pub struct Preferences {
     pub theme: ThemeSetting,
     pub language: Locale,
+    /// The page shown at quit, as a route key (`T-42`, `inbox:P-1`): a
+    /// record id or a fixed page key, never a title.
+    pub page: Option<String>,
+    /// Record ids of the projects and epics folded in the tree.
+    pub collapsed: Vec<String>,
+    /// Keys of the "3 closed" groups unfolded in the tree (`closed:E-3`).
+    pub closed_shown: Vec<String>,
+    /// Whether the sidebar is hidden (`Mod+B`).
+    pub sidebar_hidden: bool,
+    /// Terminal text size, 11 to 18; `None` is the default 13.
+    pub terminal_text_size: Option<u8>,
 }
 
 /// The file as stored. Every field but the version may be missing (it then
@@ -46,6 +57,16 @@ struct Stored {
     theme: StoredTheme,
     #[serde(default)]
     language: StoredLanguage,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    page: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    collapsed: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    closed_shown: Vec<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    sidebar_hidden: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    terminal_text_size: Option<u8>,
 }
 
 #[derive(Clone, Copy, Default, Serialize, Deserialize)]
@@ -131,6 +152,21 @@ pub fn parse(text: &str) -> Result<Preferences, LoadError> {
     Ok(Preferences {
         theme: stored.theme.into(),
         language: stored.language.into(),
+        page: stored.page.filter(|key| is_reference(key)),
+        collapsed: stored
+            .collapsed
+            .into_iter()
+            .filter(|k| is_reference(k))
+            .collect(),
+        closed_shown: stored
+            .closed_shown
+            .into_iter()
+            .filter(|k| is_reference(k))
+            .collect(),
+        sidebar_hidden: stored.sidebar_hidden,
+        terminal_text_size: stored
+            .terminal_text_size
+            .filter(|size| (11..=18).contains(size)),
     })
 }
 
@@ -140,11 +176,28 @@ pub fn serialize(prefs: &Preferences) -> String {
         version: VERSION,
         theme: prefs.theme.into(),
         language: prefs.language.into(),
+        page: prefs.page.clone(),
+        collapsed: prefs.collapsed.clone(),
+        closed_shown: prefs.closed_shown.clone(),
+        sidebar_hidden: prefs.sidebar_hidden,
+        terminal_text_size: prefs.terminal_text_size,
     };
     // A struct of plain enums and numbers always serializes.
     let mut text = serde_json::to_string_pretty(&stored).unwrap_or_default();
     text.push('\n');
     text
+}
+
+/// Whether `key` has the shape of a record id or a fixed page key
+/// (`T-42`, `closed:E-3`, `inbox:P-1`, `trash`): short, ASCII letters,
+/// digits, `-` and `:` only. Anything else (a title someone typed into the
+/// file) is dropped on load and so never written back.
+fn is_reference(key: &str) -> bool {
+    !key.is_empty()
+        && key.len() <= 32
+        && key
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == ':')
 }
 
 /// Read the preferences at `path`. A missing file is not an error.
@@ -324,13 +377,18 @@ mod tests {
         let prefs = Preferences {
             theme: ThemeSetting::Light,
             language: Locale::Fr,
+            page: Some("T-42".into()),
+            collapsed: vec!["P-1".into(), "E-3".into()],
+            closed_shown: vec!["closed:E-3".into()],
+            sidebar_hidden: true,
+            terminal_text_size: Some(15),
         };
         save_to(&path, &prefs).unwrap();
         assert_eq!(load_from(&path).unwrap(), prefs);
 
         let dark = Preferences {
             theme: ThemeSetting::Dark,
-            language: Locale::En,
+            ..Preferences::default()
         };
         save_to(&path, &dark).unwrap();
         assert_eq!(load_from(&path).unwrap(), dark);
@@ -347,6 +405,7 @@ mod tests {
         let text = serialize(&Preferences {
             theme: ThemeSetting::Dark,
             language: Locale::Fr,
+            ..Preferences::default()
         });
         let expected = "{\n  \"version\": 1,\n  \"theme\": \"dark\",\n  \"language\": \"fr\"\n}\n";
         assert_eq!(text, expected);
@@ -376,6 +435,17 @@ mod tests {
         assert_eq!(parse("{\"version\": 1}"), Ok(Preferences::default()));
         let prefs = parse("{\"version\": 1, \"theme\": \"light\", \"future\": [1, 2]}").unwrap();
         assert_eq!(prefs.theme, ThemeSetting::Light);
+    }
+
+    #[test]
+    fn only_record_ids_and_page_keys_are_kept() {
+        let prefs = parse(
+            "{\"version\": 1, \"page\": \"Embed the terminal\", \"collapsed\": [\"P-1\", \"my secret title\"], \"terminal_text_size\": 40}",
+        )
+        .unwrap();
+        assert_eq!(prefs.page, None);
+        assert_eq!(prefs.collapsed, ["P-1"]);
+        assert_eq!(prefs.terminal_text_size, None);
     }
 
     #[test]

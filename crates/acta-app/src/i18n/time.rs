@@ -68,7 +68,7 @@ impl LocalTime {
     }
 
     /// Days since 1970-01-01 of the local date.
-    fn day_number(self) -> i64 {
+    pub fn day_number(self) -> i64 {
         days_from_civil(self.year, self.month, self.day)
     }
 
