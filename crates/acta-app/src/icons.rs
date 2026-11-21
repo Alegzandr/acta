@@ -79,6 +79,7 @@ icons! {
     Settings => "settings",
     SquareTerminal => "square-terminal",
     Trash2 => "trash-2",
+    ExternalLink => "external-link",
 }
 
 /// The app mark, shown in the updater window only (docs/design/components-app.md 5).

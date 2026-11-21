@@ -1061,6 +1061,26 @@ catalogue! {
         en: t("Sign out and clear"),
         fr: t("Se déconnecter et effacer"),
     }
+    MenuEdit "menu.edit" {
+        en: t("Edit"),
+        fr: t("Édition"),
+    }
+    MenuCut "menu.cut" {
+        en: t("Cut"),
+        fr: t("Couper"),
+    }
+    MenuCopy "menu.copy" {
+        en: t("Copy"),
+        fr: t("Copier"),
+    }
+    MenuPaste "menu.paste" {
+        en: t("Paste"),
+        fr: t("Coller"),
+    }
+    MenuSelectAll "menu.select_all" {
+        en: t("Select All"),
+        fr: t("Tout sélectionner"),
+    }
     TabOpenNew "tab.open_new" {
         en: t("Open in new tab"),
         fr: t("Ouvrir dans un nouvel onglet"),
