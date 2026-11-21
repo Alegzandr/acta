@@ -59,6 +59,9 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `tree.rename` | Rename | Renommer |
 | `tree.set_status` | Set status | Changer le statut |
 | `tree.move_epic` | Move to epic | Déplacer vers un epic |
+| `tree.unread` | New changes by Claude Code | Nouvelles modifications de Claude Code |
+| `tree.empty` | No projects yet. | Aucun projet pour l'instant. |
+| `tree.collapse_all` | Collapse all | Tout replier |
 | `status.draft` | Draft | Brouillon |
 | `status.planned` | Planned | Prévu |
 | `status.active` | Active | En cours |
@@ -359,6 +362,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `cmd.reading_width` | Reading width: {value} | Largeur de lecture : {value} |
 | `cmd.language` | Language: {value} | Langue : {value} |
 | `cmd.new_project` | New project... | Nouveau projet... |
+| `cmd.tree_collapse_all` | Projects: Collapse all | Projets : tout replier |
 | `cmd.new_epic` | New epic... | Nouvel epic... |
 | `cmd.switch_project` | Switch project... | Changer de projet... |
 | `cmd.toggle_sidebar` | Toggle left sidebar | Afficher ou masquer la barre latérale gauche |
@@ -686,16 +690,9 @@ Strings that exist in the behaviour sections but are not in this table are a def
 
 Moved into 10.4 when 4.8 was implemented (M8), with the texts that replaced "Toggle sidebar", "Zoom tool window" and "Tabs and tool windows"; the commands that moved a tool window to a dock and widened or narrowed a pane left with them. `{view}` is always a view's name key (`view.projects`, `tree.inbox`, `tree.knowledge`, `terminal.title`, `chat.title`), never translated twice or inflected: the colon form keeps every sentence whole in French, where a view's gender would otherwise change the participle. `view.agent_browser` ("Agent browser", "Navigateur de l'agent") joined 10.4 with ADR 0010, with the `browser.*` keys of the Agent browser view (components-app.md 5).
 
-### 10.4.2 Keys of the tree (4.2.1), pending
+### 10.4.2 Keys of the tree (4.2.1)
 
-New with the tree's redesign (2026-11-21). They stay here, outside the table the tests read, until 4.2.1 is implemented; the implementing change moves them into 10.4 right after `tree.move_epic` (and `cmd.tree_collapse_all` after `cmd.new_project`) and adds them to `catalogue.rs` in the same commit. The ghost row reuses `topic.new` and the empty tree's button `cmd.new_project`. The Knowledge row's count is gone from the tree, so no key changes for it.
-
-| Key | English | French |
-|---|---|---|
-| `tree.unread` | New changes by Claude Code | Nouvelles modifications de Claude Code |
-| `tree.empty` | No projects yet. | Aucun projet pour l'instant. |
-| `tree.collapse_all` | Collapse all | Tout replier |
-| `cmd.tree_collapse_all` | Projects: Collapse all | Projets : tout replier |
+Moved into 10.4 when 4.2.1 was implemented: `tree.unread`, `tree.empty` and `tree.collapse_all` right after `tree.move_epic`, `cmd.tree_collapse_all` after `cmd.new_project`. The ghost row reuses `topic.new` and the empty tree's button `cmd.new_project`. The Knowledge row's count is gone from the tree, so no key changes for it.
 
 ### 10.4.3 Keys of folder sets and commit modes (ADR 0011), pending
 

@@ -1,11 +1,15 @@
-//! The sidebar tree as rows (docs/design/layout.md 4.2, components.md 5 list /
-//! tree row): every project; under an expanded project its Inbox and
+//! The sidebar tree as rows (docs/design/layout.md 4.2.1, components.md 5
+//! Tree row): every project; under an expanded project its Inbox and
 //! Knowledge rows, the topics outside any epic, then the epics with their
 //! topics. Closed topics collapse under a "3 closed" row at the end of their
-//! group (color.md 2.3). Pure, so the order and the expansion rules are
+//! group; an expanded epic with no topic shows a "New topic" ghost row.
+//! Also the geometry the view needs without a window: where each row sits,
+//! which rows are drawn, the sticky project row, how far a reveal scrolls,
+//! and the one signal of a row's trailing slot. Pure, so all of it is
 //! tested without a window.
 
 use std::collections::HashSet;
+use std::ops::Range;
 
 use acta_core::model::{EpicId, ProjectId, ProjectTree, Status, TopicId, TopicSummary};
 use acta_core::store::Unread;
@@ -42,7 +46,6 @@ pub enum Row {
     },
     Knowledge {
         project: ProjectId,
-        count: i64,
     },
     Epic {
         id: EpicId,
@@ -62,6 +65,11 @@ pub enum Row {
         shown: bool,
         depth: u8,
     },
+    /// The ghost row of an expanded epic with no topic at all.
+    NewTopic {
+        project: ProjectId,
+        epic: EpicId,
+    },
 }
 
 impl Row {
@@ -72,6 +80,7 @@ impl Row {
             Row::Project { .. } => 0,
             Row::Inbox { .. } | Row::Knowledge { .. } | Row::Epic { .. } => 1,
             Row::Topic { depth, .. } | Row::Closed { depth, .. } => *depth,
+            Row::NewTopic { .. } => 2,
         }
     }
 
@@ -83,7 +92,7 @@ impl Row {
             Row::Knowledge { project, .. } => Some(Route::Knowledge(*project)),
             Row::Epic { id, .. } => Some(Route::Epic(*id)),
             Row::Topic { id, .. } => Some(Route::Topic(*id)),
-            Row::Closed { .. } => None,
+            Row::Closed { .. } | Row::NewTopic { .. } => None,
         }
     }
 
@@ -111,8 +120,13 @@ impl Row {
         match (self, self.route()) {
             (_, Some(route)) => RowKey::Route(route),
             (Row::Closed { group, .. }, None) => RowKey::Closed(*group),
-            (_, None) => unreachable!("only the closed row opens no page"),
+            (Row::NewTopic { epic, .. }, None) => RowKey::NewTopic(*epic),
+            (_, None) => unreachable!("only the ghost rows open no page"),
         }
+    }
+
+    pub fn is_project(&self) -> bool {
+        matches!(self, Row::Project { .. })
     }
 
     /// The title type-ahead matches (records only).
@@ -157,9 +171,32 @@ pub fn row_unread(row: &Row, projects: &[ProjectTree], unread: &Unread) -> bool 
                     .chain(t.epics.iter().flat_map(|(_, topics)| topics))
                     .any(|topic| unread.topics.contains(&topic.id))
         }),
-        Row::Knowledge { project, .. } => unread.project_has_kb(*project),
+        Row::Knowledge { project } => unread.project_has_kb(*project),
+        Row::Closed {
+            group,
+            shown: false,
+            ..
+        } => group_topics(projects, *group)
+            .iter()
+            .any(|t| !t.status.is_open() && unread.topics.contains(&t.id)),
         _ => false,
     }
+}
+
+/// The topics of a group, closed ones included.
+fn group_topics(projects: &[ProjectTree], group: Group) -> &[TopicSummary] {
+    let found = match group {
+        Group::Loose(id) => projects
+            .iter()
+            .find(|t| t.project.id == id)
+            .map(|t| t.loose_topics.as_slice()),
+        Group::Epic(id) => projects
+            .iter()
+            .flat_map(|t| &t.epics)
+            .find(|(e, _)| e.id == id)
+            .map(|(_, topics)| topics.as_slice()),
+    };
+    found.unwrap_or_default()
 }
 
 /// The identity of a row.
@@ -167,6 +204,7 @@ pub fn row_unread(row: &Row, projects: &[ProjectTree], unread: &Unread) -> bool 
 pub enum RowKey {
     Route(Route),
     Closed(Group),
+    NewTopic(EpicId),
 }
 
 /// The keyboard cursor of the tree: the row it is on, and the index it
@@ -362,6 +400,50 @@ impl Folds {
     pub fn expand(&mut self, key: &str) {
         self.collapsed.remove(key);
     }
+
+    /// "Collapse all" (4.2.1): every project and every epic folds; the
+    /// "N closed" folds are kept.
+    pub fn collapse_all(&mut self, projects: &[ProjectTree]) {
+        for tree in projects {
+            self.collapsed.insert(tree.project.id.to_string());
+            for (epic, _) in &tree.epics {
+                self.collapsed.insert(epic.id.to_string());
+            }
+        }
+    }
+
+    /// Unfold what hides the row of `route` (4.2.1, reveal): its project,
+    /// its epic, and for a closed topic its "N closed" row. They stay
+    /// unfolded, as if the user had unfolded them.
+    pub fn reveal(&mut self, projects: &[ProjectTree], route: Route) {
+        let location = match route {
+            Route::Project(id) | Route::Inbox(id) | Route::Knowledge(id) => {
+                locate_project(projects, id)
+            }
+            Route::Epic(id) => locate_epic(projects, id),
+            Route::Topic(id) => locate_topic(projects, id),
+            Route::Kb(_) | Route::Trash | Route::Settings | Route::Shortcuts => None,
+        };
+        let Some(location) = location else { return };
+        if let Some((project, _)) = location.project {
+            self.expand(&project.to_string());
+        }
+        if let Some((epic, _)) = location.epic {
+            self.expand(&epic.to_string());
+        }
+        if let (Route::Topic(id), Some((project, _))) = (route, location.project) {
+            let group = match location.epic {
+                Some((epic, _)) => Group::Epic(epic),
+                None => Group::Loose(project),
+            };
+            let closed = group_topics(projects, group)
+                .iter()
+                .any(|t| t.id == id && !t.status.is_open());
+            if closed {
+                self.closed_shown.insert(group.key());
+            }
+        }
+    }
 }
 
 fn push_topics(
@@ -421,7 +503,6 @@ pub fn rows(projects: &[ProjectTree], folds: &Folds) -> Vec<Row> {
         });
         rows.push(Row::Knowledge {
             project: project.id,
-            count: project.knowledge,
         });
         push_topics(
             &mut rows,
@@ -438,12 +519,185 @@ pub fn rows(projects: &[ProjectTree], folds: &Folds) -> Vec<Row> {
                 title: epic.title.clone(),
                 expanded,
             });
-            if expanded {
+            if expanded && topics.is_empty() {
+                rows.push(Row::NewTopic {
+                    project: project.id,
+                    epic: epic.id,
+                });
+            } else if expanded {
                 push_topics(&mut rows, topics, Group::Epic(epic.id), 2, folds);
             }
         }
     }
     rows
+}
+
+/// A row's height (4.2.1, Geometry).
+pub const ROW: f32 = 28.;
+/// The tree viewport's padding, on every side.
+pub const PAD: f32 = 8.;
+/// A row's own horizontal padding inside its pill.
+const ROW_PAD: f32 = 8.;
+/// The leading slot, and the gap after it and before the trailing slot.
+const SLOT: f32 = 16.;
+const GAP: f32 = 8.;
+
+/// Where the rows sit in the tree's scrolled content: each row's top, and
+/// the content's height. Rows are 28; 4 of space follow the Knowledge row,
+/// 8 precede a project row that follows an expanded project (folded
+/// projects stack with no space), 8 pad the top and the bottom.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Layout {
+    tops: Vec<f32>,
+    pub height: f32,
+}
+
+impl Layout {
+    pub fn of(rows: &[Row]) -> Layout {
+        let mut tops = Vec::with_capacity(rows.len());
+        let mut y = PAD;
+        for (i, row) in rows.iter().enumerate() {
+            if i > 0 {
+                let previous = &rows[i - 1];
+                if row.is_project() && !previous.is_project() {
+                    y += 8.;
+                } else if matches!(previous, Row::Knowledge { .. }) {
+                    y += 4.;
+                }
+            }
+            tops.push(y);
+            y += ROW;
+        }
+        Layout {
+            tops,
+            height: y + PAD,
+        }
+    }
+
+    pub fn top(&self, i: usize) -> f32 {
+        self.tops[i]
+    }
+
+    /// The first row whose bottom is below `y` (the row at that height,
+    /// or the next one when `y` is in a space).
+    fn first_below(&self, y: f32) -> usize {
+        self.tops.partition_point(|top| top + ROW <= y)
+    }
+
+    /// The rows to lay out for a viewport at `scroll_top`, `viewport` high:
+    /// those in it, plus one screen above and below (4.2.1, Long trees).
+    pub fn drawn(&self, scroll_top: f32, viewport: f32) -> Range<usize> {
+        let start = self.first_below(scroll_top - viewport);
+        let end = self
+            .tops
+            .partition_point(|top| *top < scroll_top + 2. * viewport);
+        start..end.max(start)
+    }
+
+    /// The first row in view and how far the viewport's top is below its
+    /// top: what keeps the rows on screen in place when rows come and go
+    /// above them (interaction.md 6.5, rule 2).
+    pub fn anchor(&self, rows: &[Row], scroll_top: f32) -> Option<(RowKey, f32)> {
+        let i = self.first_below(scroll_top);
+        let row = rows.get(i)?;
+        Some((row.key(), scroll_top - self.tops[i]))
+    }
+
+    /// The scroll top that puts the anchor's row back where it was; `None`
+    /// when that row is gone.
+    pub fn anchored(&self, rows: &[Row], (key, delta): (RowKey, f32)) -> Option<f32> {
+        let i = rows.iter().position(|r| r.key() == key)?;
+        Some((self.tops[i] + delta).max(0.))
+    }
+
+    /// The sticky project row at `scroll_top` (4.2.1, Long trees): the
+    /// expanded project whose row is above the viewport while some of its
+    /// rows are still in it, as its index and its y in the viewport (0, or
+    /// less while the next project's row pushes it up).
+    pub fn sticky(&self, rows: &[Row], scroll_top: f32) -> Option<(usize, f32)> {
+        let above = self.tops.partition_point(|top| *top < scroll_top);
+        let p = (0..above).rev().find(|&i| rows[i].is_project())?;
+        if rows[p].is_expanded() != Some(true) {
+            return None;
+        }
+        let next = (p + 1..rows.len()).find(|&i| rows[i].is_project());
+        let last = next.unwrap_or(rows.len()) - 1;
+        if last == p || self.tops[last] + ROW <= scroll_top {
+            return None;
+        }
+        let y = next.map_or(0., |q| (self.tops[q] - scroll_top - ROW).min(0.));
+        Some((p, y))
+    }
+
+    /// The scroll top that shows row `i` whole below the sticky row, moving
+    /// the least (4.2.1, reveal); `None` when it is shown already.
+    pub fn reveal(&self, rows: &[Row], i: usize, scroll_top: f32, viewport: f32) -> Option<f32> {
+        let top = *self.tops.get(i)?;
+        // Above a project row nothing sticks; above any other row the
+        // sticky copy of its project may.
+        let cover = if rows[i].is_project() { 0. } else { ROW };
+        if top - cover < scroll_top {
+            return Some(if i == 0 { 0. } else { (top - cover).max(0.) });
+        }
+        let bottom = top + ROW;
+        if bottom > scroll_top + viewport {
+            return Some(bottom - viewport);
+        }
+        None
+    }
+}
+
+/// The width of a row's title box in a view `width` wide (4.2.1,
+/// Geometry), given what its trailing slot reserves (0 for nothing).
+pub fn title_width(width: f32, depth: u8, trailing: f32) -> f32 {
+    let trailing = if trailing > 0. { GAP + trailing } else { 0. };
+    width - 2. * PAD - 2. * ROW_PAD - SLOT * f32::from(depth) - SLOT - GAP - trailing
+}
+
+/// What a project or epic row's trailing slot always reserves: the `plus`
+/// appears there on hover without moving the title.
+pub const PARENT_TRAILING: f32 = 24.;
+
+/// A due mark (4.2.1, Due marks): an open record due before today, or
+/// today. Due dates are not in the store yet: see [`row_due`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(dead_code, reason = "due dates come with store v4; see row_due")]
+pub enum Due {
+    Overdue,
+    Today,
+}
+
+/// The due mark of a row. The hook for due dates: once the summaries carry
+/// a due date (store v4), a project, epic or topic row that is open (a
+/// topic not closed, an epic or project not complete) and due before today
+/// returns `Overdue`, due today `Today`; never rolled up into a folded
+/// parent, and nothing for any other row.
+pub fn row_due(_row: &Row) -> Option<Due> {
+    None
+}
+
+/// The one signal of a row's trailing slot at rest (4.2.1, "One signal, in
+/// this order"); on hover a project or epic row shows its `plus` instead.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Signal {
+    /// A live Claude Code session focuses the row's record
+    /// (components-app.md 5, Claude Code sessions).
+    Session,
+    Unread,
+    Due(Due),
+}
+
+/// The signal a row shows: a live session first (while Claude Code works
+/// on a record it keeps writing to it, so its unread dot would say less),
+/// then the unread dot, then overdue, then due today.
+pub fn signal(session: bool, unread: bool, due: Option<Due>) -> Option<Signal> {
+    if session {
+        Some(Signal::Session)
+    } else if unread {
+        Some(Signal::Unread)
+    } else {
+        due.map(Signal::Due)
+    }
 }
 
 /// Where the keyboard cursor goes on `Left`: the row's parent, or `None`
@@ -670,7 +924,6 @@ mod tests {
         assert!(!row_unread(&project(2, false), &projects, &unread));
         let knowledge = |p| Row::Knowledge {
             project: ProjectId(p),
-            count: 1,
         };
         assert!(row_unread(&knowledge(1), &projects, &unread));
         assert!(!row_unread(&knowledge(2), &projects, &unread));
@@ -682,7 +935,7 @@ mod tests {
             .map(|row| match row {
                 Row::Project { title, .. } => format!("P {title}"),
                 Row::Inbox { count, .. } => format!("  inbox {count}"),
-                Row::Knowledge { count, .. } => format!("  knowledge {count}"),
+                Row::Knowledge { .. } => "  knowledge".to_string(),
                 Row::Epic { title, .. } => format!("  E {title}"),
                 Row::Topic { title, depth, .. } => {
                     format!("{}{title}", " ".repeat(*depth as usize * 2))
@@ -690,6 +943,7 @@ mod tests {
                 Row::Closed { count, depth, .. } => {
                     format!("{}{count} closed", " ".repeat(*depth as usize * 2))
                 }
+                Row::NewTopic { .. } => "    + New topic".to_string(),
             })
             .collect()
     }
@@ -702,7 +956,7 @@ mod tests {
             [
                 "P Acta",
                 "  inbox 4",
-                "  knowledge 55",
+                "  knowledge",
                 "  Naming",
                 "  E Terminal",
                 "    Embed the terminal",
@@ -710,7 +964,7 @@ mod tests {
                 "    2 closed",
                 "P Atlas",
                 "  inbox 4",
-                "  knowledge 55",
+                "  knowledge",
             ]
         );
     }
@@ -869,6 +1123,225 @@ mod tests {
         assert!(
             !menu_items(&projects, inbox, MenuKind::Row, "No epic").contains(&MenuItem::Delete)
         );
+    }
+
+    #[test]
+    fn an_empty_epic_shows_the_new_topic_ghost_row() {
+        let mut projects = acta();
+        projects[1].epics.push((sample::epic(2, "Storage"), vec![]));
+        let rows = rows(&projects, &Folds::default());
+        let at = rows
+            .iter()
+            .position(|r| matches!(r, Row::NewTopic { .. }))
+            .unwrap();
+        assert!(matches!(rows[at - 1], Row::Epic { id, .. } if id == EpicId(2)));
+        assert_eq!(rows[at].depth(), 2);
+        assert_eq!(rows[at].key(), RowKey::NewTopic(EpicId(2)));
+        assert_eq!(rows[at].route(), None);
+        assert_eq!(parent_index(&rows, at), Some(at - 1));
+        // Folded, or an epic with topics: no ghost row.
+        let mut folds = Folds::default();
+        folds.toggle("E-2".into());
+        let ghost = |rows: &[Row]| rows.iter().any(|r| matches!(r, Row::NewTopic { .. }));
+        assert!(!ghost(&super::rows(&projects, &folds)));
+        assert!(!ghost(&super::rows(&acta(), &Folds::default())));
+    }
+
+    #[test]
+    fn a_folded_closed_row_holds_the_dot_of_its_closed_topics() {
+        let projects = acta();
+        let unread = Unread {
+            topics: [TopicId(4)].into_iter().collect(),
+            kb: vec![],
+        };
+        let closed = |shown| Row::Closed {
+            group: Group::Epic(EpicId(1)),
+            count: 2,
+            shown,
+            depth: 2,
+        };
+        assert!(row_unread(&closed(false), &projects, &unread));
+        assert!(
+            !row_unread(&closed(true), &projects, &unread),
+            "the topic shows it"
+        );
+        let open_only = Unread {
+            topics: [TopicId(2)].into_iter().collect(),
+            kb: vec![],
+        };
+        assert!(!row_unread(&closed(false), &projects, &open_only));
+    }
+
+    #[test]
+    fn spaces_follow_knowledge_and_expanded_projects_only() {
+        let rows = rows(&acta(), &Folds::default());
+        let layout = Layout::of(&rows);
+        assert_eq!(layout.top(0), PAD);
+        assert_eq!(layout.top(1), PAD + ROW, "Inbox right under its project");
+        assert_eq!(layout.top(3), PAD + 3. * ROW + 4., "4 below Knowledge");
+        let atlas = rows.iter().rposition(Row::is_project).unwrap();
+        assert_eq!(
+            layout.top(atlas),
+            layout.top(atlas - 1) + ROW + 8.,
+            "8 after an expanded project"
+        );
+        assert_eq!(layout.height, layout.top(rows.len() - 1) + ROW + PAD);
+        // Folded projects stack with no space.
+        let mut folds = Folds::default();
+        folds.collapse_all(&acta());
+        let folded = super::rows(&acta(), &folds);
+        assert_eq!(folded.len(), 2);
+        assert_eq!(Layout::of(&folded).top(1), PAD + ROW);
+    }
+
+    /// Project "Acta" with `n` topics in no epic, then project "Atlas".
+    fn long(n: i64) -> Vec<ProjectTree> {
+        let mut projects = acta();
+        projects[0].loose_topics = (100..100 + n)
+            .map(|i| sample::topic(i, None, "Topic", Status::Planned))
+            .collect();
+        projects
+    }
+
+    #[test]
+    fn only_the_rows_near_the_viewport_are_drawn() {
+        let rows = rows(&long(10_000), &Folds::default());
+        let layout = Layout::of(&rows);
+        let drawn = layout.drawn(28_000., 560.);
+        // One screen above and below: about 60 rows of 10,000.
+        assert!(drawn.len() <= 62, "{drawn:?}");
+        assert!(layout.top(drawn.start) + ROW > 28_000. - 560.);
+        assert!(layout.top(drawn.end - 1) < 28_000. + 2. * 560.);
+        assert_eq!(layout.drawn(0., 560.).start, 0);
+    }
+
+    #[test]
+    fn the_sticky_row_names_the_project_and_is_pushed_up_by_the_next() {
+        let rows = rows(&long(40), &Folds::default());
+        let layout = Layout::of(&rows);
+        assert_eq!(layout.sticky(&rows, 0.), None, "the project row is in view");
+        assert_eq!(layout.sticky(&rows, 300.), Some((0, 0.)));
+        let atlas = rows.iter().rposition(Row::is_project).unwrap();
+        let next = layout.top(atlas);
+        // The next project's row arrives at the sticky row's bottom.
+        assert_eq!(layout.sticky(&rows, next - ROW), Some((0, 0.)));
+        assert_eq!(layout.sticky(&rows, next - 10.), Some((0, -18.)));
+        assert_eq!(layout.sticky(&rows, next), None, "Atlas is at the top");
+        // Folded: nothing of it is in view, nothing sticks.
+        let mut folds = Folds::default();
+        folds.toggle("P-1".into());
+        let folded = super::rows(&long(40), &folds);
+        assert_eq!(Layout::of(&folded).sticky(&folded, 20.), None);
+    }
+
+    #[test]
+    fn reveal_scrolls_the_least_and_clears_the_sticky_row() {
+        let rows = rows(&long(100), &Folds::default());
+        let layout = Layout::of(&rows);
+        let i = 60;
+        let top = layout.top(i);
+        // In view: no scroll.
+        assert_eq!(layout.reveal(&rows, i, top - 100., 560.), None);
+        // Below: its bottom lands on the viewport's bottom.
+        assert_eq!(layout.reveal(&rows, i, 0., 560.), Some(top + ROW - 560.));
+        // Above, or under the sticky row: it lands right below the sticky row.
+        assert_eq!(layout.reveal(&rows, i, top + 200., 560.), Some(top - ROW));
+        assert_eq!(layout.reveal(&rows, i, top - 10., 560.), Some(top - ROW));
+        // A project row needs no room for the sticky row; the first one
+        // shows the padding above it too.
+        let atlas = rows.iter().rposition(Row::is_project).unwrap();
+        let atlas_top = layout.top(atlas);
+        assert_eq!(
+            layout.reveal(&rows, atlas, atlas_top + 50., 560.),
+            Some(atlas_top)
+        );
+        assert_eq!(layout.reveal(&rows, 0, 300., 560.), Some(0.));
+    }
+
+    #[test]
+    fn the_rows_on_screen_keep_their_place_when_rows_appear_above() {
+        let projects = long(30);
+        let before = rows(&projects, &Folds::default());
+        let layout = Layout::of(&before);
+        let scroll_top = layout.top(20) + 5.;
+        let anchor = layout.anchor(&before, scroll_top).unwrap();
+        assert_eq!(anchor, (before[20].key(), 5.));
+        // Another process adds a topic above it.
+        let mut more = projects.clone();
+        more[0]
+            .loose_topics
+            .insert(0, sample::topic(99, None, "New", Status::Draft));
+        let after = rows(&more, &Folds::default());
+        let moved = Layout::of(&after).anchored(&after, anchor).unwrap();
+        assert_eq!(moved, scroll_top + ROW);
+        // The anchor's row gone: no correction.
+        let mut gone = projects.clone();
+        gone[0].loose_topics.clear();
+        let after = rows(&gone, &Folds::default());
+        assert_eq!(Layout::of(&after).anchored(&after, anchor), None);
+    }
+
+    #[test]
+    fn title_space_matches_the_spec_at_260_and_200() {
+        // Projects and epics with their reserved 24; topics without and
+        // with a dot.
+        let at = |w| {
+            [
+                title_width(w, 0, PARENT_TRAILING),
+                title_width(w, 1, PARENT_TRAILING),
+                title_width(w, 1, 0.),
+                title_width(w, 1, 16.),
+                title_width(w, 2, 0.),
+                title_width(w, 2, 16.),
+            ]
+        };
+        assert_eq!(at(260.), [172., 156., 188., 164., 172., 148.]);
+        assert_eq!(at(200.), [112., 96., 128., 104., 112., 88.]);
+    }
+
+    #[test]
+    fn one_signal_in_the_order_of_the_spec() {
+        let overdue = Some(Due::Overdue);
+        assert_eq!(signal(true, true, overdue), Some(Signal::Session));
+        assert_eq!(signal(false, true, overdue), Some(Signal::Unread));
+        assert_eq!(
+            signal(false, false, overdue),
+            Some(Signal::Due(Due::Overdue))
+        );
+        assert_eq!(
+            signal(false, false, Some(Due::Today)),
+            Some(Signal::Due(Due::Today))
+        );
+        assert_eq!(signal(false, false, None), None);
+        let rows = rows(&acta(), &Folds::default());
+        assert!(rows.iter().all(|r| row_due(r).is_none()), "no dates yet");
+    }
+
+    #[test]
+    fn reveal_unfolds_the_project_the_epic_and_the_closed_row() {
+        let projects = acta();
+        let mut folds = Folds::default();
+        folds.collapse_all(&projects);
+        assert!(folds.collapsed.contains("P-1") && folds.collapsed.contains("E-1"));
+        folds.reveal(&projects, Route::Topic(TopicId(4)));
+        let rows = rows(&projects, &folds);
+        assert!(
+            rows.iter()
+                .any(|r| r.route() == Some(Route::Topic(TopicId(4))))
+        );
+        assert!(
+            folds.collapsed.contains("P-2"),
+            "other projects stay folded"
+        );
+        // An open topic leaves the closed row folded; collapse all keeps it.
+        let mut folds = Folds::default();
+        folds.reveal(&projects, Route::Topic(TopicId(2)));
+        assert!(folds.closed_shown.is_empty());
+        folds.closed_shown.insert(Group::Epic(EpicId(1)).key());
+        folds.collapse_all(&projects);
+        assert_eq!(folds.closed_shown.len(), 1);
+        folds.reveal(&projects, Route::Knowledge(ProjectId(2)));
+        assert!(!folds.collapsed.contains("P-2"));
     }
 
     #[test]

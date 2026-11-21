@@ -451,6 +451,9 @@ impl Shell {
     /// the preferences saved.
     pub(super) fn after_layout(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(bench) = self.bench() else { return };
+        // The tree moved, hid or resized under the pointer: it is hovered
+        // again only when the pointer next moves over it.
+        bench.tree.clear_hover();
         // Pages the change closed leave their slots; their history is kept
         // so that undoing the change brings them back.
         let named = bench.layout.page_tabs();
@@ -3222,6 +3225,28 @@ impl Shell {
                     );
             }
             LayoutMenu::View(view) => {
+                // The Projects view's own item, above the view menu and a
+                // separator (layout.md 4.2.1, as the chat's, 4.8.4).
+                if view == ViewId::Projects {
+                    panel = panel
+                        .child(
+                            menu_row(
+                                "vm-collapse-all",
+                                text(locale, Key::TreeCollapseAll),
+                                false,
+                                None,
+                                true,
+                                &t,
+                            )
+                            .on_click(cx.listener(
+                                |shell, _, _, cx| {
+                                    shell.close_menu(cx);
+                                    shell.collapse_all(cx)
+                                },
+                            )),
+                        )
+                        .child(menu::separator(&t));
+                }
                 let place = layout.locate(Tab::View(view)).map(|s| s.place);
                 panel = move_items(panel, place, view, None, &t, locale, cx);
                 let can_split = layout.can_split_off(view);

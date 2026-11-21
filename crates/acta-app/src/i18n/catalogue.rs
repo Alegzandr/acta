@@ -205,6 +205,18 @@ catalogue! {
         en: t("Move to epic"),
         fr: t("Déplacer vers un epic"),
     }
+    TreeUnread "tree.unread" {
+        en: t("New changes by Claude Code"),
+        fr: t("Nouvelles modifications de Claude Code"),
+    }
+    TreeEmpty "tree.empty" {
+        en: t("No projects yet."),
+        fr: t("Aucun projet pour l\u{2019}instant."),
+    }
+    TreeCollapseAll "tree.collapse_all" {
+        en: t("Collapse all"),
+        fr: t("Tout replier"),
+    }
     StatusDraft "status.draft" {
         en: t("Draft"),
         fr: t("Brouillon"),
@@ -1404,6 +1416,10 @@ catalogue! {
     CmdNewProject "cmd.new_project" {
         en: t("New project\u{2026}"),
         fr: t("Nouveau projet\u{2026}"),
+    }
+    CmdTreeCollapseAll "cmd.tree_collapse_all" {
+        en: t("Projects: Collapse all"),
+        fr: t("Projets\u{202f}: tout replier"),
     }
     CmdNewEpic "cmd.new_epic" {
         en: t("New epic\u{2026}"),
