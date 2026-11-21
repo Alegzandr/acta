@@ -1253,6 +1253,18 @@ catalogue! {
         en: t("Layout reset."),
         fr: t("Disposition réinitialisée."),
     }
+    LayoutNoRoom "layout.no_room" {
+        en: t("Not enough room: {reason}"),
+        fr: t("Pas assez de place\u{202f}: {reason}"),
+    }
+    LayoutNoRoomLeft "layout.no_room.left" {
+        en: t("the window is too narrow for both sidebars."),
+        fr: t("la fenêtre est trop étroite pour les deux barres latérales."),
+    }
+    LayoutNoRoomHideRight "layout.no_room.hide_right" {
+        en: t("Hide the right sidebar and move"),
+        fr: t("Masquer la barre latérale droite et déplacer"),
+    }
     PaletteRecent "palette.recent" {
         en: t("Recent"),
         fr: t("Récents"),

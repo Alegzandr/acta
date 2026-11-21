@@ -2251,10 +2251,16 @@ impl Shell {
                 .knowledge_view
                 .as_ref()
                 .is_some_and(|v| v.read(cx).menu_open());
-        // The move toast sits at the bottom left of the page area.
+        let place = bench.layout.locate(Tab::View(view)).map(|s| s.place);
+        // The move toast sits at the bottom left of the page area, over the
+        // sidebar shown over the page.
         let toast_over = bench.toast.is_some()
-            && bench.layout.locate(Tab::View(view)).map(|s| s.place) == Some(Place::Page);
-        bench.ui.left_overlay
+            && (place == Some(Place::Page)
+                || (bench.ui.left_overlay && place == Some(Place::Side(Side::Left))));
+        // The sidebar shown over the page covers what is under it, and
+        // hosts what is in it (workbench.md 4.8.10).
+        let left_over = bench.ui.left_overlay && place != Some(Place::Side(Side::Left));
+        left_over
             || bench.ui.menu.is_some()
             || bench.tree_menu.is_some()
             || toast_over
@@ -3445,13 +3451,16 @@ impl Shell {
         let locale = settings::locale(cx);
         let bench = self.bench()?;
         let toast = bench.toast.clone()?;
-        if toast.kind == ToastKind::Layout {
+        if matches!(
+            toast.kind,
+            ToastKind::Layout | ToastKind::LayoutReset | ToastKind::LayoutNoRoom
+        ) {
             return Some(self.layout_toast_element(toast, &t, locale, cx));
         }
         let glyph = match toast.kind {
             ToastKind::Error => Some(icon(Icon::TriangleAlert, 16., t.danger)),
             ToastKind::Done => Some(icon(Icon::Check, 16., t.success)),
-            ToastKind::Undo | ToastKind::Layout => None,
+            _ => None,
         };
         Some(
             div()
@@ -3505,6 +3514,9 @@ impl Shell {
 
     /// The move toast (4.8.11): the message on its own line, wrapping to
     /// two at most, then Undo, Reset layout and the `x` on a line under it.
+    /// "Layout reset." has Undo only; the no-room toast its one action. It
+    /// is drawn above the sidebar shown over the page, which would
+    /// otherwise cover it.
     fn layout_toast_element(
         &mut self,
         toast: Toast,
@@ -3513,7 +3525,11 @@ impl Shell {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let macos = cfg!(target_os = "macos");
-        div()
+        let kind = toast.kind;
+        let undo = kind != ToastKind::LayoutNoRoom;
+        let reset = kind == ToastKind::Layout;
+        let room = kind == ToastKind::LayoutNoRoom;
+        let element = div()
             .id("layout-toast")
             .occlude()
             .absolute()
@@ -3543,34 +3559,52 @@ impl Shell {
                     .flex_row()
                     .items_center()
                     .gap(px(4.))
-                    .child(
-                        ui::button(
-                            "toast-layout-undo",
-                            text(locale, Key::CommonUndo),
-                            Variant::Ghost,
-                            false,
-                            t,
+                    .when(undo, |this| {
+                        this.child(
+                            ui::button(
+                                "toast-layout-undo",
+                                text(locale, Key::CommonUndo),
+                                Variant::Ghost,
+                                false,
+                                t,
+                            )
+                            .child(ui::kbd(
+                                &[crate::i18n::KeyName::Mod.label(locale, macos), "Z"],
+                                t,
+                            ))
+                            .on_click(
+                                cx.listener(|shell, _, window, cx| shell.undo_layout(window, cx)),
+                            ),
                         )
-                        .child(ui::kbd(
-                            &[crate::i18n::KeyName::Mod.label(locale, macos), "Z"],
-                            t,
-                        ))
-                        .on_click(
-                            cx.listener(|shell, _, window, cx| shell.undo_layout(window, cx)),
-                        ),
-                    )
-                    .child(
-                        ui::button(
-                            "toast-layout-reset",
-                            text(locale, Key::CmdLayoutReset),
-                            Variant::Ghost,
-                            false,
-                            t,
+                    })
+                    .when(reset, |this| {
+                        this.child(
+                            ui::button(
+                                "toast-layout-reset",
+                                text(locale, Key::CmdLayoutReset),
+                                Variant::Ghost,
+                                false,
+                                t,
+                            )
+                            .on_click(
+                                cx.listener(|shell, _, window, cx| shell.reset_layout(window, cx)),
+                            ),
                         )
-                        .on_click(
-                            cx.listener(|shell, _, window, cx| shell.reset_layout(window, cx)),
-                        ),
-                    )
+                    })
+                    .when(room, |this| {
+                        this.child(
+                            ui::button(
+                                "toast-layout-room",
+                                text(locale, Key::LayoutNoRoomHideRight),
+                                Variant::Ghost,
+                                false,
+                                t,
+                            )
+                            .on_click(cx.listener(
+                                |shell, _, window, cx| shell.hide_right_and_move(window, cx),
+                            )),
+                        )
+                    })
                     .child(div().flex_1())
                     .child(
                         ui::ghost_icon_button("toast-close", Icon::X, 24., false, false, true, t)
@@ -3581,8 +3615,8 @@ impl Shell {
                                 cx.notify();
                             })),
                     ),
-            )
-            .into_any_element()
+            );
+        deferred(element).with_priority(2).into_any_element()
     }
 
     fn bulk_notice(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
