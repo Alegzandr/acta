@@ -140,7 +140,7 @@ pub fn build_claude_launch(
             }
             let words: Vec<String> = std::iter::once(shim.into_owned())
                 .chain(claude_args)
-                .map(|word| format!("\"{word}\""))
+                .map(|word| quote_word(&word))
                 .collect();
             verbatim_args = true;
             let line = format!("\"{}\"", words.join(" "));
@@ -180,6 +180,15 @@ pub fn build_claude_launch(
 /// a quoted word.
 fn has_cmd_metachar(text: &str) -> bool {
     text.contains(['"', '%', '!', '^', '&', '|', '<', '>'])
+}
+
+/// One word in double quotes, for the program behind the shim (node parses
+/// with MSVCRT rules): backslashes right before the closing quote are
+/// doubled, or `"D:\"` would escape the quote and swallow the next word.
+/// The word holds no `"` (checked by [`has_cmd_metachar`]).
+fn quote_word(word: &str) -> String {
+    let trailing = word.len() - word.trim_end_matches('\\').len();
+    format!("\"{word}{}\"", "\\".repeat(trailing))
 }
 
 /// Find `claude` the way ADR 0002 point 3 says, for this platform.
@@ -359,6 +368,94 @@ mod tests {
                 r#"""C:\npm\claude.cmd" "--add-dir" "D:\docs"""#
             ]
         );
+
+        // Trailing backslashes are doubled before the closing quote, so a
+        // drive root does not swallow the next word when node parses `%*`.
+        let folders = [
+            PathBuf::from("C:\\acta"),
+            PathBuf::from("D:\\"),
+            PathBuf::from("E:\\x\\\\"),
+            PathBuf::from("F:\\docs"),
+        ];
+        let launch = build_claude_launch(&program, &folders, &focus(), |_| true).unwrap();
+        let line = &launch.spec.args[3];
+        assert_eq!(
+            line,
+            r#"""C:\npm\claude.cmd" "--add-dir" "D:\\" "--add-dir" "E:\x\\\\" "--add-dir" "F:\docs"""#
+        );
+        // What the shim's `%*` hands node: the line without cmd's outer
+        // quotes and the shim word, split by MSVCRT rules.
+        let rest = line[1..line.len() - 1]
+            .split_once(' ')
+            .map(|(_, rest)| rest)
+            .unwrap();
+        assert_eq!(
+            msvcrt_split(rest),
+            [
+                "--add-dir",
+                "D:\\",
+                "--add-dir",
+                "E:\\x\\\\",
+                "--add-dir",
+                "F:\\docs"
+            ]
+        );
+    }
+
+    /// Command-line splitting as the Microsoft C runtime does it.
+    fn msvcrt_split(line: &str) -> Vec<String> {
+        let mut words = Vec::new();
+        let mut word = String::new();
+        let mut in_word = false;
+        let mut quoted = false;
+        let mut chars = line.chars().peekable();
+        while let Some(c) = chars.next() {
+            match c {
+                '\\' => {
+                    let mut n = 1;
+                    while chars.peek() == Some(&'\\') {
+                        chars.next();
+                        n += 1;
+                    }
+                    if chars.peek() == Some(&'"') {
+                        word.push_str(&"\\".repeat(n / 2));
+                        if n % 2 == 1 {
+                            chars.next();
+                            word.push('"');
+                        }
+                    } else {
+                        word.push_str(&"\\".repeat(n));
+                    }
+                    in_word = true;
+                }
+                '"' => {
+                    quoted = !quoted;
+                    in_word = true;
+                }
+                ' ' | '\t' if !quoted => {
+                    if in_word {
+                        words.push(std::mem::take(&mut word));
+                        in_word = false;
+                    }
+                }
+                _ => {
+                    word.push(c);
+                    in_word = true;
+                }
+            }
+        }
+        if in_word {
+            words.push(word);
+        }
+        words
+    }
+
+    #[test]
+    fn cmd_shim_metacharacters() {
+        let program = ClaudeProgram::CmdShim {
+            comspec: "C:\\Windows\\system32\\cmd.exe".into(),
+            shim: PathBuf::from("C:\\npm\\claude.cmd"),
+        };
 
         // Folders cmd would interpret are left out and reported.
         let folders = [
