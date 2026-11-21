@@ -21,9 +21,9 @@ use windows::Win32::Security::Authorization::{
     SE_KERNEL_OBJECT,
 };
 use windows::Win32::Security::{
-    ACCESS_ALLOWED_ACE, ACL, DACL_SECURITY_INFORMATION, GetAce, GetSecurityDescriptorControl,
-    GetTokenInformation, PSECURITY_DESCRIPTOR, PSID, SE_DACL_PROTECTED, SECURITY_ATTRIBUTES,
-    TOKEN_QUERY, TOKEN_USER, TokenUser,
+    ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, DACL_SECURITY_INFORMATION, GetAce, GetLengthSid,
+    GetSecurityDescriptorControl, GetTokenInformation, IsValidSid, PSECURITY_DESCRIPTOR, PSID,
+    SE_DACL_PROTECTED, SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER, TokenUser,
 };
 use windows::Win32::Storage::FileSystem::{FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_ACCESS_DUPLEX};
 use windows::Win32::System::Pipes::{
@@ -150,30 +150,92 @@ pub fn dacl_is_ours(h: HANDLE, sid: &str) -> bool {
             if control & SE_DACL_PROTECTED.0 == 0 || (*dacl).AceCount != 2 {
                 return None;
             }
-            let ace = |i: u32| -> Option<(u8, u32, String)> {
+            let ace = |i: u32| -> Option<Ace> {
                 let mut p: *mut core::ffi::c_void = std::ptr::null_mut();
                 GetAce(dacl, i, &mut p).ok()?;
-                // Allowed and denied ACEs share this layout.
-                let ace = &*(p as *const ACCESS_ALLOWED_ACE);
-                let sid_ptr = PSID(&ace.SidStart as *const u32 as *mut core::ffi::c_void);
-                let mut s = PWSTR::null();
-                ConvertSidToStringSidW(sid_ptr, &mut s).ok()?;
-                let text = s.to_string().unwrap_or_default();
-                let _ = LocalFree(Some(HLOCAL(s.0.cast())));
-                Some((ace.Header.AceType, ace.Mask, text))
+                read_ace(p)
             };
-            const ALLOWED: u8 = 0;
-            const DENIED: u8 = 1;
-            let first = ace(0)?;
-            let second = ace(1)?;
-            (first == (DENIED, FILE_ALL_ACCESS, NETWORK_SID.to_string())
-                && second == (ALLOWED, FILE_ALL_ACCESS, sid.to_string()))
-                .then_some(())
+            rule_holds(&ace(0)?, &ace(1)?, sid).then_some(())
         })()
         .is_some();
         let _ = LocalFree(Some(HLOCAL(sd.0)));
         ok
     }
+}
+
+/// One ACE of a pipe's DACL, as the rule needs it.
+#[derive(Debug, PartialEq, Eq)]
+struct Ace {
+    kind: u8,
+    flags: u8,
+    mask: u32,
+    sid: String,
+}
+
+const ACCESS_ALLOWED_ACE_TYPE: u8 = 0;
+const ACCESS_DENIED_ACE_TYPE: u8 = 1;
+
+/// Reads an allowed or denied ACE at `p`; `None` for any other type, or a
+/// SID that is invalid or does not fit inside the ACE.
+///
+/// # Safety
+/// `p` points to an ACE of at least `ACE_HEADER` size whose `AceSize` bytes
+/// are readable (as `GetAce` returns).
+unsafe fn read_ace(p: *const core::ffi::c_void) -> Option<Ace> {
+    // SAFETY: the caller's contract; the header is read before anything
+    // else, and the SID only once its type, validity and length are known.
+    unsafe {
+        let header = &*(p as *const ACE_HEADER);
+        if header.AceType != ACCESS_ALLOWED_ACE_TYPE && header.AceType != ACCESS_DENIED_ACE_TYPE {
+            return None;
+        }
+        // Allowed and denied ACEs share this layout.
+        let fixed = std::mem::offset_of!(ACCESS_ALLOWED_ACE, SidStart);
+        let size = usize::from(header.AceSize);
+        // The SID's fixed part (revision, count, authority) must fit before
+        // IsValidSid reads its sub-authority count.
+        if size < fixed + 8 {
+            return None;
+        }
+        let ace = &*(p as *const ACCESS_ALLOWED_ACE);
+        let sid_ptr = PSID(&ace.SidStart as *const u32 as *mut core::ffi::c_void);
+        let count = usize::from(*(sid_ptr.0 as *const u8).add(1));
+        if fixed + 8 + 4 * count > size || !IsValidSid(sid_ptr).as_bool() {
+            return None;
+        }
+        if fixed + GetLengthSid(sid_ptr) as usize > size {
+            return None;
+        }
+        let mut s = PWSTR::null();
+        ConvertSidToStringSidW(sid_ptr, &mut s).ok()?;
+        let text = s.to_string().unwrap_or_default();
+        let _ = LocalFree(Some(HLOCAL(s.0.cast())));
+        Some(Ace {
+            kind: header.AceType,
+            flags: header.AceFlags,
+            mask: ace.Mask,
+            sid: text,
+        })
+    }
+}
+
+/// Network denied everything, then `sid` allowed everything, both without
+/// flags (an inherit-only ACE would not apply to the pipe).
+fn rule_holds(first: &Ace, second: &Ace, sid: &str) -> bool {
+    *first
+        == Ace {
+            kind: ACCESS_DENIED_ACE_TYPE,
+            flags: 0,
+            mask: FILE_ALL_ACCESS,
+            sid: NETWORK_SID.into(),
+        }
+        && *second
+            == Ace {
+                kind: ACCESS_ALLOWED_ACE_TYPE,
+                flags: 0,
+                mask: FILE_ALL_ACCESS,
+                sid: sid.into(),
+            }
 }
 
 pub struct Server {
@@ -481,6 +543,81 @@ mod tests {
         getrandom::fill(&mut b).unwrap();
         let tag: String = b.iter().map(|x| format!("{x:02x}")).collect();
         format!(r"\\.\pipe\acta-test-{test}-{tag}")
+    }
+
+    /// An ACE in memory: header, mask, then `sid` bytes; `size` overrides
+    /// `AceSize`.
+    fn raw_ace(kind: u8, flags: u8, sid: &[u8], size: Option<u16>) -> Vec<u32> {
+        let mut bytes = vec![kind, flags, 0, 0];
+        let len = (8 + sid.len()) as u16;
+        bytes[2..4].copy_from_slice(&size.unwrap_or(len).to_le_bytes());
+        bytes.extend_from_slice(&FILE_ALL_ACCESS.to_le_bytes());
+        bytes.extend_from_slice(sid);
+        bytes.resize(bytes.len().div_ceil(4) * 4 + 64, 0);
+        // u32 storage keeps the ACE aligned as Windows lays it out.
+        bytes
+            .chunks(4)
+            .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect()
+    }
+
+    /// S-1-5-2 (NETWORK).
+    const NETWORK: [u8; 12] = [1, 1, 0, 0, 0, 0, 0, 5, 2, 0, 0, 0];
+
+    fn read(buf: &[u32]) -> Option<Ace> {
+        // SAFETY: `buf` holds the ACE and slack beyond its AceSize.
+        unsafe { read_ace(buf.as_ptr().cast()) }
+    }
+
+    #[test]
+    fn aces_are_read_only_when_their_type_and_sid_are_sound() {
+        let ok = read(&raw_ace(ACCESS_DENIED_ACE_TYPE, 0, &NETWORK, None)).unwrap();
+        assert_eq!((ok.kind, ok.flags, ok.sid.as_str()), (1, 0, NETWORK_SID));
+        // Another ACE type (an object ACE, 5) is not read as allowed or denied.
+        assert_eq!(read(&raw_ace(5, 0, &NETWORK, None)), None);
+        // A SID claiming more sub-authorities than the ACE holds.
+        let mut long = NETWORK;
+        long[1] = 15;
+        assert_eq!(
+            read(&raw_ace(ACCESS_ALLOWED_ACE_TYPE, 0, &long, None)),
+            None
+        );
+        // An invalid SID (revision 2).
+        let mut bad = NETWORK;
+        bad[0] = 2;
+        assert_eq!(read(&raw_ace(ACCESS_ALLOWED_ACE_TYPE, 0, &bad, None)), None);
+        // An AceSize too small for its SID.
+        assert_eq!(
+            read(&raw_ace(ACCESS_DENIED_ACE_TYPE, 0, &NETWORK, Some(16))),
+            None
+        );
+    }
+
+    #[test]
+    fn the_rule_needs_both_aces_without_flags() {
+        let sid = "S-1-5-21-1-2-3-1001";
+        let ace = |kind, flags, sid: &str| Ace {
+            kind,
+            flags,
+            mask: FILE_ALL_ACCESS,
+            sid: sid.into(),
+        };
+        let deny = ace(ACCESS_DENIED_ACE_TYPE, 0, NETWORK_SID);
+        let allow = ace(ACCESS_ALLOWED_ACE_TYPE, 0, sid);
+        assert!(rule_holds(&deny, &allow, sid));
+        // INHERIT_ONLY (8): a deny that does not apply to the pipe.
+        assert!(!rule_holds(
+            &ace(ACCESS_DENIED_ACE_TYPE, 8, NETWORK_SID),
+            &allow,
+            sid
+        ));
+        assert!(!rule_holds(
+            &deny,
+            &ace(ACCESS_ALLOWED_ACE_TYPE, 2, sid),
+            sid
+        ));
+        assert!(!rule_holds(&deny, &allow, "S-1-5-21-1-2-3-500"));
+        assert!(!rule_holds(&allow, &deny, sid));
     }
 
     #[test]
