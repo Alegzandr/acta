@@ -247,20 +247,43 @@ pub fn claude_config_dir() -> Option<PathBuf> {
     Some(PathBuf::from(home).join(".claude"))
 }
 
-/// Whether Claude Code still has the transcript of conversation `id`:
-/// `<config>/projects/<project>/<id>.jsonl` (code.claude.com/docs/en/sessions,
-/// "Where transcripts are stored"). Only existence is checked; nothing is
-/// read. Transcripts age out after 30 days by default, and a resume of an id
-/// that is gone ends at once with "No conversation found", so Acta starts a
-/// new conversation instead.
-pub fn transcript_exists(config_dir: &Path, id: &str) -> bool {
+/// Claude Code's directory name for a working directory: every character
+/// but an ASCII letter or digit becomes `-` (one per UTF-16 unit, as
+/// JavaScript counts them). Names over 200 characters are truncated and
+/// hashed by Claude Code (code.claude.com/docs/en/sessions, "Where
+/// transcripts are stored"); Acta does not reproduce the hash, so `None`.
+pub fn project_dir_name(cwd: &Path) -> Option<String> {
+    let mut name = String::new();
+    for c in cwd.to_string_lossy().chars() {
+        if c.is_ascii_alphanumeric() {
+            name.push(c);
+        } else {
+            for _ in 0..c.len_utf16() {
+                name.push('-');
+            }
+        }
+    }
+    (!name.is_empty() && name.len() <= 200).then_some(name)
+}
+
+/// Whether conversation `id` belongs to `cwd` in Claude Code's storage:
+/// `<config>/projects/<project_dir_name(cwd)>/<id>.jsonl`. Only existence is
+/// checked; nothing is read. A transcript elsewhere (the page's folder
+/// changed) or gone (transcripts age out after 30 days) means a new
+/// conversation: a resume across folders would carry the old folder's
+/// conversation into this one, and one of a missing id ends at once.
+pub fn transcript_exists(config_dir: &Path, cwd: &Path, id: &str) -> bool {
     if !is_uuid(id) {
         return false;
     }
-    let file = format!("{id}.jsonl");
-    std::fs::read_dir(config_dir.join("projects"))
-        .map(|dirs| dirs.flatten().any(|d| d.path().join(&file).is_file()))
-        .unwrap_or(false)
+    let Some(dir) = project_dir_name(cwd) else {
+        return false;
+    };
+    config_dir
+        .join("projects")
+        .join(dir)
+        .join(format!("{id}.jsonl"))
+        .is_file()
 }
 
 /// Characters `cmd.exe` interprets even inside double quotes, or that end
@@ -446,18 +469,52 @@ mod tests {
             .as_nanos();
         let dir = std::env::temp_dir().join(format!("acta-launch-{}-{n}", std::process::id()));
         let id = "019a7a6e-1c2d-7f00-8a00-0123456789ab";
-        assert!(!transcript_exists(&dir, id));
+        let cwd = Path::new("C:\\Users\\alexandre\\acta");
+        assert!(!transcript_exists(&dir, cwd, id));
         let project = dir.join("projects").join("C--Users-alexandre-acta");
         std::fs::create_dir_all(&project).unwrap();
         std::fs::write(project.join(format!("{id}.jsonl")), "").unwrap();
-        assert!(transcript_exists(&dir, id));
+        // Only under the directory of this working directory.
+        let here = if cfg!(windows) {
+            cwd.to_path_buf()
+        } else {
+            PathBuf::from("C:\\Users\\alexandre\\acta")
+        };
+        assert!(transcript_exists(&dir, &here, id));
         assert!(!transcript_exists(
             &dir,
+            Path::new("C:\\Users\\alexandre\\other"),
+            id
+        ));
+        assert!(!transcript_exists(
+            &dir,
+            &here,
             "019a7a6e-1c2d-7f00-8a00-0123456789ac"
         ));
-        assert!(!transcript_exists(&dir, "../x"));
+        assert!(!transcript_exists(&dir, &here, "../x"));
         let _ = std::fs::remove_dir_all(&dir);
         assert!(is_uuid(id) && !is_uuid("019a7a6e1c2d7f008a000123456789ab"));
+    }
+
+    #[test]
+    fn project_directory_names_follow_claude_codes_layout() {
+        // Seen on disk for a real run (Claude Code 2.1.330, Windows).
+        assert_eq!(
+            project_dir_name(Path::new(
+                "C:\\Users\\Alegzandr\\AppData\\Local\\Temp\\claude\\scratchpad\\ccint\\hl\\proj"
+            ))
+            .as_deref(),
+            Some("C--Users-Alegzandr-AppData-Local-Temp-claude-scratchpad-ccint-hl-proj")
+        );
+        assert_eq!(
+            project_dir_name(Path::new("/home/alexandre/my app.v2")).as_deref(),
+            Some("-home-alexandre-my-app-v2")
+        );
+        assert_eq!(
+            project_dir_name(Path::new("/home/\u{e9}t\u{e9}")).as_deref(),
+            Some("-home--t-")
+        );
+        assert_eq!(project_dir_name(&PathBuf::from("a".repeat(201))), None);
     }
 
     #[test]

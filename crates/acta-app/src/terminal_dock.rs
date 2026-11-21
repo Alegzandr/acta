@@ -172,9 +172,6 @@ impl TerminalDock {
         let new_conversations = settings::current(cx).new_conversations;
         let ws = self.ws.read(cx);
         let folders = ws.db.run(cx, move |store| {
-            let config = acta_terminal::claude_config_dir();
-            let conversation =
-                conversation_for(store, owner, new_conversations, config.as_deref())?;
             let effective = store.effective_folders(owner)?;
             let epic = match owner {
                 Owner::Topic(id) => store.topic(id)?.epic,
@@ -190,6 +187,13 @@ impl TerminalDock {
             {
                 folders.push((path, Owner::Project(project)));
             }
+            let config = acta_terminal::claude_config_dir();
+            let conversation = match folders.first() {
+                Some((cwd, _)) => {
+                    conversation_for(store, owner, new_conversations, config.as_deref(), cwd)?
+                }
+                None => None,
+            };
             Ok((folders, epic, conversation))
         });
         // The previous session (if any) ends when its view is dropped.
@@ -876,10 +880,12 @@ fn conversation_for(
     owner: Owner,
     always_new: bool,
     claude_config: Option<&std::path::Path>,
+    cwd: &std::path::Path,
 ) -> acta_core::Result<Option<Conversation>> {
     let key = conversation_key(owner);
     let last = store.local_value(&key)?.filter(|id| {
-        !always_new && claude_config.is_some_and(|dir| acta_terminal::transcript_exists(dir, id))
+        !always_new
+            && claude_config.is_some_and(|dir| acta_terminal::transcript_exists(dir, cwd, id))
     });
     if let Some(id) = last {
         return Ok(Some(Conversation::Resume(id)));
@@ -980,8 +986,13 @@ mod tests {
         let claude = tempfile::tempdir().unwrap();
         let config = Some(claude.path());
         let owner = Owner::Topic(TopicId(12));
+        let cwd = PathBuf::from(if cfg!(windows) {
+            "C:\\Users\\alexandre\\acta"
+        } else {
+            "/home/alexandre/acta"
+        });
         // First start: a new conversation, recorded for the page.
-        let first = conversation_for(store, owner, false, config)
+        let first = conversation_for(store, owner, false, config, &cwd)
             .unwrap()
             .unwrap();
         let Conversation::New(id) = first else {
@@ -993,25 +1004,44 @@ mod tests {
             Some(id.clone())
         );
         // No transcript yet: a new one again.
-        let again = conversation_for(store, owner, false, config)
+        let again = conversation_for(store, owner, false, config, &cwd)
             .unwrap()
             .unwrap();
         let Conversation::New(id) = again else {
             panic!("{again:?}")
         };
-        // Claude Code wrote the transcript: the next start resumes it,
-        // unless the setting asks for a new conversation every time.
+        // Claude Code wrote the transcript under this folder's directory:
+        // the next start resumes it.
         let project = claude
             .path()
             .join("projects")
-            .join("C--Users-alexandre-acta");
+            .join(acta_terminal::launch::project_dir_name(&cwd).unwrap());
         std::fs::create_dir_all(&project).unwrap();
         std::fs::write(project.join(format!("{id}.jsonl")), "").unwrap();
         assert_eq!(
-            conversation_for(store, owner, false, config).unwrap(),
+            conversation_for(store, owner, false, config, &cwd).unwrap(),
             Some(Conversation::Resume(id.clone()))
         );
-        let always = conversation_for(store, owner, true, config)
+        // The page's folder moved: that transcript is another folder's, so
+        // a new conversation starts and becomes the page's.
+        let moved = PathBuf::from(if cfg!(windows) {
+            "C:\\Users\\alexandre\\elsewhere"
+        } else {
+            "/home/alexandre/elsewhere"
+        });
+        let fresh = conversation_for(store, owner, false, config, &moved)
+            .unwrap()
+            .unwrap();
+        let Conversation::New(fresh) = fresh else {
+            panic!("{fresh:?}")
+        };
+        assert_ne!(fresh, id);
+        assert_eq!(
+            store.local_value(&conversation_key(owner)).unwrap(),
+            Some(fresh)
+        );
+        // The setting asks for a new conversation every time.
+        let always = conversation_for(store, owner, true, config, &cwd)
             .unwrap()
             .unwrap();
         assert!(matches!(always, Conversation::New(other) if other != id));
