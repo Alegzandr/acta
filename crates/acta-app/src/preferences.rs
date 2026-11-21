@@ -62,6 +62,9 @@ pub struct Preferences {
     pub terminal_width: Option<u16>,
     pub chat_width: Option<u16>,
     pub chat_height: Option<u16>,
+    /// The version that last ran ("0.4.1"): a launch on another version
+    /// shows "Updated to ..." in the status bar for that session.
+    pub last_version: Option<String>,
 }
 
 /// The file as stored. Every field but the version may be missing (it then
@@ -99,6 +102,13 @@ struct Stored {
     chat_width: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     chat_height: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    last_version: Option<String>,
+}
+
+/// A stored version: digits and dots only, short.
+fn is_version(v: &str) -> bool {
+    !v.is_empty() && v.len() <= 16 && v.chars().all(|c| c.is_ascii_digit() || c == '.')
 }
 
 /// A stored pane size: kept only when it is a plausible number of pixels.
@@ -212,6 +222,7 @@ pub fn parse(text: &str) -> Result<Preferences, LoadError> {
         terminal_width: pane_size(stored.terminal_width),
         chat_width: pane_size(stored.chat_width),
         chat_height: pane_size(stored.chat_height),
+        last_version: stored.last_version.filter(|v| is_version(v)),
     })
 }
 
@@ -234,6 +245,7 @@ pub fn serialize(prefs: &Preferences) -> String {
         terminal_width: prefs.terminal_width,
         chat_width: prefs.chat_width,
         chat_height: prefs.chat_height,
+        last_version: prefs.last_version.clone(),
     };
     // A struct of plain enums and numbers always serializes.
     let mut text = serde_json::to_string_pretty(&stored).unwrap_or_default();
@@ -443,6 +455,7 @@ mod tests {
             terminal_width: Some(520),
             chat_width: Some(480),
             chat_height: Some(240),
+            last_version: Some("0.3.0".into()),
         };
         save_to(&path, &prefs).unwrap();
         assert_eq!(load_from(&path).unwrap(), prefs);
@@ -517,6 +530,8 @@ mod tests {
         assert_eq!(prefs.sidebar_width, None);
         assert_eq!(prefs.terminal_width, Some(520));
         assert_eq!(prefs.chat_height, None);
+        let odd = parse(r#"{"version":1,"last_version":"Alexandre"}"#).unwrap();
+        assert_eq!(odd.last_version, None);
     }
 
     #[test]

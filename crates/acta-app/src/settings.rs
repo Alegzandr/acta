@@ -27,6 +27,9 @@ actions!(
 pub struct Settings {
     current: Preferences,
     writer: Writer,
+    /// This launch runs a newer version than the last one (the status
+    /// bar's "Updated to ..." for this session, components.md 5).
+    just_updated: bool,
 }
 
 impl Global for Settings {}
@@ -35,10 +38,18 @@ impl Global for Settings {}
 pub fn init(cx: &mut App) {
     let current = preferences::load();
     theme::apply(current.theme, cx);
+    let updated = just_updated(current.last_version.as_deref(), acta_core::VERSION);
+    let first_record = current.last_version.as_deref() != Some(acta_core::VERSION);
     cx.set_global(Settings {
         current,
         writer: Writer::new(preferences::path()),
+        just_updated: updated,
     });
+    if first_record {
+        change(cx, |prefs| {
+            prefs.last_version = Some(acta_core::VERSION.into())
+        });
+    }
     cx.on_action(|_: &ThemeSystem, cx| set_theme(ThemeSetting::System, cx));
     cx.on_action(|_: &ThemeLight, cx| set_theme(ThemeSetting::Light, cx));
     cx.on_action(|_: &ThemeDark, cx| set_theme(ThemeSetting::Dark, cx));
@@ -61,6 +72,17 @@ pub fn flush(cx: &mut App) {
         let current = settings.current.clone();
         cx.global_mut::<Settings>().writer.flush(&current);
     }
+}
+
+/// Whether a launch on `now` follows one on another version. No record
+/// (a first launch, or a build from before the record) is not an update.
+pub fn just_updated(last: Option<&str>, now: &str) -> bool {
+    last.is_some_and(|v| v != now)
+}
+
+/// This session runs a version that was just installed by an update.
+pub fn updated_this_session(cx: &App) -> bool {
+    cx.try_global::<Settings>().is_some_and(|s| s.just_updated)
 }
 
 pub fn current(cx: &App) -> &Preferences {
@@ -95,4 +117,16 @@ pub fn set_language(locale: Locale, cx: &mut App) {
     }
     change(cx, |prefs| prefs.language = locale);
     cx.refresh_windows();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_a_change_of_version_counts_as_an_update() {
+        assert!(just_updated(Some("0.3.0"), "0.4.1"));
+        assert!(!just_updated(Some("0.4.1"), "0.4.1"));
+        assert!(!just_updated(None, "0.4.1"));
+    }
 }

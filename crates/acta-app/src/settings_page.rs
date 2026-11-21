@@ -991,7 +991,7 @@ impl SettingsPage {
 }
 
 /// The Acta repository's releases: "Release notes".
-const RELEASES: &str = "https://github.com/Alegzandr/acta/releases";
+pub const RELEASES: &str = "https://github.com/Alegzandr/acta/releases";
 
 /// About (components-app.md 5, Settings): the version, the release notes
 /// and the licences of what Acta ships.

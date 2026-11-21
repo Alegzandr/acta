@@ -2133,14 +2133,36 @@ impl Shell {
                     .child(claude_item),
             )
             .child(
-                ui::bar_item("status-version", &tokens)
+                div()
+                    .flex()
+                    .flex_row()
+                    .h_full()
+                    .when(settings::updated_this_session(cx), |this| {
+                        // components.md 5, Update indicator: "Updated to
+                        // 0.4.1" for the first session on a new version,
+                        // opening the release notes; no dot.
+                        this.child(
+                            ui::bar_item("status-updated", &tokens)
+                                .child(type_scale::SMALL.el().child(tr(
+                                    locale,
+                                    Key::UpdateDone,
+                                    &[("version", Arg::Text(acta_core::VERSION))],
+                                )))
+                                .on_click(|_, _, cx| cx.open_url(crate::settings_page::RELEASES)),
+                        )
+                    })
                     .child(
-                        type_scale::SMALL
-                            .el()
-                            .font_features(type_scale::tabular())
-                            .child(version),
-                    )
-                    .on_click(cx.listener(|shell, _, window, cx| shell.open_settings(window, cx))),
+                        ui::bar_item("status-version", &tokens)
+                            .child(
+                                type_scale::SMALL
+                                    .el()
+                                    .font_features(type_scale::tabular())
+                                    .child(version),
+                            )
+                            .on_click(
+                                cx.listener(|shell, _, window, cx| shell.open_settings(window, cx)),
+                            ),
+                    ),
             )
     }
 
