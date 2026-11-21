@@ -217,8 +217,17 @@ impl UndoStack {
         self.0.last()
     }
 
+    #[cfg(test)]
     pub fn pop(&mut self) -> Option<Undo> {
         self.0.pop()
+    }
+
+    /// Remove exactly `step`: the newest step equal to it, whatever was
+    /// pushed while it was being written.
+    pub fn remove(&mut self, step: &Undo) {
+        if let Some(at) = self.0.iter().rposition(|s| s == step) {
+            self.0.remove(at);
+        }
     }
 
     #[cfg(test)]
@@ -678,7 +687,8 @@ impl Workspace {
             return;
         };
         self.undoing = true;
-        let task = self.write(cx, Key::ErrorSave, move |store| step.apply(store));
+        let applied = step.clone();
+        let task = self.write(cx, Key::ErrorSave, move |store| applied.apply(store));
         cx.spawn(async move |ws, cx| {
             let result = task.await;
             let _ = ws.update(cx, |ws, cx| {
@@ -686,7 +696,7 @@ impl Workspace {
                 // A failed write keeps the step for another try.
                 if let Ok(done) = result {
                     if let Some(stack) = ws.undo.get_mut(&project) {
-                        stack.pop();
+                        stack.remove(&step);
                     }
                     if !done {
                         ws.toast_error(Key::UndoChanged, cx);
@@ -938,6 +948,18 @@ mod tests {
             stack.pop(),
             Some(Undo::Restore(Record::Topic(TopicId(149))))
         );
+    }
+
+    #[test]
+    fn a_finished_undo_removes_its_own_step_not_a_newer_one() {
+        let mut stack = UndoStack::default();
+        let old = Undo::Restore(Record::Topic(TopicId(1)));
+        let newer = Undo::Restore(Record::Topic(TopicId(2)));
+        stack.push(old.clone());
+        stack.push(newer.clone());
+        stack.remove(&old);
+        assert_eq!(stack.pop(), Some(newer));
+        assert_eq!(stack.pop(), None);
     }
 
     #[test]

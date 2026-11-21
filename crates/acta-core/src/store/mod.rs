@@ -245,15 +245,29 @@ impl Store {
             return f(self);
         }
         self.conn.execute_batch("BEGIN IMMEDIATE")?;
-        match f(self) {
-            Ok(value) => {
-                self.conn.execute_batch("COMMIT")?;
-                Ok(value)
-            }
-            Err(err) => {
-                let _ = self.conn.execute_batch("ROLLBACK");
-                Err(err)
-            }
+        // The guard rolls back when it is dropped without a successful
+        // COMMIT: an error from `f`, a failed COMMIT, or a panic in `f`.
+        let mut guard = TxGuard {
+            store: self,
+            committed: false,
+        };
+        let value = f(guard.store)?;
+        guard.store.conn.execute_batch("COMMIT")?;
+        guard.committed = true;
+        Ok(value)
+    }
+}
+
+/// Rolls back the transaction of [`Store::atomically`] unless it committed.
+struct TxGuard<'a> {
+    store: &'a mut Store,
+    committed: bool,
+}
+
+impl Drop for TxGuard<'_> {
+    fn drop(&mut self) {
+        if !self.committed && !self.store.conn.is_autocommit() {
+            let _ = self.store.conn.execute_batch("ROLLBACK");
         }
     }
 }

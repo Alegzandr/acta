@@ -1327,6 +1327,53 @@ fn order_index_follows_the_stored_order_and_folder_paths_set_together() {
 
     let dir = tempfile::tempdir().unwrap();
     let f1 = s.add_folder(Owner::Project(p), dir.path(), H).unwrap();
-    s.set_folder_paths(&[(f1, "/gone/acta".into())], H).unwrap();
-    assert_eq!(s.folder(f1).unwrap().path, "/gone/acta");
+    let gone = if cfg!(windows) {
+        "D:\\gone\\acta"
+    } else {
+        "/gone/acta"
+    };
+    let stored = crate::folder_path::normalize(crate::paths::Os::CURRENT, gone);
+    s.set_folder_paths(&[(f1, stored.clone())], H).unwrap();
+    assert_eq!(s.folder(f1).unwrap().path, stored);
+
+    // Not in stored form, or another folder of the same owner: refused.
+    let unnormal = format!("{stored}/");
+    assert!(s.set_folder_paths(&[(f1, unnormal)], H).is_err());
+    let other = tempfile::tempdir().unwrap();
+    let f2 = s.add_folder(Owner::Project(p), other.path(), H).unwrap();
+    assert!(s.set_folder_paths(&[(f2, stored.clone())], H).is_err());
+    assert_ne!(s.folder(f2).unwrap().path, stored);
+}
+
+#[test]
+fn a_panic_inside_atomically_rolls_back_and_leaves_autocommit() {
+    let mut t = open();
+    let s = &mut t.store;
+    let p = s.create_project("Acta", "", H).unwrap();
+    let a = topic(s, p, None, "A");
+    let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _: Result<()> = s.atomically(|s| {
+            s.update_topic(
+                a,
+                TopicPatch {
+                    title: Some("Renamed".into()),
+                    ..TopicPatch::default()
+                },
+                H,
+            )?;
+            panic!("in the middle");
+        });
+    }));
+    assert!(caught.is_err());
+    assert!(s.conn.is_autocommit(), "no transaction left open");
+    assert_eq!(s.topic(a).unwrap().title, "A");
+    s.update_topic(
+        a,
+        TopicPatch {
+            title: Some("B".into()),
+            ..TopicPatch::default()
+        },
+        H,
+    )
+    .unwrap();
 }
