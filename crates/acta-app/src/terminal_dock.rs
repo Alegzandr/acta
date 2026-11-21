@@ -300,15 +300,17 @@ impl TerminalDock {
         let new_conversations = settings::current(cx).new_conversations;
         let ws = self.ws.read(cx);
         let folders = ws.db.run(cx, move |store| {
-            let effective = store.effective_folders(owner)?;
+            // The active folder first: the session starts there.
+            let visible = store.visible_folders(owner)?;
             let epic = match owner {
                 Owner::Topic(id) => store.topic(id)?.epic,
                 _ => None,
             };
-            let mut folders: Vec<(PathBuf, Owner)> = effective
-                .folders
-                .iter()
-                .map(|f| (PathBuf::from(&f.path), f.from))
+            let mut folders: Vec<(PathBuf, Owner)> = visible
+                .active()
+                .into_iter()
+                .chain(visible.additional())
+                .map(|f| (PathBuf::from(&f.folder.path), f.origin))
                 .collect();
             if folders.is_empty()
                 && let Some(path) = unsaved

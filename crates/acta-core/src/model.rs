@@ -4,6 +4,7 @@
 //! short ids shown to agents (`T-42`) are these numbers with a prefix. The
 //! identity that survives export and import is the UUIDv7 (ADR 0006).
 
+use crate::date::Date;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -109,6 +110,9 @@ pub enum EventKind {
     /// (`{"kind":"progress","text":"..."}`), new the entry's number, so
     /// no wording is lost.
     Edited,
+    /// The due date changed: old and new are `YYYY-MM-DD`, absent for no
+    /// date (data.md request 16).
+    Due,
 }
 
 /// Level a knowledge entry or a folder is attached to.
@@ -212,6 +216,10 @@ pub struct Project {
     pub title: String,
     pub description: String,
     pub position: i64,
+    /// The folder this page chose as active (ADR 0011); `None` follows the
+    /// default rule. See [`crate::store::VisibleFolders`].
+    pub active_folder: Option<FolderId>,
+    pub due_on: Option<Date>,
     pub stamp: Stamp,
 }
 
@@ -223,7 +231,8 @@ pub struct Epic {
     pub description: String,
     pub state: String,
     pub position: i64,
-    pub include_inherited_folders: bool,
+    pub active_folder: Option<FolderId>,
+    pub due_on: Option<Date>,
     pub stamp: Stamp,
 }
 
@@ -240,7 +249,8 @@ pub struct Topic {
     pub state_updated_at: Option<i64>,
     pub state_updated_by: Option<Author>,
     pub position: i64,
-    pub include_inherited_folders: bool,
+    pub active_folder: Option<FolderId>,
+    pub due_on: Option<Date>,
     pub stamp: Stamp,
 }
 
@@ -254,6 +264,7 @@ pub struct TopicSummary {
     pub position: i64,
     /// Count of timeline entries (system events excluded).
     pub entries: i64,
+    pub due_on: Option<Date>,
     pub updated_at: i64,
     pub updated_by: Author,
 }
@@ -264,6 +275,7 @@ pub struct EpicSummary {
     pub title: String,
     pub position: i64,
     pub progress: Progress,
+    pub due_on: Option<Date>,
     pub updated_at: i64,
 }
 
@@ -285,6 +297,14 @@ pub struct ProjectSummary {
 pub struct Progress {
     pub done: i64,
     pub total: i64,
+}
+
+impl Progress {
+    /// An epic or a project is open for due dates while its progress is
+    /// below 100% or it has no topic (components-records.md 5).
+    pub fn is_open(self) -> bool {
+        self.total == 0 || self.done < self.total
+    }
 }
 
 /// The sidebar tree of one project: loose topics first, then epics.
@@ -409,7 +429,62 @@ pub struct Folder {
     /// Absolute canonical path, shown as stored (ADR 0008).
     pub path: String,
     pub position: i64,
+    /// The name the user gave; empty means the last segment of the path,
+    /// so it follows a Locate or a move ([`Folder::display_name`]).
+    pub name: String,
+    /// One of [`FOLDER_ICONS`], or empty for automatic (ADR 0011).
+    pub icon: String,
+    pub commit_mode: CommitMode,
+    /// "Commit in my name, without Co-Authored-By Claude"; `None` follows
+    /// the Settings default.
+    pub commit_as_user: Option<bool>,
+    /// "Also on <default branch>".
+    pub commit_on_default: bool,
     pub stamp: Stamp,
+}
+
+impl Folder {
+    /// The name shown: the user's, else the last segment of the path.
+    pub fn display_name(&self) -> &str {
+        if !self.name.is_empty() {
+            return &self.name;
+        }
+        let trimmed = self.path.trim_end_matches(['/', '\\']);
+        trimmed
+            .rsplit(['/', '\\'])
+            .next()
+            .filter(|s| !s.is_empty())
+            .unwrap_or(&self.path)
+    }
+}
+
+/// The icons a folder may be given besides automatic (ADR 0011, 1).
+pub const FOLDER_ICONS: [&str; 12] = [
+    "folder-open",
+    "folder-git-2",
+    "git-branch",
+    "code",
+    "book-open",
+    "package",
+    "server",
+    "globe",
+    "smartphone",
+    "database",
+    "flask-conical",
+    "palette",
+];
+
+/// What Claude Code may do with git in a folder (ADR 0011, 3).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CommitMode {
+    /// Commits only when the user asks (Claude Code's own rule).
+    #[default]
+    Manual,
+    /// Commit automatically.
+    Commit,
+    /// Commit and push automatically.
+    Push,
 }
 
 /// A page of a list: summaries first, then a cursor (ADR 0005).

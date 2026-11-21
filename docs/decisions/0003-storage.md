@@ -81,6 +81,9 @@ getrandom = "0.4"
 - To verify in M2: restore through the backup API while an MCP server holds the database open; `journal_size_limit`; behaviour when the busy timeout is exceeded.
 - Revisit when rusqlite gains a non-OpenSSL native provider (#1811), which would remove the Perl requirement.
 
+## Changelog
+- 2026-11-21: the main database connection (app, CLI, MCP server, hooks) sets `PRAGMA cache_size = -16384` (16 MiB, a cap allocated only as pages are read; `presence.db` keeps the default). Decrypted pages stay in process memory and never reach the disk, so the rule on plaintext at rest holds. Why: the Overview's 5 ms budget (data.md request 17), measured on a seeded 10,000-topic / 200,000-entry database at 31 ms with the default 2 MiB cache and 5 ms with 16 MiB.
+
 ## Evidence
 Spike: `spikes/storage`, run with `cargo run --release -- run` (add `--no-default-features --features ltc` for libtomcrypt). Windows 11 26300, rustc 1.97.1 MSVC, Strawberry Perl 5.42.3 (portable, on PATH for the build only), no NASM. Not run on macOS or Linux. Credential service `acta-spike`, deleted at the end. 28 checks pass with OpenSSL 3.6.3, 29 with libtomcrypt 1.18.2 (the difference is the final credential-deletion check, skipped in the run that kept its database for the cross-provider test).
 - Build: clean release build 4 min 34 s with vendored OpenSSL (8.1 MB executable); 12.7 s with libtomcrypt (3.7 MB). With Git's Perl the OpenSSL build fails in 4.5 s.
