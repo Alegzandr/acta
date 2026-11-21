@@ -234,9 +234,46 @@ cmd_verify() {
     expect "$(env PATH="$user_path" acta --version)" "acta $version" "acta --version from PATH"
 }
 
+# api_quota: "<remaining> <limit> <reset epoch>" of the unauthenticated GitHub REST
+# API for this runner's IP, which the app's update check uses (60 requests an hour,
+# shared by every job that had the IP). Reading it does not count against it.
+api_quota() {
+    curl --silent --show-error --proto '=https' --tlsv1.2 https://api.github.com/rate_limit |
+        jq -r '.resources.core | "\(.remaining) \(.limit) \(.reset)"'
+}
+
+# report_quota <when>: print the quota; returns 1 when too little is left for one
+# update (the check and the download each list the releases, the new version checks
+# once more).
+report_quota() {
+    quota=$(api_quota) || quota=
+    # shellcheck disable=SC2086 # split "<remaining> <limit> <reset>" into $2 $3 $4
+    set -- "$1" $quota
+    case "$#:${2:-}${3:-}${4:-}" in
+        4: | 4:*[!0-9]* | [!4]*)
+            echo "GitHub API quota $1: could not be read"
+            return 0
+            ;;
+    esac
+    echo "GitHub API quota of this runner's IP $1: $2 of $3 left, reset at $(date -u -r "$4" +%H:%M:%S 2>/dev/null || date -u -d "@$4" +%H:%M:%S) UTC"
+    [ "$2" -ge 3 ]
+}
+
 cmd_update() {
     from=$1
     to=$2
+    # Up to 0.1.3 the app checks through the REST API without a token. With the IP's
+    # quota spent that check fails as a network error, which says nothing about Acta:
+    # stop here and say so. Later versions read releases/latest/download (ADR 0004).
+    uses_api=0
+    if [ "$(printf '%s
+%s
+' "$from" 0.1.3 | sort -V | head -n 1)" = "$from" ]; then
+        uses_api=1
+        if ! report_quota "before the first launch"; then
+            fail "the unauthenticated GitHub API quota of this runner's IP is spent, so Acta $from cannot check for updates; rerun the job later"
+        fi
+    fi
     started=$(now)
     deadline=$((started + UPDATE_TIMEOUT))
     launches=0
@@ -267,8 +304,10 @@ cmd_update() {
             relaunch=1
             continue
         fi
-        [ "$(now)" -lt "$deadline" ] ||
+        if [ "$(now)" -ge "$deadline" ]; then
+            if [ "$uses_api" = 1 ]; then report_quota "at the end" || true; fi
             fail "Acta did not restart as $to within $UPDATE_TIMEOUT s ($launches launch(es))"
+        fi
         sleep 2
     done
     elapsed=$(($(now) - started))

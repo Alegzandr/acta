@@ -18,7 +18,15 @@ acta-core.workspace = true
 gpui-kit = "=0.10.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-velopack = "=1.2.161"
+# public-utils only makes modules public: `bundle::Manifest` is in the signature of
+# `UpdateSource`, and `download` fetches the feed (update_source.rs).
+velopack = { version = "=1.2.161", features = ["public-utils"] }
+# Velopack's HTTP client, named only to match on `ureq::Error` (update.rs: the
+# status or kind of a network error, for the log). Any 3.x unifies with velopack's
+# own ureq dependency, which also brings its default features; the `rustls` feature is
+# requested here because `Error::Rustls` exists only with it. If velopack moves to
+# another major, the match no longer type-checks against `velopack::NetworkError`.
+ureq = { version = "3.5", default-features = false, features = ["rustls"] }
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"
