@@ -86,6 +86,8 @@ done
 # Every package carries the third-party notices; a package without them must not exist.
 licenses=dist/licenses
 [ -s "$licenses/THIRD-PARTY-RUST.txt" ] || die "$licenses is missing or incomplete; run scripts/licenses.sh first"
+# Acta's own licence goes next to them, as Acta-LICENSE.txt.
+[ -s LICENSE ] || die "LICENSE is missing"
 command -v vpk >/dev/null 2>&1 || die "vpk not found; run: dotnet tool install -g vpk --version 1.2.161"
 # A vpk that cannot start (no .NET 10 runtime where its launcher looks: set DOTNET_ROOT)
 # must stop here, not be mistaken below for "no previous release".
@@ -122,6 +124,7 @@ if [ "$want_os" = Darwin ]; then
     cp "$bin_dir/Acta" "$bin_dir/acta-cli" "$app/Contents/MacOS/"
     chmod 755 "$app/Contents/MacOS/Acta" "$app/Contents/MacOS/acta-cli"
     cp -R "$licenses" "$app/Contents/Resources/licenses"
+    cp LICENSE "$app/Contents/Resources/licenses/Acta-LICENSE.txt"
 
     icns=$app/Contents/Resources/Acta.icns
     if [ -f assets/icons/acta.icns ]; then
@@ -215,6 +218,7 @@ else
     cp "$bin_dir/Acta" "$bin_dir/acta-cli" "$stage/"
     chmod 755 "$stage/Acta" "$stage/acta-cli"
     cp -R "$licenses" "$stage/licenses"
+    cp LICENSE "$stage/licenses/Acta-LICENSE.txt"
 
     vpk pack --packId "$PACK_ID" --packTitle Acta --packVersion "$version" \
         --packDir "$stage" --mainExe Acta --icon assets/icons/acta.png \

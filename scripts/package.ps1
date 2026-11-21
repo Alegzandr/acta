@@ -59,6 +59,8 @@ $licenses = 'dist\licenses'
 if (-not (Test-Path (Join-Path $licenses 'THIRD-PARTY-RUST.txt') -PathType Leaf)) {
     throw "$licenses is missing or incomplete; run scripts/licenses.sh first (Git Bash)"
 }
+# Acta's own licence goes next to them, as Acta-LICENSE.txt.
+if (-not (Test-Path 'LICENSE' -PathType Leaf)) { throw 'LICENSE is missing' }
 if (-not (Get-Command vpk -ErrorAction SilentlyContinue)) {
     throw 'vpk not found; run: dotnet tool install -g vpk --version 1.2.161'
 }
@@ -74,6 +76,7 @@ if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
 New-Item -ItemType Directory -Force $stage, $OutputDir | Out-Null
 Copy-Item (Join-Path $BinDir 'Acta.exe'), (Join-Path $BinDir 'acta-cli.exe') $stage
 Copy-Item $licenses (Join-Path $stage 'licenses') -Recurse
+Copy-Item 'LICENSE' (Join-Path $stage 'licenses\Acta-LICENSE.txt')
 
 if ($FetchPrevious) {
     # Fails when the channel has no published release yet: then there is simply no delta.
