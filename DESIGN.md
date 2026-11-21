@@ -47,14 +47,14 @@ Load only the part a task needs. Section numbers are global: "4.7" or "DESIGN 4.
 | [layout.md](docs/design/layout.md) | 4 | Spacing, heights, radii, icons (4.1); app shell (4.2), the Projects tree: structure, signals, reveal, long trees, empty states (4.2.1), titlebar (4.3), tabs (4.4), tool windows (4.5), status bar (4.6), `preferences.json` (4.7). |
 | [workbench.md](docs/design/workbench.md) | 4.8 | Workbench layout: areas, views, area header and view tabs, showing and hiding, resizing, moving views by drag and drop and by command, page groups, web views during drags, narrow windows, recovering the layout, persistence, defaults and Reset layout. |
 | [components.md](docs/design/components.md) | 5 | States and focus ring; button, inputs, editors, list row, tree row (kinds, states, drag, sticky project row), status indicator, segmented control, slash menu, notice, checkbox, palette, menus, tooltip, toast, dialog, empty state, scrollbar, resize handle, kbd, update indicator. |
-| [components-records.md](docs/design/components-records.md) | 5 | Timeline entry, current-state panel, note card, properties block, due row and due date picker, topic table. |
+| [components-records.md](docs/design/components-records.md) | 5 | Timeline entry, current-state panel, note card, properties block, due row and due date picker, topic table, Overview section and filter chip. |
 | [components-knowledge.md](docs/design/components-knowledge.md) | 5 | Knowledge section, knowledge base page, document reading view and editor, history. |
 | [components-folders.md](docs/design/components-folders.md) | 5 | Working folders: rows, the switcher, inheritance, the active folder, git state, commit modes, not found and repair, picker, paths, terminal launch. |
 | [components-app.md](docs/design/components-app.md) | 5 | Chat panel, settings page, shortcuts page, export, import, trash, snapshot restore, key-loss recovery, updater window. |
 | [interaction.md](docs/design/interaction.md) | 6 | Keyboard map (6.1), focus (6.2), motion and latency budgets (6.3), writes, undo and confirmation (6.4), changes from other processes (6.5). |
-| [screens.md](docs/design/screens.md) | 8 | Wireframes: topic page (8.1), inbox (8.2), palette (8.3), terminal (8.4), first run (8.5), knowledge (8.6, 8.7, 8.10), import preview (8.8), key loss (8.9), working folders (8.11), settings (8.12), chat (8.13), epic (8.14), tab bar (8.15), updater (8.16), workbench with the right sidebar (8.17), dragging a view (8.18), split page area and views moved (8.19). |
+| [screens.md](docs/design/screens.md) | 8 | Wireframes: topic page (8.1), inbox (8.2), palette (8.3), terminal (8.4), first run (8.5), knowledge (8.6, 8.7, 8.10), import preview (8.8), key loss (8.9), working folders (8.11), settings (8.12), chat (8.13), epic (8.14), tab bar (8.15), updater (8.16), workbench with the right sidebar (8.17), dragging a view (8.18), split page area and views moved (8.19), project page with its Overview (8.20). |
 | [copy.md](docs/design/copy.md) | 7, 10.1 to 10.3 | Voice; languages, French conventions, dates, times and numbers, due dates and typed dates (10.2.1), layout under longer text. |
-| [catalogue.md](docs/design/catalogue.md) | 10.4 to 10.4.4 | Every UI string by key, English and French. Code and tests read 10.4; 10.4.1 notes how the keys of 4.8 moved into it; 10.4.2 to 10.4.4 hold keys pending implementation. |
+| [catalogue.md](docs/design/catalogue.md) | 10.4 to 10.4.5 | Every UI string by key, English and French. Code and tests read 10.4; 10.4.1 notes how the keys of 4.8 moved into it; 10.4.2 to 10.4.5 hold keys pending implementation. |
 | [data.md](docs/design/data.md) | 11 | What model data every element shows; data model requests. |
 
 Sections 1 (principles), 9 (review checklist) and the Direction are in this file. The token table (2.1), the contrast table (2.2) and the catalogue (10.4) are parsed by tests in `crates/acta-app` (`theme.rs`, `i18n/mod.rs`): keep their headings and table shapes.
@@ -118,6 +118,14 @@ Run against every screen, in dark and in light, in English and in French. One fa
 - [ ] Picker: reachable by `D`, `Enter` on the row and "Set due date..."; every action works from the keyboard; the preview line shows the exact day before `Enter`; `Esc` and a click outside change nothing; English and French words parse in both languages; day-month order only.
 - [ ] Setting, changing and clearing is one `Mod+Z` step, writes a system event, and shows no toast. Past midnight, relative forms and marks update without moving a row; day counts are calendar days across a daylight-saving change.
 - [ ] Agent side: `brief`, `find` and the session briefing stay within their budgets with every record dated; `update` takes only `YYYY-MM-DD` or `""`.
+
+**Overview** (components-records.md 5, screens.md 8.20; run with a calm project, then one with blocked, overdue, idle topics and a 12-day-old inbox, in both themes and languages)
+- [ ] At rest the project page shows at most four attention lines, each only above zero; nothing applies: the header row and "Nothing needs attention." only; no zero, no chart, no tile, no card.
+- [ ] Colour is `warning` on the Blocked and Overdue glyphs only; no accent at rest; every line reads in greyscale by glyph and words.
+- [ ] "More" is collapsed by default and holds only Last 7 days, Epics and the memory line, each absent when it has nothing to say; the epic page's section is absent with nothing to report and collapsed by default otherwise.
+- [ ] Every number opens the list it counts, and the list's count equals it; the chip clears with its `x`, `Backspace` or `Esc`; every line has its palette command.
+- [ ] A remote write that adds or removes a line moves neither focus nor viewport; values change at local midnight without moving anything else.
+- [ ] Agent side: the `Attention:` line appears only when something needs attention, is one line within 160 chars (120 on an epic), and `brief` stays within its budget with every topic blocked, overdue or idle.
 
 **Behaviour**
 - [ ] Feedback on the next frame; nothing in the "never animates" list animates; budgets in 6.3 hold with 10,000 topics.
