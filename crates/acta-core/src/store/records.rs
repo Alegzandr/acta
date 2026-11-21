@@ -7,7 +7,7 @@ use crate::model::{
     ProjectSummary, ProjectTree, Record, Status, Topic, TopicId, TopicSummary,
 };
 use crate::time::now_ms;
-use rusqlite::{OptionalExtension, Transaction, params};
+use rusqlite::{OptionalExtension, params};
 
 #[derive(Clone, Debug, Default)]
 pub struct ProjectPatch {
@@ -371,47 +371,18 @@ impl Store {
     /// Moves a project, epic, topic or folder to `index` among its siblings
     /// (clamped). Siblings whose position changes get a new `updated_at`, so
     /// an import carries the order.
+    /// Where a record stands among its siblings, in the stored order
+    /// (what [`Store::reorder`] takes as `index`).
+    pub fn order_index(&self, record: Record) -> Result<usize> {
+        let (_, ids, raw) = siblings(&self.conn, record)?;
+        ids.iter()
+            .position(|(id, _)| *id == raw)
+            .ok_or_else(|| Error::NotFound(record.to_string()))
+    }
+
     pub fn reorder(&mut self, record: Record, index: usize, author: Author) -> Result<()> {
         let tx = self.write()?;
-        let (table, scope) = match record {
-            Record::Project(id) => {
-                read_project(&tx, id)?;
-                ("projects", String::from("1 = 1"))
-            }
-            Record::Epic(id) => {
-                let e = read_epic(&tx, id)?;
-                ("epics", format!("project_id = {}", e.project.0))
-            }
-            Record::Topic(id) => {
-                let t = read_topic(&tx, id)?;
-                let epic = t
-                    .epic
-                    .map_or("IS NULL".to_owned(), |e| format!("= {}", e.0));
-                (
-                    "topics",
-                    format!("project_id = {} AND epic_id {epic}", t.project.0),
-                )
-            }
-            Record::Folder(id) => {
-                let f = super::folders::read_folder(&tx, id)?;
-                ("folders", super::owner_condition(f.owner))
-            }
-            other => return Err(Error::Invalid(format!("{other} cannot be reordered"))),
-        };
-        let raw = match record {
-            Record::Project(id) => id.0,
-            Record::Epic(id) => id.0,
-            Record::Topic(id) => id.0,
-            Record::Folder(id) => id.0,
-            _ => unreachable!(),
-        };
-        let mut ids: Vec<(i64, i64)> = {
-            let mut stmt = tx.prepare(&format!(
-                "SELECT id, position FROM {table} WHERE {scope} AND deleted_at IS NULL ORDER BY position, id"
-            ))?;
-            stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
-                .collect::<rusqlite::Result<_>>()?
-        };
+        let (table, mut ids, raw) = siblings(&tx, record)?;
         let from = ids
             .iter()
             .position(|(id, _)| *id == raw)
@@ -432,6 +403,57 @@ impl Store {
     }
 }
 
+/// A reorderable record's table, its live siblings `(id, position)` in the
+/// stored order, and its own local id.
+type Siblings = (&'static str, Vec<(i64, i64)>, i64);
+
+/// The table of a reorderable record, its live siblings `(id, position)` in
+/// the stored order, and its own local id.
+fn siblings(tx: &rusqlite::Connection, record: Record) -> Result<Siblings> {
+    {
+        let (table, scope) = match record {
+            Record::Project(id) => {
+                read_project(tx, id)?;
+                ("projects", String::from("1 = 1"))
+            }
+            Record::Epic(id) => {
+                let e = read_epic(tx, id)?;
+                ("epics", format!("project_id = {}", e.project.0))
+            }
+            Record::Topic(id) => {
+                let t = read_topic(tx, id)?;
+                let epic = t
+                    .epic
+                    .map_or("IS NULL".to_owned(), |e| format!("= {}", e.0));
+                (
+                    "topics",
+                    format!("project_id = {} AND epic_id {epic}", t.project.0),
+                )
+            }
+            Record::Folder(id) => {
+                let f = super::folders::read_folder(tx, id)?;
+                ("folders", super::owner_condition(f.owner))
+            }
+            other => return Err(Error::Invalid(format!("{other} cannot be reordered"))),
+        };
+        let raw = match record {
+            Record::Project(id) => id.0,
+            Record::Epic(id) => id.0,
+            Record::Topic(id) => id.0,
+            Record::Folder(id) => id.0,
+            _ => unreachable!(),
+        };
+        let ids: Vec<(i64, i64)> = {
+            let mut stmt = tx.prepare(&format!(
+                "SELECT id, position FROM {table} WHERE {scope} AND deleted_at IS NULL ORDER BY position, id"
+            ))?;
+            stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+                .collect::<rusqlite::Result<_>>()?
+        };
+        Ok((table, ids, raw))
+    }
+}
+
 fn check_epic_in(conn: &rusqlite::Connection, epic: EpicId, project: ProjectId) -> Result<()> {
     let e = read_epic(conn, epic)?;
     if e.project != project {
@@ -443,7 +465,7 @@ fn check_epic_in(conn: &rusqlite::Connection, epic: EpicId, project: ProjectId) 
 }
 
 fn next_topic_position(
-    tx: &Transaction<'_>,
+    tx: &rusqlite::Connection,
     project: ProjectId,
     epic: Option<EpicId>,
 ) -> Result<i64> {
@@ -457,7 +479,7 @@ fn next_topic_position(
 
 /// Applies a topic patch inside a transaction, writing the system events.
 pub(crate) fn apply_topic_patch(
-    tx: &Transaction<'_>,
+    tx: &rusqlite::Connection,
     cur: &Topic,
     patch: TopicPatch,
     author: Author,

@@ -87,6 +87,8 @@ name = "acta-app"
 version = "0.1.4"
 dependencies = [
  "acta-core",
+ "acta-terminal",
+ "chrono",
  "gpui-kit",
  "serde",
  "serde_json",

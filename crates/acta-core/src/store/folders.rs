@@ -132,6 +132,72 @@ impl Store {
         Ok(())
     }
 
+    /// Sets several folders to paths already in stored form, in one
+    /// transaction (bulk repair: the caller resolved the paths off the
+    /// store, so nothing here touches the disk). Each path must already be
+    /// in the normal form of ADR 0008 (what `folder_path::canonical`
+    /// returns) and must not be another folder of the same owner, after the
+    /// change; otherwise it is refused and nothing is written.
+    pub fn set_folder_paths(
+        &mut self,
+        changes: &[(FolderId, String)],
+        author: Author,
+    ) -> Result<()> {
+        let os = Os::CURRENT;
+        let tx = self.write()?;
+        let now = now_ms();
+        for (id, path) in changes {
+            if folder_path::normalize(os, path) != *path {
+                return Err(Error::Invalid(format!("{id}: path is not in stored form")));
+            }
+            let folder = read_folder(&tx, *id)?;
+            let siblings: Vec<(i64, String)> = {
+                let mut stmt = tx.prepare(&format!(
+                    "SELECT id, path FROM folders WHERE {} AND deleted_at IS NULL",
+                    super::owner_condition(folder.owner)
+                ))?;
+                stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+                    .collect::<rusqlite::Result<_>>()?
+            };
+            let clash = siblings.iter().any(|(other, other_path)| {
+                let after = changes
+                    .iter()
+                    .find(|(c, _)| c.0 == *other)
+                    .map_or(other_path.as_str(), |(_, p)| p.as_str());
+                *other != id.0 && folder_path::same(os, after, path)
+            });
+            if clash {
+                return Err(Error::Invalid(format!(
+                    "{id}: the same folder is already attached here"
+                )));
+            }
+            tx.execute(
+                "UPDATE folders SET path = ?2, updated_at = ?3, updated_by = ?4 WHERE id = ?1",
+                params![id.0, path, now, author],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Puts back a path exactly as it was stored, without checking that it
+    /// exists: the undo of a Locate, whose old path is by definition gone.
+    pub fn restore_folder_path(
+        &mut self,
+        id: FolderId,
+        stored: &str,
+        author: Author,
+    ) -> Result<()> {
+        self.folder(id)?;
+        let tx = self.write()?;
+        tx.execute(
+            "UPDATE folders SET path = ?2, updated_at = ?3, updated_by = ?4 WHERE id = ?1",
+            params![id.0, stored, now_ms(), author],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Bulk repair (ADR 0008): every folder under `old_root` whose path with
     /// `new_root` substituted exists on this machine is moved there. Returns
     /// the folders changed.

@@ -10,7 +10,7 @@ use crate::model::{
     ProjectId,
 };
 use crate::time::now_ms;
-use rusqlite::{OptionalExtension, Transaction, params};
+use rusqlite::{OptionalExtension, params};
 
 #[derive(Clone, Debug)]
 pub struct NewKb {
@@ -449,7 +449,7 @@ pub(crate) fn next_rev(conn: &rusqlite::Connection, id: KbId) -> Result<i64> {
 
 #[allow(clippy::too_many_arguments)]
 fn insert_revision(
-    tx: &Transaction<'_>,
+    tx: &rusqlite::Connection,
     id: KbId,
     rev: i64,
     title: &str,

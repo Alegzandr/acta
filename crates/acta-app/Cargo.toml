@@ -14,6 +14,9 @@ path = "src/main.rs"
 
 [dependencies]
 acta-core.workspace = true
+acta-terminal = { path = "../acta-terminal" }
+# Local UTC offset for the time forms of docs/design/copy.md 10.2.
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 # Exact pins: ADR 0001 (UI stack) and ADR 0004 (must match the vpk tool version).
 gpui-kit = "=0.10.0"
 serde = { version = "1", features = ["derive"] }

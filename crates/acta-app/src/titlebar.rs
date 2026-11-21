@@ -29,6 +29,7 @@ use gpui_kit::{
 
 use crate::i18n::{Key, KeyName, text};
 use crate::icons::{Icon, icon};
+use crate::route::Route;
 use crate::settings;
 use crate::shell::Shell;
 use crate::theme::{RADIUS_SM, Tokens};
@@ -168,11 +169,17 @@ fn control_button(control: Control, tokens: &Tokens, rest: Hsla) -> Stateful<gpu
         .child(glyph(control))
 }
 
-/// The titlebar of `shell`'s window. `breadcrumb` is the active page's
-/// location; for now every page shows its last part only.
+/// One part of the breadcrumb: a project or epic link, or the page itself.
+pub struct Crumb {
+    pub label: SharedString,
+    pub route: Option<Route>,
+}
+
+/// The titlebar of `shell`'s window. `crumbs` is the active page's
+/// location, the last part being the page itself (docs/design/layout.md 4.3).
 pub fn render(
     shell: &Shell,
-    breadcrumb: SharedString,
+    crumbs: Vec<Crumb>,
     window: &mut Window,
     cx: &mut Context<Shell>,
 ) -> impl IntoElement + use<> {
@@ -233,8 +240,24 @@ pub fn render(
             )
             .on_click(cx.listener(|shell, _, _, cx| shell.toggle_sidebar(cx))),
         )
-        .child(button("titlebar-back", Icon::ArrowLeft, false, true))
-        .child(button("titlebar-forward", Icon::ArrowRight, false, true));
+        .child(
+            button(
+                "titlebar-back",
+                Icon::ArrowLeft,
+                false,
+                !shell.can_go_back(),
+            )
+            .on_click(|_, window, cx| window.dispatch_action(Box::new(crate::shell::Back), cx)),
+        )
+        .child(
+            button(
+                "titlebar-forward",
+                Icon::ArrowRight,
+                false,
+                !shell.can_go_forward(),
+            )
+            .on_click(|_, window, cx| window.dispatch_action(Box::new(crate::shell::Forward), cx)),
+        );
 
     let drag_area = div()
         .id("titlebar-drag")
@@ -273,15 +296,12 @@ pub fn render(
                 }
             })
         })
-        .child(
-            // The last part of the breadcrumb is the page itself.
-            type_scale::SMALL
-                .el()
-                .min_w_0()
-                .truncate()
-                .text_color(tertiary_if_inactive(tokens.text_secondary))
-                .child(breadcrumb),
-        );
+        .child(breadcrumb(
+            crumbs,
+            &tokens,
+            tertiary_if_inactive(tokens.text_secondary),
+            cx,
+        ));
 
     let search_group = "titlebar-search";
     let hover = tokens.fill_hover;
@@ -298,6 +318,7 @@ pub fn render(
         .px(px(8.))
         .rounded(px(RADIUS_SM))
         .hover(move |style| style.bg(hover))
+        .on_click(|_, window, cx| window.dispatch_action(Box::new(crate::shell::OpenPalette), cx))
         .child(icon(Icon::Search, 16., icon_rest))
         .child(
             type_scale::UI
@@ -319,12 +340,17 @@ pub fn render(
         .when(!cfg!(target_os = "linux"), |this| {
             this.child(button("titlebar-chat", Icon::MessageCircle, false, true))
         })
-        .child(button(
-            "titlebar-terminal",
-            Icon::SquareTerminal,
-            false,
-            true,
-        ));
+        .child(
+            button(
+                "titlebar-terminal",
+                Icon::SquareTerminal,
+                shell.terminal_visible(),
+                false,
+            )
+            .on_click(|_, window, cx| {
+                window.dispatch_action(Box::new(crate::shell::ToggleTerminal), cx)
+            }),
+        );
 
     div()
         .id("titlebar")
@@ -345,4 +371,64 @@ pub fn render(
                 .into_iter()
                 .map(|control| control_button(control, &tokens, icon_rest)),
         )
+}
+
+/// The breadcrumb: `type.small`, parts separated by " / " in
+/// `text.tertiary`; every part but the last is a link to that page.
+fn breadcrumb(
+    crumbs: Vec<Crumb>,
+    tokens: &Tokens,
+    last_color: Hsla,
+    cx: &mut Context<Shell>,
+) -> impl IntoElement + use<> {
+    let count = crumbs.len();
+    let tertiary = tokens.text_tertiary;
+    let primary = tokens.text_primary;
+    let mut row = div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .min_w_0()
+        .overflow_hidden();
+    for (i, crumb) in crumbs.into_iter().enumerate() {
+        if i > 0 {
+            row = row.child(
+                type_scale::SMALL
+                    .el()
+                    .flex_shrink_0()
+                    .text_color(tertiary)
+                    .child("\u{a0}/\u{a0}"),
+            );
+        }
+        let last = i + 1 == count;
+        row =
+            match (crumb.route, last) {
+                (Some(route), false) => row.child(
+                    type_scale::SMALL
+                        .el()
+                        .id(("crumb", i))
+                        .flex_shrink_0()
+                        .text_color(tertiary)
+                        .cursor_pointer()
+                        .hover(move |s| s.text_color(primary).underline())
+                        .on_mouse_down(MouseButton::Left, |_, window, cx| {
+                            window.prevent_default();
+                            cx.stop_propagation();
+                        })
+                        .on_click(cx.listener(move |shell, _, window, cx| {
+                            shell.open_crumb(route, window, cx)
+                        }))
+                        .child(crumb.label),
+                ),
+                _ => row.child(
+                    type_scale::SMALL
+                        .el()
+                        .min_w_0()
+                        .truncate()
+                        .text_color(if last { last_color } else { tertiary })
+                        .child(crumb.label),
+                ),
+            };
+    }
+    row
 }

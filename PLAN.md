@@ -38,13 +38,13 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 ## M2 - Data model and core UI
 - [x] Encrypted database, key in OS keychain, migrations (`acta-core`; built and tested on Windows only, macOS and Linux by CI)
 - [x] Domain: Project > Epic > Topic, timeline entries, statuses, current-state summary (`acta-core` store; data model requests 5, 8, 9, 10, 11, 12, 14 and the store side of 6 included)
-- [ ] App shell: sidebar, topic view, timeline, command palette, keyboard navigation
-- [ ] Create, edit, reorder, change status; live refresh when another process writes
-- [ ] Working folders on projects, epics and topics with inheritance (ADR 0008) - store, path identity and reverse lookup done; UI to do
-- [ ] Knowledge base (ADR 0007): documents and agent memories on projects, epics and topics, with summaries, revisions, inheritance, roll-up browsing, reading view and editor - store and Markdown sections done; UI to do
-- [ ] No data loss (ADR 0006): stable UUIDs, soft delete with trash, automatic snapshots before migrations and daily, self-restore on failed migration - store done; trash view and snapshot restore in the UI to do
-- [ ] Export and import of the open `.acta.json` format from the command palette, with the lossless round-trip test in CI - format (`docs/export-format.md`), merge import and round-trip test done; palette commands to do
-- [ ] Key-loss recovery path: never overwrite an unreadable database, offer import - typed open errors done; recovery screen to do
+- [ ] App shell: sidebar, topic view, timeline, command palette, keyboard navigation - built on `gpui-engineer/m2-ui` (Windows only); tabs and the chat panel are M5; pointer and key paths beyond the captures not exercised by hand
+- [ ] Create, edit, reorder, change status; live refresh when another process writes - built (100 ms watcher, undo stack); refresh from a second process not yet observed in the running app
+- [ ] Working folders on projects, epics and topics with inheritance (ADR 0008) - store and UI built (row, list, inherited label, not found, Locate, bulk repair, terminal prompt); drag reorder and the narrow two-line form to do
+- [ ] Knowledge base (ADR 0007): documents and agent memories on projects, epics and topics, with summaries, revisions, inheritance, roll-up browsing, reading view and editor - store and UI built; memory edit in place, move and change kind to do
+- [ ] No data loss (ADR 0006): stable UUIDs, soft delete with trash, automatic snapshots before migrations and daily, self-restore on failed migration - store done; trash page, daily snapshot and snapshot restore built in the UI
+- [ ] Export and import of the open `.acta.json` format from the command palette, with the lossless round-trip test in CI - format, merge import and round-trip test done; palette commands, export dialog and import preview built
+- [ ] Key-loss recovery path: never overwrite an unreadable database, offer import - typed open errors and recovery screen built (Import, Try again, Start empty keeps the file aside)
 
 ## M3 - MCP, CLI, Claude Code setup
 - [x] `acta mcp` (stdio, rmcp 3.11) and `acta <command>` CLI sharing the domain layer (`acta_core::agent`)
