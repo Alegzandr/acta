@@ -56,6 +56,9 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `tree.settings` | Settings | Paramètres |
 | `tree.closed` | {n} closed | {n} clos |
 | `tree.no_epic` | No epic | Sans epic |
+| `tree.rename` | Rename | Renommer |
+| `tree.set_status` | Set status | Changer le statut |
+| `tree.move_epic` | Move to epic | Déplacer vers un epic |
 | `status.draft` | Draft | Brouillon |
 | `status.planned` | Planned | Prévu |
 | `status.active` | Active | En cours |
@@ -198,6 +201,8 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `history.edited.memory` | Edited | Modifiée |
 | `history.from_file.document` | Created from file | Créé depuis un fichier |
 | `history.from_file.memory` | Created from file | Créée depuis un fichier |
+| `history.created.document` | Created | Créé |
+| `history.created.memory` | Created | Créée |
 | `folders.title` | Working folders | Dossiers de travail |
 | `folders.from_epic` | from epic {name} | de l'epic {name} |
 | `folders.from_project` | from project {name} | du projet {name} |
@@ -298,6 +303,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `palette.projects` | Projects | Projets |
 | `palette.hint.open` | {keys} open | {keys} ouvrir |
 | `palette.hint.tab` | {keys} open in new tab | {keys} ouvrir dans un nouvel onglet |
+| `palette.hint.create` | {keys} create | {keys} créer |
 | `palette.hint.close` | {keys} close | {keys} fermer |
 | `palette.none` | Nothing matches "{query}". {keys} creates a topic with this title. | Aucun résultat pour « {query} ». {keys} crée un sujet avec ce titre. |
 | `cmd.go_topic` | Go to topic... | Aller au sujet... |
@@ -318,7 +324,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `cmd.language` | Language: {value} | Langue : {value} |
 | `cmd.new_project` | New project... | Nouveau projet... |
 | `cmd.new_epic` | New epic... | Nouvel epic... |
-| `cmd.switch_project` | Switch project | Changer de projet |
+| `cmd.switch_project` | Switch project... | Changer de projet... |
 | `cmd.toggle_sidebar` | Toggle sidebar | Afficher ou masquer la barre latérale |
 | `cmd.toggle_terminal` | Toggle terminal | Afficher ou masquer le terminal |
 | `cmd.toggle_chat` | Toggle chat | Afficher ou masquer le chat |
@@ -407,6 +413,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `settings.check.rule` | Permission rule added | Règle d'autorisation ajoutée |
 | `settings.check.done` | Done | Fait |
 | `settings.check.missing` | Missing | À faire |
+| `settings.check.unknown` | Could not check | Vérification impossible |
 | `settings.setup` | Set up Claude Code | Configurer Claude Code |
 | `settings.setup_again` | Run setup again | Relancer la configuration |
 | `settings.setup_remove` | Remove from Claude Code | Retirer de Claude Code |
@@ -520,6 +527,25 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `shortcuts.group.lists` | Lists and tree | Listes et arborescence |
 | `shortcuts.group.editors` | Editors | Éditeurs |
 | `shortcuts.group.terminal` | Terminal and chat | Terminal et chat |
+| `shortcuts.palette` | Command palette | Palette de commandes |
+| `shortcuts.next_tab` | Next tab | Onglet suivant |
+| `shortcuts.previous_tab` | Previous tab | Onglet précédent |
+| `shortcuts.focus_projects` | Focus Projects | Aller aux projets |
+| `shortcuts.focus_page` | Focus the page area | Aller à la zone des pages |
+| `shortcuts.focus_terminal` | Focus the terminal | Aller au terminal |
+| `shortcuts.focus_chat` | Focus the chat | Aller au chat |
+| `shortcuts.next_area` | Focus next area (reserved) | Aller à la zone suivante (réservé) |
+| `shortcuts.previous_area` | Focus previous area (reserved) | Aller à la zone précédente (réservé) |
+| `shortcuts.maximize` | Maximize focused area (reserved) | Agrandir au maximum la zone active (réservé) |
+| `shortcuts.list.move` | Move the cursor | Déplacer le curseur |
+| `shortcuts.list.ends` | First or last row | Première ou dernière ligne |
+| `shortcuts.list.fold` | Collapse or expand | Replier ou déplier |
+| `shortcuts.list.preview` | Preview, focus stays in the list | Aperçu, le focus reste dans la liste |
+| `shortcuts.list.status` | Set status, then 1 to 6 | Changer le statut, puis 1 à 6 |
+| `shortcuts.list.reorder` | Move up or down | Monter ou descendre |
+| `shortcuts.list.menu` | Open the menu | Ouvrir le menu |
+| `shortcuts.editor.save` | Save the editor in focus | Enregistrer l'éditeur actif |
+| `shortcuts.editor.cancel` | Cancel the edit | Annuler la modification |
 
 Strings that exist in the behaviour sections but are not in this table are a defect of the table: add the row in the same change that adds the string.
 

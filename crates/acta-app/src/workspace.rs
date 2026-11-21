@@ -57,6 +57,12 @@ pub enum Undo {
         back: String,
         expect: String,
     },
+    /// A topic moved to another epic (`None`: out of any epic).
+    TopicEpic {
+        id: TopicId,
+        back: Option<EpicId>,
+        expect: Option<EpicId>,
+    },
     ProjectTitle {
         id: ProjectId,
         back: String,
@@ -130,6 +136,7 @@ impl Undo {
             Undo::Status { id, expect, .. } => store.topic(*id)?.status == *expect,
             Undo::TopicTitle { id, expect, .. } => store.topic(*id)?.title == *expect,
             Undo::EpicTitle { id, expect, .. } => store.epic(*id)?.title == *expect,
+            Undo::TopicEpic { id, expect, .. } => store.topic(*id)?.epic == *expect,
             Undo::ProjectTitle { id, expect, .. } => store.project(*id)?.title == *expect,
             Undo::FolderPath { id, expect, .. } => store.folder(*id)?.path == *expect,
             Undo::IncludeInherited { owner, back } => {
@@ -186,6 +193,14 @@ impl Undo {
                 EpicPatch {
                     title: Some(back.clone()),
                     ..EpicPatch::default()
+                },
+                me,
+            ),
+            Undo::TopicEpic { id, back, .. } => store.update_topic(
+                *id,
+                TopicPatch {
+                    epic: Some(*back),
+                    ..TopicPatch::default()
                 },
                 me,
             ),
@@ -524,6 +539,96 @@ impl Workspace {
                     id,
                     back,
                     expect: status,
+                },
+                (),
+            ))
+        });
+    }
+
+    /// Rename a project, epic or topic (the page title, the tree's inline
+    /// edit), undoably.
+    pub fn rename(
+        &mut self,
+        owner: Owner,
+        title: String,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<(), WriteError>> {
+        let project = self.project_of(owner);
+        self.write_undoable(cx, project, None, move |store| {
+            let me = Author::Human;
+            let undo = match owner {
+                Owner::Topic(id) => {
+                    let back = store.topic(id)?.title;
+                    store.update_topic(
+                        id,
+                        TopicPatch {
+                            title: Some(title),
+                            ..TopicPatch::default()
+                        },
+                        me,
+                    )?;
+                    Undo::TopicTitle {
+                        id,
+                        back,
+                        expect: store.topic(id)?.title,
+                    }
+                }
+                Owner::Epic(id) => {
+                    let back = store.epic(id)?.title;
+                    store.update_epic(
+                        id,
+                        EpicPatch {
+                            title: Some(title),
+                            ..EpicPatch::default()
+                        },
+                        me,
+                    )?;
+                    Undo::EpicTitle {
+                        id,
+                        back,
+                        expect: store.epic(id)?.title,
+                    }
+                }
+                Owner::Project(id) => {
+                    let back = store.project(id)?.title;
+                    store.update_project(
+                        id,
+                        ProjectPatch {
+                            title: Some(title),
+                            ..ProjectPatch::default()
+                        },
+                        me,
+                    )?;
+                    Undo::ProjectTitle {
+                        id,
+                        back,
+                        expect: store.project(id)?.title,
+                    }
+                }
+            };
+            Ok((undo, ()))
+        })
+    }
+
+    /// Move a topic to another epic of its project (`None`: out of any
+    /// epic), undoably (interaction.md 6.1, `M`).
+    pub fn move_topic(&mut self, id: TopicId, epic: Option<EpicId>, cx: &mut Context<Self>) {
+        let project = self.project_of(Owner::Topic(id));
+        self.undoable(cx, project, None, move |store| {
+            let back = store.topic(id)?.epic;
+            store.update_topic(
+                id,
+                TopicPatch {
+                    epic: Some(epic),
+                    ..TopicPatch::default()
+                },
+                Author::Human,
+            )?;
+            Ok((
+                Undo::TopicEpic {
+                    id,
+                    back,
+                    expect: epic,
                 },
                 (),
             ))
@@ -1033,6 +1138,36 @@ mod tests {
         };
         assert!(step.apply(store).unwrap());
         assert_eq!(store.order_index(Record::Topic(a)).unwrap(), 0);
+    }
+
+    #[test]
+    fn a_move_to_another_epic_undoes_while_unchanged() {
+        let mut temp = temp_store();
+        let store = &mut temp.store;
+        let (project, id) = topic(store);
+        let epic = store
+            .create_epic(project, "Terminal", "", Author::Human)
+            .unwrap();
+        let patch = |epic| TopicPatch {
+            epic: Some(epic),
+            ..TopicPatch::default()
+        };
+        store
+            .update_topic(id, patch(Some(epic)), Author::Human)
+            .unwrap();
+        let step = Undo::TopicEpic {
+            id,
+            back: None,
+            expect: Some(epic),
+        };
+        assert!(step.apply(store).unwrap());
+        assert_eq!(store.topic(id).unwrap().epic, None);
+        // Moved again by someone else: skipped.
+        store
+            .update_topic(id, patch(Some(epic)), Author::Claude)
+            .unwrap();
+        store.update_topic(id, patch(None), Author::Claude).unwrap();
+        assert!(!step.apply(store).unwrap());
     }
 
     #[test]

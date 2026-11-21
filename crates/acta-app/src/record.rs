@@ -298,12 +298,130 @@ pub fn load(store: &Store, owner: Owner, filter: EntryFilterKind) -> Result<Load
     }
 }
 
+/// components-records.md 5, System event: consecutive status changes within
+/// 5 minutes of each other read as one line, from the first status to the
+/// last, by the same author. A run that ends where it started (a change and
+/// its undo) leaves no line. `entries` is newest first, as the timeline
+/// shows it.
+pub fn collapse_status_events(entries: Vec<Entry>) -> Vec<Entry> {
+    use acta_core::model::EventKind;
+    const WINDOW_MS: i64 = 5 * 60 * 1000;
+    let is_status = |e: &Entry| {
+        e.event
+            .as_ref()
+            .is_some_and(|ev| ev.kind == EventKind::Status)
+    };
+    let mut out: Vec<Entry> = Vec::with_capacity(entries.len());
+    // The time of the oldest change of the run the last line stands for,
+    // while that line is a status change.
+    let mut run: Option<i64> = None;
+    for entry in entries {
+        if let Some(oldest) = run
+            && is_status(&entry)
+            && let Some(line) = out.last_mut()
+            && line.author == entry.author
+            && oldest - entry.stamp.created_at <= WINDOW_MS
+        {
+            // `entry` is older: the line now starts at its old status.
+            let old = entry.event.as_ref().and_then(|e| e.old.clone());
+            if let Some(event) = line.event.as_mut() {
+                event.old = old;
+            }
+            run = Some(entry.stamp.created_at);
+            continue;
+        }
+        run = is_status(&entry).then_some(entry.stamp.created_at);
+        out.push(entry);
+    }
+    out.retain(|e| {
+        !is_status(e)
+            || e.event
+                .as_ref()
+                .is_none_or(|ev| ev.old.is_none() || ev.old != ev.new)
+    });
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::db::test_support::temp_store;
     use acta_core::model::{KbKind, Status};
     use acta_core::store::{NewEntry, NewKb, NewTopic};
+
+    fn status_event(id: i64, at_min: i64, old: Status, new: Status, by: Author) -> Entry {
+        use acta_core::model::{EntryId, EventKind, Stamp, SystemEvent, TopicId};
+        Entry {
+            id: EntryId(id),
+            topic: TopicId(1),
+            seq: None,
+            kind: EntryKind::System,
+            author: by,
+            text: String::new(),
+            event: Some(SystemEvent {
+                kind: EventKind::Status,
+                old: Some(old.as_str().into()),
+                new: Some(new.as_str().into()),
+            }),
+            stamp: Stamp {
+                uuid: String::new(),
+                created_at: at_min * 60_000,
+                updated_at: at_min * 60_000,
+                updated_by: by,
+                deleted_at: None,
+                deleted_by: None,
+            },
+        }
+    }
+
+    fn lines(entries: &[Entry]) -> Vec<(Option<String>, Option<String>, i64)> {
+        entries
+            .iter()
+            .map(|e| {
+                let ev = e.event.clone().unwrap();
+                (ev.old, ev.new, e.stamp.created_at / 60_000)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_status_change_and_its_undo_leave_no_line() {
+        // Newest first: Active -> Blocked at 10, undone (Blocked -> Active)
+        // a minute later.
+        let me = Author::Human;
+        let entries = vec![
+            status_event(2, 11, Status::Blocked, Status::Active, me),
+            status_event(1, 10, Status::Active, Status::Blocked, me),
+        ];
+        assert!(collapse_status_events(entries).is_empty());
+    }
+
+    #[test]
+    fn consecutive_changes_within_five_minutes_read_as_one_line() {
+        let me = Author::Human;
+        let entries = vec![
+            status_event(4, 30, Status::Blocked, Status::Done, me),
+            status_event(3, 14, Status::Active, Status::Blocked, me),
+            status_event(2, 11, Status::Planned, Status::Active, me),
+            // More than 5 minutes before the next: its own line.
+            status_event(1, 2, Status::Draft, Status::Planned, me),
+        ];
+        let p = |s: Status| Some(s.as_str().to_owned());
+        assert_eq!(
+            lines(&collapse_status_events(entries)),
+            [
+                (p(Status::Blocked), p(Status::Done), 30),
+                (p(Status::Planned), p(Status::Blocked), 14),
+                (p(Status::Draft), p(Status::Planned), 2),
+            ]
+        );
+        // Another author breaks the run.
+        let mixed = vec![
+            status_event(2, 11, Status::Blocked, Status::Active, Author::Claude),
+            status_event(1, 10, Status::Active, Status::Blocked, me),
+        ];
+        assert_eq!(collapse_status_events(mixed).len(), 2);
+    }
 
     #[test]
     fn a_topic_page_loads_its_location_timeline_knowledge_and_inherited_folders() {

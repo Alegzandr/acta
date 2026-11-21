@@ -103,6 +103,200 @@ impl Row {
             _ => None,
         }
     }
+
+    /// What the row stands for, whatever its place: the keyboard cursor
+    /// stays on it when rows move (interaction.md 6.1).
+    pub fn key(&self) -> RowKey {
+        match (self, self.route()) {
+            (_, Some(route)) => RowKey::Route(route),
+            (Row::Closed { group, .. }, None) => RowKey::Closed(*group),
+            (_, None) => unreachable!("only the closed row opens no page"),
+        }
+    }
+
+    /// The title type-ahead matches (records only).
+    pub fn title(&self) -> Option<&str> {
+        match self {
+            Row::Project { title, .. } | Row::Epic { title, .. } | Row::Topic { title, .. } => {
+                Some(title)
+            }
+            _ => None,
+        }
+    }
+}
+
+/// The identity of a row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RowKey {
+    Route(Route),
+    Closed(Group),
+}
+
+/// The keyboard cursor of the tree: the row it is on, and the index it
+/// had, for when that row is gone (deleted, folded away).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Cursor {
+    key: Option<RowKey>,
+    index: usize,
+}
+
+impl Cursor {
+    /// The cursor's row in `rows`: the same row wherever it moved, else
+    /// the row now at its last index.
+    pub fn index(&self, rows: &[Row]) -> usize {
+        self.key
+            .and_then(|key| rows.iter().position(|r| r.key() == key))
+            .unwrap_or(self.index)
+            .min(rows.len().saturating_sub(1))
+    }
+
+    /// Put the cursor on row `at`.
+    pub fn set(&mut self, rows: &[Row], at: usize) {
+        self.index = at.min(rows.len().saturating_sub(1));
+        self.key = rows.get(self.index).map(Row::key);
+    }
+
+    /// Put the cursor on the row of `route` if the tree shows one.
+    pub fn put(&mut self, rows: &[Row], route: Route) -> bool {
+        match rows.iter().position(|r| r.route() == Some(route)) {
+            Some(at) => {
+                self.set(rows, at);
+                true
+            }
+            None => false,
+        }
+    }
+}
+
+/// Type-ahead (interaction.md 6.1): the first row from `from` on, wrapping,
+/// whose title starts with `query`, ignoring case.
+pub fn type_ahead(rows: &[Row], from: usize, query: &str) -> Option<usize> {
+    let query = query.to_lowercase();
+    if query.is_empty() || rows.is_empty() {
+        return None;
+    }
+    let n = rows.len();
+    (0..n).map(|i| (from + i) % n).find(|&i| {
+        rows[i]
+            .title()
+            .is_some_and(|t| t.to_lowercase().starts_with(&query))
+    })
+}
+
+/// A printable key pressed in the tree (no modifier but Shift).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Letter {
+    Up,
+    Down,
+    /// `S`: the status menu.
+    Status,
+    /// `E`: rename.
+    Rename,
+    /// `M`: move to epic.
+    Move,
+    /// `Space`: open in the active tab, focus stays in the tree (6.2).
+    Preview,
+    /// Type-ahead with the buffer so far.
+    Find(String),
+}
+
+/// What `ch` does, given the type-ahead buffer typed in the last second:
+/// while one is going every key extends it, so titles with a `j` or a
+/// space can be typed; otherwise the letter keys of 6.1 act.
+pub fn letter(buffer: &str, ch: char) -> Letter {
+    if !buffer.is_empty() {
+        return Letter::Find(format!("{buffer}{ch}"));
+    }
+    match ch.to_ascii_lowercase() {
+        'j' => Letter::Down,
+        'k' => Letter::Up,
+        's' => Letter::Status,
+        'e' => Letter::Rename,
+        'm' => Letter::Move,
+        ' ' => Letter::Preview,
+        _ => Letter::Find(ch.to_string()),
+    }
+}
+
+/// What the tree's menus offer (components.md 5, Context menu).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MenuItem {
+    Open,
+    OpenInNewTab,
+    Rename,
+    /// "Set status", opening the status menu.
+    StatusMenu,
+    /// "Move to epic", opening the epic menu.
+    MoveMenu,
+    Status(Status),
+    /// Move the topic to this epic (`None`: out of any epic).
+    MoveTo(Option<EpicId>, String),
+    Delete,
+}
+
+/// Which menu of a row is open.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MenuKind {
+    /// `Shift+F10`, the menu key, a right click.
+    Row,
+    /// `S` on a topic.
+    Status,
+    /// `M` on a topic.
+    Epics,
+}
+
+/// The items of `kind` for `row`; empty when the row has no such menu.
+/// `no_epic` is the label of the "No epic" item.
+pub fn menu_items(
+    projects: &[ProjectTree],
+    row: &Row,
+    kind: MenuKind,
+    no_epic: &str,
+) -> Vec<MenuItem> {
+    match (kind, row) {
+        (MenuKind::Row, Row::Topic { .. }) => vec![
+            MenuItem::Open,
+            MenuItem::OpenInNewTab,
+            MenuItem::Rename,
+            MenuItem::StatusMenu,
+            MenuItem::MoveMenu,
+            MenuItem::Delete,
+        ],
+        (MenuKind::Row, Row::Project { .. } | Row::Epic { .. }) => vec![
+            MenuItem::Open,
+            MenuItem::OpenInNewTab,
+            MenuItem::Rename,
+            MenuItem::Delete,
+        ],
+        (MenuKind::Row, Row::Inbox { .. } | Row::Knowledge { .. }) => {
+            vec![MenuItem::Open, MenuItem::OpenInNewTab]
+        }
+        (MenuKind::Status, Row::Topic { .. }) => {
+            Status::ALL.into_iter().map(MenuItem::Status).collect()
+        }
+        (MenuKind::Epics, Row::Topic { id, .. }) => {
+            let Some(at) = locate_topic(projects, *id) else {
+                return Vec::new();
+            };
+            let current = at.epic.map(|e| e.0);
+            let project = at.project.map(|p| p.0);
+            let Some(tree) = projects.iter().find(|t| Some(t.project.id) == project) else {
+                return Vec::new();
+            };
+            let mut out = Vec::new();
+            if current.is_some() {
+                out.push(MenuItem::MoveTo(None, no_epic.to_owned()));
+            }
+            out.extend(
+                tree.epics
+                    .iter()
+                    .filter(|(e, _)| Some(e.id) != current)
+                    .map(|(e, _)| MenuItem::MoveTo(Some(e.id), e.title.clone())),
+            );
+            out
+        }
+        _ => Vec::new(),
+    }
 }
 
 /// What the user folded and unfolded. Projects and epics start expanded and
@@ -495,6 +689,105 @@ mod tests {
             stored_siblings(&projects, scroll).len(),
             4,
             "closed included"
+        );
+    }
+
+    fn topic_at(rows: &[Row], id: i64) -> usize {
+        rows.iter()
+            .position(|r| matches!(r, Row::Topic { id: t, .. } if *t == TopicId(id)))
+            .unwrap()
+    }
+
+    #[test]
+    fn the_cursor_follows_its_row_when_the_rows_move() {
+        // Alt+Down, then Mod+Z puts the topic back: the cursor goes with
+        // the topic, not with the index.
+        let mut projects = acta();
+        let before = rows(&projects, &Folds::default());
+        let mut cursor = Cursor::default();
+        cursor.set(&before, topic_at(&before, 2));
+        projects[0].epics[0].1.swap(0, 1);
+        let after = rows(&projects, &Folds::default());
+        assert_eq!(cursor.index(&after), topic_at(&after, 2));
+        projects[0].epics[0].1.swap(0, 1);
+        let undone = rows(&projects, &Folds::default());
+        assert_eq!(cursor.index(&undone), topic_at(&undone, 2));
+    }
+
+    #[test]
+    fn a_cursor_whose_row_is_gone_keeps_its_place() {
+        let mut projects = acta();
+        let before = rows(&projects, &Folds::default());
+        let mut cursor = Cursor::default();
+        let at = topic_at(&before, 2);
+        cursor.set(&before, at);
+        projects[0].epics[0].1.remove(0);
+        let after = rows(&projects, &Folds::default());
+        assert_eq!(cursor.index(&after), at);
+        assert_eq!(cursor.index(&[]), 0);
+    }
+
+    #[test]
+    fn the_cursor_goes_to_the_open_page() {
+        // Mod+1 lands on the row of the page that is open.
+        let rows = rows(&acta(), &Folds::default());
+        let mut cursor = Cursor::default();
+        assert!(cursor.put(&rows, Route::Topic(TopicId(3))));
+        assert_eq!(cursor.index(&rows), topic_at(&rows, 3));
+        assert!(!cursor.put(&rows, Route::Topic(TopicId(4))), "folded away");
+        assert_eq!(cursor.index(&rows), topic_at(&rows, 3));
+    }
+
+    #[test]
+    fn type_ahead_jumps_to_a_title_and_wraps() {
+        let rows = rows(&acta(), &Folds::default());
+        assert_eq!(type_ahead(&rows, 0, "sc"), Some(topic_at(&rows, 3)));
+        assert_eq!(type_ahead(&rows, 0, "EMB"), Some(topic_at(&rows, 2)));
+        // From past it, the search wraps to the top.
+        assert_eq!(type_ahead(&rows, rows.len() - 1, "acta"), Some(0));
+        assert_eq!(type_ahead(&rows, 0, "zz"), None);
+    }
+
+    #[test]
+    fn letters_act_unless_a_type_ahead_is_going() {
+        assert_eq!(letter("", 'j'), Letter::Down);
+        assert_eq!(letter("", 'K'), Letter::Up);
+        assert_eq!(letter("", 's'), Letter::Status);
+        assert_eq!(letter("", 'e'), Letter::Rename);
+        assert_eq!(letter("", 'm'), Letter::Move);
+        assert_eq!(letter("", ' '), Letter::Preview);
+        assert_eq!(letter("", 'n'), Letter::Find("n".into()));
+        assert_eq!(letter("na", 'j'), Letter::Find("naj".into()));
+        assert_eq!(letter("old", ' '), Letter::Find("old ".into()));
+    }
+
+    #[test]
+    fn menus_offer_what_the_row_can_do() {
+        let projects = acta();
+        let rows = rows(&projects, &Folds::default());
+        let embed = &rows[topic_at(&rows, 2)];
+        let menu = menu_items(&projects, embed, MenuKind::Row, "No epic");
+        assert!(menu.contains(&MenuItem::StatusMenu) && menu.contains(&MenuItem::MoveMenu));
+        assert_eq!(menu.last(), Some(&MenuItem::Delete));
+        assert_eq!(
+            menu_items(&projects, embed, MenuKind::Status, "No epic").len(),
+            6
+        );
+        // In epic Terminal: out of it; no other epic exists.
+        assert_eq!(
+            menu_items(&projects, embed, MenuKind::Epics, "No epic"),
+            [MenuItem::MoveTo(None, "No epic".into())]
+        );
+        // A loose topic: into Terminal, and no "No epic".
+        let naming = &rows[topic_at(&rows, 1)];
+        assert_eq!(
+            menu_items(&projects, naming, MenuKind::Epics, "No epic"),
+            [MenuItem::MoveTo(Some(EpicId(1)), "Terminal".into())]
+        );
+        let inbox = &rows[1];
+        assert!(menu_items(&projects, inbox, MenuKind::Status, "No epic").is_empty());
+        assert!(
+            !menu_items(&projects, inbox, MenuKind::Row, "No epic").contains(&MenuItem::Delete)
         );
     }
 
