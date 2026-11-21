@@ -392,15 +392,32 @@ fn snapshot(host: &dyn Host, a: &SnapshotArgs) -> Reply {
     if waited == Some(false) {
         head.push_str(" · wait_for text not found after 10 s");
     }
-    let tail_room = 100;
-    let (mut text, n) = render::fenced(&head, &lines, max, tail_room + NOTICE_ROOM);
-    if n < lines.len() {
-        text.push_str(&format!(
-            "\n+{} more lines; narrow with within=<ref> or filter=interactive",
-            lines.len() - n
-        ));
+    // Every line when they all fit; else as many as fit beside the line
+    // that says how to see the rest, which never suggests what is set.
+    let (text, n) = render::fenced(&head, &lines, max, NOTICE_ROOM);
+    if n == lines.len() {
+        return Reply::ok(text);
     }
+    let interactive = matches!(a.filter, Some(SnapshotFilter::Interactive));
+    let raised = max >= budget::SNAPSHOT_MAX;
+    let tail = |rest: usize| snapshot_tail(rest, interactive, raised);
+    let room = tail(lines.len()).len() + NOTICE_ROOM;
+    let (mut text, n) = render::fenced(&head, &lines, max, room);
+    text.push_str(&tail(lines.len() - n));
     Reply::ok(text)
+}
+
+/// The line after a cut snapshot: how many lines are left and the ways to
+/// see them that the call did not use yet.
+fn snapshot_tail(rest: usize, interactive: bool, raised: bool) -> String {
+    let mut ways = vec!["within=<ref>".to_string()];
+    if !interactive {
+        ways.push("filter=interactive".into());
+    }
+    if !raised {
+        ways.push(format!("max={}", budget::SNAPSHOT_MAX));
+    }
+    format!("\n+{rest} more lines; narrow with {}", ways.join(" or "))
 }
 
 fn read(host: &dyn Host, a: &ReadArgs) -> Reply {
