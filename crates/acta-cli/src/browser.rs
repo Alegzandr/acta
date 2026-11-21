@@ -192,6 +192,25 @@ mod windows_link {
         installed.is_file().then_some(installed)
     }
 
+    /// What Claude Code and Acta's terminal set for this session only: the
+    /// app started from here must not hand it to the terminals it opens
+    /// (a `claude` there would think it runs inside this session).
+    pub fn inherited_by_session(name: &str) -> bool {
+        let upper = name.to_ascii_uppercase();
+        upper == "CLAUDECODE"
+            || upper.starts_with("CLAUDE_CODE_")
+            || upper.starts_with("CLAUDE_PLUGIN_")
+            || matches!(
+                upper.as_str(),
+                "CLAUDE_PROJECT_DIR"
+                    | "CLAUDE_ENV_FILE"
+                    | "ACTA_PROJECT"
+                    | "ACTA_EPIC"
+                    | "ACTA_TOPIC"
+                    | "ACTA_TERMINAL"
+            )
+    }
+
     /// Starts the app without activating its window, detached from this
     /// process so it outlives the session.
     fn start_app() -> Result<(), String> {
@@ -203,13 +222,23 @@ mod windows_link {
         let exe = app_exe()
             .ok_or("Acta is not running and its app was not found; ask the user to open Acta")?;
         let spawn = |flags: u32| {
-            Command::new(&exe)
-                .arg("--no-focus")
+            let mut cmd = Command::new(&exe);
+            cmd.arg("--no-focus")
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
-                .creation_flags(flags)
-                .spawn()
+                .creation_flags(flags);
+            // Not the session's folder, which a running Acta would keep from
+            // being deleted.
+            if let Some(dir) = exe.parent() {
+                cmd.current_dir(dir);
+            }
+            for (name, _) in std::env::vars_os() {
+                if inherited_by_session(&name.to_string_lossy()) {
+                    cmd.env_remove(&name);
+                }
+            }
+            cmd.spawn()
         };
         let base = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP;
         // Out of Claude Code's job when it allows it, so closing the session
@@ -334,6 +363,30 @@ pub fn serve(opener: Opener) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn the_app_does_not_inherit_the_session() {
+        use super::windows_link::inherited_by_session as session;
+        for name in [
+            "CLAUDECODE",
+            "CLAUDE_CODE_SESSION_ID",
+            "CLAUDE_CODE_ENTRYPOINT",
+            "CLAUDE_PROJECT_DIR",
+            "CLAUDE_PLUGIN_ROOT",
+            "ACTA_TOPIC",
+        ] {
+            assert!(session(name), "{name}");
+        }
+        for name in [
+            "PATH",
+            "LOCALAPPDATA",
+            "CLAUDE_CONFIG_DIR",
+            "ACTA_DEV_DATA_DIR",
+        ] {
+            assert!(!session(name), "{name}");
+        }
+    }
 
     #[test]
     fn instructions_stay_short() {
