@@ -10,10 +10,11 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use acta_core::folder_identity::{self, Known, Monitor};
 use acta_core::model::{
     Author, EpicId, FolderId, KbId, Note, NoteId, Owner, ProjectId, ProjectTree, Record, Status,
     TopicId,
@@ -27,6 +28,9 @@ use crate::i18n::{Arg, Key, text, tr};
 
 /// docs/design/interaction.md 6.5: changes land within 100 ms of the write.
 const POLL: Duration = Duration::from_millis(100);
+/// How often the attached folders are looked at (ADR 0008, "Live files"):
+/// a rename, a move or a deletion shows within this, plus a reload.
+const FOLDER_POLL: Duration = Duration::from_millis(500);
 /// How often the daily snapshot is looked at while the app runs.
 const SNAPSHOT_CHECK: Duration = Duration::from_secs(60 * 60);
 /// docs/design/interaction.md 6.4: the last 100 actions, per project.
@@ -486,6 +490,12 @@ pub struct Workspace {
     _reload: Task<()>,
     _watch: Task<()>,
     _snapshots: Task<()>,
+    /// Every live folder with its identity, reloaded with the tree, for
+    /// the folder monitor.
+    known_folders: Vec<Known>,
+    /// The next monitor pass is thorough (the window regained focus).
+    thorough: Arc<AtomicBool>,
+    _folders: Task<()>,
 }
 
 impl EventEmitter<WorkspaceEvent> for Workspace {}
@@ -545,6 +555,8 @@ impl Workspace {
                 cx.background_executor().timer(SNAPSHOT_CHECK).await;
             }
         });
+        let thorough = Arc::new(AtomicBool::new(true));
+        let folders = Self::monitor_folders(db.clone(), Arc::clone(&thorough), cx);
         let mut workspace = Self {
             db,
             bulk: None,
@@ -558,6 +570,9 @@ impl Workspace {
             _reload: Task::ready(()),
             _watch: watch,
             _snapshots: snapshots,
+            known_folders: Vec::new(),
+            thorough,
+            _folders: folders,
         };
         workspace.reload(cx);
         workspace
@@ -565,15 +580,20 @@ impl Workspace {
 
     /// Reload the tree; pages observing the workspace reload their data.
     pub fn reload(&mut self, cx: &mut Context<Self>) {
-        let task = self
-            .db
-            .run(cx, |store| Ok((load_trees(store)?, store.unread()?)));
+        let task = self.db.run(cx, |store| {
+            Ok((
+                load_trees(store)?,
+                store.unread()?,
+                store.monitored_folders()?,
+            ))
+        });
         self._reload = cx.spawn(async move |this, cx| {
             let loaded = task.await;
             let _ = this.update(cx, |ws, cx| match loaded {
-                Ok((projects, unread)) => {
+                Ok((projects, unread, folders)) => {
                     ws.projects = projects;
                     ws.unread = unread;
+                    ws.known_folders = folders;
                     ws.revision += 1;
                     cx.emit(WorkspaceEvent::Reloaded);
                     cx.notify();
@@ -581,6 +601,66 @@ impl Workspace {
                 Err(err) => crate::log::line(&format!("store: reload failed: {}", err_kind(&err))),
             });
         });
+    }
+
+    /// The folder monitor (ADR 0008, "Live files"): every `FOLDER_POLL`,
+    /// off the UI thread and never while holding the store, it asks whether
+    /// each attached folder is still there, without keeping anything open
+    /// on it. A folder that was renamed or moved is followed when its
+    /// identity proves it (the store write reloads every page, the name
+    /// shown being its last segment); one that appeared or went missing
+    /// reloads the pages, which check presence again.
+    fn monitor_folders(db: Db, thorough: Arc<AtomicBool>, cx: &mut Context<Self>) -> Task<()> {
+        let monitor = Arc::new(Mutex::new(Monitor::new()));
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(FOLDER_POLL).await;
+                let Ok(known) = this.read_with(cx, |ws, _| ws.known_folders.clone()) else {
+                    return;
+                };
+                if known.is_empty() {
+                    continue;
+                }
+                let deep = thorough.swap(false, Ordering::Relaxed);
+                let monitor = Arc::clone(&monitor);
+                let pass = cx
+                    .background_executor()
+                    .spawn(async move {
+                        let mut monitor = monitor.lock().unwrap_or_else(|p| p.into_inner());
+                        monitor.pass(&known, deep)
+                    })
+                    .await;
+                if pass.has_writes() {
+                    let db = db.clone();
+                    let (learned, followed) = (pass.learned, pass.followed);
+                    let applied = cx
+                        .background_executor()
+                        .spawn(async move { db.lock().apply_folder_pass(&learned, &followed) })
+                        .await;
+                    match applied {
+                        // The path is user content: the log says how many.
+                        Ok(moved) if !moved.is_empty() => crate::log::line(&format!(
+                            "folders: {} relocated after a rename or move",
+                            moved.len()
+                        )),
+                        Ok(_) => {}
+                        Err(err) => crate::log::line(&format!(
+                            "folders: could not record a relocation: {}",
+                            err_kind(&err)
+                        )),
+                    }
+                }
+                if pass.changed && this.update(cx, |ws, cx| ws.reload(cx)).is_err() {
+                    return;
+                }
+            }
+        })
+    }
+
+    /// The window regained focus: the next monitor pass reads every
+    /// folder's identity again and searches again for missing ones.
+    pub fn check_folders_again(&self) {
+        self.thorough.store(true, Ordering::Relaxed);
     }
 
     /// Whether `record` carries an unread dot (topics and knowledge only).
@@ -935,7 +1015,7 @@ impl Workspace {
                     let paths: Vec<(FolderId, String)> =
                         folders.into_iter().map(|f| (f.id, f.path)).collect();
                     crate::folders_model::candidates(&paths, &old_r, &new_r, |p| {
-                        Path::new(p).is_dir()
+                        folder_identity::is_dir(Path::new(p))
                     })
                     .into_iter()
                     .filter_map(|(id, path, target)| {
@@ -1133,7 +1213,7 @@ pub fn err_kind(err: &acta_core::Error) -> String {
 pub fn missing_paths(paths: impl IntoIterator<Item = String>) -> std::collections::HashSet<String> {
     paths
         .into_iter()
-        .filter(|p| !Path::new(p).is_dir())
+        .filter(|p| !folder_identity::is_dir(Path::new(p)))
         .collect()
 }
 

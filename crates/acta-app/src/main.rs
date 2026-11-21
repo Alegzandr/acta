@@ -109,6 +109,30 @@ impl Options {
     }
 }
 
+/// The working directory Acta was started in, before it left it.
+static LAUNCH_DIR: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
+
+/// ADR 0008, "Live files": on Windows no folder can be renamed or deleted
+/// while it, or a folder inside it, is some process's working directory.
+/// Started from a terminal in a project, Acta (and every process it starts
+/// without a directory of its own) would hold that project for as long as
+/// it runs; it moves to its own folder instead.
+fn leave_launch_dir() {
+    let _ = LAUNCH_DIR.set(std::env::current_dir().ok());
+    if let Some(own) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(std::path::Path::to_path_buf))
+        && std::env::set_current_dir(&own).is_err()
+    {
+        log::line("could not leave the launch directory");
+    }
+}
+
+/// The directory Acta was started in (the dev seed's project folder).
+pub fn launch_dir() -> Option<std::path::PathBuf> {
+    LAUNCH_DIR.get().cloned().flatten()
+}
+
 fn main() {
     let launched = Instant::now();
     log::rotate();
@@ -126,6 +150,7 @@ fn main() {
         std::env::args().skip(1),
         std::env::var_os("ACTA_SPECIMEN").is_some_and(|value| value == "1"),
     );
+    leave_launch_dir();
     let mut pending = None;
 
     if let Some(manager) = installed {

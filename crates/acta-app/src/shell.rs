@@ -540,8 +540,13 @@ impl Shell {
             if !window.is_window_active() {
                 shell.cancel_drag(window, cx);
             }
-            if window.is_window_active() && matches!(shell.content, Content::Workbench(_)) {
+            if window.is_window_active()
+                && let Content::Workbench(bench) = &shell.content
+            {
                 claude_setup::refresh_if_stale(cx);
+                // ADR 0008, "Live files": focus is the fallback for a
+                // change the folder monitor could not prove on its own.
+                bench.ws.read(cx).check_folders_again();
             }
         });
         Self {
@@ -3898,7 +3903,7 @@ fn seed_if_asked(store: &mut acta_core::Store) {
     let seed = std::env::var("ACTA_DEV_SEED").unwrap_or_default();
     if cfg!(debug_assertions)
         && (seed == "1" || seed == "bare")
-        && let Ok(dir) = std::env::current_dir()
+        && let Some(dir) = crate::launch_dir()
         && let Err(err) = if seed == "bare" {
             crate::dev_seed::bare(store, &dir)
         } else {

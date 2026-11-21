@@ -622,7 +622,9 @@ impl SettingsPage {
                     .background_executor()
                     .spawn(async move {
                         all.into_iter()
-                            .filter(|(_, path, _)| !std::path::Path::new(path).is_dir())
+                            .filter(|(_, path, _)| {
+                                !acta_core::folder_identity::is_dir(std::path::Path::new(path))
+                            })
                             .collect()
                     })
                     .await;
