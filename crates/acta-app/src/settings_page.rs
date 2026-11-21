@@ -933,7 +933,10 @@ impl SettingsPage {
                         t,
                     )
                     .when(!busy, |this| {
-                        this.on_click(|_, _, cx| crate::claude_setup::run_remove(cx))
+                        // A confirmed case of interaction.md 6.4.
+                        this.on_click(|_, window, cx| {
+                            window.dispatch_action(Box::new(crate::shell::RemoveClaudeSetup), cx)
+                        })
                     }),
                 )
                 .into_any_element(),

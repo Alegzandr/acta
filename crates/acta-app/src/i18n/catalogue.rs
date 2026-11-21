@@ -365,6 +365,14 @@ catalogue! {
         en: t("Change type"),
         fr: t("Changer le type"),
     }
+    EntryEdited "entry.edited" {
+        en: t("edited"),
+        fr: t("modifiée"),
+    }
+    EntryEditedBy "entry.edited_by" {
+        en: t("edited by {name}"),
+        fr: t("modifiée par {name}"),
+    }
     ConflictNotice "conflict.notice" {
         en: t("Claude Code changed this while you were editing."),
         fr: t("Claude Code a modifié ceci pendant que vous écriviez."),
@@ -1556,6 +1564,18 @@ catalogue! {
     SettingsSetupHint "settings.setup.hint" {
         en: t("Setup installs Acta\u{2019}s plugin in Claude Code and adds one permission line to ~/.claude/settings.json. Remove undoes both."),
         fr: t("La configuration installe le plugin d\u{2019}Acta dans Claude Code et ajoute une ligne d\u{2019}autorisation à ~/.claude/settings.json. Retirer annule les deux."),
+    }
+    SettingsRemoveTitle "settings.remove.title" {
+        en: t("Remove Acta from Claude Code?"),
+        fr: t("Retirer Acta de Claude Code\u{202f}?"),
+    }
+    SettingsRemoveBody "settings.remove.body" {
+        en: t("This uninstalls Acta’s plugin and takes out the permission line setup added to ~/.claude/settings.json. Your projects stay in Acta."),
+        fr: t("Cela désinstalle le plugin d’Acta et retire la ligne d’autorisation ajoutée par la configuration à ~/.claude/settings.json. Vos projets restent dans Acta."),
+    }
+    SettingsRemoveConfirm "settings.remove.confirm" {
+        en: t("Remove"),
+        fr: t("Retirer"),
     }
     SettingsData "settings.data" {
         en: t("Data"),

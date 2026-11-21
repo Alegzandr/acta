@@ -146,6 +146,8 @@ actions!(
         DismissSidebar,
         /// `Mod+/`, palette "Keyboard shortcuts".
         OpenShortcuts,
+        /// Settings: "Remove from Claude Code" (confirmed, 6.4).
+        RemoveClaudeSetup,
         /// `Mod+W`, palette "Close tab" (layout.md 4.4).
         CloseTab,
         /// `Ctrl+Tab` / `Ctrl+Shift+Tab`.
@@ -201,9 +203,24 @@ fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new(m("cmd-b", "ctrl-b"), ToggleSidebar, app),
         KeyBinding::new(m("cmd-,", "ctrl-,"), OpenSettings, app),
         KeyBinding::new(m("cmd-/", "ctrl-/"), OpenShortcuts, app),
-        KeyBinding::new(m("cmd-w", "ctrl-w"), CloseTab, app),
-        KeyBinding::new("ctrl-tab", NextTab, app),
-        KeyBinding::new("ctrl-shift-tab", PreviousTab, app),
+        // Mod+W only outside editors until drafts survive a closed tab.
+        KeyBinding::new(m("cmd-w", "ctrl-w"), CloseTab, plain),
+        // interaction.md 6.1: Ctrl+Tab is kept from the terminal too (its
+        // key routing hands it to the app).
+        KeyBinding::new("ctrl-tab", NextTab, None),
+        KeyBinding::new("ctrl-shift-tab", PreviousTab, None),
+        // The terminal text size from anywhere (settings 5); inside the
+        // terminal its own key routing does it.
+        KeyBinding::new(
+            m("cmd-shift-=", "ctrl-alt-="),
+            acta_terminal::view::IncreaseTextSize,
+            Some("!Terminal"),
+        ),
+        KeyBinding::new(
+            m("cmd-shift--", "ctrl-alt--"),
+            acta_terminal::view::DecreaseTextSize,
+            Some("!Terminal"),
+        ),
         KeyBinding::new(m("cmd-enter", "ctrl-enter"), TreeOpenTab, Some("Tree")),
         KeyBinding::new("tab", FocusNext, plain),
         KeyBinding::new("shift-tab", FocusPrevious, plain),
@@ -424,7 +441,7 @@ impl Shell {
         // regains focus.
         let activation = cx.observe_window_activation(window, |shell, window, cx| {
             if window.is_window_active() && matches!(shell.content, Content::Workbench(_)) {
-                claude_setup::refresh(cx);
+                claude_setup::refresh_if_stale(cx);
             }
         });
         Self {
@@ -565,14 +582,20 @@ impl Shell {
         if !started {
             // layout.md 4.4: tabs are restored at launch.
             let prefs = settings::current(cx).clone();
-            let restored: Vec<History> = prefs
+            // Keys are paired with their index first, so a key that no
+            // longer parses does not shift which tab was active.
+            let pairs: Vec<(usize, History)> = prefs
                 .tabs
                 .iter()
-                .filter_map(|k| Route::parse(k))
-                .map(History::at)
+                .enumerate()
+                .filter_map(|(i, k)| Route::parse(k).map(|r| (i, History::at(r))))
                 .collect();
+            let active = pairs
+                .iter()
+                .position(|(i, _)| *i == prefs.active_tab)
+                .unwrap_or(0);
+            let restored: Vec<History> = pairs.into_iter().map(|(_, h)| h).collect();
             if restored.len() >= 2 && has_projects && start.page != Page::Settings {
-                let active = prefs.active_tab.min(restored.len() - 1);
                 bench.history = restored[active].clone();
                 bench.tabs = restored;
                 bench.active_tab = active;
@@ -1603,6 +1626,10 @@ impl Shell {
                 DialogEvent::RestartTerminal => {
                     shell.close_overlay(window, cx);
                     shell.do_restart_terminal(window, cx);
+                }
+                DialogEvent::RemoveSetup => {
+                    shell.close_overlay(window, cx);
+                    claude_setup::run_remove(cx);
                 }
                 #[cfg(windows)]
                 DialogEvent::ChatSignOut => {
@@ -3513,6 +3540,9 @@ impl Render for Shell {
             .on_action(
                 cx.listener(|s, _: &CloseTab, w, cx| s.run_command(Command::CloseTab, w, cx)),
             )
+            .on_action(cx.listener(|s, _: &RemoveClaudeSetup, w, cx| {
+                s.open_dialog(DialogKind::RemoveSetup, w, cx)
+            }))
             .on_action(cx.listener(|s, _: &NextTab, w, cx| s.cycle_tab(true, w, cx)))
             .on_action(cx.listener(|s, _: &PreviousTab, w, cx| s.cycle_tab(false, w, cx)))
             .on_action(|_: &FocusNext, window, cx| window.focus_next(cx))

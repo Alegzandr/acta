@@ -20,6 +20,8 @@ pub const ALLOW_RULE: &str = "mcp__plugin_acta_acta__*";
 /// How a failure to start the `claude` CLI begins: the check reports
 /// Claude Code as not found rather than as a setup step to do.
 const NOT_RUN: &str = "cannot run claude";
+/// How long one call to the `claude` CLI may take.
+const CLAUDE_LIMIT: std::time::Duration = std::time::Duration::from_secs(60);
 /// What setup did that `--remove` must undo; kept in the plugin directory.
 const RECORD: &str = "setup-record.json";
 
@@ -46,13 +48,14 @@ pub struct RealClaude {
 impl ClaudeCli for RealClaude {
     fn run(&self, args: &[&str]) -> Result<String, String> {
         let mut cmd = std::process::Command::new(claude_program());
-        cmd.args(args).stdin(std::process::Stdio::null());
+        cmd.args(args);
         if let Some(d) = &self.config_dir {
             cmd.env("CLAUDE_CONFIG_DIR", d);
         }
-        let out = cmd
-            .output()
-            .map_err(|e| format!("{NOT_RUN} ({}): is Claude Code installed?", e.kind()))?;
+        // A `claude` that hangs is killed rather than waited on forever.
+        let out = acta_core::process::output_within(&mut cmd, CLAUDE_LIMIT)
+            .map_err(|e| format!("{NOT_RUN} ({}): is Claude Code installed?", e.kind()))?
+            .ok_or_else(|| format!("claude did not answer within {} s", CLAUDE_LIMIT.as_secs()))?;
         let text = String::from_utf8_lossy(&out.stdout).into_owned();
         if out.status.success() {
             Ok(text)

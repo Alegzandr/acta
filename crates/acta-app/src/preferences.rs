@@ -118,9 +118,13 @@ fn is_zero(n: &usize) -> bool {
     *n == 0
 }
 
-/// A stored version: digits and dots only, short.
+/// A stored version ("0.4.1", "1.0.0-rc.1"): ASCII letters, digits, dots
+/// and dashes, at most 32, no spaces.
 fn is_version(v: &str) -> bool {
-    !v.is_empty() && v.len() <= 16 && v.chars().all(|c| c.is_ascii_digit() || c == '.')
+    !v.is_empty()
+        && v.len() <= 32
+        && v.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
 }
 
 /// A stored pane size: kept only when it is a plausible number of pixels.
@@ -552,7 +556,9 @@ mod tests {
         assert_eq!(prefs.sidebar_width, None);
         assert_eq!(prefs.terminal_width, Some(520));
         assert_eq!(prefs.chat_height, None);
-        let odd = parse(r#"{"version":1,"last_version":"Alexandre"}"#).unwrap();
+        let rc = parse(r#"{"version":1,"last_version":"1.0.0-rc.1"}"#).unwrap();
+        assert_eq!(rc.last_version.as_deref(), Some("1.0.0-rc.1"));
+        let odd = parse(r#"{"version":1,"last_version":"Alexandre wrote"}"#).unwrap();
         assert_eq!(odd.last_version, None);
     }
 

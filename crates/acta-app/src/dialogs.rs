@@ -51,6 +51,8 @@ pub enum Kind {
         selected: Option<usize>,
     },
     RestartTerminal,
+    /// "Remove Acta from Claude Code?" (Settings, Claude Code).
+    RemoveSetup,
     #[cfg(windows)]
     /// "Sign out and clear chat data?" (components-app.md 5, Chat panel).
     ChatSignOut,
@@ -62,6 +64,8 @@ pub enum DialogEvent {
     Recover(Arc<ExportFile>),
     /// The terminal restart was confirmed.
     RestartTerminal,
+    /// Removing Acta from Claude Code was confirmed.
+    RemoveSetup,
     #[cfg(windows)]
     /// Deleting the chat panel's profile was confirmed.
     ChatSignOut,
@@ -693,6 +697,35 @@ impl Dialog {
                     .into_any_element(),
                 ];
                 (text(locale, Key::TerminalRestartTitle), body, buttons, 440.)
+            }
+            Kind::RemoveSetup => {
+                let body = type_scale::UI
+                    .el()
+                    .text_color(t.text_secondary)
+                    .child(text(locale, Key::SettingsRemoveBody))
+                    .into_any_element();
+                let buttons = vec![
+                    ui::button(
+                        "dialog-cancel",
+                        text(locale, Key::CommonCancel),
+                        Variant::Secondary,
+                        false,
+                        t,
+                    )
+                    .track_focus(&self.safe)
+                    .on_click(cx.listener(|d, _, _, cx| d.close(cx)))
+                    .into_any_element(),
+                    ui::button(
+                        "remove-setup-confirm",
+                        text(locale, Key::SettingsRemoveConfirm),
+                        Variant::Primary,
+                        false,
+                        t,
+                    )
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(DialogEvent::RemoveSetup)))
+                    .into_any_element(),
+                ];
+                (text(locale, Key::SettingsRemoveTitle), body, buttons, 440.)
             }
             #[cfg(windows)]
             Kind::ChatSignOut => {

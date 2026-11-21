@@ -99,6 +99,8 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `timeline.empty` | No entries yet. Add one, or let Claude Code log progress as it works. | Aucune entrée pour l'instant. Ajoutez-en une, ou laissez Claude Code consigner l'avancement au fil du travail. |
 | `entry.copy_markdown` | Copy as Markdown | Copier en Markdown |
 | `entry.change_type` | Change type | Changer le type |
+| `entry.edited` | edited | modifiée |
+| `entry.edited_by` | edited by {name} | modifiée par {name} |
 | `conflict.notice` | Claude Code changed this while you were editing. | Claude Code a modifié ceci pendant que vous écriviez. |
 | `conflict.theirs` | Show theirs | Voir sa version |
 | `conflict.mine` | Keep mine | Garder la mienne |
@@ -397,6 +399,9 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `settings.setup_again` | Run setup again | Relancer la configuration |
 | `settings.setup_remove` | Remove from Claude Code | Retirer de Claude Code |
 | `settings.setup.hint` | Setup installs Acta's plugin in Claude Code and adds one permission line to ~/.claude/settings.json. Remove undoes both. | La configuration installe le plugin d'Acta dans Claude Code et ajoute une ligne d'autorisation à ~/.claude/settings.json. Retirer annule les deux. |
+| `settings.remove.title` | Remove Acta from Claude Code? | Retirer Acta de Claude Code ? |
+| `settings.remove.body` | This uninstalls Acta's plugin and takes out the permission line setup added to ~/.claude/settings.json. Your projects stay in Acta. | Cela désinstalle le plugin d'Acta et retire la ligne d'autorisation ajoutée par la configuration à ~/.claude/settings.json. Vos projets restent dans Acta. |
+| `settings.remove.confirm` | Remove | Retirer |
 | `settings.data` | Data | Données |
 | `settings.export.last` | Last export: {days} (`time.days` or `time.today_word`) | Dernier export : {days} |
 | `settings.export.never` | Never exported | Jamais exporté |

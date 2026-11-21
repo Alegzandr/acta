@@ -6,7 +6,8 @@
 //! background executor.
 
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::Command;
+use std::time::Duration;
 
 use serde::Deserialize;
 
@@ -63,40 +64,42 @@ pub fn cli_path() -> Option<PathBuf> {
     layout.source.is_file().then_some(layout.source)
 }
 
+/// How long a check may take, and setup or removal (which install and
+/// uninstall a plugin through `claude`).
+const CHECK_LIMIT: Duration = Duration::from_secs(30);
+const SETUP_LIMIT: Duration = Duration::from_secs(120);
+
 /// Run `acta` with `args`, without a console window; `None` when it could
-/// not be started. Its output is returned whatever the exit status.
-fn run(args: &[&str]) -> Option<String> {
+/// not be started or ran past `limit` (it is then killed). Its output is
+/// returned whatever the exit status.
+fn run(args: &[&str], limit: Duration) -> Option<String> {
     let mut command = Command::new(cli_path()?);
-    command
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
+    command.args(args);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt as _;
         // CREATE_NO_WINDOW: no console flashes up, and none takes focus.
         command.creation_flags(0x0800_0000);
     }
-    let out = command.output().ok()?;
+    let out = acta_core::process::output_within(&mut command, limit).ok()??;
     Some(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
 /// `acta setup --check --json`. `None` when the command could not run or
 /// answered something else; the status bar then reports "not set up".
 pub fn check() -> Option<Check> {
-    Check::parse(&run(&["setup", "--check", "--json"])?)
+    Check::parse(&run(&["setup", "--check", "--json"], CHECK_LIMIT)?)
 }
 
 /// "Set up Claude Code" / "Run setup again": `acta setup`, then the check.
 pub fn install() -> Option<Check> {
-    run(&["setup", "--json"])?;
+    run(&["setup", "--json"], SETUP_LIMIT)?;
     check()
 }
 
 /// "Remove from Claude Code": `acta setup --remove`, then the check.
 pub fn remove() -> Option<Check> {
-    run(&["setup", "--remove", "--json"])?;
+    run(&["setup", "--remove", "--json"], SETUP_LIMIT)?;
     check()
 }
 
@@ -131,6 +134,8 @@ pub struct SetupState {
     pub checked: bool,
     /// A check, setup or removal is running.
     pub busy: bool,
+    /// When the last one finished.
+    pub finished_at: Option<std::time::Instant>,
 }
 
 impl gpui_kit::Global for SetupState {}
@@ -144,6 +149,24 @@ pub fn state(cx: &gpui_kit::App) -> Option<&SetupState> {
 pub fn refresh(cx: &mut gpui_kit::App) {
     start(cx, check, false);
 }
+
+/// The window regained focus: check again unless the last check finished
+/// less than 30 s ago (focus moves often; each check runs `claude`).
+pub fn refresh_if_stale(cx: &mut gpui_kit::App) {
+    let recent = state(cx)
+        .and_then(|s| s.finished_at)
+        .is_some_and(|at| !stale(at.elapsed()));
+    if !recent {
+        refresh(cx);
+    }
+}
+
+/// Whether a check that finished `ago` is old enough to repeat on focus.
+pub fn stale(ago: Duration) -> bool {
+    ago >= FOCUS_THROTTLE
+}
+
+const FOCUS_THROTTLE: Duration = Duration::from_secs(30);
 
 /// "Set up Claude Code" / "Run setup again".
 pub fn run_install(cx: &mut gpui_kit::App) {
@@ -170,6 +193,7 @@ fn start(cx: &mut gpui_kit::App, work: fn() -> Option<Check>, writes: bool) {
             state.check = check;
             state.checked = true;
             state.busy = false;
+            state.finished_at = Some(std::time::Instant::now());
             cx.refresh_windows();
         });
     })
@@ -209,6 +233,12 @@ mod tests {
             }
         );
         assert_eq!(Check::parse("not json"), None);
+    }
+
+    #[test]
+    fn a_focus_check_waits_30_seconds_after_the_last() {
+        assert!(!stale(Duration::from_secs(5)));
+        assert!(stale(Duration::from_secs(30)));
     }
 
     #[test]
