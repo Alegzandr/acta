@@ -131,3 +131,10 @@ ALTER TABLE topics   ADD COLUMN active_folder_id INTEGER REFERENCES folders(id);
 
 ## Evidence
 Read, not run: docs/settings, docs/permissions, docs/hooks (code.claude.com, 2026-11-21); the `attribution`, `includeCoAuthoredBy` and `includeGitInstructions` schema and the built-in git instructions, read from the installed 2.1.330 binary; `claude --help` for `--add-dir` and `--settings`. No headless run was made for this decision.
+
+## Addendum (2026-11-21): pull and branch switching from the folder row
+The user asked for a Pull button and a branch selector on git folders. These are human actions run by Acta, never by Claude Code.
+- **Pull:** `git pull --ff-only` on the current branch with its existing upstream, off the UI thread, with `GIT_TERMINAL_PROMPT=0`. A non-fast-forward, a missing upstream, a sign-in prompt or local changes that would be overwritten stop it with a short message and nothing changed. The button shows "behind N" when `git fetch` (run on demand, never in the background without the user) reports it.
+- **Branch selector:** lists local branches (and remote branches as "track"), current one checked; switching runs `git switch <branch>` (or `git switch --track origin/<b>`). If the working tree has changes git would refuse to carry, Acta says so and changes nothing: no stash, no force. "New branch..." creates from the current HEAD with `git switch -c`.
+- A running Claude Code session in that folder is told nothing automatically; the terminal header shows the new branch, and switching while a session is working asks for confirmation first.
+- Strings, wireframe and tests are part of the folder-sets implementation (components-folders.md is updated with it).
