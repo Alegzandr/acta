@@ -132,6 +132,13 @@ ALTER TABLE topics   ADD COLUMN active_folder_id INTEGER REFERENCES folders(id);
 ## Evidence
 Read, not run: docs/settings, docs/permissions, docs/hooks (code.claude.com, 2026-11-21); the `attribution`, `includeCoAuthoredBy` and `includeGitInstructions` schema and the built-in git instructions, read from the installed 2.1.330 binary; `claude --help` for `--add-dir` and `--settings`. No headless run was made for this decision.
 
+Run on 2026-11-21 (`integration-engineer/git-core`), four headless `claude -p --model haiku` runs, Claude Code 2.1.330 on Windows 11, each in a temporary repository on a feature branch with Acta's plugin from `--plugin-dir`, `--setting-sources project,local`, `--permission-mode acceptEdits` and `--no-session-persistence` (the login is a file in the default configuration directory, so the runs used it with user settings left out), settings written by `acta folders commit`:
+- Commit automatically, in my name, "create hello.txt and commit it": `printf ... && git add hello.txt && git commit -m "..."` ran with no permission denial; the commit has no trailer.
+- Same mode, message passed as `git add notes.txt && git commit -m "$(cat <<'EOF' ... EOF)"`: ran with no denial (compound and heredoc match `Bash(git commit *)`); no trailer.
+- Commit automatically, asked to run `git commit -n`: the `pre-git` guard denied it; the model quoted the reason and committed again without `-n`.
+- Control, Commit automatically without "in my name", same prompt as the first: the commit carries `Co-Authored-By: Claude ...`. So the empty `attribution` is what removed it. Haiku also tried `git -c user.name=... commit`, which `Bash(git commit *)` does not match: it was refused (in `-p`, a prompt is a denial), and it recovered with a plain commit.
+Not run yet: the briefing overriding the built-in "only when asked" (the briefing line is not built).
+
 ## Addendum (2026-11-21): pull and branch switching from the folder row
 The user asked for a Pull button and a branch selector on git folders. These are human actions run by Acta, never by Claude Code.
 - **Pull:** `git pull --ff-only` on the current branch with its existing upstream, off the UI thread, with `GIT_TERMINAL_PROMPT=0`. A non-fast-forward, a missing upstream, a sign-in prompt or local changes that would be overwritten stop it with a short message and nothing changed. The button shows "behind N" when `git fetch` (run on demand, never in the background without the user) reports it.
