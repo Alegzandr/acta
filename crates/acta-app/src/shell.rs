@@ -289,6 +289,11 @@ fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("home", TreeHome, Some("Tree")),
         KeyBinding::new("end", TreeEnd, Some("Tree")),
         KeyBinding::new("escape", DismissSidebar, Some("Tree")),
+        // 4.8.10: `Esc` dismisses the sidebar shown over the page wherever
+        // the keyboard is, except where `Esc` means something (a terminal,
+        // a field, a dialog, a menu: deeper contexts, or key handlers that
+        // run when the sidebar is not shown).
+        KeyBinding::new("escape", DismissSidebar, Some("Workbench && !Terminal")),
     ];
     // interaction.md 6.1: only Windows has a chat panel to focus.
     if cfg!(windows) {
@@ -2685,12 +2690,14 @@ impl Shell {
         .detach();
     }
 
-    /// Close the inline edit. The keyboard goes back to the tree only if
-    /// the edit had it: a click elsewhere that ended it keeps its focus.
+    /// Close the inline edit. The keyboard goes back to the tree if the
+    /// edit had it or nothing has it (the field gave it up on `Enter`): a
+    /// click elsewhere that ended it keeps its focus.
     fn cancel_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let nowhere = window.focused(cx).is_none();
         let Some(bench) = self.bench() else { return };
         if let Some(rename) = bench.rename.take()
-            && rename.state.focus_handle(cx).is_focused(window)
+            && (nowhere || rename.state.focus_handle(cx).is_focused(window))
         {
             let handle = bench.tree_focus.clone();
             window.focus(&handle, cx);
@@ -4194,6 +4201,16 @@ impl Render for Shell {
             .on_action(cx.listener(|s, _: &CancelDrag, w, cx| {
                 s.cancel_drag(w, cx);
             }))
+            .on_action(cx.listener(|s, _: &DismissSidebar, w, cx| {
+                let over = s.bench().is_some_and(|b| {
+                    b.ui.left_overlay && b.overlay.is_none() && b.ui.menu.is_none()
+                });
+                if over {
+                    s.dismiss_sidebar(w, cx);
+                } else {
+                    cx.propagate();
+                }
+            }))
             .on_action(cx.listener(|s, _: &ToggleSidebar, w, cx| s.toggle_sidebar(w, cx)))
             .on_action(cx.listener(|s, _: &ResetLayout, w, cx| s.reset_layout(w, cx)))
             .on_action(cx.listener(|s, _: &ToggleRight, w, cx| s.toggle_area(Side::Right, w, cx)))
@@ -4368,5 +4385,47 @@ mod tests {
     fn the_key_bindings_parse() {
         // `KeyBinding::new` panics on a keystroke the pinned GPUI rejects.
         assert!(key_bindings().len() > 30);
+    }
+
+    /// The action GPUI dispatches for `key` with focus in the innermost of
+    /// `contexts` (outermost first), as the window resolves it.
+    fn action_for(key: &'static str, contexts: &[&str]) -> Option<Box<dyn gpui_kit::Action>> {
+        let keymap = gpui_kit::Keymap::new(key_bindings());
+        let stack: Vec<gpui_kit::KeyContext> = contexts
+            .iter()
+            .map(|c| gpui_kit::KeyContext::parse(c).expect("a context"))
+            .collect();
+        let keystroke = gpui_kit::Keystroke::parse(key).expect("a keystroke");
+        let (bindings, pending) = keymap.bindings_for_input(&[keystroke], &stack);
+        assert!(!pending, "{key} waits for more keys");
+        bindings.first().map(|b| b.action().boxed_clone())
+    }
+
+    fn is<A: gpui_kit::Action + Default>(action: Option<Box<dyn gpui_kit::Action>>) -> bool {
+        action.is_some_and(|a| a.partial_eq(&A::default()))
+    }
+
+    #[test]
+    fn alt_up_and_alt_down_reorder_in_the_tree() {
+        let tree = ["Workbench", "Tree"];
+        assert!(is::<TreeMoveUp>(action_for("alt-up", &tree)));
+        assert!(is::<TreeMoveDown>(action_for("alt-down", &tree)));
+        assert!(is::<TreeUp>(action_for("up", &tree)));
+        // Outside the tree they mean nothing.
+        assert!(action_for("alt-up", &["Workbench"]).is_none());
+    }
+
+    #[test]
+    fn escape_dismisses_the_sidebar_over_the_page_except_in_a_terminal() {
+        assert!(is::<DismissSidebar>(action_for("escape", &["Workbench"])));
+        assert!(is::<DismissSidebar>(action_for(
+            "escape",
+            &["Workbench", "RecordPage"]
+        )));
+        assert!(action_for("escape", &["Workbench", "Terminal"]).is_none());
+        assert!(is::<crate::dialogs::CancelDialog>(action_for(
+            "escape",
+            &["Workbench", "Dialog"]
+        )));
     }
 }
