@@ -292,6 +292,31 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `tab.close` | Close tab | Fermer l'onglet |
 | `tab.close_others` | Close other tabs | Fermer les autres onglets |
 | `tab.reopen` | Reopen closed tab | Rouvrir l'onglet fermé |
+| `view.projects` | Projects | Projets |
+| `area.left` | Left sidebar | Barre latérale gauche |
+| `area.right` | Right sidebar | Barre latérale droite |
+| `area.bottom` | Bottom panel | Panneau du bas |
+| `area.page` | Page area | Zone des pages |
+| `area.hide.left` | Hide left sidebar | Masquer la barre latérale gauche |
+| `area.hide.right` | Hide right sidebar | Masquer la barre latérale droite |
+| `area.hide.bottom` | Hide bottom panel | Masquer le panneau du bas |
+| `area.empty` | Drag a view here, or move one from the palette. | Faites glisser une vue ici, ou déplacez-en une depuis la palette. |
+| `view.actions` | View actions | Actions de la vue |
+| `view.move_left` | Move to left sidebar | Déplacer dans la barre latérale gauche |
+| `view.move_right` | Move to right sidebar | Déplacer dans la barre latérale droite |
+| `view.move_bottom` | Move to bottom panel | Déplacer dans le panneau du bas |
+| `view.move_page` | Move to page area | Déplacer dans la zone des pages |
+| `view.split_off` | Split from group | Séparer du groupe |
+| `view.hide` | Hide | Masquer |
+| `layout.menu` | Layout | Disposition |
+| `layout.group` | Group {n} | Groupe {n} |
+| `layout.webview_hidden` | Hidden while you rearrange the layout. | Masqué pendant la réorganisation de la disposition. |
+| `layout.moved.left` | View moved to the left sidebar: {view} | Vue déplacée dans la barre latérale gauche : {view} |
+| `layout.moved.right` | View moved to the right sidebar: {view} | Vue déplacée dans la barre latérale droite : {view} |
+| `layout.moved.bottom` | View moved to the bottom panel: {view} | Vue déplacée dans le panneau du bas : {view} |
+| `layout.moved.page` | View moved to the page area: {view} | Vue déplacée dans la zone des pages : {view} |
+| `layout.hidden` | View hidden: {view} | Vue masquée : {view} |
+| `layout.reset_done` | Layout reset. | Disposition réinitialisée. |
 | `palette.recent` | Recent | Récents |
 | `palette.topics` | Topics | Sujets |
 | `palette.commands` | Commands | Commandes |
@@ -309,7 +334,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `cmd.forward` | Forward | Suivant |
 | `cmd.undo` | Undo | Annuler |
 | `cmd.redo` | Redo | Rétablir |
-| `cmd.zoom` | Zoom tool window | Agrandir la fenêtre d'outil |
+| `cmd.zoom` | Maximize focused area | Agrandir au maximum la zone active |
 | `cmd.set_status` | Set status: {status} | Définir le statut : {status} |
 | `cmd.settings` | Open settings | Ouvrir les paramètres |
 | `cmd.theme` | Theme: {value} | Thème : {value} |
@@ -319,18 +344,30 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `cmd.new_project` | New project... | Nouveau projet... |
 | `cmd.new_epic` | New epic... | Nouvel epic... |
 | `cmd.switch_project` | Switch project | Changer de projet |
-| `cmd.toggle_sidebar` | Toggle sidebar | Afficher ou masquer la barre latérale |
+| `cmd.toggle_sidebar` | Toggle left sidebar | Afficher ou masquer la barre latérale gauche |
 | `cmd.toggle_terminal` | Toggle terminal | Afficher ou masquer le terminal |
 | `cmd.toggle_chat` | Toggle chat | Afficher ou masquer le chat |
-| `cmd.terminal_bottom` | Move terminal to bottom | Placer le terminal en bas |
-| `cmd.terminal_right` | Move terminal to right | Placer le terminal à droite |
-| `cmd.chat_bottom` | Move chat to bottom | Placer le chat en bas |
-| `cmd.chat_right` | Move chat to right | Placer le chat à droite |
+| `cmd.toggle_right` | Toggle right sidebar | Afficher ou masquer la barre latérale droite |
+| `cmd.toggle_bottom` | Toggle bottom panel | Afficher ou masquer le panneau du bas |
 | `cmd.restart_terminal` | Restart terminal here | Redémarrer le terminal ici |
-| `cmd.widen_sidebar` | Widen sidebar | Élargir la barre latérale |
-| `cmd.narrow_sidebar` | Narrow sidebar | Rétrécir la barre latérale |
-| `cmd.widen_terminal` | Widen terminal | Élargir le terminal |
-| `cmd.narrow_terminal` | Narrow terminal | Rétrécir le terminal |
+| `cmd.view_show` | {view}: Show | {view} : afficher |
+| `cmd.view_hide` | {view}: Hide | {view} : masquer |
+| `cmd.view_left` | {view}: Move to left sidebar | {view} : déplacer dans la barre latérale gauche |
+| `cmd.view_right` | {view}: Move to right sidebar | {view} : déplacer dans la barre latérale droite |
+| `cmd.view_bottom` | {view}: Move to bottom panel | {view} : déplacer dans le panneau du bas |
+| `cmd.view_page` | {view}: Move to page area | {view} : déplacer dans la zone des pages |
+| `cmd.view_split_off` | {view}: Split from group | {view} : séparer du groupe |
+| `cmd.split_right` | Split right | Diviser vers la droite |
+| `cmd.split_down` | Split down | Diviser vers le bas |
+| `cmd.tab_next_group` | Move tab to next group | Déplacer l'onglet dans le groupe suivant |
+| `cmd.tab_prev_group` | Move tab to previous group | Déplacer l'onglet dans le groupe précédent |
+| `cmd.join_groups` | Join groups | Réunir les groupes |
+| `cmd.next_area` | Focus next area | Aller à la zone suivante |
+| `cmd.prev_area` | Focus previous area | Aller à la zone précédente |
+| `cmd.grow_area` | Grow focused area | Agrandir la zone active |
+| `cmd.shrink_area` | Shrink focused area | Réduire la zone active |
+| `cmd.layout_undo` | Undo layout change | Annuler le changement de disposition |
+| `cmd.layout_reset` | Reset layout | Réinitialiser la disposition |
 | `cmd.setup` | Set up Claude Code | Configurer Claude Code |
 | `cmd.restart_update` | Restart to update | Redémarrer pour mettre à jour |
 | `cmd.terminal_larger` | Increase terminal text size | Augmenter la taille du texte du terminal |
@@ -395,6 +432,8 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `settings.reading_width.narrow` | Narrow | Étroite |
 | `settings.reading_width.default` | Default | Normale |
 | `settings.reading_width.wide` | Wide | Large |
+| `settings.layout` | Layout | Disposition |
+| `settings.layout.desc` | Puts every view and panel back where it was on a new install. You can undo it right after. | Remet chaque vue et chaque panneau à sa place d'origine. Vous pouvez annuler juste après. |
 | `settings.terminal_size` | Terminal text size | Taille du texte du terminal |
 | `settings.folders` | Working folders | Dossiers de travail |
 | `settings.auto_memory` | Turn off Claude Code's own memory in attached folders | Désactiver la mémoire propre à Claude Code dans les dossiers rattachés |
@@ -516,69 +555,13 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `shortcuts.filter` | Filter shortcuts | Filtrer les raccourcis |
 | `shortcuts.none` | No shortcut matches "{query}". | Aucun raccourci ne correspond à « {query} ». |
 | `shortcuts.group.general` | General | Général |
-| `shortcuts.group.tabs` | Tabs and tool windows | Onglets et fenêtres d'outils |
+| `shortcuts.group.tabs` | Tabs, views and layout | Onglets, vues et disposition |
 | `shortcuts.group.lists` | Lists and tree | Listes et arborescence |
 | `shortcuts.group.editors` | Editors | Éditeurs |
 | `shortcuts.group.terminal` | Terminal and chat | Terminal et chat |
 
 Strings that exist in the behaviour sections but are not in this table are a defect of the table: add the row in the same change that adds the string.
 
-### 10.4.1 Keys waiting for the workbench layout (4.8)
+### 10.4.1 Keys of the workbench layout (4.8)
 
-Specified with 4.8 and not yet in the code. The tests of `crates/acta-app/src/i18n` read only the table of 10.4, so these rows live here until the change that implements 4.8 moves them into 10.4 (in this order, at the places named) together with `catalogue.rs`. A row marked "replaces" changes the text of an existing key at that moment; the keys listed under "retired" leave 10.4 in the same change. Existing keys reused as they are: `tree.inbox`, `tree.knowledge`, `terminal.title`, `chat.title` (view names), `common.undo`, `cmd.toggle_terminal`, `cmd.toggle_chat`, `cmd.restart_terminal`, `tab.*`.
-
-| Key | English | French |
-|---|---|---|
-| `view.projects` | Projects | Projets |
-| `view.agent_browser` | Agent browser (added with ADR 0010) | Navigateur de l'agent |
-| `area.left` | Left sidebar | Barre latérale gauche |
-| `area.right` | Right sidebar | Barre latérale droite |
-| `area.bottom` | Bottom panel | Panneau du bas |
-| `area.page` | Page area | Zone des pages |
-| `area.hide.left` | Hide left sidebar | Masquer la barre latérale gauche |
-| `area.hide.right` | Hide right sidebar | Masquer la barre latérale droite |
-| `area.hide.bottom` | Hide bottom panel | Masquer le panneau du bas |
-| `area.empty` | Drag a view here, or move one from the palette. | Faites glisser une vue ici, ou déplacez-en une depuis la palette. |
-| `view.actions` | View actions | Actions de la vue |
-| `view.move_left` | Move to left sidebar | Déplacer dans la barre latérale gauche |
-| `view.move_right` | Move to right sidebar | Déplacer dans la barre latérale droite |
-| `view.move_bottom` | Move to bottom panel | Déplacer dans le panneau du bas |
-| `view.move_page` | Move to page area | Déplacer dans la zone des pages |
-| `view.split_off` | Split from group | Séparer du groupe |
-| `view.hide` | Hide | Masquer |
-| `layout.menu` | Layout | Disposition |
-| `layout.group` | Group {n} | Groupe {n} |
-| `layout.webview_hidden` | Hidden while you rearrange the layout. | Masqué pendant la réorganisation de la disposition. |
-| `layout.moved.left` | View moved to the left sidebar: {view} | Vue déplacée dans la barre latérale gauche : {view} |
-| `layout.moved.right` | View moved to the right sidebar: {view} | Vue déplacée dans la barre latérale droite : {view} |
-| `layout.moved.bottom` | View moved to the bottom panel: {view} | Vue déplacée dans le panneau du bas : {view} |
-| `layout.moved.page` | View moved to the page area: {view} | Vue déplacée dans la zone des pages : {view} |
-| `layout.hidden` | View hidden: {view} | Vue masquée : {view} |
-| `layout.reset_done` | Layout reset. | Disposition réinitialisée. |
-| `cmd.toggle_sidebar` | Toggle left sidebar (replaces "Toggle sidebar") | Afficher ou masquer la barre latérale gauche |
-| `cmd.toggle_right` | Toggle right sidebar | Afficher ou masquer la barre latérale droite |
-| `cmd.toggle_bottom` | Toggle bottom panel | Afficher ou masquer le panneau du bas |
-| `cmd.view_show` | {view}: Show | {view} : afficher |
-| `cmd.view_hide` | {view}: Hide | {view} : masquer |
-| `cmd.view_left` | {view}: Move to left sidebar | {view} : déplacer dans la barre latérale gauche |
-| `cmd.view_right` | {view}: Move to right sidebar | {view} : déplacer dans la barre latérale droite |
-| `cmd.view_bottom` | {view}: Move to bottom panel | {view} : déplacer dans le panneau du bas |
-| `cmd.view_page` | {view}: Move to page area | {view} : déplacer dans la zone des pages |
-| `cmd.view_split_off` | {view}: Split from group | {view} : séparer du groupe |
-| `cmd.split_right` | Split right | Diviser vers la droite |
-| `cmd.split_down` | Split down | Diviser vers le bas |
-| `cmd.tab_next_group` | Move tab to next group | Déplacer l'onglet dans le groupe suivant |
-| `cmd.tab_prev_group` | Move tab to previous group | Déplacer l'onglet dans le groupe précédent |
-| `cmd.join_groups` | Join groups | Réunir les groupes |
-| `cmd.next_area` | Focus next area | Aller à la zone suivante |
-| `cmd.prev_area` | Focus previous area | Aller à la zone précédente |
-| `cmd.zoom` | Maximize focused area (replaces "Zoom tool window") | Agrandir au maximum la zone active |
-| `cmd.grow_area` | Grow focused area | Agrandir la zone active |
-| `cmd.shrink_area` | Shrink focused area | Réduire la zone active |
-| `cmd.layout_undo` | Undo layout change | Annuler le changement de disposition |
-| `cmd.layout_reset` | Reset layout | Réinitialiser la disposition |
-| `settings.layout` | Layout | Disposition |
-| `settings.layout.desc` | Puts every view and panel back where it was on a new install. You can undo it right after. | Remet chaque vue et chaque panneau à sa place d'origine. Vous pouvez annuler juste après. |
-| `shortcuts.group.tabs` | Tabs, views and layout (replaces "Tabs and tool windows") | Onglets, vues et disposition |
-
-Retired when 4.8 ships (their commands become `cmd.view_*` and `cmd.grow_area` / `cmd.shrink_area`): `cmd.terminal_bottom`, `cmd.terminal_right`, `cmd.chat_bottom`, `cmd.chat_right`, `cmd.widen_sidebar`, `cmd.narrow_sidebar`, `cmd.widen_terminal`, `cmd.narrow_terminal`. `{view}` is always the view's name key above, never translated twice or inflected: the colon form keeps every sentence whole in French, where a view's gender would otherwise change the participle.
+Moved into 10.4 when 4.8 was implemented (M8), with the texts that replaced "Toggle sidebar", "Zoom tool window" and "Tabs and tool windows"; the commands that moved a tool window to a dock and widened or narrowed a pane left with them. `{view}` is always a view's name key (`view.projects`, `tree.inbox`, `tree.knowledge`, `terminal.title`, `chat.title`), never translated twice or inflected: the colon form keeps every sentence whole in French, where a view's gender would otherwise change the participle. `view.agent_browser` ("Agent browser", "Navigateur de l'agent") joins 10.4 with ADR 0010.

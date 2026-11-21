@@ -26,9 +26,6 @@ use crate::type_scale;
 use crate::ui::{self, Variant};
 use crate::workspace::{FolderRef, ToastKind, Undo, Workspace};
 
-/// The header of a tool window.
-const HEADER: f32 = 28.;
-
 /// Where a launch comes from: the page's record and its name.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Origin {
@@ -58,8 +55,6 @@ enum Pane {
 }
 
 pub enum DockEvent {
-    /// Hide was asked from the header.
-    Hide,
     /// "Restart here": the shell restarts with the active page's origin
     /// (after the confirmation when a process runs).
     RestartHere,
@@ -403,7 +398,6 @@ impl TerminalDock {
     }
 
     fn render_dock(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let active = self.active.clone();
         let t = cx.global::<Tokens>().clone();
         let locale = settings::locale(cx);
         let mode = cx.global::<Appearance>().mode;
@@ -416,71 +410,6 @@ impl TerminalDock {
             }
         }
         let pane = self.project.and_then(|p| self.panes.get(&p));
-        let origin = match pane {
-            Some(Pane::Running { origin, .. })
-            | Some(Pane::Ask { origin, .. })
-            | Some(Pane::Missing { origin, .. })
-            | Some(Pane::NotFound { origin }) => Some(origin.clone()),
-            _ => None,
-        };
-        let mismatch = match (&origin, &active) {
-            (Some(started), Some(active)) => started.owner != active.owner,
-            _ => false,
-        };
-        let header = div()
-            .flex()
-            .flex_row()
-            .flex_shrink_0()
-            .items_center()
-            .gap(px(8.))
-            .h(px(HEADER))
-            .px(px(8.))
-            .bg(t.bg_sunken)
-            .border_b_1()
-            .border_color(t.border_subtle)
-            .child(ui::label(text(locale, Key::TerminalTitle), &t))
-            .children(origin.as_ref().map(|o| {
-                type_scale::SMALL
-                    .el()
-                    .min_w_0()
-                    .truncate()
-                    .text_color(if mismatch {
-                        t.text_primary
-                    } else {
-                        t.text_tertiary
-                    })
-                    .child(Self::context(o, locale))
-            }))
-            .when(mismatch, |this| {
-                this.child(
-                    ui::button(
-                        "terminal-restart-text",
-                        text(locale, Key::TerminalRestartHere),
-                        Variant::Ghost,
-                        false,
-                        &t,
-                    )
-                    .h(px(24.))
-                    .on_click(cx.listener(|_, _, _, cx| cx.emit(DockEvent::RestartHere))),
-                )
-            })
-            .child(div().flex_1())
-            .child(
-                ui::ghost_icon_button(
-                    "terminal-restart",
-                    Icon::RotateCw,
-                    24.,
-                    false,
-                    false,
-                    true,
-                    &t,
-                )
-                .on_click(cx.listener(|_, _, _, cx| cx.emit(DockEvent::RestartHere))),
-            )
-            .child(
-                ui::ghost_icon_button("terminal-hide", Icon::Minus, 24., false, false, true, &t)
-                    .on_click(cx.listener(|_, _, _, cx| cx.emit(DockEvent::Hide))),
-            );
         let surface = match mode {
             Mode::Dark => t.bg_sunken,
             Mode::Light => t.bg_raised,
@@ -674,9 +603,92 @@ impl TerminalDock {
             .flex_col()
             .size_full()
             .bg(surface)
-            .child(header)
             .child(body)
             .into_any_element()
+    }
+
+    /// The session shown, and whether it was started from another page
+    /// than the active one (layout.md 4.5).
+    fn shown_origin(&self) -> (Option<Origin>, bool) {
+        let pane = self.project.and_then(|p| self.panes.get(&p));
+        let origin = match pane {
+            Some(Pane::Running { origin, .. })
+            | Some(Pane::Ask { origin, .. })
+            | Some(Pane::Missing { origin, .. })
+            | Some(Pane::NotFound { origin }) => Some(origin.clone()),
+            _ => None,
+        };
+        let mismatch = match (&origin, &self.active) {
+            (Some(started), Some(active)) => started.owner != active.owner,
+            _ => false,
+        };
+        (origin, mismatch)
+    }
+
+    /// The context of the terminal's area header or view strip
+    /// (workbench.md 4.8.4): "on topic Embed the terminal", in
+    /// `text.primary` with a "Restart here" text button when the session
+    /// was started elsewhere.
+    pub fn header_context(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let t = cx.global::<Tokens>().clone();
+        let locale = settings::locale(cx);
+        let (origin, mismatch) = self.shown_origin();
+        let origin = origin?;
+        Some(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(8.))
+                .min_w_0()
+                .child(
+                    type_scale::SMALL
+                        .el()
+                        .min_w_0()
+                        .truncate()
+                        .text_color(if mismatch {
+                            t.text_primary
+                        } else {
+                            t.text_tertiary
+                        })
+                        .child(Self::context(&origin, locale)),
+                )
+                .when(mismatch, |this| {
+                    this.child(
+                        ui::button(
+                            "terminal-restart-text",
+                            text(locale, Key::TerminalRestartHere),
+                            Variant::Ghost,
+                            false,
+                            &t,
+                        )
+                        .h(px(24.))
+                        .on_click(cx.listener(|_, _, _, cx| cx.emit(DockEvent::RestartHere))),
+                    )
+                })
+                .into_any_element(),
+        )
+    }
+
+    /// The terminal's own header button: Restart here (`rotate-cw`).
+    pub fn header_buttons(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let t = cx.global::<Tokens>().clone();
+        let locale = settings::locale(cx);
+        ui::ghost_icon_button(
+            "terminal-restart",
+            Icon::RotateCw,
+            24.,
+            false,
+            false,
+            true,
+            &t,
+        )
+        .tooltip(ui::tip(text(locale, Key::CmdRestartTerminal)))
+        .on_mouse_down(gpui_kit::MouseButton::Left, |_, _, cx| {
+            cx.stop_propagation()
+        })
+        .on_click(cx.listener(|_, _, _, cx| cx.emit(DockEvent::RestartHere)))
+        .into_any_element()
     }
 
     fn project_name(&self, id: ProjectId, cx: &App) -> String {

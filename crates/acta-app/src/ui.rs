@@ -101,6 +101,50 @@ pub fn tip(
     }
 }
 
+/// A tooltip with its shortcut as kbd hints after the label
+/// (docs/design/components.md 5, Tooltip).
+pub struct TipKeys(SharedString, Vec<&'static str>);
+
+impl gpui_kit::Render for TipKeys {
+    fn render(
+        &mut self,
+        _: &mut gpui_kit::Window,
+        cx: &mut gpui_kit::Context<Self>,
+    ) -> impl IntoElement {
+        let t = cx.global::<Tokens>();
+        type_scale::SMALL
+            .el()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(8.))
+            .px(px(8.))
+            .py(px(4.))
+            .whitespace_nowrap()
+            .bg(t.bg_overlay)
+            .border_1()
+            .border_color(t.border_default)
+            .rounded(px(RADIUS_MD))
+            .shadow(vec![t.shadow_overlay()])
+            .text_color(t.text_primary)
+            .child(self.0.clone())
+            .child(kbd(&self.1, t))
+    }
+}
+
+/// The builder `.tooltip()` takes, for `text` and its `keys`.
+pub fn tip_keys(
+    text: impl Into<SharedString>,
+    keys: Vec<&'static str>,
+) -> impl Fn(&mut gpui_kit::Window, &mut gpui_kit::App) -> gpui_kit::AnyView + 'static {
+    let text = text.into();
+    move |_, cx| {
+        use gpui_kit::AppContext as _;
+        let (text, keys) = (text.clone(), keys.clone());
+        cx.new(|_| TipKeys(text, keys)).into()
+    }
+}
+
 /// Keyboard shortcut hint: each key in its own 18-high box, `type.small`
 /// with `tnum` in `text.tertiary`, 2 apart (docs/design/components.md 5, kbd).
 pub fn kbd(keys: &[&str], tokens: &Tokens) -> Div {
@@ -513,6 +557,24 @@ pub fn page_scroll(id: impl Into<ElementId>) -> Stateful<Div> {
         .flex_col()
         .items_center()
         .px(px(32.))
+}
+
+/// A view's scrolling content in a side area or the bottom panel
+/// (workbench.md 4.8.3): it starts 12 below the area header, with side
+/// padding 12, and takes the full width.
+pub fn view_scroll(id: impl Into<ElementId>) -> Stateful<Div> {
+    div()
+        .id(id.into())
+        .size_full()
+        .overflow_y_scroll()
+        .flex()
+        .flex_col()
+        .p(px(12.))
+}
+
+/// The column of a view: the full width, no page title.
+pub fn view_column() -> Div {
+    div().w_full().flex().flex_col()
 }
 
 /// A row of the properties block (docs/design/components-records.md 5):

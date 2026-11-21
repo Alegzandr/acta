@@ -1,17 +1,19 @@
-//! The workbench window (docs/design/layout.md 4.2): titlebar, the tree
-//! sidebar, the page area, the docks (terminal and chat) and the status
-//! bar, plus the overlays (palette, quick capture, dialogs, toast).
+//! The workbench window (docs/design/layout.md 4.2, workbench.md 4.8):
+//! titlebar, the four areas (left sidebar, page area, bottom panel, right
+//! sidebar) with the views and page tabs in their groups, the status bar,
+//! and the overlays (palette, quick capture, dialogs, toast). The layout
+//! itself is `layout.rs`; drawing and moving it is `shell_layout.rs`.
 //!
 //! The store opens in the background at launch. A database whose key is
 //! lost shows the key-loss recovery screen (screens.md 8.9) and is never
 //! touched; with no project yet the first-run page asks for a folder
-//! (8.5). Tabs are M5: one page per window, with back and forward history.
+//! (8.5).
 //!
-//! Docks (layout.md 4.5): the terminal lives in the right dock; the chat in
-//! the right or the bottom one (Windows; macOS and Linux open claude.ai in
-//! the browser, ADR 0009). One tool window per dock: showing one in the
-//! right dock hides the other there, and both go on running.
+//! Page tabs: the focused group's page is "checked out" (`history`, `page`
+//! in [`Bench`]); every other tab waits in `slots` with its history, and
+//! with its view while some group shows it.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -20,18 +22,18 @@ use acta_core::store::ExportFile;
 use gpui_kit::component::window_border;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, AnyView, App, AppContext, Bounds, Context, DragMoveEvent, Entity, FocusHandle,
-    Focusable, InteractiveElement, IntoElement, KeyBinding, ParentElement, PathPromptOptions,
-    Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Task, TitlebarOptions,
-    Window, WindowBounds, WindowDecorations, WindowOptions, actions, deferred, div, point, px,
-    size,
+    AnyElement, AnyView, App, AppContext, Bounds, Context, DragMoveEvent, Entity, EventEmitter,
+    FocusHandle, Focusable, InteractiveElement, IntoElement, KeyBinding, ParentElement,
+    PathPromptOptions, Render, SharedString, StatefulInteractiveElement, Styled, Subscription,
+    Task, TitlebarOptions, Window, WindowBounds, WindowDecorations, WindowOptions, actions,
+    deferred, div, point, px, size,
 };
 
 use crate::capture::{Capture, CaptureEvent};
 #[cfg(windows)]
 use crate::chat::Kept;
 #[cfg(windows)]
-use crate::chat_panel::{ChatEvent, ChatPanel, Dock};
+use crate::chat_panel::{ChatEvent, ChatPanel};
 use crate::claude_setup;
 use crate::commands::{self, Command};
 use crate::db::{self, Db, Opened};
@@ -42,9 +44,9 @@ use crate::icons::{Icon, icon};
 use crate::inbox_page::InboxPage;
 use crate::kb_model::Filters;
 use crate::kb_page::{DocPage, Draft, KnowledgePage};
+use crate::layout::{Direction, Layout, Place, Side, Tab, TabId, ViewAction, ViewId};
 use crate::palette::{CreateKind, Palette, PaletteEvent, Setup};
 use crate::palette_model::{Group, Target};
-use crate::panes;
 use crate::record_page::{EditTitle, OpenStatusMenu, PageEvent, RecordPage};
 use crate::route::{History, Route};
 use crate::settings;
@@ -57,6 +59,12 @@ use crate::tree::{self, Folds, Row};
 use crate::type_scale;
 use crate::ui::{self, Variant};
 use crate::workspace::{Toast, ToastKind, Workspace, WorkspaceEvent};
+
+#[path = "shell_layout.rs"]
+mod layout_ui;
+
+use layout_ui::{CHAT, LayoutUi, ResizeDrag};
+pub(crate) use layout_ui::{MenuKind, area_keys, view_icon, view_keys, view_name, views};
 
 /// claude.ai: the chat panel's page, and what "Open claude.ai in your
 /// browser" opens.
@@ -73,8 +81,23 @@ const TOAST_TIME: Duration = Duration::from_secs(6);
 actions!(
     acta,
     [
-        /// `Mod+B`, palette "Toggle sidebar".
+        /// `Mod+B`, palette "Toggle left sidebar".
         ToggleSidebar,
+        /// `Mod+Shift+B`, palette "Toggle right sidebar".
+        ToggleRight,
+        /// `Mod+J`, palette "Toggle bottom panel".
+        ToggleBottom,
+        /// `Mod+\\`, palette "Split right".
+        SplitRight,
+        /// `F6` / `Shift+F6`: the next or previous area (6.2).
+        NextArea,
+        PreviousArea,
+        /// `Mod+Shift+Enter`: maximize the focused area and back.
+        ZoomArea,
+        /// `Esc` during a drag: cancel it (4.8.7).
+        CancelDrag,
+        /// Settings: "Reset layout" (4.8.13).
+        ResetLayout,
         /// `Mod+,`, palette "Open settings".
         OpenSettings,
         /// `Tab`: the next control.
@@ -167,17 +190,6 @@ struct ProjectFacts {
     last: Option<(String, i64)>,
 }
 
-/// What a resize handle drags (docs/design/components.md 5, Resize handle).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Handle {
-    Sidebar,
-    Right,
-    Bottom,
-}
-
-/// The value of a resize drag.
-struct ResizeDrag(Handle);
-
 /// The keys of the workbench (docs/design/interaction.md 6.1). Bindings
 /// that must not reach past a focused terminal carry `!Terminal`; the ones
 /// the terminal keeps (palette, terminal toggles, pane focus, text size)
@@ -201,6 +213,15 @@ fn key_bindings() -> Vec<KeyBinding> {
     let plain = Some("!Terminal && !Input");
     let mut out = vec![
         KeyBinding::new(m("cmd-b", "ctrl-b"), ToggleSidebar, app),
+        // interaction.md 6.1: the terminal and the chat keep Mod+Shift+B;
+        // Ctrl+J is Claude Code's newline and Ctrl+\\ the shell's quit.
+        KeyBinding::new(m("cmd-shift-b", "ctrl-shift-b"), ToggleRight, None),
+        KeyBinding::new(m("cmd-j", "ctrl-j"), ToggleBottom, app),
+        KeyBinding::new(m("cmd-\\", "ctrl-\\"), SplitRight, app),
+        KeyBinding::new("f6", NextArea, None),
+        KeyBinding::new("shift-f6", PreviousArea, None),
+        KeyBinding::new(m("cmd-shift-enter", "ctrl-shift-enter"), ZoomArea, None),
+        KeyBinding::new("escape", CancelDrag, Some("Dragging")),
         KeyBinding::new(m("cmd-,", "ctrl-,"), OpenSettings, app),
         KeyBinding::new(m("cmd-/", "ctrl-/"), OpenShortcuts, app),
         // Mod+W only outside editors until drafts survive a closed tab.
@@ -322,22 +343,43 @@ enum Overlay {
     Dialog(Entity<Dialog>),
 }
 
+/// A page tab that is not the checked-out one: its history, and its view
+/// while a group shows it.
+struct PageSlot {
+    history: History,
+    view: Option<PageView>,
+    sub: Option<Subscription>,
+}
+
 struct Bench {
     ws: Entity<Workspace>,
-    /// The active tab's history (layout.md 4.4).
+    /// The layout of the window (workbench.md 4.8) and its undo steps.
+    layout: Layout,
+    layout_undo: crate::layout::UndoLog,
+    ui: LayoutUi,
+    /// The checked-out page tab: the focused group's page (or the last
+    /// page it showed, under a view tab), with its history and view.
+    current: TabId,
     history: History,
-    /// Every tab's history, in order; the active one's entry is refreshed
-    /// from `history` whenever tabs change.
-    tabs: Vec<History>,
-    active_tab: usize,
+    page: PageView,
+    /// Every other page tab.
+    slots: HashMap<TabId, PageSlot>,
+    next_tab: u64,
     /// Closed tabs, most recent last ("Reopen closed tab").
     closed_tabs: Vec<History>,
-    page: PageView,
     settings: Entity<SettingsPage>,
+    /// The page shown where a tab has nothing yet.
+    first_run: Entity<FirstRun>,
     folds: Folds,
     cursor: usize,
     tree_focus: FocusHandle,
-    page_focus: FocusHandle,
+    /// One focus handle per page group (at most three, 4.8.8).
+    group_focus: [FocusHandle; 3],
+    /// The container of the Inbox or Knowledge view.
+    view_focus: FocusHandle,
+    inbox_view: Option<Entity<InboxPage>>,
+    knowledge_view: Option<Entity<KnowledgePage>>,
+    view_subs: HashMap<ViewId, Subscription>,
     active_project: Option<ProjectId>,
     /// Where the next "New topic" goes when it was asked for from a tree
     /// row's `plus` (that project, and that epic if any).
@@ -353,11 +395,29 @@ struct Bench {
     toast: Option<Toast>,
     toast_timer: Task<()>,
     dock: Entity<TerminalDock>,
-    dock_visible: bool,
     #[cfg(windows)]
     chat: Entity<ChatPanel>,
     _subs: Vec<Subscription>,
     _page_sub: Option<Subscription>,
+}
+
+impl Bench {
+    fn new_tab_id(&mut self) -> TabId {
+        let id = TabId(self.next_tab);
+        self.next_tab += 1;
+        id
+    }
+
+    /// The tab showing `route`, if any.
+    fn find_tab(&self, route: Route) -> Option<TabId> {
+        if self.history.current() == Some(route) {
+            return Some(self.current);
+        }
+        self.slots
+            .iter()
+            .find(|(_, s)| s.history.current() == Some(route))
+            .map(|(id, _)| *id)
+    }
 }
 
 enum Content {
@@ -388,18 +448,6 @@ enum Content {
 pub struct Shell {
     content: Content,
     start: Start,
-    sidebar_visible: bool,
-    /// Pane sizes (layout.md 4.2, 4.5), from the preferences and the
-    /// resize handles.
-    sizes: panes::Sizes,
-    /// The handle being dragged; its size goes to the preferences once
-    /// the drag ends.
-    resizing: Option<Handle>,
-    /// Whether the sidebar fitted beside the page in the last frame
-    /// (layout.md 4.2, narrow behaviour).
-    sidebar_fits: bool,
-    /// `Mod+B` while the sidebar is auto-hidden: it shows over the page.
-    sidebar_overlay: bool,
     /// What the status bar says about the active project (layout.md 4.6):
     /// read off the UI thread when the project or the data changes.
     facts: Option<ProjectFacts>,
@@ -435,11 +483,12 @@ impl Shell {
         // Focus inside the window, so its keys reach the shell. This does
         // not raise or activate the window.
         window.focus(&focus, cx);
-        let sidebar_visible = start.sidebar || !settings::current(cx).sidebar_hidden;
-        let sizes = panes::Sizes::from_prefs(settings::current(cx));
         // layout.md 4.6: the setup is checked again when the window
-        // regains focus.
+        // regains focus. A drag ends with the window's focus (4.8.7).
         let activation = cx.observe_window_activation(window, |shell, window, cx| {
+            if !window.is_window_active() {
+                shell.cancel_drag(window, cx);
+            }
             if window.is_window_active() && matches!(shell.content, Content::Workbench(_)) {
                 claude_setup::refresh_if_stale(cx);
             }
@@ -447,11 +496,6 @@ impl Shell {
         Self {
             content,
             start,
-            sidebar_visible,
-            sizes,
-            resizing: None,
-            sidebar_fits: true,
-            sidebar_overlay: false,
             facts: None,
             facts_key: None,
             _facts: Task::ready(()),
@@ -505,7 +549,6 @@ impl Shell {
                 &dock,
                 window,
                 |shell, _, event: &DockEvent, window, cx| match event {
-                    DockEvent::Hide => shell.hide_terminal(window, cx),
                     DockEvent::RestartHere => shell.restart_terminal_here(window, cx),
                 },
             ),
@@ -516,16 +559,26 @@ impl Shell {
         let first_run_sub = Self::watch_first_run(&first_run, window, cx);
         let bench = Bench {
             ws,
+            // The real layout is read with the first tree (`after_reload`).
+            layout: Layout::defaults(vec![TabId(0)], CHAT),
+            layout_undo: crate::layout::UndoLog::default(),
+            ui: LayoutUi::new(),
+            current: TabId(0),
             history: History::default(),
-            tabs: vec![History::default()],
-            active_tab: 0,
+            page: PageView::FirstRun(first_run.clone()),
+            slots: HashMap::new(),
+            next_tab: 1,
             closed_tabs: Vec::new(),
-            page: PageView::FirstRun(first_run),
             settings: settings_page,
+            first_run,
             folds,
             cursor: 0,
             tree_focus: cx.focus_handle(),
-            page_focus: cx.focus_handle(),
+            group_focus: [cx.focus_handle(), cx.focus_handle(), cx.focus_handle()],
+            view_focus: cx.focus_handle(),
+            inbox_view: None,
+            knowledge_view: None,
+            view_subs: HashMap::new(),
             active_project: None,
             create_in: None,
             recent: Vec::new(),
@@ -536,7 +589,6 @@ impl Shell {
             toast: None,
             toast_timer: Task::ready(()),
             dock,
-            dock_visible: false,
             #[cfg(windows)]
             chat,
             _subs: subs,
@@ -578,36 +630,17 @@ impl Shell {
         let has_projects = !ws.projects.is_empty();
         let first_project = ws.projects.first().map(|t| t.project.id);
         let on_first_run = matches!(bench.page, PageView::FirstRun(_));
-        let started = bench.history.current().is_some();
+        let started = bench.history.current().is_some() || !bench.slots.is_empty();
         if !started {
-            // layout.md 4.4: tabs are restored at launch.
-            let prefs = settings::current(cx).clone();
-            // Keys are paired with their index first, so a key that no
-            // longer parses does not shift which tab was active.
-            let pairs: Vec<(usize, History)> = prefs
-                .tabs
-                .iter()
-                .enumerate()
-                .filter_map(|(i, k)| Route::parse(k).map(|r| (i, History::at(r))))
-                .collect();
-            let active = pairs
-                .iter()
-                .position(|(i, _)| *i == prefs.active_tab)
-                .unwrap_or(0);
-            let restored: Vec<History> = pairs.into_iter().map(|(_, h)| h).collect();
-            if restored.len() >= 2 && has_projects && start.page != Page::Settings {
-                bench.history = restored[active].clone();
-                bench.tabs = restored;
-                bench.active_tab = active;
-            }
-            let saved = bench
-                .history
-                .current()
-                .or_else(|| prefs.page.as_deref().and_then(Route::parse));
+            self.restore_layout(has_projects, window, cx);
+            let Some(bench) = self.bench() else { return };
             let route = if start.page == Page::Settings {
                 Some(Route::Settings)
             } else if has_projects {
-                saved.or(first_project.map(Route::Project))
+                bench
+                    .history
+                    .current()
+                    .or(first_project.map(Route::Project))
             } else {
                 None
             };
@@ -615,6 +648,7 @@ impl Shell {
                 Some(route) => self.navigate(route, false, window, cx),
                 None => self.show_first_run(window, cx),
             }
+            self.after_layout(window, cx);
             self.dev_overlay(window, cx);
             return;
         }
@@ -628,6 +662,60 @@ impl Shell {
         }
         self.follow_cursor(cx);
         self.clamp_cursor(cx);
+    }
+
+    /// The layout of `preferences.json` (4.8.12): every page tab whose key
+    /// still parses gets a slot, the layout is repaired against them, and
+    /// the focused group's page is checked out. With no project, or no tab,
+    /// one empty tab.
+    fn restore_layout(&mut self, has_projects: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let saved = settings::current(cx).layout.clone();
+        let start_sidebar = self.start.sidebar;
+        let Some(bench) = self.bench() else { return };
+        let (mut layout, pages) = match saved {
+            Some(saved) => (saved.layout, saved.pages),
+            None => (Layout::defaults(Vec::new(), CHAT), Vec::new()),
+        };
+        bench.slots.clear();
+        if has_projects {
+            for (id, key) in pages {
+                if let Some(route) = Route::parse(&key) {
+                    bench.slots.insert(
+                        id,
+                        PageSlot {
+                            history: History::at(route),
+                            view: None,
+                            sub: None,
+                        },
+                    );
+                    bench.next_tab = bench.next_tab.max(id.0 + 1);
+                }
+            }
+        }
+        if bench.slots.is_empty() {
+            let id = bench.new_tab_id();
+            bench.slots.insert(
+                id,
+                PageSlot {
+                    history: History::default(),
+                    view: None,
+                    sub: None,
+                },
+            );
+        }
+        let live: Vec<TabId> = bench.slots.keys().copied().collect();
+        layout.repair(&live, CHAT);
+        if start_sidebar {
+            layout.left.shown = true;
+        }
+        let first = layout.focused_page().unwrap_or(live[0]);
+        bench.layout = layout;
+        // The placeholder tab of `start_workbench` is gone; `first` is
+        // checked out without storing it.
+        let slot = bench.slots.remove(&first).expect("a live tab");
+        bench.current = first;
+        bench.history = slot.history;
+        let _ = (window, cx);
     }
 
     /// Put the keyboard cursor back on the row that moved.
@@ -650,15 +738,28 @@ impl Shell {
         match std::env::var("ACTA_DEV_OVERLAY").as_deref() {
             Ok("palette") => self.open_palette(None, None, window, cx),
             Ok("capture") => self.open_capture(window, cx),
-            Ok("terminal") => self.toggle_terminal(window, cx),
+            Ok("terminal") => self.view_action(ViewId::Terminal, ViewAction::Show, window, cx),
             // Shown without taking the keyboard, for captures.
             #[cfg(windows)]
-            Ok("chat") => self.show_chat(false, window, cx),
+            Ok("chat") => {
+                self.change_layout(None, window, cx, |l| l.show_view(ViewId::Chat).is_some());
+            }
             // The chat under the palette: the placeholder instead of the page.
             #[cfg(windows)]
             Ok("chat-palette") => {
-                self.show_chat(false, window, cx);
+                self.change_layout(None, window, cx, |l| l.show_view(ViewId::Chat).is_some());
                 self.open_palette(None, None, window, cx);
+            }
+            Ok("layout-menu") => self.open_menu(MenuKind::Layout, 1000., 40., cx),
+            Ok("split") => {
+                self.change_layout(None, window, cx, |l| {
+                    l.show_view(ViewId::Terminal);
+                    l.move_tab(
+                        Tab::View(ViewId::Terminal),
+                        crate::layout::Target::Area(Side::Bottom),
+                    )
+                    .is_ok()
+                });
             }
             Ok("export") => self.open_export(window, cx),
             Ok("snapshots") => self.open_snapshots(window, cx),
@@ -693,104 +794,43 @@ impl Shell {
         )
     }
 
-    /// Whether the sidebar is on screen, beside the page or over it.
-    pub fn sidebar_visible(&self) -> bool {
-        if self.sidebar_fits {
-            self.sidebar_visible
-        } else {
-            self.sidebar_overlay
+    /// `Mod+B`: show or hide the left sidebar; while it is auto-hidden in a
+    /// narrow window it shows over the page instead (4.8.10).
+    pub fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if matches!(self.content, Content::Workbench(_)) {
+            self.toggle_area(Side::Left, window, cx);
         }
-    }
-
-    /// `Mod+B`: show or hide the sidebar. While it is auto-hidden because
-    /// the window is too narrow, it shows over the page instead (4.2).
-    pub fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
-        if !matches!(self.content, Content::Workbench(_)) {
-            return;
-        }
-        if self.sidebar_fits {
-            self.sidebar_visible = !self.sidebar_visible;
-            let hidden = !self.sidebar_visible;
-            settings::change(cx, |prefs| prefs.sidebar_hidden = hidden);
-        } else {
-            self.sidebar_overlay = !self.sidebar_overlay;
-        }
-        cx.notify();
     }
 
     /// Dismiss the sidebar shown over the page and return to the page.
     fn dismiss_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.sidebar_overlay {
-            self.sidebar_overlay = false;
+        let Some(bench) = self.bench() else { return };
+        if bench.ui.left_overlay {
+            bench.ui.left_overlay = false;
             self.focus_page(window, cx);
             cx.notify();
         }
     }
 
-    // ---- pane sizes ----
-
-    /// A resize handle moved to `position` (window coordinates).
-    fn resize(
-        &mut self,
-        handle: Handle,
-        position: gpui_kit::Point<gpui_kit::Pixels>,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) {
-        let viewport = window.viewport_size();
-        let (x, y) = (f32::from(position.x), f32::from(position.y));
-        match handle {
-            Handle::Sidebar => self.sizes.sidebar = panes::sidebar_width(x),
-            Handle::Right => {
-                let width = (f32::from(viewport.width) - x).max(panes::DOCK_MIN);
-                if self.terminal_visible() {
-                    self.sizes.terminal = width;
-                } else {
-                    self.sizes.chat = width;
-                }
-            }
-            Handle::Bottom => {
-                self.sizes.bottom =
-                    (f32::from(viewport.height) - STATUS_BAR_HEIGHT - y).max(panes::BOTTOM_MIN)
-            }
-        }
-        self.resizing = Some(handle);
-        cx.notify();
+    /// Whether the left sidebar is on screen, beside the page or over it.
+    pub fn sidebar_visible(&self, window: &Window) -> bool {
+        let Content::Workbench(bench) = &self.content else {
+            return false;
+        };
+        let (w, h) = layout_ui::body_size(window);
+        let f = crate::layout_frame::frame(&bench.layout, w, h);
+        f.left.is_some() || (f.left_auto_hidden && bench.ui.left_overlay)
     }
 
-    /// Double-click on a handle: the default size again.
-    fn reset_size(&mut self, handle: Handle, cx: &mut Context<Self>) {
-        let d = panes::Sizes::default();
-        match handle {
-            Handle::Sidebar => self.sizes.sidebar = d.sidebar,
-            Handle::Right if self.terminal_visible() => self.sizes.terminal = d.terminal,
-            Handle::Right => self.sizes.chat = d.chat,
-            Handle::Bottom => self.sizes.bottom = d.bottom,
+    /// Whether a side area is shown (the titlebar's area toggles).
+    pub fn area_shown(&self, side: Side, window: &Window) -> bool {
+        let Content::Workbench(bench) = &self.content else {
+            return false;
+        };
+        match side {
+            Side::Left => self.sidebar_visible(window),
+            _ => bench.layout.side(side).shown,
         }
-        self.save_sizes(cx);
-    }
-
-    /// "Widen sidebar", "Narrow terminal" and the like: steps of 40.
-    fn step_size(&mut self, handle: Handle, by: f32, cx: &mut Context<Self>) {
-        match handle {
-            Handle::Sidebar => {
-                self.sizes.sidebar = panes::sidebar_width(self.sizes.sidebar + by);
-                if !self.sidebar_visible {
-                    self.toggle_sidebar(cx);
-                }
-            }
-            Handle::Right | Handle::Bottom => {
-                self.sizes.terminal = (self.sizes.terminal + by).max(panes::DOCK_MIN)
-            }
-        }
-        self.save_sizes(cx);
-    }
-
-    fn save_sizes(&mut self, cx: &mut Context<Self>) {
-        self.resizing = None;
-        let sizes = self.sizes;
-        settings::change(cx, |prefs| sizes.to_prefs(prefs));
-        cx.notify();
     }
 
     /// The titlebar shows only the name and the window controls: first
@@ -803,19 +843,29 @@ impl Shell {
         }
     }
 
-    pub fn terminal_visible(&self) -> bool {
-        match &self.content {
-            Content::Workbench(bench) => bench.dock_visible,
-            _ => false,
+    /// Whether a view's titlebar toggle is selected (4.8.5): visible in the
+    /// layout; for Inbox and Knowledge while they are pages, the focused
+    /// group's active tab shows that page.
+    pub fn view_selected(&self, view: ViewId) -> bool {
+        let Content::Workbench(bench) = &self.content else {
+            return false;
+        };
+        if view.is_page_kind() && !bench.layout.is_placed(view) {
+            let showing =
+                matches!(bench.layout.focused_tab(), Some(Tab::Page(id)) if id == bench.current);
+            return showing
+                && matches!(
+                    (view, bench.history.current()),
+                    (ViewId::Inbox, Some(Route::Inbox(_)))
+                        | (ViewId::Knowledge, Some(Route::Knowledge(_)))
+                );
         }
+        bench.layout.is_visible(view)
     }
 
-    #[cfg(windows)]
-    pub fn chat_visible(&self, cx: &App) -> bool {
-        match &self.content {
-            Content::Workbench(bench) => bench.chat.read(cx).is_shown(),
-            _ => false,
-        }
+    /// The titlebar is a workbench's (toggles shown).
+    pub fn is_workbench(&self) -> bool {
+        matches!(self.content, Content::Workbench(_))
     }
 
     pub fn can_go_back(&self) -> bool {
@@ -828,7 +878,9 @@ impl Shell {
 
     // ---- navigation ----
 
-    /// Open `route` in the page area (`push` records a history step).
+    /// Open `route` in the focused group's tab (`push` records a history
+    /// step). A page open in another tab is focused there instead: a page
+    /// is open once (4.4).
     pub fn navigate(
         &mut self,
         route: Route,
@@ -837,6 +889,22 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         let Some(bench) = self.bench() else { return };
+        if let Some(other) = bench.find_tab(route)
+            && other != bench.current
+            && let Some(spot) = bench.layout.locate(Tab::Page(other))
+        {
+            bench.layout.activate(spot);
+            self.after_layout(window, cx);
+            self.focus_page(window, cx);
+            return;
+        }
+        let Some(bench) = self.bench() else { return };
+        // Navigation goes to the focused group's page tab (4.8.8).
+        if let Some(spot) = bench.layout.locate(Tab::Page(bench.current))
+            && bench.layout.focused_tab() != Some(Tab::Page(bench.current))
+        {
+            bench.layout.activate(spot);
+        }
         if push {
             bench.history.open(route);
         } else {
@@ -845,48 +913,90 @@ impl Shell {
         self.show(route, window, cx);
     }
 
-    fn show(&mut self, route: Route, window: &mut Window, cx: &mut Context<Self>) {
-        // Opening something dismisses the sidebar shown over the page.
-        self.sidebar_overlay = false;
-        let Some(bench) = self.bench() else { return };
+    /// The view of a page, its events tied to the tab that shows it.
+    fn make_view(
+        &mut self,
+        route: Route,
+        tab: TabId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> (PageView, Option<Subscription>) {
+        let Some(bench) = self.bench() else {
+            return (PageView::FirstRun(cx.new(|_| FirstRun)), None);
+        };
         let ws = bench.ws.clone();
-        let (page, sub): (PageView, Option<Subscription>) = match route {
-            Route::Project(id) => record(ws, Owner::Project(id), window, cx),
-            Route::Epic(id) => record(ws, Owner::Epic(id), window, cx),
-            Route::Topic(id) => record(ws, Owner::Topic(id), window, cx),
+        let settings_page = bench.settings.clone();
+        match route {
+            Route::Project(id) => record(ws, Owner::Project(id), tab, window, cx),
+            Route::Epic(id) => record(ws, Owner::Epic(id), tab, window, cx),
+            Route::Topic(id) => record(ws, Owner::Topic(id), tab, window, cx),
             Route::Inbox(id) => {
                 let page = cx.new(|cx| InboxPage::new(ws, id, window, cx));
-                let sub = cx.subscribe_in(&page, window, Self::on_page);
+                let sub = Self::page_events(&page, tab, window, cx);
                 (PageView::Inbox(page), Some(sub))
             }
             Route::Knowledge(id) => {
                 let page = cx.new(|cx| KnowledgePage::new(ws, id, Filters::default(), window, cx));
-                let sub = cx.subscribe_in(&page, window, Self::on_page);
+                let sub = Self::page_events(&page, tab, window, cx);
                 (PageView::Knowledge(page), Some(sub))
             }
             Route::Kb(id) => {
                 let page = cx.new(|cx| DocPage::open(ws, id, cx));
-                let sub = cx.subscribe_in(&page, window, Self::on_page);
+                let sub = Self::page_events(&page, tab, window, cx);
                 (PageView::Doc(page), Some(sub))
             }
             Route::Trash => {
                 let page = cx.new(|cx| TrashPage::new(ws, cx));
-                let sub = cx.subscribe_in(&page, window, Self::on_page);
+                let sub = Self::page_events(&page, tab, window, cx);
                 (PageView::Trash(page), Some(sub))
             }
-            Route::Settings => {
-                let Some(bench) = self.bench() else { return };
-                (PageView::Settings(bench.settings.clone()), None)
-            }
+            Route::Settings => (PageView::Settings(settings_page), None),
             Route::Shortcuts => {
                 let page = cx.new(|cx| crate::shortcuts_page::ShortcutsPage::new(window, cx));
                 (PageView::Shortcuts(page), None)
             }
+        }
+    }
+
+    /// A page's events, for the tab `tab` that shows it.
+    fn page_events<P: EventEmitter<PageEvent>>(
+        page: &Entity<P>,
+        tab: TabId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Subscription {
+        cx.subscribe_in(
+            page,
+            window,
+            move |shell, _, event: &PageEvent, window, cx| shell.on_page(tab, event, window, cx),
+        )
+    }
+
+    /// Show `route` in the checked-out tab.
+    fn show(&mut self, route: Route, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(tab) = self.bench().map(|b| b.current) else {
+            return;
         };
+        let (page, sub) = self.make_view(route, tab, window, cx);
         let Some(bench) = self.bench() else { return };
         bench.page = page;
         bench._page_sub = sub;
-        // The active project, and its tree node unfolded (4.2, 4.6).
+        self.follow_route(route, true, window, cx);
+    }
+
+    /// What follows the checked-out page: the active project and its tree
+    /// node unfolded (4.2, 4.6), recent topics, the terminal's origin, the
+    /// saved layout, and focus when `focus`.
+    fn follow_route(
+        &mut self,
+        route: Route,
+        focus: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(bench) = self.bench() else { return };
+        // Opening something dismisses the sidebar shown over the page.
+        bench.ui.left_overlay = false;
         let projects = bench.ws.read(cx).projects.clone();
         let project = match route {
             Route::Project(id) | Route::Inbox(id) | Route::Knowledge(id) => Some(id),
@@ -912,7 +1022,6 @@ impl Shell {
             bench.recent.insert(0, id);
             bench.recent.truncate(5);
         }
-        let page_focus = bench.page_focus.clone();
         let dock = bench.dock.clone();
         let origin = self.origin(cx);
         dock.update(cx, |dock, cx| {
@@ -924,31 +1033,50 @@ impl Shell {
             dock.active = origin;
             cx.notify();
         });
+        self.sync_page_kind_views(window, cx);
         self.save_layout(cx);
-        self.focus_page(window, cx);
-        let _ = page_focus;
+        if focus {
+            self.focus_page(window, cx);
+        }
         cx.notify();
     }
 
     fn on_page(
         &mut self,
-        _: &Entity<impl Render>,
+        tab: TabId,
         event: &PageEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // A page in another group: that group takes focus first.
+        let current = self.bench().map(|b| b.current);
+        if current != Some(tab)
+            && matches!(event, PageEvent::Open(_) | PageEvent::NewKb(_))
+            && let Some(bench) = self.bench()
+            && let Some(spot) = bench.layout.locate(Tab::Page(tab))
+        {
+            bench.layout.activate(spot);
+            self.after_layout(window, cx);
+        }
+        let current = self.bench().map(|b| b.current);
         match event {
             PageEvent::Open(route) => self.navigate(*route, true, window, cx),
             PageEvent::Replace(route) => {
                 if let Some(bench) = self.bench() {
-                    bench.history.replace(*route);
+                    if current == Some(tab) {
+                        bench.history.replace(*route);
+                    } else if let Some(slot) = bench.slots.get_mut(&tab) {
+                        slot.history.replace(*route);
+                    }
                 }
                 self.save_layout(cx);
             }
             PageEvent::NewKb(draft) => self.new_kb_draft(*draft, window, cx),
             PageEvent::Located(project) => {
                 let project = *project;
-                if let Some(bench) = self.bench() {
+                if current == Some(tab)
+                    && let Some(bench) = self.bench()
+                {
                     bench.active_project = Some(project);
                 }
                 // The breadcrumb and the tree now know the entry's owner.
@@ -960,8 +1088,9 @@ impl Shell {
     fn new_kb_draft(&mut self, draft: Draft, window: &mut Window, cx: &mut Context<Self>) {
         let Some(bench) = self.bench() else { return };
         let ws = bench.ws.clone();
+        let tab = bench.current;
         let page = cx.new(|cx| DocPage::create(ws, draft, window, cx));
-        let sub = cx.subscribe_in(&page, window, Self::on_page);
+        let sub = Self::page_events(&page, tab, window, cx);
         let Some(bench) = self.bench() else { return };
         bench.page = PageView::Doc(page);
         bench._page_sub = Some(sub);
@@ -986,105 +1115,116 @@ impl Shell {
         self.navigate(Route::Settings, true, window, cx);
     }
 
-    /// Write the page and the tree's folds to `preferences.json` (ids only).
+    /// Write the layout (page tabs as route keys) and the tree's folds to
+    /// `preferences.json` (ids only, 4.7).
     fn save_layout(&mut self, cx: &mut Context<Self>) {
         let Some(bench) = self.bench() else { return };
-        let page = bench.history.current().map(Route::key);
         let mut collapsed: Vec<String> = bench.folds.collapsed.iter().cloned().collect();
         let mut closed: Vec<String> = bench.folds.closed_shown.iter().cloned().collect();
         collapsed.sort();
         closed.sort();
-        bench.tabs[bench.active_tab] = bench.history.clone();
-        let (tabs, active_tab) = if bench.tabs.len() >= 2 {
-            (
-                bench
-                    .tabs
-                    .iter()
-                    .filter_map(|h| h.current().map(Route::key))
-                    .collect::<Vec<_>>(),
-                bench.active_tab,
-            )
-        } else {
-            (Vec::new(), 0)
-        };
+        let pages: Vec<(TabId, String)> = bench
+            .layout
+            .page_tabs()
+            .into_iter()
+            .filter_map(|id| {
+                let route = if id == bench.current {
+                    bench.history.current()
+                } else {
+                    bench.slots.get(&id).and_then(|s| s.history.current())
+                };
+                route.map(|r| (id, r.key()))
+            })
+            .collect();
+        // The first-run page has no tab worth keeping.
+        let layout = (!pages.is_empty()).then(|| crate::layout::Saved {
+            layout: bench.layout.clone(),
+            pages,
+        });
         let current = settings::current(cx);
-        if current.page == page
-            && current.collapsed == collapsed
+        if current.collapsed == collapsed
             && current.closed_shown == closed
-            && current.tabs == tabs
-            && current.active_tab == active_tab
+            && current.layout == layout
         {
             return;
         }
         settings::change(cx, |prefs| {
-            prefs.page = page;
             prefs.collapsed = collapsed;
             prefs.closed_shown = closed;
-            prefs.tabs = tabs;
-            prefs.active_tab = active_tab;
+            if layout.is_some() {
+                prefs.layout = layout;
+            }
         });
     }
 
-    // ---- tabs (layout.md 4.4) ----
+    // ---- tabs (layout.md 4.4, workbench.md 4.8.8) ----
 
-    /// Open `route` in a new tab, or focus the tab that already shows it.
+    /// Open `route` in a new tab of the focused group, or focus the tab
+    /// that already shows it.
     fn open_in_tab(&mut self, route: Route, window: &mut Window, cx: &mut Context<Self>) {
         let Some(bench) = self.bench() else { return };
-        bench.tabs[bench.active_tab] = bench.history.clone();
-        if let Some(at) = bench.tabs.iter().position(|h| h.current() == Some(route)) {
-            self.switch_tab(at, window, cx);
+        if let Some(at) = bench.find_tab(route) {
+            if let Some(spot) = bench.layout.locate(Tab::Page(at)) {
+                bench.layout.activate(spot);
+            }
+            self.after_layout(window, cx);
+            self.focus_page(window, cx);
             return;
         }
-        bench.tabs.push(History::at(route));
-        let at = bench.tabs.len() - 1;
-        self.switch_tab(at, window, cx);
+        self.open_tab(History::at(route), window, cx);
     }
 
-    fn switch_tab(&mut self, at: usize, window: &mut Window, cx: &mut Context<Self>) {
+    /// A new page tab holding `history`, after the focused group's active
+    /// tab. Opening a tab is not a layout step: closing it undoes it.
+    fn open_tab(&mut self, history: History, window: &mut Window, cx: &mut Context<Self>) {
         let Some(bench) = self.bench() else { return };
-        if at >= bench.tabs.len() {
-            return;
-        }
-        bench.tabs[bench.active_tab] = bench.history.clone();
-        bench.active_tab = at;
-        bench.history = bench.tabs[at].clone();
-        if let Some(route) = bench.history.current() {
-            self.show(route, window, cx);
-        }
-        cx.notify();
+        let id = bench.new_tab_id();
+        bench.slots.insert(
+            id,
+            PageSlot {
+                history,
+                view: None,
+                sub: None,
+            },
+        );
+        bench.layout.add_page(id);
+        self.after_layout(window, cx);
+        self.focus_page(window, cx);
     }
 
-    /// Close tab `at`; the last remaining tab cannot be closed.
-    fn close_tab(&mut self, at: usize, window: &mut Window, cx: &mut Context<Self>) {
+    /// Close page tab `id`; the last page of the window cannot be closed.
+    fn close_page(&mut self, id: TabId, window: &mut Window, cx: &mut Context<Self>) {
         let Some(bench) = self.bench() else { return };
-        if bench.tabs.len() <= 1 || at >= bench.tabs.len() {
+        if bench.layout.close_page(id).is_err() {
             return;
         }
-        bench.tabs[bench.active_tab] = bench.history.clone();
-        let closed = bench.tabs.remove(at);
-        bench.closed_tabs.push(closed);
-        let was_active = at == bench.active_tab;
-        if at < bench.active_tab || bench.active_tab >= bench.tabs.len() {
-            bench.active_tab = bench.active_tab.saturating_sub(1);
-        }
-        bench.history = bench.tabs[bench.active_tab].clone();
-        if was_active && let Some(route) = bench.history.current() {
-            self.show(route, window, cx);
+        let history = if id == bench.current {
+            Some(bench.history.clone())
         } else {
-            self.save_layout(cx);
-        }
-        cx.notify();
+            bench.slots.get(&id).map(|s| s.history.clone())
+        };
+        bench.closed_tabs.extend(history);
+        self.after_layout(window, cx);
+        self.focus_page(window, cx);
     }
 
-    fn close_other_tabs(&mut self, cx: &mut Context<Self>) {
+    /// "Close other tabs": every page but the checked-out one.
+    fn close_other_tabs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(bench) = self.bench() else { return };
-        bench.tabs[bench.active_tab] = bench.history.clone();
-        let keep = bench.tabs.remove(bench.active_tab);
-        bench.closed_tabs.append(&mut bench.tabs);
-        bench.tabs = vec![keep];
-        bench.active_tab = 0;
-        self.save_layout(cx);
-        cx.notify();
+        let others: Vec<TabId> = bench
+            .layout
+            .page_tabs()
+            .into_iter()
+            .filter(|id| *id != bench.current)
+            .collect();
+        for id in others {
+            if bench.layout.close_page(id).is_ok()
+                && let Some(slot) = bench.slots.get(&id)
+            {
+                bench.closed_tabs.push(slot.history.clone());
+            }
+        }
+        self.after_layout(window, cx);
     }
 
     fn reopen_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1092,25 +1232,24 @@ impl Shell {
         let Some(history) = bench.closed_tabs.pop() else {
             return;
         };
-        bench.tabs[bench.active_tab] = bench.history.clone();
-        bench.tabs.push(history);
-        let at = bench.tabs.len() - 1;
-        self.switch_tab(at, window, cx);
+        self.open_tab(history, window, cx);
     }
 
-    /// `Ctrl+Tab` / `Ctrl+Shift+Tab`, wrapping.
+    /// `Ctrl+Tab` / `Ctrl+Shift+Tab`: the focused group's tabs, wrapping.
     fn cycle_tab(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some(bench) = self.bench() else { return };
-        let n = bench.tabs.len();
+        let group = bench.layout.focused;
+        let g = &bench.layout.page.groups[group];
+        let n = g.tabs.len();
         if n < 2 {
             return;
         }
         let at = if forward {
-            (bench.active_tab + 1) % n
+            (g.active + 1) % n
         } else {
-            (bench.active_tab + n - 1) % n
+            (g.active + n - 1) % n
         };
-        self.switch_tab(at, window, cx);
+        self.activate_tab(Place::Page, group, at, window, cx);
     }
 
     /// A tab's icon and title (layout.md 4.4).
@@ -1149,11 +1288,19 @@ impl Shell {
                     .unwrap_or_else(|| id.to_string()),
             ),
             Route::Kb(id) => {
-                let title = match &bench.page {
-                    PageView::Doc(page) if bench.history.current() == Some(route) => {
-                        page.read(cx).located().and_then(|(_, t)| t)
-                    }
+                let doc = |view: &PageView| match view {
+                    PageView::Doc(page) => page.read(cx).located().and_then(|(_, t)| t),
                     _ => None,
+                };
+                let title = if bench.history.current() == Some(route) {
+                    doc(&bench.page)
+                } else {
+                    bench
+                        .slots
+                        .values()
+                        .find(|s| s.history.current() == Some(route))
+                        .and_then(|s| s.view.as_ref())
+                        .and_then(doc)
                 };
                 (
                     Icon::FileText,
@@ -1169,108 +1316,20 @@ impl Shell {
         }
     }
 
-    /// The tab bar (layout.md 4.4): 32 high, `bg.sunken`, only with two or
-    /// more tabs, across the page area.
-    fn tab_bar(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let t = cx.global::<Tokens>().clone();
-        let locale = settings::locale(cx);
-        let (routes, active) = match &self.content {
-            Content::Workbench(bench) if bench.tabs.len() >= 2 => {
-                let mut tabs = bench.tabs.clone();
-                tabs[bench.active_tab] = bench.history.clone();
-                (
-                    tabs.iter().map(|h| h.current()).collect::<Vec<_>>(),
-                    bench.active_tab,
-                )
-            }
-            _ => return None,
-        };
-        let mut bar = div()
-            .id("tab-bar")
-            .flex()
-            .flex_row()
-            .flex_shrink_0()
-            .h(px(32.))
-            .w_full()
-            .overflow_x_scroll()
-            .bg(t.bg_sunken)
-            .border_b_1()
-            .border_color(t.border_subtle);
-        for (i, route) in routes.into_iter().enumerate() {
-            let Some(route) = route else { continue };
-            let (glyph, status, title) = self.tab_label(route, locale, cx);
-            let is_active = i == active;
-            let group = SharedString::from(format!("tab-{i}"));
-            let hover = t.fill_hover;
-            let leading = match status {
-                Some(status) => ui::status_glyph(status, 14., &t),
-                None => icon(glyph, 14., t.text_secondary),
-            };
-            let close = ui::ghost_icon_button(
-                format!("tab-close-{i}"),
-                Icon::X,
-                16.,
-                false,
-                false,
-                true,
-                &t,
-            )
-            .when(!is_active, |this| {
-                this.invisible().group_hover(group.clone(), |s| s.visible())
-            })
-            .on_click(cx.listener(move |shell, _, window, cx| {
-                cx.stop_propagation();
-                shell.close_tab(i, window, cx)
-            }));
-            bar = bar.child(
-                ui::focusable(div().id(("tab", i)), &t, false)
-                    .group(group)
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(8.))
-                    .h_full()
-                    .px(px(12.))
-                    .min_w(px(120.))
-                    .max_w(px(220.))
-                    .flex_shrink(1.)
-                    .when(is_active, |this| this.bg(t.bg_base))
-                    .when(!is_active, |this| this.hover(move |s| s.bg(hover)))
-                    .on_click(
-                        cx.listener(move |shell, _, window, cx| shell.switch_tab(i, window, cx)),
-                    )
-                    .on_mouse_down(
-                        gpui_kit::MouseButton::Middle,
-                        cx.listener(move |shell, _, window, cx| shell.close_tab(i, window, cx)),
-                    )
-                    .child(leading)
-                    .child(
-                        type_scale::UI
-                            .el()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .text_color(if is_active {
-                                t.text_primary
-                            } else {
-                                t.text_secondary
-                            })
-                            .child(title),
-                    )
-                    .child(close),
-            );
-        }
-        Some(bar.into_any_element())
-    }
-
+    /// Focus the focused group: its record page's own handle, else the
+    /// group. Pages that focus their own editor on open (inbox, editor)
+    /// keep it.
     fn focus_page(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(bench) = self.bench() else { return };
+        let group = bench.layout.focused.min(2);
+        if let Some(Tab::View(view)) = bench.layout.focused_tab() {
+            return self.focus_view(view, window, cx);
+        }
         let handle = match &bench.page {
             PageView::Record(page) => Some(page.read(cx).focus_handle(cx)),
             _ => None,
         };
-        let handle = handle.unwrap_or_else(|| bench.page_focus.clone());
-        // Pages that focus their own editor on open (inbox, editor) keep it.
+        let handle = handle.unwrap_or_else(|| bench.group_focus[group].clone());
         if !matches!(bench.page, PageView::Inbox(_) | PageView::Doc(_)) {
             window.focus(&handle, cx);
         }
@@ -1309,7 +1368,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let context = self.command_context(cx);
+        let context = self.command_context(window, cx);
         let Some(bench) = self.bench() else { return };
         let ws = bench.ws.read(cx);
         let setup = Setup {
@@ -1329,23 +1388,43 @@ impl Shell {
         cx.notify();
     }
 
-    fn command_context(&self, cx: &App) -> commands::Context {
-        // Only the chat (Windows) needs the app here.
-        #[cfg(not(windows))]
-        let _ = cx;
-        match &self.content {
-            Content::Workbench(bench) => commands::Context {
-                has_project: bench.active_project.is_some(),
-                on_topic: matches!(bench.history.current(), Some(Route::Topic(_))),
-                on_record: matches!(bench.page, PageView::Record(_)),
-                can_back: bench.history.can_go_back(),
-                can_forward: bench.history.can_go_forward(),
-                tabs: bench.tabs.len() > 1,
-                closed_tab: !bench.closed_tabs.is_empty(),
-                #[cfg(windows)]
-                chat_bottom: bench.chat.read(cx).dock == Dock::Bottom,
-            },
-            _ => commands::Context::default(),
+    fn command_context(&self, window: &Window, cx: &App) -> commands::Context {
+        let Content::Workbench(bench) = &self.content else {
+            return commands::Context::default();
+        };
+        let mut states = [None; 5];
+        for view in views() {
+            let place = bench.layout.locate(Tab::View(view)).map(|s| s.place);
+            states[view as usize] = Some(commands::ViewState {
+                place: place.or(if view.is_page_kind() {
+                    Some(Place::Page)
+                } else {
+                    None
+                }),
+                visible: bench.layout.is_visible(view),
+                can_split: bench.layout.can_split_off(view),
+            });
+        }
+        let focused_view = views().find(|v| {
+            bench.layout.is_visible(*v)
+                && self
+                    .view_focus(*v, cx)
+                    .is_some_and(|h| h.contains_focused(window, cx))
+        });
+        commands::Context {
+            has_project: bench.active_project.is_some(),
+            on_topic: matches!(bench.history.current(), Some(Route::Topic(_))),
+            on_record: matches!(bench.page, PageView::Record(_)),
+            can_back: bench.history.can_go_back(),
+            can_forward: bench.history.can_go_forward(),
+            tabs: bench.layout.page_tabs().len() > 1,
+            closed_tab: !bench.closed_tabs.is_empty(),
+            views: states,
+            focused_view,
+            groups: bench.layout.page.groups.len(),
+            can_split_right: bench.layout.can_split_active(Direction::Row),
+            can_split_down: bench.layout.can_split_active(Direction::Column),
+            layout_undo: !bench.layout_undo.is_empty(),
         }
     }
 
@@ -1498,8 +1577,9 @@ impl Shell {
                 if let Some(bench) = self.bench() {
                     bench.history.open(Route::Knowledge(project));
                 }
+                let tab = self.bench().map_or(TabId(0), |b| b.current);
                 let page = cx.new(|cx| KnowledgePage::new(ws, project, filters, window, cx));
-                let sub = cx.subscribe_in(&page, window, Self::on_page);
+                let sub = Self::page_events(&page, tab, window, cx);
                 if let Some(bench) = self.bench() {
                     bench.page = PageView::Knowledge(page);
                     bench._page_sub = Some(sub);
@@ -1522,19 +1602,26 @@ impl Shell {
             }
             Command::Back => self.back(window, cx),
             Command::Forward => self.forward(window, cx),
-            Command::Undo => self.undo(cx),
-            Command::ToggleSidebar => self.toggle_sidebar(cx),
-            Command::WidenSidebar => self.step_size(Handle::Sidebar, panes::STEP, cx),
-            Command::NarrowSidebar => self.step_size(Handle::Sidebar, -panes::STEP, cx),
-            Command::WidenTerminal => self.step_size(Handle::Right, panes::STEP, cx),
-            Command::NarrowTerminal => self.step_size(Handle::Right, -panes::STEP, cx),
+            Command::Undo => self.undo(window, cx),
+            Command::ToggleSidebar => self.toggle_sidebar(window, cx),
+            Command::ToggleRight => self.toggle_area(Side::Right, window, cx),
+            Command::ToggleBottom => self.toggle_area(Side::Bottom, window, cx),
             Command::ToggleTerminal => self.toggle_terminal(window, cx),
             #[cfg(windows)]
             Command::ToggleChat => self.toggle_chat(window, cx),
-            #[cfg(windows)]
-            Command::ChatBottom => self.move_chat(Dock::Bottom, window, cx),
-            #[cfg(windows)]
-            Command::ChatRight => self.move_chat(Dock::Right, window, cx),
+            Command::View(action, view) => self.view_action(view, action, window, cx),
+            Command::SplitRight => self.split_page(Direction::Row, window, cx),
+            Command::SplitDown => self.split_page(Direction::Column, window, cx),
+            Command::TabNextGroup => self.move_tab_to_group(1, window, cx),
+            Command::TabPreviousGroup => self.move_tab_to_group(-1, window, cx),
+            Command::JoinGroups => self.join_groups(window, cx),
+            Command::NextArea => self.cycle_area(true, window, cx),
+            Command::PreviousArea => self.cycle_area(false, window, cx),
+            Command::Zoom => self.toggle_zoom(window, cx),
+            Command::GrowArea => self.step_area(true, window, cx),
+            Command::ShrinkArea => self.step_area(false, window, cx),
+            Command::LayoutUndo => self.undo_layout(window, cx),
+            Command::LayoutReset => self.reset_layout(window, cx),
             Command::ChatBrowser => cx.open_url(CLAUDE_HOME),
             #[cfg(windows)]
             Command::ChatSignOut => self.open_dialog(DialogKind::ChatSignOut, window, cx),
@@ -1553,11 +1640,13 @@ impl Shell {
             Command::Settings => self.open_settings(window, cx),
             Command::Shortcuts => self.navigate(Route::Shortcuts, true, window, cx),
             Command::CloseTab => {
-                if let Some(at) = self.bench().map(|b| b.active_tab) {
-                    self.close_tab(at, window, cx)
+                // The focused group's active tab: a page closes, a view
+                // tab hides its view (4.8.8).
+                if let Some(tab) = self.bench().and_then(|b| b.layout.focused_tab()) {
+                    self.close_tab_of(tab, window, cx)
                 }
             }
-            Command::CloseOtherTabs => self.close_other_tabs(cx),
+            Command::CloseOtherTabs => self.close_other_tabs(window, cx),
             Command::ReopenTab => self.reopen_tab(window, cx),
             Command::Theme(setting) => settings::set_theme(setting, cx),
             Command::TextSize(size) => settings::set_text_size(size, cx),
@@ -1822,31 +1911,9 @@ impl Shell {
 
     // ---- terminal ----
 
+    /// ``Ctrl+` ``: the terminal's toggle (4.8.5).
     fn toggle_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let origin = self.origin(cx);
-        let Some(bench) = self.bench() else { return };
-        let dock = bench.dock.clone();
-        let focused = dock.read(cx).focus_handle(cx).contains_focused(window, cx);
-        if bench.dock_visible && focused {
-            self.hide_terminal(window, cx);
-            return;
-        }
-        let Some(origin) = origin else { return };
-        bench.dock_visible = true;
-        #[cfg(windows)]
-        hide_right_chat(bench, cx);
-        dock.update(cx, |dock, cx| dock.show(origin, window, cx));
-        let handle = dock.read(cx).focus_handle(cx);
-        window.focus(&handle, cx);
-        cx.notify();
-    }
-
-    fn hide_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(bench) = self.bench() {
-            bench.dock_visible = false;
-        }
-        self.focus_page(window, cx);
-        cx.notify();
+        self.toggle_view(ViewId::Terminal, window, cx);
     }
 
     /// "Restart terminal here": confirmed while a process runs (6.4).
@@ -1866,10 +1933,11 @@ impl Shell {
         let Some(origin) = self.origin(cx) else {
             return;
         };
+        self.change_layout(None, window, cx, |l| {
+            l.show_view(ViewId::Terminal).is_some()
+        });
         let Some(bench) = self.bench() else { return };
-        bench.dock_visible = true;
-        #[cfg(windows)]
-        hide_right_chat(bench, cx);
+        bench.ui.terminal_shown = true;
         bench
             .dock
             .update(cx, |dock, cx| dock.restart(origin, window, cx));
@@ -1895,8 +1963,7 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         match event {
-            ChatEvent::Hide => self.hide_chat(window, cx),
-            ChatEvent::Move(dock) => self.move_chat(*dock, window, cx),
+            ChatEvent::View(action) => self.view_action(ViewId::Chat, *action, window, cx),
             ChatEvent::SignOut => self.open_dialog(DialogKind::ChatSignOut, window, cx),
             ChatEvent::Kept(kept) => self.run_kept(*kept, window, cx),
             ChatEvent::ClearFailed => {
@@ -1912,8 +1979,7 @@ impl Shell {
 
     #[cfg(windows)]
     /// A key Acta keeps, pressed while the page had the keyboard
-    /// (interaction.md 6.1). Keys of features that do not exist yet (tabs,
-    /// pane cycling, zoom) are kept from the page and do nothing.
+    /// (interaction.md 6.1).
     fn run_kept(&mut self, kept: Kept, window: &mut Window, cx: &mut Context<Self>) {
         let Some(bench) = self.bench() else { return };
         let chat = bench.chat.clone();
@@ -1921,12 +1987,17 @@ impl Shell {
             Kept::Palette => Box::new(OpenPalette),
             Kept::ToggleChat => Box::new(ToggleChat),
             Kept::ToggleTerminal => Box::new(ToggleTerminal),
+            Kept::ToggleRight => Box::new(ToggleRight),
             Kept::Focus(1) => Box::new(FocusSidebar),
             Kept::Focus(2) => Box::new(FocusPage),
             Kept::Focus(3) => Box::new(FocusTerminal),
+            Kept::Focus(4) => Box::new(FocusChat),
             Kept::NextTab => Box::new(NextTab),
             Kept::PreviousTab => Box::new(PreviousTab),
-            Kept::Focus(_) | Kept::NextPane | Kept::PreviousPane | Kept::ZoomToolWindow => return,
+            Kept::NextPane => Box::new(NextArea),
+            Kept::PreviousPane => Box::new(PreviousArea),
+            Kept::ZoomToolWindow => Box::new(ZoomArea),
+            Kept::Focus(_) => return,
         };
         // The keyboard comes back to the GPUI window before the action
         // runs, so that what it focuses receives the next keys.
@@ -1934,93 +2005,54 @@ impl Shell {
         window.dispatch_action(action, cx);
     }
 
-    #[cfg(windows)]
-    /// Show and focus the chat; if it has focus, hide it (layout.md 4.5).
+    /// `Mod+Shift+H`: the chat's toggle (4.8.5); macOS and Linux open
+    /// claude.ai in the browser (components-app.md 5, Chat panel).
     fn toggle_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(bench) = self.bench() else { return };
-        let chat = bench.chat.clone();
-        let focused = chat.read(cx).focus_handle(cx).contains_focused(window, cx);
-        if chat.read(cx).is_shown() && focused {
-            self.hide_chat(window, cx);
+        if CHAT {
+            self.toggle_view(ViewId::Chat, window, cx);
         } else {
-            self.show_chat(true, window, cx);
+            cx.open_url(CLAUDE_HOME);
         }
     }
 
-    #[cfg(windows)]
-    fn show_chat(&mut self, focus: bool, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(bench) = self.bench() else { return };
-        let chat = bench.chat.clone();
-        if chat.read(cx).dock == Dock::Right {
-            bench.dock_visible = false;
-        }
-        chat.update(cx, |chat, cx| {
-            chat.show(window, cx);
-            if focus && chat.is_shown() {
-                chat.focus(window, cx);
-            }
-        });
-        cx.notify();
-    }
-
-    #[cfg(windows)]
-    fn hide_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(bench) = self.bench() else { return };
-        let chat = bench.chat.clone();
-        chat.update(cx, |chat, cx| chat.hide(cx));
-        self.focus_page(window, cx);
-        cx.notify();
-    }
-
-    #[cfg(windows)]
-    /// `Mod+4`: focus the chat, showing it first if needed.
+    /// `Mod+4`: focus the chat wherever it is, showing it first if needed.
     fn focus_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(bench) = self.bench() else { return };
-        let chat = bench.chat.clone();
-        if chat.read(cx).is_shown() {
-            chat.update(cx, |chat, cx| chat.focus(window, cx));
-        } else {
-            self.show_chat(true, window, cx);
+        if CHAT {
+            self.view_action(ViewId::Chat, ViewAction::Show, window, cx);
         }
-    }
-
-    #[cfg(windows)]
-    /// "Move chat to bottom" / "Move chat to right": the chat shows in its
-    /// new dock and takes the right dock from the terminal if it goes there.
-    fn move_chat(&mut self, dock: Dock, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(bench) = self.bench() else { return };
-        let chat = bench.chat.clone();
-        chat.update(cx, |chat, cx| chat.move_to(dock, cx));
-        self.show_chat(true, window, cx);
     }
 
     #[cfg(windows)]
     /// Whether a GPUI layer that can overlap the chat is open
-    /// (components-app.md 5: palette, quick capture, dialog, menu).
+    /// (components-app.md 5: palette, quick capture, dialog, menu, the
+    /// sidebar over the page).
     fn chat_covered(&mut self, cx: &mut Context<Self>) -> bool {
-        let sidebar_over = self.sidebar_overlay && !self.sidebar_fits;
         let Some(bench) = self.bench() else {
             return false;
         };
-        let page_menu = match &bench.page {
+        let page_menu = |view: &PageView| match view {
             PageView::Record(page) => page.read(cx).menu_open(),
             PageView::Knowledge(page) => page.read(cx).menu_open(),
             PageView::Settings(page) => page.read(cx).menu_open(),
             PageView::Doc(page) => page.read(cx).menu_open(),
             _ => false,
         };
-        sidebar_over || bench.overlay.is_some() || page_menu || bench.chat.read(cx).menu_open()
+        let any_page_menu = page_menu(&bench.page)
+            || bench
+                .slots
+                .values()
+                .filter_map(|s| s.view.as_ref())
+                .any(page_menu)
+            || bench
+                .knowledge_view
+                .as_ref()
+                .is_some_and(|v| v.read(cx).menu_open());
+        bench.ui.left_overlay
+            || bench.ui.menu.is_some()
+            || bench.overlay.is_some()
+            || any_page_menu
+            || bench.chat.read(cx).menu_open()
     }
-
-    /// macOS and Linux: no panel, claude.ai opens in the browser
-    /// (components-app.md 5, Chat panel).
-    #[cfg(not(windows))]
-    fn toggle_chat(&mut self, _: &mut Window, cx: &mut Context<Self>) {
-        cx.open_url(CLAUDE_HOME);
-    }
-
-    #[cfg(not(windows))]
-    fn focus_chat(&mut self, _: &mut Window, _: &mut Context<Self>) {}
 
     #[cfg(windows)]
     fn ask_chat_sign_out(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -2029,42 +2061,6 @@ impl Shell {
 
     #[cfg(not(windows))]
     fn ask_chat_sign_out(&mut self, _: &mut Window, _: &mut Context<Self>) {}
-
-    /// The chat for the right dock and for the bottom dock, with the web
-    /// view hidden while an overlay is open.
-    #[cfg(windows)]
-    fn chat_docks(
-        &mut self,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> (Option<AnyElement>, Option<AnyElement>) {
-        let covered = self.chat_covered(cx);
-        let Some(bench) = self.bench() else {
-            return (None, None);
-        };
-        let chat = bench.chat.clone();
-        chat.update(cx, |chat, cx| chat.set_covered(covered, window, cx));
-        let (shown, dock) = {
-            let chat = chat.read(cx);
-            (chat.is_shown(), chat.dock)
-        };
-        if !shown {
-            return (None, None);
-        }
-        match dock {
-            Dock::Right => (Some(chat.into_any_element()), None),
-            Dock::Bottom => (None, Some(chat.into_any_element())),
-        }
-    }
-
-    #[cfg(not(windows))]
-    fn chat_docks(
-        &mut self,
-        _: &Window,
-        _: &mut Context<Self>,
-    ) -> (Option<AnyElement>, Option<AnyElement>) {
-        (None, None)
-    }
 
     // ---- toast and undo ----
 
@@ -2088,12 +2084,18 @@ impl Shell {
         cx.notify();
     }
 
-    /// `Mod+Z`: the active project's stack (pages of no project, such as
-    /// Settings, keep the project of the page before them).
-    fn undo(&mut self, cx: &mut Context<Self>) {
+    /// `Mod+Z`: the newest undo step of the window, a layout change
+    /// (4.8.11, rule 3) or a write of the active project (pages of no
+    /// project, such as Settings, keep the project of the page before them).
+    fn undo(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(bench) = self.bench() else { return };
-        bench.toast = None;
         let project = bench.active_project;
+        let write = bench.ws.read(cx).newest_undo(project);
+        let layout = bench.layout_undo.newest();
+        if layout.is_some() && layout > write {
+            return self.undo_layout(window, cx);
+        }
+        bench.toast = None;
         bench.ws.update(cx, |ws, cx| ws.undo_active(project, cx));
         cx.notify();
     }
@@ -2201,7 +2203,9 @@ impl Shell {
         cx.notify();
     }
 
-    fn sidebar(&mut self, width: f32, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    /// The Projects view (4.8.3): the tree, with Trash and Settings pinned
+    /// at its bottom; it fills its group.
+    fn projects_view(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let tokens = cx.global::<Tokens>().clone();
         let t = &tokens;
         let locale = settings::locale(cx);
@@ -2264,9 +2268,7 @@ impl Shell {
         div()
             .flex()
             .flex_col()
-            .flex_shrink_0()
-            .w(px(width))
-            .h_full()
+            .size_full()
             .bg(t.bg_sunken)
             .child(
                 div()
@@ -2922,10 +2924,13 @@ impl Shell {
         let locale = settings::locale(cx);
         let bench = self.bench()?;
         let toast = bench.toast.clone()?;
+        if toast.kind == ToastKind::Layout {
+            return Some(self.layout_toast_element(toast, &t, locale, cx));
+        }
         let glyph = match toast.kind {
             ToastKind::Error => Some(icon(Icon::TriangleAlert, 16., t.danger)),
             ToastKind::Done => Some(icon(Icon::Check, 16., t.success)),
-            ToastKind::Undo => None,
+            ToastKind::Undo | ToastKind::Layout => None,
         };
         Some(
             div()
@@ -2961,7 +2966,7 @@ impl Shell {
                             false,
                             &t,
                         )
-                        .on_click(cx.listener(|shell, _, _, cx| shell.undo(cx))),
+                        .on_click(cx.listener(|shell, _, window, cx| shell.undo(window, cx))),
                     )
                 })
                 .child(
@@ -2977,138 +2982,88 @@ impl Shell {
         )
     }
 
-    /// The workbench between the titlebar and the status bar: sidebar,
-    /// page, docks and their resize handles, sized so that panes give way
-    /// sidebar first (layout.md 4.2, narrow behaviour).
-    fn workbench_body(
+    /// The move toast (4.8.11): the message on its own line, wrapping to
+    /// two at most, then Undo, Reset layout and the `x` on a line under it.
+    fn layout_toast_element(
         &mut self,
-        outlined: bool,
-        window: &mut Window,
+        toast: Toast,
+        t: &Tokens,
+        locale: Locale,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let t = cx.global::<Tokens>().clone();
-        let viewport = window.viewport_size();
-        let frame = if outlined { 2. } else { 0. };
-        let width = f32::from(viewport.width) - frame;
-        let body_height = f32::from(viewport.height) - frame - titlebar::HEIGHT - STATUS_BAR_HEIGHT;
-        let first_run = matches!(self.bench().map(|b| &b.page), Some(PageView::FirstRun(_)));
-        let bulk = self.bulk_notice(cx);
-        let toast = self.toast_element(cx);
-        let tab_bar = self.tab_bar(cx);
-        let (right_chat, bottom) = self.chat_docks(window, cx);
-        let terminal = self.terminal_visible();
-        let right_wanted = if terminal {
-            Some(self.sizes.terminal)
-        } else if right_chat.is_some() {
-            Some(self.sizes.chat)
-        } else {
-            None
-        };
-        let dock_width = right_wanted.map(|w| panes::dock_width(w, width));
-        let sidebar_width = self.sizes.sidebar;
-        let fits = first_run || panes::sidebar_fits(sidebar_width, dock_width.unwrap_or(0.), width);
-        if fits != self.sidebar_fits {
-            self.sidebar_fits = fits;
-            if fits {
-                self.sidebar_overlay = false;
-            }
-        }
-        let inline_sidebar = (self.sidebar_visible && fits && !first_run)
-            .then(|| self.sidebar(sidebar_width, window, cx));
-        let overlay_sidebar = (self.sidebar_overlay && !fits && !first_run).then(|| {
-            let el = self.sidebar(panes::SIDEBAR_DEFAULT, window, cx);
-            deferred(
-                div()
-                    .id("sidebar-overlay")
-                    .occlude()
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .h_full()
-                    .border_r_1()
-                    .border_color(t.border_default)
-                    .shadow(vec![t.shadow_overlay()])
-                    .on_mouse_down_out(
-                        cx.listener(|shell, _, window, cx| shell.dismiss_sidebar(window, cx)),
-                    )
-                    .child(el),
-            )
-            .with_priority(1)
-            .into_any_element()
-        });
-        let resizing = self.resizing;
-        let bench = self.bench().expect("workbench");
-        let page_view = bench.page.view();
-        let page_focus = bench.page_focus.clone();
-        let right: Option<AnyElement> = if bench.dock_visible {
-            Some(bench.dock.clone().into_any_element())
-        } else {
-            right_chat
-        };
-        let page = div()
-            .id("page-area")
-            .track_focus(&page_focus)
-            .relative()
-            .flex()
-            .flex_col()
-            .flex_1()
-            .min_w_0()
-            .min_h_0()
-            .children(tab_bar)
-            .children(bulk)
-            .child(div().flex_1().min_h_0().child(page_view))
-            .children(toast);
-        // The bottom dock sits under the page area only.
-        let bottom = bottom.map(|dock| {
-            let height = panes::bottom_height(self.sizes.bottom, body_height);
-            div()
-                .flex()
-                .flex_col()
-                .w_full()
-                .flex_shrink_0()
-                .child(resize_handle(Handle::Bottom, resizing, &t, cx))
-                .child(div().h(px(height)).w_full().child(dock))
-        });
-        let column = div()
-            .flex()
-            .flex_col()
-            .flex_1()
-            .min_w(px(panes::PAGE_MIN.min(width)))
-            .h_full()
-            .child(page)
-            .children(bottom);
-        let right = right.map(|dock| {
-            let width = dock_width.unwrap_or(panes::DOCK_DEFAULT);
-            div()
-                .flex()
-                .flex_row()
-                .h_full()
-                .flex_shrink_0()
-                .child(resize_handle(Handle::Right, resizing, &t, cx))
-                .child(div().w(px(width)).h_full().child(dock))
-        });
-        let sidebar = inline_sidebar.map(|el| {
-            div()
-                .flex()
-                .flex_row()
-                .h_full()
-                .flex_shrink_0()
-                .child(el)
-                .child(resize_handle(Handle::Sidebar, resizing, &t, cx))
-        });
+        let macos = cfg!(target_os = "macos");
         div()
-            .relative()
+            .id("layout-toast")
+            .occlude()
+            .absolute()
+            .left(px(16.))
+            .bottom(px(16.))
+            .max_w(px(360.))
             .flex()
-            .flex_row()
-            .flex_1()
-            .min_h_0()
-            .w_full()
-            .children(sidebar)
-            .child(column)
-            .children(right)
-            .children(overlay_sidebar)
+            .flex_col()
+            .gap(px(4.))
+            .px(px(12.))
+            .py(px(8.))
+            .bg(t.bg_overlay)
+            .border_1()
+            .border_color(t.border_default)
+            .rounded(px(RADIUS_LG))
+            .shadow(vec![t.shadow_overlay()])
+            .child(
+                type_scale::UI
+                    .el()
+                    .text_color(t.text_primary)
+                    .line_clamp(2)
+                    .child(toast.message.clone()),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(4.))
+                    .child(
+                        ui::button(
+                            "toast-layout-undo",
+                            text(locale, Key::CommonUndo),
+                            Variant::Ghost,
+                            false,
+                            t,
+                        )
+                        .child(ui::kbd(
+                            &[crate::i18n::KeyName::Mod.label(locale, macos), "Z"],
+                            t,
+                        ))
+                        .on_click(
+                            cx.listener(|shell, _, window, cx| shell.undo_layout(window, cx)),
+                        ),
+                    )
+                    .child(
+                        ui::button(
+                            "toast-layout-reset",
+                            text(locale, Key::CmdLayoutReset),
+                            Variant::Ghost,
+                            false,
+                            t,
+                        )
+                        .on_click(
+                            cx.listener(|shell, _, window, cx| shell.reset_layout(window, cx)),
+                        ),
+                    )
+                    .child(div().flex_1())
+                    .child(
+                        ui::ghost_icon_button("toast-close", Icon::X, 24., false, false, true, t)
+                            .on_click(cx.listener(|shell, _, _, cx| {
+                                if let Some(bench) = shell.bench() {
+                                    bench.toast = None;
+                                }
+                                cx.notify();
+                            })),
+                    ),
+            )
             .into_any_element()
     }
+
     fn bulk_notice(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let t = cx.global::<Tokens>().clone();
         let locale = settings::locale(cx);
@@ -3206,11 +3161,12 @@ fn row_project(projects: &[acta_core::model::ProjectTree], row: &Row) -> Option<
 fn record(
     ws: Entity<Workspace>,
     owner: Owner,
+    tab: TabId,
     window: &mut Window,
     cx: &mut Context<Shell>,
 ) -> (PageView, Option<Subscription>) {
     let page = cx.new(|cx| RecordPage::new(ws, owner, window, cx));
-    let sub = cx.subscribe_in(&page, window, Shell::on_page);
+    let sub = Shell::page_events(&page, tab, window, cx);
     (PageView::Record(page), Some(sub))
 }
 
@@ -3537,10 +3493,12 @@ impl Render for Shell {
                 .into_any_element(),
             Content::Workbench(_) => self.workbench_body(outlined, window, cx),
         };
-        // A drag that ended: its size goes to the preferences.
-        if self.resizing.is_some() && !cx.has_active_drag() {
-            self.save_sizes(cx);
+        // A resize drag that ended: one undo step, saved (4.8.6).
+        let resizing = matches!(&self.content, Content::Workbench(b) if b.ui.resize.is_some());
+        if resizing && !cx.has_active_drag() {
+            self.resize_ended(window, cx);
         }
+        let dragging = matches!(&self.content, Content::Workbench(b) if b.ui.dragging());
         let status_bar = is_bench.then(|| self.status_bar(cx));
         let overlay = self.overlay_element();
 
@@ -3549,7 +3507,18 @@ impl Render for Shell {
             .id("shell")
             .key_context("Workbench")
             .track_focus(&self.focus)
-            .on_action(cx.listener(|shell, _: &ToggleSidebar, _, cx| shell.toggle_sidebar(cx)))
+            .when(dragging, |this| this.key_context("Dragging"))
+            .on_action(cx.listener(|s, _: &CancelDrag, w, cx| {
+                s.cancel_drag(w, cx);
+            }))
+            .on_action(cx.listener(|s, _: &ToggleSidebar, w, cx| s.toggle_sidebar(w, cx)))
+            .on_action(cx.listener(|s, _: &ResetLayout, w, cx| s.reset_layout(w, cx)))
+            .on_action(cx.listener(|s, _: &ToggleRight, w, cx| s.toggle_area(Side::Right, w, cx)))
+            .on_action(cx.listener(|s, _: &ToggleBottom, w, cx| s.toggle_area(Side::Bottom, w, cx)))
+            .on_action(cx.listener(|s, _: &SplitRight, w, cx| s.split_page(Direction::Row, w, cx)))
+            .on_action(cx.listener(|s, _: &NextArea, w, cx| s.cycle_area(true, w, cx)))
+            .on_action(cx.listener(|s, _: &PreviousArea, w, cx| s.cycle_area(false, w, cx)))
+            .on_action(cx.listener(|s, _: &ZoomArea, w, cx| s.toggle_zoom(w, cx)))
             .on_action(
                 cx.listener(|shell, _: &OpenSettings, window, cx| shell.open_settings(window, cx)),
             )
@@ -3585,9 +3554,9 @@ impl Render for Shell {
                 cx.listener(|s, _: &AddEntry, w, cx| s.run_command(Command::AddEntry, w, cx)),
             )
             .on_action(cx.listener(|s, _: &CaptureNote, w, cx| s.open_capture(w, cx)))
-            .on_action(cx.listener(|s, _: &GoInbox, w, cx| s.run_command(Command::GoInbox, w, cx)))
+            .on_action(cx.listener(|s, _: &GoInbox, w, cx| s.toggle_view(ViewId::Inbox, w, cx)))
             .on_action(
-                cx.listener(|s, _: &GoKnowledge, w, cx| s.run_command(Command::GoKnowledge, w, cx)),
+                cx.listener(|s, _: &GoKnowledge, w, cx| s.toggle_view(ViewId::Knowledge, w, cx)),
             )
             .on_action(
                 cx.listener(|s, _: &NewDocument, w, cx| s.run_command(Command::NewDocument, w, cx)),
@@ -3597,7 +3566,7 @@ impl Render for Shell {
             )
             .on_action(cx.listener(|s, _: &Back, w, cx| s.back(w, cx)))
             .on_action(cx.listener(|s, _: &Forward, w, cx| s.forward(w, cx)))
-            .on_action(cx.listener(|s, _: &Undo, _, cx| s.undo(cx)))
+            .on_action(cx.listener(|s, _: &Undo, w, cx| s.undo(w, cx)))
             .on_action(cx.listener(|s, _: &ExportData, w, cx| s.open_export(w, cx)))
             .on_action(cx.listener(|s, _: &ImportData, w, cx| s.import(w, cx)))
             .on_action(cx.listener(|s, _: &RestoreSnapshot, w, cx| s.open_snapshots(w, cx)))
@@ -3608,28 +3577,32 @@ impl Render for Shell {
             .on_action(|_: &OpenChatInBrowser, _, cx| cx.open_url(CLAUDE_HOME))
             .on_action(cx.listener(|s, _: &ChatSignOut, w, cx| s.ask_chat_sign_out(w, cx)))
             .on_action(cx.listener(|s, _: &FocusSidebar, w, cx| {
-                if let Some(bench) = s.bench() {
-                    let handle = bench.tree_focus.clone();
-                    if s.sidebar_fits {
-                        s.sidebar_visible = true;
-                    } else {
-                        s.sidebar_overlay = true;
+                // `Mod+1`: Projects wherever it is, shown if hidden; in a
+                // narrow window the left sidebar shows over the page.
+                if s.is_workbench() {
+                    s.view_action(ViewId::Projects, ViewAction::Show, w, cx);
+                    let over = s.left_auto_hidden(w)
+                        && s.bench().is_some_and(|b| {
+                            b.layout
+                                .locate(Tab::View(ViewId::Projects))
+                                .map(|p| p.place)
+                                == Some(Place::Side(Side::Left))
+                        });
+                    if over && let Some(bench) = s.bench() {
+                        bench.ui.left_overlay = true;
                     }
-                    w.focus(&handle, cx);
                     cx.notify();
                 }
             }))
-            .on_drag_move(cx.listener(|s, e: &DragMoveEvent<ResizeDrag>, w, cx| {
+            .on_drag_move(cx.listener(|s, e: &DragMoveEvent<ResizeDrag>, _, cx| {
                 let handle = e.drag(cx).0;
-                s.resize(handle, e.event.position, w, cx)
+                let p = e.event.position;
+                layout_ui::on_resize_drag(s, handle, f32::from(p.x), f32::from(p.y), cx)
             }))
             .on_action(cx.listener(|s, _: &FocusPage, w, cx| s.focus_page(w, cx)))
             .on_action(cx.listener(|s, _: &FocusTerminal, w, cx| {
-                if !s.terminal_visible() {
-                    s.toggle_terminal(w, cx);
-                } else if let Some(bench) = s.bench() {
-                    let handle = bench.dock.read(cx).focus_handle(cx);
-                    w.focus(&handle, cx);
+                if s.is_workbench() {
+                    s.view_action(ViewId::Terminal, ViewAction::Show, w, cx)
                 }
             }))
             .on_action(
@@ -3662,89 +3635,6 @@ impl Render for Shell {
         } else {
             frame.into_any_element()
         }
-    }
-}
-
-/// A resize handle (docs/design/components.md 5): the 1px `border.subtle`
-/// divider between two panes, with an 8 hit area that lies over the pane
-/// painted before it, so the pane after it never covers the hit area.
-/// Hovered or dragged, the line becomes 2px `accent`; double-click restores
-/// the default size.
-fn resize_handle(
-    handle: Handle,
-    resizing: Option<Handle>,
-    t: &Tokens,
-    cx: &mut Context<Shell>,
-) -> gpui_kit::Div {
-    let vertical = handle != Handle::Bottom;
-    let id: &'static str = match handle {
-        Handle::Sidebar => "resize-sidebar",
-        Handle::Right => "resize-right",
-        Handle::Bottom => "resize-bottom",
-    };
-    let accent = t.accent;
-    let reach = panes::HANDLE_HIT - 1.;
-    let line = div()
-        .absolute()
-        .map(|this| {
-            if vertical {
-                this.top_0().bottom_0().right_0().w(px(2.))
-            } else {
-                this.left_0().right_0().bottom_0().h(px(2.))
-            }
-        })
-        .when(resizing == Some(handle), |this| this.bg(accent))
-        .group_hover(id, move |s| s.bg(accent));
-    let hit = div()
-        .id(id)
-        .group(id)
-        .absolute()
-        .map(|this| {
-            if vertical {
-                this.top_0()
-                    .bottom_0()
-                    .left(px(-reach))
-                    .w(px(panes::HANDLE_HIT))
-                    .cursor(gpui_kit::CursorStyle::ResizeLeftRight)
-            } else {
-                this.left_0()
-                    .right_0()
-                    .top(px(-reach))
-                    .h(px(panes::HANDLE_HIT))
-                    .cursor(gpui_kit::CursorStyle::ResizeUpDown)
-            }
-        })
-        .on_drag(ResizeDrag(handle), |_, _, _, cx| {
-            cx.new(|_| gpui_kit::EmptyView)
-        })
-        .on_click(
-            cx.listener(move |shell, event: &gpui_kit::ClickEvent, _, cx| {
-                if event.click_count() >= 2 {
-                    shell.reset_size(handle, cx);
-                }
-            }),
-        )
-        .child(line);
-    div()
-        .relative()
-        .flex_shrink_0()
-        .map(|this| {
-            if vertical {
-                this.w(px(1.)).h_full()
-            } else {
-                this.h(px(1.)).w_full()
-            }
-        })
-        .bg(t.border_subtle)
-        .child(hit)
-}
-
-/// A chat in the right dock gives way to the terminal shown there.
-#[cfg(windows)]
-fn hide_right_chat(bench: &mut Bench, cx: &mut Context<Shell>) {
-    let chat = bench.chat.clone();
-    if chat.read(cx).dock == Dock::Right {
-        chat.update(cx, |chat, cx| chat.hide(cx));
     }
 }
 

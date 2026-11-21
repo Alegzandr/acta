@@ -45,7 +45,16 @@ fn groups() -> Vec<(Key, Vec<Command>)> {
         ),
         (
             Key::ShortcutsGroupTabs,
-            vec![Command::ToggleSidebar, Command::ToggleTerminal],
+            vec![
+                Command::ToggleSidebar,
+                Command::ToggleRight,
+                Command::ToggleBottom,
+                Command::ToggleTerminal,
+                Command::SplitRight,
+                Command::NextArea,
+                Command::PreviousArea,
+                Command::Zoom,
+            ],
         ),
         (Key::ShortcutsGroupTerminal, terminal_and_chat()),
     ]

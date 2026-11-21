@@ -56,6 +56,9 @@ pub struct InboxPage {
     capture: Entity<TextareaState>,
     /// A note being edited in place, with its editor.
     editing: Option<(NoteId, Entity<TextareaState>)>,
+    /// Shown as the Inbox view (workbench.md 4.8.3): no title, no meta
+    /// line, the narrow form, following the active project.
+    as_view: bool,
     seen_revision: u64,
     _load: Task<()>,
     _subs: Vec<Subscription>,
@@ -67,6 +70,30 @@ impl InboxPage {
     pub fn new(
         ws: Entity<Workspace>,
         project: ProjectId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let page = Self::build(ws, project, false, window, cx);
+        // The capture editor is focused when the inbox opens (8.2).
+        page.capture.update(cx, |state, cx| state.focus(window, cx));
+        page
+    }
+
+    /// The Inbox as a view of a side area or the bottom panel: it takes no
+    /// focus on its own.
+    pub fn new_view(
+        ws: Entity<Workspace>,
+        project: ProjectId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::build(ws, project, true, window, cx)
+    }
+
+    fn build(
+        ws: Entity<Workspace>,
+        project: ProjectId,
+        as_view: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -88,8 +115,6 @@ impl InboxPage {
                 .auto_grow(3, 16)
                 .placeholder(placeholder)
         });
-        // The capture editor is focused when the inbox opens (8.2).
-        capture.update(cx, |state, cx| state.focus(window, cx));
         let subs = vec![
             cx.observe(&ws, |page, ws, cx| {
                 let revision = ws.read(cx).revision;
@@ -121,6 +146,7 @@ impl InboxPage {
             show_filed: false,
             capture,
             editing: None,
+            as_view,
             seen_revision: 0,
             _load: Task::ready(()),
             _subs: subs,
@@ -574,7 +600,9 @@ impl Render for InboxPage {
         for (i, (note, title)) in shown.iter().enumerate() {
             list = list.child(self.card(note, title.as_deref(), i, locale, &t, cx));
         }
-        ui::page_scroll("inbox-page").child(
+        let column = if self.as_view {
+            ui::view_column().child(capture.mt(px(0.)))
+        } else {
             ui::column()
                 .child(
                     type_scale::TITLE
@@ -595,14 +623,24 @@ impl Render for InboxPage {
                         .child(self.project_title.clone()),
                 )
                 .child(capture)
-                .child(
-                    div()
-                        .mt(px(24.))
-                        .flex()
-                        .child(ui::segmented(&t).children(filters)),
-                )
-                .child(list),
+        }
+        .child(
+            div()
+                .mt(px(24.))
+                .flex()
+                .flex_wrap()
+                .child(ui::segmented(&t).children(filters)),
         )
+        .child(list);
+        if self.as_view {
+            ui::view_scroll("inbox-view")
+                .child(column)
+                .into_any_element()
+        } else {
+            ui::page_scroll("inbox-page")
+                .child(column)
+                .into_any_element()
+        }
     }
 }
 

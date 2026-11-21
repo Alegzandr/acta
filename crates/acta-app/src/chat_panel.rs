@@ -1,6 +1,6 @@
-//! The chat tool window (ADR 0009; docs/design/components-app.md 5, Chat
-//! panel; screens.md 8.13): claude.ai in the system web view, in the right
-//! or the bottom dock. Windows only; macOS and Linux open claude.ai in the
+//! The Chat view (ADR 0009; docs/design/components-app.md 5, Chat panel;
+//! screens.md 8.13; workbench.md 4.8): claude.ai in the system web view,
+//! in whatever area the layout puts it. Windows only; macOS and Linux open claude.ai in the
 //! browser instead (ADR 0009, changelog 2026-11-21).
 //!
 //! The web view is created the first time the user asks for it and lives on
@@ -23,16 +23,15 @@ use gpui_kit::{
 };
 
 use crate::chat::{self, Built, ChatState, Decision, Effect, Kept, Reason, Surface};
-use crate::i18n::{Key, KeyName, text};
+use crate::i18n::{Key, text};
 use crate::icons::Icon;
+use crate::layout::{Place, Side, ViewAction};
 use crate::menu;
 use crate::settings;
 use crate::theme::{RADIUS_MD, Tokens};
 use crate::type_scale;
 use crate::ui::{self, Variant};
 
-/// docs/design/layout.md 4.5: the header of a tool window.
-const HEADER: f32 = 28.;
 /// components-app.md 5: the starting line appears after 400 ms.
 const STARTING_LINE: Duration = Duration::from_millis(400);
 /// components.md 5, Tooltip: after 500 ms of hover; neighbours instantly
@@ -43,12 +42,6 @@ const TOOLTIP_WARM: Duration = Duration::from_secs(1);
 /// of its files.
 const CLEAR_ATTEMPTS: u32 = 40;
 const CLEAR_PAUSE: Duration = Duration::from_millis(250);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Dock {
-    Right,
-    Bottom,
-}
 
 /// What the web view's handlers report; they run outside GPUI.
 #[derive(Clone, Debug)]
@@ -63,12 +56,10 @@ pub enum Signal {
 }
 
 pub enum ChatEvent {
-    /// Hide was asked from the header.
-    Hide,
     /// A kept key, to run as if GPUI had received it.
     Kept(Kept),
-    /// "Move chat to bottom" / "Move chat to right" from the header menu.
-    Move(Dock),
+    /// An item of the view menu in the chat's own menu (4.8.4).
+    View(ViewAction),
     /// "Sign out and clear chat data..." from the header menu: the shell
     /// asks for confirmation.
     SignOut,
@@ -82,7 +73,6 @@ enum Tip {
     Browser,
     Reload,
     Menu,
-    Hide,
 }
 
 /// The live web view and what it needs to stay alive. Fields drop in
@@ -95,8 +85,14 @@ struct Web {
 
 pub struct ChatPanel {
     state: ChatState,
-    pub dock: Dock,
     focus: FocusHandle,
+    /// Covered by an overlay, and hidden for a layout drag (4.8.9): the
+    /// web view hides for either, with the line of the one that applies.
+    overlay: bool,
+    rearranging: bool,
+    /// Where the view is and whether it can split, for its menu.
+    place: Place,
+    can_split: bool,
     /// The sign-in help notice is shown.
     help: bool,
     /// The header's menu is open (it would fall under the web view).
@@ -140,11 +136,6 @@ impl ChatPanel {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let prefs = settings::current(cx);
         let state = ChatState::new(prefs.chat_started);
-        let dock = if prefs.chat_bottom {
-            Dock::Bottom
-        } else {
-            Dock::Right
-        };
         let clear_pending = prefs.chat_clear_pending;
         let (signals, receiver) = async_channel::unbounded();
         let listen = Self::listen(receiver, window, cx);
@@ -157,8 +148,11 @@ impl ChatPanel {
         });
         let mut panel = Self {
             state,
-            dock,
             focus: cx.focus_handle(),
+            overlay: false,
+            rearranging: false,
+            place: Place::Side(Side::Right),
+            can_split: false,
             help: false,
             menu: false,
             signals,
@@ -214,10 +208,6 @@ impl ChatPanel {
         }
     }
 
-    pub fn is_shown(&self) -> bool {
-        self.state.shown
-    }
-
     /// The header menu is open: the shell counts it as an overlay.
     pub fn menu_open(&self) -> bool {
         self.menu
@@ -249,6 +239,20 @@ impl ChatPanel {
     /// When the overlay closes and focus came back to the panel, the page
     /// gets the keyboard again.
     pub fn set_covered(&mut self, covered: bool, window: &Window, cx: &mut Context<Self>) {
+        self.overlay = covered;
+        self.apply_covered(window, cx);
+    }
+
+    /// From the start of a view or tab drag to its drop or cancel, the web
+    /// view is hidden with its own line (workbench.md 4.8.9).
+    pub fn set_rearranging(&mut self, on: bool, window: &Window, cx: &mut Context<Self>) {
+        self.rearranging = on;
+        self.apply_covered(window, cx);
+        cx.notify();
+    }
+
+    fn apply_covered(&mut self, window: &Window, cx: &mut Context<Self>) {
+        let covered = self.overlay || self.rearranging;
         if self.state.covered != covered {
             self.state.set_covered(covered);
             self.sync(cx);
@@ -256,12 +260,6 @@ impl ChatPanel {
                 self.focus_web(cx);
             }
         }
-    }
-
-    pub fn move_to(&mut self, dock: Dock, cx: &mut Context<Self>) {
-        self.dock = dock;
-        settings::change(cx, |prefs| prefs.chat_bottom = dock == Dock::Bottom);
-        cx.notify();
     }
 
     /// "Sign out and clear chat data", confirmed.
@@ -544,15 +542,7 @@ impl ChatPanel {
         let (key, keys) = match tip {
             Tip::Browser => (Key::ChatOpenBrowser, None),
             Tip::Reload => (Key::ChatReload, None),
-            Tip::Menu => (Key::ChatMore, None),
-            Tip::Hide => (
-                Key::ChatHide,
-                Some([
-                    KeyName::Mod.label(locale, false),
-                    KeyName::Shift.label(locale, false),
-                    "H",
-                ]),
-            ),
+            Tip::Menu => (Key::ChatMore, None::<[&str; 3]>),
         };
         Some(
             deferred(
@@ -585,31 +575,28 @@ impl ChatPanel {
         )
     }
 
-    fn header(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    /// The chat's own header buttons, wherever its area header or view
+    /// strip is (workbench.md 4.8.4): Open in browser, Reload, and its menu,
+    /// which holds the view menu after its own items.
+    pub fn header_buttons(
+        &mut self,
+        place: Place,
+        can_split: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        self.place = place;
+        self.can_split = can_split;
         let t = cx.global::<Tokens>().clone();
-        let locale = settings::locale(cx);
         let can_reload = self.state.has_web;
         let menu = self.menu.then(|| self.render_menu(&t, cx));
         let tip = |this: &Self, tip: Tip, cx: &App| this.tooltip(tip, &t, cx);
+        let stop =
+            |_: &gpui_kit::MouseDownEvent, _: &mut Window, cx: &mut App| cx.stop_propagation();
         div()
             .flex()
             .flex_row()
-            .flex_shrink_0()
             .items_center()
             .gap(px(8.))
-            .h(px(HEADER))
-            .px(px(8.))
-            .bg(t.bg_sunken)
-            .border_b_1()
-            .border_color(t.border_subtle)
-            .child(ui::label(text(locale, Key::ChatTitle), &t))
-            .child(
-                type_scale::SMALL
-                    .el()
-                    .text_color(t.text_tertiary)
-                    .child("claude.ai"),
-            )
-            .child(div().flex_1())
             .child(
                 ui::ghost_icon_button(
                     "chat-browser",
@@ -621,6 +608,7 @@ impl ChatPanel {
                     &t,
                 )
                 .on_hover(Self::hover_listener(Tip::Browser, cx))
+                .on_mouse_down(gpui_kit::MouseButton::Left, stop)
                 .on_click(|_, _, cx| cx.open_url(chat::HOME))
                 .children(tip(self, Tip::Browser, cx)),
             )
@@ -635,6 +623,7 @@ impl ChatPanel {
                     &t,
                 )
                 .on_hover(Self::hover_listener(Tip::Reload, cx))
+                .on_mouse_down(gpui_kit::MouseButton::Left, stop)
                 .when(can_reload, |this| {
                     this.on_click(cx.listener(|panel, _, window, cx| panel.retry(window, cx)))
                 })
@@ -653,6 +642,7 @@ impl ChatPanel {
                             &t,
                         )
                         .on_hover(Self::hover_listener(Tip::Menu, cx))
+                        .on_mouse_down(gpui_kit::MouseButton::Left, stop)
                         .on_click(cx.listener(|panel, _, _, cx| {
                             panel.menu = !panel.menu;
                             cx.notify();
@@ -661,74 +651,106 @@ impl ChatPanel {
                     )
                     .children(menu),
             )
-            .child(
-                ui::ghost_icon_button("chat-hide", Icon::Minus, 24., false, false, true, &t)
-                    .on_hover(Self::hover_listener(Tip::Hide, cx))
-                    .on_click(cx.listener(|_, _, _, cx| cx.emit(ChatEvent::Hide)))
-                    .children(tip(self, Tip::Hide, cx)),
-            )
+            .into_any_element()
     }
 
     fn render_menu(&self, t: &Tokens, cx: &mut Context<Self>) -> AnyElement {
         let locale = settings::locale(cx);
-        let (move_label, target) = match self.dock {
-            Dock::Right => (Key::CmdChatBottom, Dock::Bottom),
-            Dock::Bottom => (Key::CmdChatRight, Dock::Right),
-        };
         let close = |panel: &mut ChatPanel, cx: &mut Context<ChatPanel>| {
             panel.menu = false;
             cx.notify();
         };
-        deferred(
-            anchored().offset(point(px(-176.), px(28.))).child(
-                menu::panel("chat-menu-panel", t)
-                    .on_mouse_down_out(cx.listener(move |panel, _, _, cx| close(panel, cx)))
-                    .child(
-                        menu::item(
-                            "chat-menu-help",
-                            None,
-                            text(locale, Key::ChatHelp),
-                            None,
-                            false,
-                            t,
-                        )
-                        .on_click(cx.listener(move |panel, _, _, cx| {
-                            close(panel, cx);
-                            panel.help = true;
-                        })),
-                    )
-                    .child(
-                        menu::item(
-                            "chat-menu-move",
-                            None,
-                            text(locale, move_label),
-                            None,
-                            false,
-                            t,
-                        )
-                        .on_click(cx.listener(move |panel, _, _, cx| {
-                            close(panel, cx);
-                            cx.emit(ChatEvent::Move(target));
-                        })),
-                    )
-                    .child(
-                        menu::item(
-                            "chat-menu-signout",
-                            None,
-                            text(locale, Key::ChatSignout),
-                            None,
-                            false,
-                            t,
-                        )
-                        .on_click(cx.listener(move |panel, _, _, cx| {
-                            close(panel, cx);
-                            cx.emit(ChatEvent::SignOut);
-                        })),
-                    ),
-            ),
-        )
-        .with_priority(1)
-        .into_any_element()
+        let mut panel = menu::panel("chat-menu-panel", t)
+            .on_mouse_down_out(cx.listener(move |panel, _, _, cx| close(panel, cx)))
+            .child(
+                menu::item(
+                    "chat-menu-help",
+                    None,
+                    text(locale, Key::ChatHelp),
+                    None,
+                    false,
+                    t,
+                )
+                .on_click(cx.listener(move |panel, _, _, cx| {
+                    close(panel, cx);
+                    panel.help = true;
+                })),
+            )
+            .child(
+                menu::item(
+                    "chat-menu-signout",
+                    None,
+                    text(locale, Key::ChatSignout),
+                    None,
+                    false,
+                    t,
+                )
+                .on_click(cx.listener(move |panel, _, _, cx| {
+                    close(panel, cx);
+                    cx.emit(ChatEvent::SignOut);
+                })),
+            )
+            .child(menu::separator(t));
+        // The view menu (workbench.md 4.8.4): the current area's item
+        // disabled with a check.
+        let moves = [
+            (Place::Side(Side::Left), Key::ViewMoveLeft),
+            (Place::Side(Side::Right), Key::ViewMoveRight),
+            (Place::Side(Side::Bottom), Key::ViewMoveBottom),
+            (Place::Page, Key::ViewMovePage),
+        ];
+        for (i, (place, key)) in moves.into_iter().enumerate() {
+            let here = self.place == place;
+            panel = panel.child(if here {
+                menu::disabled_item(
+                    ("chat-menu-move", i),
+                    text(locale, key),
+                    Some(menu::check(t)),
+                    t,
+                )
+            } else {
+                menu::item(
+                    ("chat-menu-move", i),
+                    None,
+                    text(locale, key),
+                    None,
+                    false,
+                    t,
+                )
+                .on_click(cx.listener(move |panel, _, _, cx| {
+                    close(panel, cx);
+                    cx.emit(ChatEvent::View(ViewAction::MoveTo(place)));
+                }))
+            });
+        }
+        let split = text(locale, Key::ViewSplitOff);
+        panel = panel.child(if self.can_split {
+            menu::item("chat-menu-split", None, split, None, false, t).on_click(cx.listener(
+                move |panel, _, _, cx| {
+                    close(panel, cx);
+                    cx.emit(ChatEvent::View(ViewAction::SplitOff));
+                },
+            ))
+        } else {
+            menu::disabled_item("chat-menu-split", split, None, t)
+        });
+        panel = panel.child(menu::separator(t)).child(
+            menu::item(
+                "chat-menu-hide",
+                None,
+                text(locale, Key::ViewHide),
+                None,
+                false,
+                t,
+            )
+            .on_click(cx.listener(move |panel, _, _, cx| {
+                close(panel, cx);
+                cx.emit(ChatEvent::View(ViewAction::Hide));
+            })),
+        );
+        deferred(anchored().offset(point(px(-176.), px(28.))).child(panel))
+            .with_priority(1)
+            .into_any_element()
     }
 
     fn body(&mut self, cx: &mut Context<Self>) -> AnyElement {
@@ -787,7 +809,13 @@ impl ChatPanel {
             Surface::Starting { line } => empty()
                 .when(line, |this| this.child(small(Key::ChatStarting)))
                 .into_any_element(),
-            Surface::Covered => empty().child(small(Key::ChatHidden)).into_any_element(),
+            Surface::Covered => empty()
+                .child(small(if self.rearranging {
+                    Key::LayoutWebviewHidden
+                } else {
+                    Key::ChatHidden
+                }))
+                .into_any_element(),
             Surface::RuntimeMissing => empty()
                 .child(heading(Key::ChatRuntimeTitle))
                 .child(reading(Key::ChatRuntimeBody))
@@ -890,7 +918,6 @@ impl ChatPanel {
 impl Render for ChatPanel {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.global::<Tokens>().clone();
-        let header = self.header(cx);
         let body = self.body(cx);
         div()
             .id("chat-dock")
@@ -899,7 +926,6 @@ impl Render for ChatPanel {
             .flex_col()
             .size_full()
             .bg(t.bg_sunken)
-            .child(header)
             .child(div().flex().flex_col().flex_1().min_h_0().child(body))
     }
 }

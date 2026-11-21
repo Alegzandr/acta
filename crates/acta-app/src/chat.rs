@@ -128,6 +128,8 @@ pub enum Kept {
     Palette,
     ToggleChat,
     ToggleTerminal,
+    /// `Ctrl+Shift+B`: the right sidebar (workbench.md 4.8).
+    ToggleRight,
     /// `Mod+1` to `Mod+4`: sidebar, page, terminal, chat.
     Focus(u8),
     NextTab,
@@ -169,6 +171,7 @@ pub fn kept(key: KeyCode, mods: Mods) -> Option<Kept> {
         KeyCode::Letter('k') if shift => Some(Kept::Palette),
         KeyCode::Letter('h') if shift => Some(Kept::ToggleChat),
         KeyCode::Letter('j') if shift => Some(Kept::ToggleTerminal),
+        KeyCode::Letter('b') if shift => Some(Kept::ToggleRight),
         KeyCode::Enter if shift => Some(Kept::ZoomToolWindow),
         KeyCode::Digit(n @ 1..=4) if !shift => Some(Kept::Focus(n)),
         _ => None,
@@ -528,6 +531,8 @@ mod tests {
         assert_eq!(w(Letter('h'), ctrl_shift()), Some(Kept::ToggleChat));
         assert_eq!(w(Backtick, ctrl()), Some(Kept::ToggleTerminal));
         assert_eq!(w(Letter('j'), ctrl_shift()), Some(Kept::ToggleTerminal));
+        assert_eq!(w(Letter('b'), ctrl_shift()), Some(Kept::ToggleRight));
+        assert_eq!(w(Letter('b'), ctrl()), None, "Ctrl+B belongs to the page");
         for n in 1..=4 {
             assert_eq!(w(Digit(n), ctrl()), Some(Kept::Focus(n)));
         }

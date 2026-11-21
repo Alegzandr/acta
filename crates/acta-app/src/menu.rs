@@ -58,6 +58,28 @@ pub fn item(
         .children(trailing)
 }
 
+/// A disabled item: `text.disabled`, no hover, no action.
+pub fn disabled_item(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    trailing: Option<AnyElement>,
+    tokens: &Tokens,
+) -> Stateful<Div> {
+    type_scale::UI
+        .el()
+        .id(id.into())
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(8.))
+        .h(px(32.))
+        .px(px(8.))
+        .rounded(px(RADIUS_SM))
+        .text_color(tokens.text_disabled)
+        .child(div().flex_1().min_w_0().truncate().child(label.into()))
+        .children(trailing)
+}
+
 /// The 1px `border.default` line before a destructive item, 4 above and
 /// below.
 pub fn separator(tokens: &Tokens) -> Div {

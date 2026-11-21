@@ -1,10 +1,11 @@
 //! Client-side titlebar, docs/design/layout.md 4.3: 36 high, `bg.sunken`, bottom border
 //! `border.subtle`, the whole bar a drag region except its controls.
 //!
-//! Left to right: sidebar toggle, back and forward, the breadcrumb, the drag
-//! region, "Search" with the palette shortcut, the chat toggle (Windows
-//! only) and the terminal toggle, then the platform's window controls.
-//! A toggle whose tool window is visible is drawn selected.
+//! Left to right: back and forward, the breadcrumb, the drag region,
+//! "Search" with the palette shortcut, the view toggles, the area toggles
+//! and the Layout menu (workbench.md 4.8.5), then the platform's window
+//! controls. A toggle whose view or area is visible is drawn selected;
+//! every toggle is always shown, because it is the way back (4.8.11).
 //!
 //! gpui-component's `TitleBar` is not used: it is 34 high with 34 wide
 //! controls, a gradient fill and the `danger` colour on the close button,
@@ -20,13 +21,14 @@
 
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    Context, Decorations, Hsla, InteractiveElement, IntoElement, MouseButton, MouseMoveEvent,
-    ParentElement, PathBuilder, Pixels, Point, SharedString, Stateful, StatefulInteractiveElement,
-    Styled, Window, WindowControlArea, canvas, div, point, px,
+    Context, Decorations, Hsla, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
+    MouseMoveEvent, ParentElement, PathBuilder, Pixels, Point, SharedString, Stateful,
+    StatefulInteractiveElement, Styled, Window, WindowControlArea, canvas, div, point, px,
 };
 
 use crate::i18n::{Key, KeyName, text};
 use crate::icons::{Icon, icon};
+use crate::layout::Side;
 use crate::route::Route;
 use crate::settings;
 use crate::shell::Shell;
@@ -93,6 +95,8 @@ const GLYPH: f32 = 10.;
 
 /// Size of the titlebar's icon buttons: compact on macOS (docs/design/layout.md 4.1).
 const BUTTON: f32 = if cfg!(target_os = "macos") { 24. } else { 28. };
+/// layout.md 4.3: under 1040 of window width, "Search" is its icon only.
+const SEARCH_LABEL_MIN: f32 = 1040.;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Control {
@@ -269,8 +273,8 @@ pub fn render(
     };
 
     // First run, key loss and open failed (screens.md 8.5, 8.9): only the
-    // name and the window controls.
-    let bare = shell.bare_titlebar();
+    // name and the window controls. The specimen has no workbench.
+    let bare = shell.bare_titlebar() || !shell.is_workbench();
     let button = |id, glyph, selected, disabled| {
         ui::ghost_icon_button(id, glyph, BUTTON, selected, disabled, active, &tokens)
     };
@@ -288,15 +292,6 @@ pub fn render(
         .when(show_icon, |this| {
             this.child(app_icon(window)).child(div().w(px(4.)))
         })
-        .child(
-            button(
-                "titlebar-sidebar",
-                Icon::PanelLeft,
-                shell.sidebar_visible(),
-                false,
-            )
-            .on_click(cx.listener(|shell, _, _, cx| shell.toggle_sidebar(cx))),
-        )
         .child(
             button(
                 "titlebar-back",
@@ -364,6 +359,7 @@ pub fn render(
             cx,
         ));
 
+    let narrow = f32::from(window.viewport_size().width) < SEARCH_LABEL_MIN;
     let search_group = "titlebar-search";
     let hover = tokens.fill_hover;
     let label_hover = tertiary_if_inactive(tokens.text_primary);
@@ -381,29 +377,93 @@ pub fn render(
         .hover(move |style| style.bg(hover))
         .on_click(|_, window, cx| window.dispatch_action(Box::new(crate::shell::OpenPalette), cx))
         .child(icon(Icon::Search, 16., icon_rest))
-        .child(
-            type_scale::UI
-                .el()
-                .text_color(icon_rest)
-                .group_hover(search_group, move |style| style.text_color(label_hover))
-                .child(text(locale, Key::CommonSearch)),
-        )
-        .child(ui::kbd(&[KeyName::Mod.label(locale, macos), "K"], &tokens));
+        .when(!narrow, |this| {
+            this.child(
+                type_scale::UI
+                    .el()
+                    .text_color(icon_rest)
+                    .group_hover(search_group, move |style| style.text_color(label_hover))
+                    .child(text(locale, Key::CommonSearch)),
+            )
+            .child(ui::kbd(&[KeyName::Mod.label(locale, macos), "K"], &tokens))
+        });
 
-    // The chat toggle: Windows only (macOS and Linux open claude.ai in the
-    // browser, ADR 0009).
-    #[cfg(windows)]
-    let chat_toggle = Some(
-        button(
-            "titlebar-chat",
-            Icon::MessageCircle,
-            shell.chat_visible(cx),
-            false,
-        )
-        .on_click(|_, window, cx| window.dispatch_action(Box::new(crate::shell::ToggleChat), cx)),
-    );
-    #[cfg(not(windows))]
-    let chat_toggle: Option<gpui_kit::Stateful<gpui_kit::Div>> = None;
+    // 4.8.5: one toggle per view (the chat on Windows only, ADR 0009),
+    // then the area toggles and the Layout menu. Right click on a view
+    // toggle opens its view menu; on an area toggle, the Layout menu.
+    let menu_at = |e: &MouseDownEvent| (f32::from(e.position.x), f32::from(e.position.y) + 8.);
+    let mut views = div().flex().flex_row().items_center().gap(px(4.));
+    for view in crate::shell::views() {
+        let name = text(locale, crate::shell::view_name(view));
+        views = views.child(
+            ui::ghost_icon_button(
+                format!("titlebar-view-{}", view.key()),
+                crate::shell::view_icon(view),
+                BUTTON,
+                shell.view_selected(view),
+                false,
+                active,
+                &tokens,
+            )
+            .tooltip(ui::tip_keys(
+                name,
+                crate::shell::view_keys(view, macos, locale),
+            ))
+            .on_click(cx.listener(move |shell, _, window, cx| shell.toggle_view(view, window, cx)))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |shell, e: &MouseDownEvent, _, cx| {
+                    let (x, y) = menu_at(e);
+                    shell.open_menu(crate::shell::MenuKind::View(view), x - 200., y, cx)
+                }),
+            ),
+        );
+    }
+    let mut areas = div().flex().flex_row().items_center().gap(px(4.));
+    for (side, glyph, key) in [
+        (Side::Left, Icon::PanelLeft, Key::AreaLeft),
+        (Side::Bottom, Icon::PanelBottom, Key::AreaBottom),
+        (Side::Right, Icon::PanelRight, Key::AreaRight),
+    ] {
+        areas = areas.child(
+            ui::ghost_icon_button(
+                format!("titlebar-area-{}", side.key()),
+                glyph,
+                BUTTON,
+                shell.area_shown(side, window),
+                false,
+                active,
+                &tokens,
+            )
+            .tooltip(ui::tip_keys(
+                text(locale, key),
+                crate::shell::area_keys(side, macos, locale),
+            ))
+            .on_click(cx.listener(move |shell, _, window, cx| shell.toggle_area(side, window, cx)))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |shell, e: &MouseDownEvent, _, cx| {
+                    let (x, y) = menu_at(e);
+                    shell.open_menu(crate::shell::MenuKind::Layout, x - 240., y, cx)
+                }),
+            ),
+        );
+    }
+    let layout_menu = button("titlebar-layout", Icon::PanelsTopLeft, false, false)
+        .tooltip(ui::tip(text(locale, Key::LayoutMenu)))
+        .on_mouse_down(MouseButton::Left, |_, window, cx| {
+            window.prevent_default();
+            cx.stop_propagation();
+        })
+        .on_click(cx.listener(move |shell, e: &gpui_kit::ClickEvent, _, cx| {
+            let p = e.position();
+            shell.open_menu(
+                crate::shell::MenuKind::Layout,
+                f32::from(p.x) - 240.,
+                f32::from(p.y) + 12.,
+                cx,
+            )
+        }));
     let trailing = div()
         .flex()
         .flex_row()
@@ -412,18 +472,11 @@ pub fn render(
         .gap(px(4.))
         .pr(px(8.))
         .child(search)
-        .children(chat_toggle)
-        .child(
-            button(
-                "titlebar-terminal",
-                Icon::SquareTerminal,
-                shell.terminal_visible(),
-                false,
-            )
-            .on_click(|_, window, cx| {
-                window.dispatch_action(Box::new(crate::shell::ToggleTerminal), cx)
-            }),
-        );
+        .child(div().w(px(4.)))
+        .child(views)
+        .child(div().w(px(4.)))
+        .child(areas)
+        .child(layout_menu);
 
     div()
         .id("titlebar")
