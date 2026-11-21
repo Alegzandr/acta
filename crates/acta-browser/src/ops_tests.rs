@@ -15,6 +15,12 @@ pub struct Fake {
     pub stopped: AtomicBool,
     pub tree: Value,
     pub handoff: Handoff,
+    /// The element `DOM.focus` last focused: the tree reports it focused,
+    /// unless `focus_fixed` keeps the tree as built.
+    pub focus: Mutex<Option<i64>>,
+    pub focus_fixed: bool,
+    /// The tree cannot be read.
+    pub tree_fails: AtomicBool,
     /// How long a handoff waits before answering.
     pub handoff_delay: Duration,
     pub activity: Mutex<Vec<Activity>>,
@@ -33,6 +39,9 @@ impl Fake {
             tree,
             handoff: Handoff::Done,
             handoff_delay: Duration::ZERO,
+            focus: Mutex::new(None),
+            focus_fixed: false,
+            tree_fails: AtomicBool::new(false),
             activity: Mutex::default(),
             set_up: AtomicBool::new(false),
             fail_setup: AtomicBool::new(false),
@@ -104,7 +113,26 @@ impl Host for Fake {
                 "entries": [{"id": 1, "url": format!("http://127.0.0.1/{}", "a".repeat(400)),
                              "title": format!("{INJECTION}{}", "t".repeat(400))}],
             }),
-            "Accessibility.getFullAXTree" => self.tree.clone(),
+            "Accessibility.getFullAXTree" => {
+                if self.tree_fails.load(Ordering::SeqCst) {
+                    return Err("Accessibility.getFullAXTree: no answer in 10 s".into());
+                }
+                let mut tree = self.tree.clone();
+                if let Some(f) = *self.focus.lock().unwrap()
+                    && !self.focus_fixed
+                {
+                    for n in tree["nodes"].as_array_mut().unwrap() {
+                        if n["backendDOMNodeId"] == f {
+                            n["properties"] = json!([{"name": "focused", "value": {"type": "boolean", "value": true}}]);
+                        }
+                    }
+                }
+                tree
+            }
+            "DOM.focus" => {
+                *self.focus.lock().unwrap() = params["backendNodeId"].as_i64();
+                json!({})
+            }
             "Accessibility.getPartialAXTree" => {
                 json!({"nodes": [node("x", None, "button", "Greet", params["backendNodeId"].as_i64().unwrap_or(0), &[])]})
             }
@@ -542,7 +570,8 @@ fn text_never_goes_where_focus_moved_to_a_secret_field() {
                 json!([{"name": "focused", "value": {"type": "boolean", "value": true}}]);
         }
     }
-    let fake = Fake::new(tree);
+    let mut fake = Fake::new(tree);
+    fake.focus_fixed = true;
     let reply = run(
         &fake,
         &Request::Type(TypeArgs {
@@ -573,4 +602,51 @@ fn screenshots_account_for_the_display_scale() {
     let g = shot_geometry(65.0, 31.0, 2.0, 1024.0);
     assert_eq!((g.scale, g.width, g.height), (1.0, 130.0, 62.0));
     assert_eq!(shot_geometry(100.0, 100.0, f64::NAN, 1024.0).width, 100.0);
+}
+
+#[test]
+fn nothing_is_typed_when_focus_cannot_be_confirmed() {
+    let typed = |fake: &Fake| {
+        run(
+            fake,
+            &Request::Type(TypeArgs {
+                target: "e2".into(),
+                text: Some("Alexandre".into()),
+                ..Default::default()
+            }),
+        )
+    };
+    // The tree cannot be read.
+    let fake = Fake::new(big_tree(1));
+    fake.set_up.store(true, Ordering::SeqCst);
+    fake.tree_fails.store(true, Ordering::SeqCst);
+    let reply = typed(&fake);
+    assert!(
+        !reply.ok && reply.text.contains("cannot confirm"),
+        "{}",
+        reply.text
+    );
+    // Focus is in a frame (its document is another target).
+    let mut tree = big_tree(1);
+    tree["nodes"].as_array_mut().unwrap().push(json!({
+        "nodeId": "f", "parentId": "1", "ignored": false,
+        "role": {"value": "Iframe"}, "name": {"value": ""}, "backendDOMNodeId": 77,
+        "childIds": [],
+        "properties": [{"name": "focused", "value": {"type": "boolean", "value": true}}],
+    }));
+    let mut fake = Fake::new(tree);
+    fake.focus_fixed = true;
+    let reply = typed(&fake);
+    assert!(
+        !reply.ok && reply.text.contains("cannot confirm"),
+        "{}",
+        reply.text
+    );
+    // Nothing focused at all.
+    let mut fake = Fake::new(big_tree(1));
+    fake.focus_fixed = true;
+    assert!(typed(&fake).text.contains("cannot confirm"));
+    assert!(!fake.methods().iter().any(|m| m == "Input.insertText"));
+    // Focus confirmed on the field: typed.
+    assert!(typed(&Fake::new(big_tree(1))).ok);
 }

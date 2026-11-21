@@ -44,7 +44,7 @@ struct Link {
     opener: Opener,
     #[cfg(windows)]
     conn: Option<windows_link::Connected>,
-    /// This process started the app once already: never again.
+    /// This process started the app, and it still runs.
     #[cfg(windows)]
     started: bool,
 }
@@ -144,8 +144,8 @@ mod windows_link {
 
     /// Opens the store for its key, then the pipe; starts the app when
     /// nobody serves it.
-    /// `started` is set once this process has started the app; it is
-    /// never started twice by one `acta mcp browser`.
+    /// `started` is set while an app this process started runs: it is not
+    /// started again until that app is gone.
     pub fn connect(opener: &Opener, started: &mut bool) -> Result<Connected, String> {
         let store = opener.open()?;
         let key = store.derive_secret(acta_browser::auth::KEY_LABEL);
@@ -168,6 +168,11 @@ mod windows_link {
         // Claimed atomically, and held until the app holds it too, so two
         // sessions asking at once start one app.
         let mut _claim = None;
+        // Once the app that was started is gone (closed by the user), a
+        // later call may start it again.
+        if *started && !acta_browser::pipe::app_running(&mutex) {
+            *started = false;
+        }
         if !*started && let Ok(Some(claim)) = acta_browser::pipe::AppMutex::claim(&mutex) {
             *started = true;
             _claim = Some(claim);

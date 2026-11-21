@@ -452,8 +452,10 @@ fn read(host: &dyn Host, a: &ReadArgs) -> Reply {
     Reply::ok(text)
 }
 
-/// The element that has focus, from the accessibility tree (no script).
-fn focused(host: &dyn Host) -> Option<i64> {
+/// The element that has focus and its role, from the accessibility tree
+/// (no script). `None` when it cannot be read or nothing in this document
+/// has focus.
+fn focused(host: &dyn Host) -> Option<(i64, String)> {
     let tree = host.cdp("Accessibility.getFullAXTree", json!({})).ok()?;
     tree["nodes"].as_array()?.iter().rev().find_map(|n| {
         let focused = n["properties"]
@@ -463,7 +465,11 @@ fn focused(host: &dyn Host) -> Option<i64> {
             .any(|p| p["name"] == "focused" && p["value"]["value"] == json!(true));
         let role = n["role"]["value"].as_str().unwrap_or("");
         (focused && role != "RootWebArea")
-            .then(|| n["backendDOMNodeId"].as_i64())
+            .then(|| {
+                n["backendDOMNodeId"]
+                    .as_i64()
+                    .map(|b| (b, role.to_string()))
+            })
             .flatten()
     })
 }
@@ -689,8 +695,19 @@ fn type_text(host: &dyn Host, a: &TypeArgs) -> Reply {
         return failed("type", Some(rf), &e);
     }
     // The page may move focus on focus (to a password field, say): what
-    // receives the text is checked again.
-    if let Some(f) = focused(host).filter(|f| *f != b) {
+    // receives the text is checked again, and nothing is typed when it
+    // cannot be confirmed (the tree unreadable, focus in another frame).
+    let unconfirmed = || {
+        Reply::err(format!(
+            "refused: cannot confirm that {rf} has the keyboard (focus may be in a frame); take a new snapshot or call handoff"
+        ))
+    };
+    let f = match focused(host) {
+        None => return unconfirmed(),
+        Some((_, role)) if role.eq_ignore_ascii_case("Iframe") => return unconfirmed(),
+        Some((f, _)) => f,
+    };
+    if f != b {
         let secret = host
             .cdp("DOM.describeNode", json!({ "backendNodeId": f }))
             .map(|d| {

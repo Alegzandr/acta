@@ -124,6 +124,9 @@ pub struct Server {
     created_any: bool,
     /// The instance waiting for the next client.
     next: Option<File>,
+    /// Tests: make the instance after the first fail.
+    #[cfg(test)]
+    fail_next: bool,
 }
 
 // SAFETY: the descriptor is read-only after creation and freed in Drop.
@@ -162,6 +165,8 @@ impl Server {
             sd,
             created_any: false,
             next: None,
+            #[cfg(test)]
+            fail_next: false,
         })
     }
 
@@ -169,6 +174,10 @@ impl Server {
     /// with `FILE_FLAG_FIRST_PIPE_INSTANCE`: if the name is already taken
     /// this fails instead of joining someone else's pipe.
     fn create(&mut self) -> std::io::Result<(File, String)> {
+        #[cfg(test)]
+        if self.fail_next && self.created_any {
+            return Err(std::io::Error::other("injected failure"));
+        }
         let sa = SECURITY_ATTRIBUTES {
             nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
             lpSecurityDescriptor: self.sd.0,
@@ -222,9 +231,10 @@ impl Server {
             return Err(e.into());
         }
         let dacl = read_sddl(h);
-        // The next instance exists before this one is handed off; if it
-        // cannot be made now, the next accept tries again.
-        self.next = self.create().map(|(f, _)| f).ok();
+        // The next instance exists before this one is handed off. If it
+        // cannot be made, nothing is served: the connected client is
+        // dropped and the caller stops serving (and says why).
+        self.next = Some(self.create()?.0);
         Ok(Accepted { file, dacl })
     }
 }
@@ -403,6 +413,18 @@ mod tests {
         assert!(claimed.is_some() && app_running(&name));
         drop(claimed);
         assert!(!app_running(&name));
+    }
+
+    #[test]
+    fn no_client_is_served_without_an_instance_behind_it() {
+        let name = format!(r"\\.\pipe\acta-test-next-{}", std::process::id());
+        let mut server = Server::new(&name, &user_sid().unwrap()).unwrap();
+        server.fail_next = true;
+        let t = std::thread::spawn(move || server.accept().map(|_| ()));
+        let client = connect(&name, Duration::from_secs(2));
+        let accepted = t.join().unwrap();
+        assert_eq!(accepted.unwrap_err().to_string(), "injected failure");
+        drop(client);
     }
 
     #[test]
