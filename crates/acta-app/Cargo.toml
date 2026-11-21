@@ -19,6 +19,10 @@ gpui-kit = "=0.10.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 velopack = "=1.2.161"
+# Velopack's HTTP client, named only to read the status or the kind of a network
+# error for the log. Same major and features as velopack 1.2.161 uses, so cargo
+# keeps one copy; a velopack that moves to another ureq fails to compile here.
+ureq = { version = "3.5", default-features = false, features = ["rustls"] }
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"
