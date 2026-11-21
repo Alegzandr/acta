@@ -44,6 +44,9 @@ struct Link {
     opener: Opener,
     #[cfg(windows)]
     conn: Option<windows_link::Connected>,
+    /// This process started the app once already: never again.
+    #[cfg(windows)]
+    started: bool,
 }
 
 #[derive(Clone)]
@@ -67,12 +70,18 @@ impl BrowserServer {
                 opener,
                 #[cfg(windows)]
                 conn: None,
+                #[cfg(windows)]
+                started: false,
             })),
             tool_router: router,
         }
     }
 
     async fn call(&self, req: Request) -> CallToolResult {
+        // Field limits before anything leaves this process.
+        if let Err(why) = req.check() {
+            return result(Reply::err(why));
+        }
         let link = self.link.clone();
         let reply = tokio::task::spawn_blocking(move || {
             let mut link = link.lock().unwrap_or_else(|p| p.into_inner());
@@ -94,7 +103,7 @@ impl Link {
     #[cfg(windows)]
     fn call(&mut self, req: &Request) -> Reply {
         if self.conn.is_none() {
-            match windows_link::connect(&self.opener) {
+            match windows_link::connect(&self.opener, &mut self.started) {
                 Ok(c) => self.conn = Some(c),
                 Err(why) => return Reply::err(why),
             }
@@ -135,12 +144,15 @@ mod windows_link {
 
     /// Opens the store for its key, then the pipe; starts the app when
     /// nobody serves it.
-    pub fn connect(opener: &Opener) -> Result<Connected, String> {
+    /// `started` is set once this process has started the app; it is
+    /// never started twice by one `acta mcp browser`.
+    pub fn connect(opener: &Opener, started: &mut bool) -> Result<Connected, String> {
         let store = opener.open()?;
         let key = store.derive_secret(acta_browser::auth::KEY_LABEL);
         let sid = acta_browser::pipe::user_sid()
             .map_err(|e| format!("cannot read this user's id: {}", e.kind()))?;
         let name = acta_browser::pipe::pipe_name(&sid, store.data_dir());
+        let mutex = acta_browser::pipe::mutex_name(&sid, store.data_dir());
         let session = Session::resolve(&store, &Launch::from_env(), Author::Claude);
         let hello = Hello {
             session: session.focus.map(|f| f.to_string()),
@@ -151,7 +163,16 @@ mod windows_link {
             Err(ConnectError::Failed(why)) => return Err(why),
             Err(ConnectError::NoApp) => {}
         }
-        start_app()?;
+        // The app holds its mutex from its first moments: running or still
+        // starting, it is waited for, never started again.
+        // Claimed atomically, and held until the app holds it too, so two
+        // sessions asking at once start one app.
+        let mut _claim = None;
+        if !*started && let Ok(Some(claim)) = acta_browser::pipe::AppMutex::claim(&mutex) {
+            *started = true;
+            _claim = Some(claim);
+            start_app()?;
+        }
         let end = Instant::now() + START_WAIT;
         loop {
             match Client::connect(&name, &key, &hello) {
@@ -162,7 +183,7 @@ mod windows_link {
                 }
                 Err(ConnectError::NoApp) => {
                     return Err(
-                        "Acta was started but its browser did not answer within 10 s; ask the user to open Acta"
+                        "Acta's browser did not answer within 10 s; ask the user to open Acta"
                             .into(),
                     );
                 }
@@ -192,14 +213,20 @@ mod windows_link {
         installed.is_file().then_some(installed)
     }
 
-    /// What Claude Code and Acta's terminal set for this session only: the
-    /// app started from here must not hand it to the terminals it opens
-    /// (a `claude` there would think it runs inside this session).
+    /// What the app started from here must not inherit: what Claude Code
+    /// and Acta's terminal set for this session only (a `claude` in the
+    /// app's terminals would think it runs inside this session), Anthropic
+    /// credentials and settings, and WebView2 overrides (the app refuses the
+    /// browser when they are set; the user's own environment still has
+    /// them, and so does an Acta started by hand).
     pub fn inherited_by_session(name: &str) -> bool {
         let upper = name.to_ascii_uppercase();
         upper == "CLAUDECODE"
             || upper.starts_with("CLAUDE_CODE_")
             || upper.starts_with("CLAUDE_PLUGIN_")
+            || upper.starts_with("ANTHROPIC_")
+            || upper.starts_with("WEBVIEW2_")
+            || upper.starts_with("MCP_")
             || matches!(
                 upper.as_str(),
                 "CLAUDE_PROJECT_DIR"
@@ -375,6 +402,9 @@ mod tests {
             "CLAUDE_PROJECT_DIR",
             "CLAUDE_PLUGIN_ROOT",
             "ACTA_TOPIC",
+            "ANTHROPIC_API_KEY",
+            "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+            "webview2_user_data_folder",
         ] {
             assert!(session(name), "{name}");
         }
@@ -386,6 +416,30 @@ mod tests {
         ] {
             assert!(!session(name), "{name}");
         }
+    }
+
+    #[tokio::test]
+    async fn over_limit_fields_never_leave_the_process() {
+        let server = BrowserServer::new(Opener {
+            config: None,
+            dev: true,
+            refusal: Some("no store in this test"),
+        });
+        let r = server
+            .call(Request::Type(TypeArgs {
+                target: "e2".into(),
+                text: Some("a".repeat(2_001)),
+                ..Default::default()
+            }))
+            .await;
+        let v = serde_json::to_value(&r).unwrap();
+        assert_eq!(v["isError"], true);
+        assert!(
+            v["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("at most 2000")
+        );
     }
 
     #[test]

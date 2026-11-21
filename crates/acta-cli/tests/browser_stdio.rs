@@ -155,7 +155,9 @@ fn elsewhere_every_tool_points_to_claude_in_chrome() {
     assert_eq!(text, acta_browser::UNSUPPORTED);
 }
 
-#[cfg(windows)]
+// Debug builds only: a release build ignores ACTA_DEV_DATA_DIR and
+// ACTA_DEV_APP, and would look for the real app.
+#[cfg(all(windows, debug_assertions))]
 mod windows {
     use super::*;
     use acta_browser::events::{Events, Notice};
@@ -177,6 +179,8 @@ mod windows {
         fn ensure_view(&self) -> Result<bool, String> {
             Ok(false)
         }
+
+        fn set_up(&self) {}
 
         fn cdp(&self, method: &str, p: Value) -> Result<Value, String> {
             Ok(match method {
