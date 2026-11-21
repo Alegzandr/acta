@@ -1560,6 +1560,8 @@ impl Shell {
             Command::CloseOtherTabs => self.close_other_tabs(cx),
             Command::ReopenTab => self.reopen_tab(window, cx),
             Command::Theme(setting) => settings::set_theme(setting, cx),
+            Command::TextSize(size) => settings::set_text_size(size, cx),
+            Command::ReadingWidth(width) => settings::set_reading_width(width, cx),
             Command::Language(locale) => settings::set_language(locale, cx),
         }
     }
@@ -2650,7 +2652,7 @@ impl Shell {
             .child(
                 div()
                     .w_full()
-                    .max_w(px(ui::COLUMN_MAX))
+                    .max_w(px(ui::column_max()))
                     .pt(px(96.))
                     .flex()
                     .flex_col()
@@ -2830,7 +2832,7 @@ impl Shell {
             .child(
                 div()
                     .w_full()
-                    .max_w(px(ui::COLUMN_MAX))
+                    .max_w(px(ui::column_max()))
                     .pt(px(96.))
                     .flex()
                     .flex_col()

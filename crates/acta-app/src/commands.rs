@@ -58,6 +58,8 @@ pub enum Command {
     CloseOtherTabs,
     ReopenTab,
     Theme(crate::theme::ThemeSetting),
+    TextSize(crate::type_scale::TextSize),
+    ReadingWidth(crate::ui::ReadingWidth),
     Language(Locale),
 }
 
@@ -156,9 +158,10 @@ impl Command {
             Command::Theme(ThemeSetting::System),
             Command::Theme(ThemeSetting::Light),
             Command::Theme(ThemeSetting::Dark),
-            Command::Language(Locale::En),
-            Command::Language(Locale::Fr),
         ]);
+        out.extend(crate::type_scale::TextSize::ALL.map(Command::TextSize));
+        out.extend(crate::ui::ReadingWidth::ALL.map(Command::ReadingWidth));
+        out.extend([Command::Language(Locale::En), Command::Language(Locale::Fr)]);
         out
     }
 
@@ -225,6 +228,18 @@ impl Command {
                 );
                 return tr(locale, Key::CmdTheme, &[("value", Arg::Text(&value))]);
             }
+            Command::TextSize(size) => {
+                let value = text(locale, text_size_key(size));
+                return tr(locale, Key::CmdTextSize, &[("value", Arg::Text(&value))]);
+            }
+            Command::ReadingWidth(width) => {
+                let value = text(locale, reading_width_key(width));
+                return tr(
+                    locale,
+                    Key::CmdReadingWidth,
+                    &[("value", Arg::Text(&value))],
+                );
+            }
             Command::Language(target) => {
                 return tr(
                     locale,
@@ -275,6 +290,26 @@ impl Command {
             Command::SetStatus(_) => vec!["S"],
             _ => vec![],
         }
+    }
+}
+
+/// The name of a Text size value, in Settings and in the palette.
+pub fn text_size_key(size: crate::type_scale::TextSize) -> Key {
+    use crate::type_scale::TextSize;
+    match size {
+        TextSize::Small => Key::SettingsTextSizeSmall,
+        TextSize::Default => Key::SettingsTextSizeDefault,
+        TextSize::Large => Key::SettingsTextSizeLarge,
+    }
+}
+
+/// The name of a Reading width value, in Settings and in the palette.
+pub fn reading_width_key(width: crate::ui::ReadingWidth) -> Key {
+    use crate::ui::ReadingWidth;
+    match width {
+        ReadingWidth::Narrow => Key::SettingsReadingWidthNarrow,
+        ReadingWidth::Default => Key::SettingsReadingWidthDefault,
+        ReadingWidth::Wide => Key::SettingsReadingWidthWide,
     }
 }
 

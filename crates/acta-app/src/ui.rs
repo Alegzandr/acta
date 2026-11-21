@@ -1,5 +1,7 @@
 //! Small pieces of docs/design/components.md 5 shared by several views.
 
+use std::sync::atomic::{AtomicU8, Ordering};
+
 use acta_core::model::{Author, Status};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
@@ -429,14 +431,60 @@ pub fn segmented(tokens: &Tokens) -> Div {
         .overflow_hidden()
 }
 
-/// docs/design/typography.md 3.3: the content column is at most 680 wide.
-pub const COLUMN_MAX: f32 = 680.;
+/// The Reading width setting (Settings > Appearance): the widest the
+/// content column gets (docs/design/typography.md 3.3).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum ReadingWidth {
+    Narrow,
+    #[default]
+    Default,
+    Wide,
+}
 
-/// The content column: at most 680 wide, 32 above the title.
+impl ReadingWidth {
+    pub const ALL: [ReadingWidth; 3] = [
+        ReadingWidth::Narrow,
+        ReadingWidth::Default,
+        ReadingWidth::Wide,
+    ];
+
+    /// The column's maximum width: about 65, 75 and 100 characters of
+    /// reading text per line at the Default text size.
+    pub fn column_max(self) -> f32 {
+        match self {
+            ReadingWidth::Narrow => 480.,
+            ReadingWidth::Default => 560.,
+            ReadingWidth::Wide => 720.,
+        }
+    }
+}
+
+/// The setting in force, written by the settings module (see
+/// `type_scale::set_text_size` for why it is not a GPUI global).
+static READING_WIDTH: AtomicU8 = AtomicU8::new(1);
+
+pub fn set_reading_width(width: ReadingWidth) {
+    let n = ReadingWidth::ALL
+        .iter()
+        .position(|w| *w == width)
+        .unwrap_or(1);
+    READING_WIDTH.store(n as u8, Ordering::Relaxed);
+}
+
+pub fn reading_width() -> ReadingWidth {
+    ReadingWidth::ALL[(READING_WIDTH.load(Ordering::Relaxed) as usize).min(2)]
+}
+
+/// The content column's maximum width under the Reading width setting.
+pub fn column_max() -> f32 {
+    reading_width().column_max()
+}
+
+/// The content column: at most [`column_max`] wide, 32 above the title.
 pub fn column() -> Div {
     div()
         .w_full()
-        .max_w(px(COLUMN_MAX))
+        .max_w(px(column_max()))
         .pt(px(32.))
         .pb(px(48.))
         .flex()

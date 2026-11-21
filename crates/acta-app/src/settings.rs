@@ -7,6 +7,8 @@ use gpui_kit::{App, Global, actions};
 use crate::i18n::Locale;
 use crate::preferences::{self, Preferences, Writer};
 use crate::theme::{self, ThemeSetting};
+use crate::type_scale::{self, TextSize};
+use crate::ui::{self, ReadingWidth};
 
 actions!(
     acta,
@@ -38,6 +40,8 @@ impl Global for Settings {}
 pub fn init(cx: &mut App) {
     let current = preferences::load();
     theme::apply(current.theme, cx);
+    type_scale::set_text_size(current.text_size);
+    ui::set_reading_width(current.reading_width);
     let updated = just_updated(current.last_version.as_deref(), acta_core::VERSION);
     let first_record = current.last_version.as_deref() != Some(acta_core::VERSION);
     cx.set_global(Settings {
@@ -102,6 +106,26 @@ pub fn set_theme(setting: ThemeSetting, cx: &mut App) {
     }
     change(cx, |prefs| prefs.theme = setting);
     theme::apply(setting, cx);
+}
+
+/// Change the size of reading text: every window relays out at once.
+pub fn set_text_size(size: TextSize, cx: &mut App) {
+    if current(cx).text_size == size {
+        return;
+    }
+    change(cx, |prefs| prefs.text_size = size);
+    type_scale::set_text_size(size);
+    cx.refresh_windows();
+}
+
+/// Change the widest the content column gets, at once.
+pub fn set_reading_width(width: ReadingWidth, cx: &mut App) {
+    if current(cx).reading_width == width {
+        return;
+    }
+    change(cx, |prefs| prefs.reading_width = width);
+    ui::set_reading_width(width);
+    cx.refresh_windows();
 }
 
 /// The interface language in force.

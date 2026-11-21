@@ -1221,6 +1221,14 @@ catalogue! {
         en: t("Theme: {value}"),
         fr: t("Thème\u{202f}: {value}"),
     }
+    CmdTextSize "cmd.text_size" {
+        en: t("Text size: {value}"),
+        fr: t("Taille du texte\u{202f}: {value}"),
+    }
+    CmdReadingWidth "cmd.reading_width" {
+        en: t("Reading width: {value}"),
+        fr: t("Largeur de lecture\u{202f}: {value}"),
+    }
     CmdLanguage "cmd.language" {
         en: t("Language: {value}"),
         fr: t("Langue\u{202f}: {value}"),
@@ -1500,6 +1508,46 @@ catalogue! {
     SettingsLanguageHint "settings.language.hint" {
         en: t("Changes Acta\u{2019}s own text. What you and Claude Code write is never translated."),
         fr: t("Change les textes d\u{2019}Acta. Ce que vous et Claude Code écrivez n\u{2019}est jamais traduit."),
+    }
+    SettingsTextSize "settings.text_size" {
+        en: t("Text size"),
+        fr: t("Taille du texte"),
+    }
+    SettingsTextSizeHint "settings.text_size.hint" {
+        en: t("Timelines, notes and documents. The interface keeps its size."),
+        fr: t("Fils, notes et documents. L\u{2019}interface garde sa taille."),
+    }
+    SettingsTextSizeSmall "settings.text_size.small" {
+        en: t("Small"),
+        fr: t("Petit"),
+    }
+    SettingsTextSizeDefault "settings.text_size.default" {
+        en: t("Default"),
+        fr: t("Normal"),
+    }
+    SettingsTextSizeLarge "settings.text_size.large" {
+        en: t("Large"),
+        fr: t("Grand"),
+    }
+    SettingsReadingWidth "settings.reading_width" {
+        en: t("Reading width"),
+        fr: t("Largeur de lecture"),
+    }
+    SettingsReadingWidthHint "settings.reading_width.hint" {
+        en: t("How wide pages get in a large window."),
+        fr: t("La largeur maximale des pages dans une grande fenêtre."),
+    }
+    SettingsReadingWidthNarrow "settings.reading_width.narrow" {
+        en: t("Narrow"),
+        fr: t("Étroite"),
+    }
+    SettingsReadingWidthDefault "settings.reading_width.default" {
+        en: t("Default"),
+        fr: t("Normale"),
+    }
+    SettingsReadingWidthWide "settings.reading_width.wide" {
+        en: t("Wide"),
+        fr: t("Large"),
     }
     SettingsTerminalSize "settings.terminal_size" {
         en: t("Terminal text size"),

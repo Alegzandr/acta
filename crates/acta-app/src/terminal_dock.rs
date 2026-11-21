@@ -21,7 +21,7 @@ use crate::i18n::{Arg, Key, KeyName, Locale, text, tr};
 use crate::icons::{Icon, icon};
 use crate::paths_view;
 use crate::settings;
-use crate::theme::{RADIUS_XS, Appearance, Mode, Tokens};
+use crate::theme::{Appearance, Mode, RADIUS_XS, Tokens};
 use crate::type_scale;
 use crate::ui::{self, Variant};
 use crate::workspace::{FolderRef, ToastKind, Undo, Workspace};

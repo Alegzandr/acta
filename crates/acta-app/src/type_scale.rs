@@ -2,6 +2,7 @@
 //! No role asks for letter-spacing (the pinned GPUI has none).
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 use gpui_kit::{Div, FontFeatures, FontWeight, Styled, div, px};
 
@@ -40,8 +41,10 @@ const fn mono(name: &'static str, size: f32, line: f32) -> TypeRole {
 pub const TITLE: TypeRole = sans("type.title", 24., 30., FontWeight::SEMIBOLD);
 pub const SUBTITLE: TypeRole = sans("type.subtitle", 20., 28., FontWeight::SEMIBOLD);
 pub const HEADING: TypeRole = sans("type.heading", 16., 24., FontWeight::SEMIBOLD);
-pub const READING: TypeRole = sans("type.reading", 15., 24., FontWeight::NORMAL);
-pub const DOCUMENT: TypeRole = sans("type.document", 16., 26., FontWeight::NORMAL);
+/// The two reading roles at the Default text size; [`TypeRole::size`] and
+/// [`TypeRole::line`] follow the Text size setting (typography.md 3.2).
+pub const READING: TypeRole = sans("type.reading", 16., 26., FontWeight::NORMAL);
+pub const DOCUMENT: TypeRole = sans("type.document", 17., 28., FontWeight::NORMAL);
 pub const UI: TypeRole = sans("type.ui", 14., 20., FontWeight::NORMAL);
 pub const UI_STRONG: TypeRole = sans("type.ui-strong", 14., 20., FontWeight::SEMIBOLD);
 pub const SMALL: TypeRole = sans("type.small", 12., 16., FontWeight::NORMAL);
@@ -59,6 +62,42 @@ pub const SANS_ROLES: [TypeRole; 9] = [
 pub fn tabular() -> FontFeatures {
     FontFeatures(Arc::new(vec![("tnum".into(), 1)]))
 }
+/// The Text size setting (Settings > Appearance): it scales the reading
+/// roles only, never the interface chrome.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum TextSize {
+    Small,
+    #[default]
+    Default,
+    Large,
+}
+
+impl TextSize {
+    pub const ALL: [TextSize; 3] = [TextSize::Small, TextSize::Default, TextSize::Large];
+
+    /// `type.reading` and `type.document` at this setting, as (size, line).
+    pub fn reading(self) -> ((f32, f32), (f32, f32)) {
+        match self {
+            TextSize::Small => ((15., 24.), (16., 26.)),
+            TextSize::Default => ((16., 26.), (17., 28.)),
+            TextSize::Large => ((18., 28.), (19., 30.)),
+        }
+    }
+}
+
+/// The setting in force. Text is laid out without an `App` at hand, so it
+/// lives here; the settings module writes it at launch and on change.
+static TEXT_SIZE: AtomicU8 = AtomicU8::new(1);
+
+pub fn set_text_size(size: TextSize) {
+    let n = TextSize::ALL.iter().position(|s| *s == size).unwrap_or(1);
+    TEXT_SIZE.store(n as u8, Ordering::Relaxed);
+}
+
+pub fn text_size() -> TextSize {
+    TextSize::ALL[(TEXT_SIZE.load(Ordering::Relaxed) as usize).min(2)]
+}
+
 /// The mono roles, in table order.
 pub const MONO_ROLES: [TypeRole; 2] = [CODE, TERMINAL];
 
@@ -68,12 +107,31 @@ impl TypeRole {
         if self.mono { FONT_MONO } else { FONT_SANS }
     }
 
+    /// The size in force: the reading roles follow the Text size setting.
+    pub fn size(&self) -> f32 {
+        self.scaled().0
+    }
+
+    /// The line height in force, as [`Self::size`].
+    pub fn line(&self) -> f32 {
+        self.scaled().1
+    }
+
+    fn scaled(&self) -> (f32, f32) {
+        let (reading, document) = text_size().reading();
+        match self.name {
+            "type.reading" => reading,
+            "type.document" => document,
+            _ => (self.size, self.line),
+        }
+    }
+
     /// A block of text in this role. Colour is the caller's (a text token).
     pub fn el(&self) -> Div {
         div()
             .font_family(self.family())
-            .text_size(px(self.size))
-            .line_height(px(self.line))
+            .text_size(px(self.size()))
+            .line_height(px(self.line()))
             .font_weight(self.weight)
     }
 }
@@ -109,8 +167,8 @@ mod tests {
             (TITLE, 24., 30.),
             (SUBTITLE, 20., 28.),
             (HEADING, 16., 24.),
-            (READING, 15., 24.),
-            (DOCUMENT, 16., 26.),
+            (READING, 16., 26.),
+            (DOCUMENT, 17., 28.),
             (UI, 14., 20.),
             (UI_STRONG, 14., 20.),
             (SMALL, 12., 16.),
@@ -121,5 +179,26 @@ mod tests {
         for (role, size, line) in table {
             assert_eq!((role.size, role.line), (size, line), "{}", role.name);
         }
+    }
+
+    #[test]
+    fn text_size_scales_reading_only_and_keeps_a_reading_line_height() {
+        for size in TextSize::ALL {
+            let ((r, rl), (d, dl)) = size.reading();
+            assert!(d > r, "a document reads one step larger");
+            for (s, l) in [(r, rl), (d, dl)] {
+                let ratio = l / s;
+                assert!((1.5..=1.7).contains(&ratio), "{size:?} {s}/{l}");
+                assert_eq!(
+                    l % 2.,
+                    0.,
+                    "even line heights keep baselines on whole pixels"
+                );
+            }
+        }
+        assert_eq!(
+            TextSize::Default.reading(),
+            ((READING.size, READING.line), (DOCUMENT.size, DOCUMENT.line))
+        );
     }
 }

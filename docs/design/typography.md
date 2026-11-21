@@ -26,14 +26,16 @@ Two weights of the sans: 400 and 600 (Segoe UI Variable's Regular and Semibold i
 | `type.title` | Sans | 24 / 30 | 600 | Page title (topic, epic, project, document, settings), first-run heading |
 | `type.subtitle` | Sans | 20 / 28 | 600 | Document h2, settings section heading |
 | `type.heading` | Sans | 16 / 24 | 600 | Dialog title, empty-state heading, Markdown h1/h2 on short surfaces, document h3 |
-| `type.reading` | Sans | 15 / 24 | 400 | Current state, description, timeline bodies, notes |
-| `type.document` | Sans | 16 / 26 | 400 | Document body, in the reading view and in its editor |
+| `type.reading` | Sans | 16 / 26 (Text size: 15 / 24, 16 / 26, 18 / 28) | 400 | Current state, description, timeline bodies, notes |
+| `type.document` | Sans | 17 / 28 (Text size: 16 / 26, 17 / 28, 19 / 30) | 400 | Document body, in the reading view and in its editor |
 | `type.ui` | Sans | 14 / 20 | 400 | Everything else: rows, buttons, inputs, menus, property values |
 | `type.ui-strong` | Sans | 14 / 20 | 600 | Author names, selected segment, primary button, project rows, Markdown h3 |
 | `type.small` | Sans | 12 / 16 | 400 | Timestamps, counts, breadcrumb, tooltips, hints, status bar, kbd hints |
 | `type.label` | Sans | 12 / 16 | 600 | Section labels ("Current state", "Timeline"), epic rows, table and tool window headers |
 | `type.code` | Mono | 13 / 20 | 400 | Inline code, code blocks, paths, ids, "Claude Code" author name |
 | `type.terminal` | Mono | 13 / 17 | 400 / 700 | Terminal grid (cell 7.8 x 17); size adjustable 11 to 18 with `Ctrl+Alt+=` / `Ctrl+Alt+-` (`Cmd+Shift+=` / `Cmd+Shift+-` on macOS) and from the palette |
+
+**Text size** (Settings > Appearance, and the palette: "Text size: Small / Default / Large"; stored in `preferences.json`, applied live) scales `type.reading` and `type.document` only, the two roles people read for minutes; the interface chrome keeps its sizes so rows, controls and the tree do not reflow. Every step keeps a line height of about 1.6 em and an even line height, so baselines stay on whole pixels.
 
 Sentence case everywhere, in both languages. No uppercase, no italics for UI (italics are for Markdown emphasis only). Minimum text size is 12px; nothing smaller.
 
@@ -43,14 +45,14 @@ Descriptions, current state, timeline entries and notes are stored as **Markdown
 
 Rendered in v1: paragraphs, `*emphasis*`, `**strong**` (600), inline code, fenced code blocks (no syntax highlighting), links, ordered and unordered lists (two nesting levels), task lists (read-only checkboxes), blockquotes, headings, horizontal rule. Tables are rendered too (Claude Code writes them constantly in specs). Not rendered in v1: images, HTML, footnotes. Unknown syntax shows as typed.
 
-Setting: `type.reading` in `text.primary`; paragraph gap 12; list item gap 4, indent 20, marker in `text.tertiary`; headings h1/h2 as `type.heading` and h3 as `type.ui-strong`, 24 above and 8 below (a timeline entry rarely needs them, so they stay small); blockquote indented 16 in `text.secondary` with no bar; inline code `type.code` on `bg.sunken`, padding 0 x 4, radius 4; code block `type.code` on `bg.sunken`, padding 12, radius 8, horizontal scroll, never wraps; links `accent`, underlined at rest (1px, 2 under the baseline), `accent.hover` on hover, focus ring on keyboard focus, open in the system browser; rule 1px `border.subtle` with 16 above and below.
+Setting (tuned on 2026-11-21 for an app that is read for hours: calm, untiring, few sizes): `type.reading` in `text.primary`; paragraph gap 0.75 em (12); list item gap 4, indent 20, marker in `text.tertiary`; headings stay close to the body: h1/h2 two px over the reading size, weight 600, h3 the reading size at 600, 24 above and 8 below (a timeline entry rarely needs them, and it must not out-shout the page title); blockquote indented 16 in `text.secondary` with no bar; inline code `type.code` on `bg.sunken`, padding 0 x 4, radius 4; code block `type.code` on `bg.sunken`, padding 12 x 16, radius 8, horizontal scroll, never wraps; links `accent`, underlined at rest (1px, 2 under the baseline), `accent.hover` on hover, focus ring on keyboard focus, open in the system browser; rule 1px `border.subtle` with 16 above and below.
 
 Tables: `type.ui`, cells padded 6 x 12, header row weight 600, 1px `border.subtle` under each row and no vertical lines, column alignment follows the Markdown alignment row (left by default), numeric columns right-aligned with `tnum`, cell text wraps at a 320 maximum column width; a table wider than the column scrolls horizontally on its own, like a code block.
 
 **Documents are the long-form surface** (ADR 0007): specs and architecture notes that are read for minutes, not glanced at. They get their own setting, used only in the document reading view and its editor:
-- Body `type.document` 16 / 26 in `text.primary`; paragraph gap 16; list item gap 6, indent 24.
-- Headings carry real structure there, because the agent addresses sections by heading: h1 `type.title` (32 above, 12 below); h2 `type.subtitle` (32 above, 8 below); h3 `type.heading` (24 above, 4 below); h4 and deeper as h3 in `text.secondary`. A heading is never the last line before a scroll boundary without its first paragraph line (keep-with-next when paginating by keyboard).
+- Body `type.document` 17 / 28 at the Default text size, in `text.primary`; paragraph gap 16; list item gap 6, indent 24.
+- Headings carry real structure there, because the agent addresses sections by heading: h1 the page title's 24 (32 above, 12 below); h2 three px over the body, at most 22 (32 above, 8 below); h3 one px over the body (24 above, 4 below), all at 600, so the steps hold at every Text size; h4 and deeper as h3 in `text.secondary`. A heading is never the last line before a scroll boundary without its first paragraph line (keep-with-next when paginating by keyboard).
 - Code blocks, inline code, tables, blockquotes, links and rules as above; code stays 13 / 20 so 80 columns fit the measure.
-- Short surfaces (current state, description, entries, notes) keep `type.reading` 15 / 24 and the compact heading sizes: they sit among UI and must not out-shout the page title.
+- Short surfaces (current state, description, entries, notes) keep `type.reading` and the compact heading sizes: they sit among UI and must not out-shout the page title.
 
-Measure: the content column is at most **680px** and never narrower than 360px. With Inter (average advance 0.47 em on English text, measured from the font) that is about 95 characters at 15px and 90 at 16px: a generous measure, the one the page-like references use, and the upper bound; nothing may widen it. Text is left-aligned, ragged right, no hyphenation. Single-line titles truncate with an ellipsis in lists and wrap in the topic header.
+Measure: the content column is at most **560** wide by default and never narrower than 360. **Reading width** (Settings > Appearance, and the palette: "Reading width: Narrow / Default / Wide"; stored in `preferences.json`, applied live) sets that maximum to 480, 560 or 720. Measured in the app with Segoe UI (6.95 px per character of English prose at 16px, 0.43 em), a timeline entry, which sits 32 inside the column, holds about 65, 75 and 100 characters per line at the Default text size, and a document about the same at its one-step-larger size: the comfortable 60 to 75 by default, wider only when the user asks. Text never runs full-bleed across a wide window: the column stays centred and the margins grow. Text is left-aligned, ragged right, no hyphenation. Single-line titles truncate with an ellipsis in lists and wrap in the topic header.

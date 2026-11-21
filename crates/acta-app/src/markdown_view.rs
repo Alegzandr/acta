@@ -14,13 +14,14 @@ use gpui_kit::{
 use crate::theme::Tokens;
 use crate::type_scale;
 
-/// typography.md 3.3: a code block on `bg.sunken`, padding 12, radius 6,
-/// no border.
+/// typography.md 3.3: a code block on `bg.sunken`, padding 12 x 16,
+/// radius 8, no border.
 fn code_block(tokens: &Tokens) -> StyleRefinement {
     StyleRefinement::default()
         .bg(tokens.bg_sunken)
         .border_0()
-        .p(px(12.))
+        .px(px(16.))
+        .py(px(12.))
         .rounded(px(crate::theme::RADIUS_MD))
 }
 
@@ -32,14 +33,16 @@ fn inline_code(tokens: &Tokens) -> HighlightStyle {
     }
 }
 
-/// A short surface: `type.reading`, paragraph gap 12, h1/h2 as
-/// `type.heading` (16) and h3 as `type.ui-strong` (13).
+/// A short surface: `type.reading` at the Text size setting, paragraph gap
+/// 0.75 em; headings stay close to the body (h1/h2 two px larger, h3 the
+/// body size), so an entry never out-shouts the page title.
 pub fn short(id: impl Into<ElementId>, text: impl Into<SharedString>, tokens: &Tokens) -> Div {
+    let body = type_scale::READING.size();
     let style = TextViewStyle {
         paragraph_gap: rems(0.75),
-        heading_font_size: Some(Arc::new(|level, _| match level {
-            1 | 2 => px(16.),
-            _ => px(13.),
+        heading_font_size: Some(Arc::new(move |level, _| match level {
+            1 | 2 => px(body + 2.),
+            _ => px(body),
         })),
         code_block: code_block(tokens),
         inline_code: inline_code(tokens),
@@ -52,14 +55,17 @@ pub fn short(id: impl Into<ElementId>, text: impl Into<SharedString>, tokens: &T
         .child(TextView::markdown(id, text).style(style))
 }
 
-/// A document body: `type.document`, paragraph gap 16, h1 24, h2 20, h3 16.
+/// A document body: `type.document` at the Text size setting, paragraph gap
+/// 16; h1 the page title's 24, h2 three px over the body (at most 22), h3
+/// one px over it, so the steps hold at every Text size.
 pub fn document(id: impl Into<ElementId>, text: impl Into<SharedString>, tokens: &Tokens) -> Div {
+    let body = type_scale::DOCUMENT.size();
     let style = TextViewStyle {
         paragraph_gap: rems(1.),
-        heading_font_size: Some(Arc::new(|level, _| match level {
+        heading_font_size: Some(Arc::new(move |level, _| match level {
             1 => px(24.),
-            2 => px(20.),
-            _ => px(16.),
+            2 => px((body + 3.).min(22.)),
+            _ => px(body + 1.),
         })),
         code_block: code_block(tokens),
         inline_code: inline_code(tokens),

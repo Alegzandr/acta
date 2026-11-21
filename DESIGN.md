@@ -65,7 +65,7 @@ Run against every screen, in dark and in light, in English and in French. One fa
 - [ ] `accent` appears only on: focus, selection marker, the single primary action, links, Active, unread, cursor. Count accent elements at rest: three or fewer.
 - [ ] Every text style is a role from 3.2; only weights 400 and 600; no uppercase; nothing under 12px.
 - [ ] Digits that align or update use `tnum`.
-- [ ] Reading text is within the 680 column and left-aligned.
+- [ ] Reading text is within the content column (the Reading width setting) and left-aligned.
 - [ ] Text/surface pairs used are in 2.2 and pass; `text.tertiary` is not on a selected overlay row; no coloured text on `accent.subtle`.
 
 **Layout**
