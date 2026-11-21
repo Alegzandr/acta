@@ -161,10 +161,30 @@ impl Zone {
         self.date_of(crate::time::now_ms())
     }
 
-    /// The first instant of a local day (where a clock change skips local
-    /// midnight, the first instant that falls on that day). A binary search
-    /// between the widest offsets in use, UTC-12 and UTC+14.
+    /// The first instant of a local day: the earliest instant whose local
+    /// time is 00:00 that day (a clock that falls back across midnight
+    /// shows it twice), or, where a clock change skips local midnight, the
+    /// first instant that falls on that day.
     pub fn midnight(self, date: Date) -> i64 {
+        let local = date.0 * MS_PER_DAY;
+        // Every offset in force within a day and a half of the day's
+        // start; each gives one candidate instant for local 00:00.
+        let mut offsets: Vec<i64> = (-36..=36)
+            .map(|k| (self.offset_at)(local + k * 30 * 60_000))
+            .collect();
+        offsets.sort_unstable();
+        offsets.dedup();
+        let exact = offsets
+            .iter()
+            .map(|o| local - o * 1000)
+            .filter(|at| (self.offset_at)(*at) * 1000 == local - at)
+            .min();
+        exact.unwrap_or_else(|| self.first_instant_on(date))
+    }
+
+    /// The first instant whose local day is `date` or later, by binary
+    /// search between the widest offsets in use, UTC-12 and UTC+14.
+    fn first_instant_on(self, date: Date) -> i64 {
         let (mut lo, mut hi) = (
             date.0 * MS_PER_DAY - 14 * 3_600_000 - 1,
             date.0 * MS_PER_DAY + 12 * 3_600_000,
@@ -632,6 +652,33 @@ mod tests {
             Zone::UTC.midnight(d(2026, 7, 1)),
             d(2026, 7, 1).days() * MS_PER_DAY
         );
+    }
+
+    #[test]
+    fn a_clock_that_falls_back_across_midnight_starts_the_day_at_its_first_midnight() {
+        // UTC+1 until local 00:30 on 1 July 2026, when the clock goes back
+        // to 23:30 the day before (UTC+0): 00:00 to 00:30 on 1 July is
+        // shown first, then 30 minutes of 30 June again.
+        fn zone(ms: i64) -> i64 {
+            let switch = d(2026, 7, 1).days() * MS_PER_DAY - 30 * 60_000;
+            if ms < switch { 3600 } else { 0 }
+        }
+        let z = Zone::from_fn(zone);
+        let day = d(2026, 7, 1);
+        let first = day.days() * MS_PER_DAY - 3_600_000;
+        assert_eq!(z.midnight(day), first);
+        assert_eq!(z.date_of(first), day);
+        assert_eq!(z.date_of(first - 1), day.add_days(-1));
+        // A clock that skips midnight (00:00 to 01:00): the day starts at
+        // the first instant that falls on it, local 01:00.
+        fn skip(ms: i64) -> i64 {
+            let switch = d(2026, 7, 1).days() * MS_PER_DAY;
+            if ms < switch { 0 } else { 3600 }
+        }
+        let z = Zone::from_fn(skip);
+        assert_eq!(z.midnight(day), day.days() * MS_PER_DAY);
+        assert_eq!(z.date_of(z.midnight(day)), day);
+        assert_eq!(z.date_of(z.midnight(day) - 1), day.add_days(-1));
     }
 
     /// Saturday 21 November 2026.
