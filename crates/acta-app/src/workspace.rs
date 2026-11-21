@@ -10,6 +10,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -241,31 +242,45 @@ impl Undo {
     }
 }
 
-/// The bounded undo stack of one project.
+/// The order of every undo step of the process: `Mod+Z` takes the newest
+/// of a window's layout steps and its writes (workbench.md 4.8.11, rule 3;
+/// interaction.md 6.4).
+static UNDO_SEQ: AtomicU64 = AtomicU64::new(1);
+
+pub fn next_undo_seq() -> u64 {
+    UNDO_SEQ.fetch_add(1, Ordering::Relaxed)
+}
+
+/// The bounded undo stack of one project, each step with its order.
 #[derive(Clone, Debug, Default)]
-pub struct UndoStack(Vec<Undo>);
+pub struct UndoStack(Vec<(u64, Undo)>);
 
 impl UndoStack {
     pub fn push(&mut self, undo: Undo) {
-        self.0.push(undo);
+        self.0.push((next_undo_seq(), undo));
         if self.0.len() > UNDO_DEPTH {
             self.0.remove(0);
         }
     }
 
     pub fn last(&self) -> Option<&Undo> {
-        self.0.last()
+        self.0.last().map(|(_, u)| u)
+    }
+
+    /// The order of the newest step.
+    pub fn newest(&self) -> Option<u64> {
+        self.0.last().map(|(seq, _)| *seq)
     }
 
     #[cfg(test)]
     pub fn pop(&mut self) -> Option<Undo> {
-        self.0.pop()
+        self.0.pop().map(|(_, u)| u)
     }
 
     /// Remove exactly `step`: the newest step equal to it, whatever was
     /// pushed while it was being written.
     pub fn remove(&mut self, step: &Undo) {
-        if let Some(at) = self.0.iter().rposition(|s| s == step) {
+        if let Some(at) = self.0.iter().rposition(|(_, s)| s == step) {
             self.0.remove(at);
         }
     }
@@ -291,6 +306,9 @@ pub enum ToastKind {
     Error,
     /// A fact with nothing to act on (an export written); gone after 6 s.
     Done,
+    /// A layout change (workbench.md 4.8.11): Undo and Reset layout; gone
+    /// after 6 s.
+    Layout,
 }
 
 pub enum WorkspaceEvent {
@@ -837,12 +855,23 @@ impl Workspace {
         .detach();
     }
 
-    /// `Mod+Z` on a page of `active`: its project's stack, or, when that is
-    /// empty, the steps that belong to no project (a new project).
-    pub fn undo_active(&mut self, active: Option<ProjectId>, cx: &mut Context<Self>) {
+    /// The stack `Mod+Z` takes on a page of `active`: its project's, or,
+    /// when that is empty, the steps that belong to no project (a new
+    /// project).
+    fn undo_key(&self, active: Option<ProjectId>) -> Option<ProjectId> {
         let has = |key| self.undo.get(&key).is_some_and(|s| s.last().is_some());
-        let key = if has(active) { active } else { None };
+        if has(active) { active } else { None }
+    }
+
+    /// `Mod+Z` on a page of `active`.
+    pub fn undo_active(&mut self, active: Option<ProjectId>, cx: &mut Context<Self>) {
+        let key = self.undo_key(active);
         self.undo(key, cx);
+    }
+
+    /// The order of the step `Mod+Z` would take on a page of `active`.
+    pub fn newest_undo(&self, active: Option<ProjectId>) -> Option<u64> {
+        self.undo.get(&self.undo_key(active))?.newest()
     }
 
     pub fn toast(&mut self, message: String, kind: ToastKind, cx: &mut Context<Self>) {
@@ -1210,5 +1239,26 @@ mod tests {
     fn error_kinds_carry_no_text() {
         let err = acta_core::Error::Invalid("title of Alexandre's secret".into());
         assert_eq!(err_kind(&err), "Invalid");
+    }
+
+    #[test]
+    fn mod_z_takes_the_newest_of_layout_steps_and_writes() {
+        use crate::layout::{Layout, UndoLog, layout_step_first};
+        let mut writes = UndoStack::default();
+        let mut layout = UndoLog::default();
+        let step = Undo::Delete(Record::Topic(TopicId(1)));
+        // A write, then a layout change, then a write.
+        writes.push(step.clone());
+        layout.record(Layout::defaults(Vec::new(), true), next_undo_seq(), None);
+        assert!(layout_step_first(layout.newest(), writes.newest()));
+        writes.push(Undo::Delete(Record::Topic(TopicId(2))));
+        assert!(!layout_step_first(layout.newest(), writes.newest()));
+        // The write is taken back: the layout step is now the newest.
+        writes.pop();
+        assert!(layout_step_first(layout.newest(), writes.newest()));
+        layout.undo();
+        assert!(!layout_step_first(layout.newest(), writes.newest()));
+        assert!(!layout_step_first(None, None));
+        assert!(layout_step_first(Some(3), None));
     }
 }

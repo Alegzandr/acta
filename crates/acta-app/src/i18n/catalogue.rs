@@ -1129,10 +1129,6 @@ catalogue! {
         en: t("Sign out and clear"),
         fr: t("Se déconnecter et effacer"),
     }
-    ChatHide "chat.hide" {
-        en: t("Hide chat"),
-        fr: t("Masquer le chat"),
-    }
     ChatMore "chat.more" {
         en: t("More"),
         fr: t("Plus"),
@@ -1156,6 +1152,106 @@ catalogue! {
     TabReopen "tab.reopen" {
         en: t("Reopen closed tab"),
         fr: t("Rouvrir l\u{2019}onglet fermé"),
+    }
+    ViewProjects "view.projects" {
+        en: t("Projects"),
+        fr: t("Projets"),
+    }
+    AreaLeft "area.left" {
+        en: t("Left sidebar"),
+        fr: t("Barre latérale gauche"),
+    }
+    AreaRight "area.right" {
+        en: t("Right sidebar"),
+        fr: t("Barre latérale droite"),
+    }
+    AreaBottom "area.bottom" {
+        en: t("Bottom panel"),
+        fr: t("Panneau du bas"),
+    }
+    AreaPage "area.page" {
+        en: t("Page area"),
+        fr: t("Zone des pages"),
+    }
+    AreaHideLeft "area.hide.left" {
+        en: t("Hide left sidebar"),
+        fr: t("Masquer la barre latérale gauche"),
+    }
+    AreaHideRight "area.hide.right" {
+        en: t("Hide right sidebar"),
+        fr: t("Masquer la barre latérale droite"),
+    }
+    AreaHideBottom "area.hide.bottom" {
+        en: t("Hide bottom panel"),
+        fr: t("Masquer le panneau du bas"),
+    }
+    AreaEmpty "area.empty" {
+        en: t("Drag a view here, or move one from the palette."),
+        fr: t("Faites glisser une vue ici, ou déplacez-en une depuis la palette."),
+    }
+    ViewActions "view.actions" {
+        en: t("View actions"),
+        fr: t("Actions de la vue"),
+    }
+    ViewMoveLeft "view.move_left" {
+        en: t("Move to left sidebar"),
+        fr: t("Déplacer dans la barre latérale gauche"),
+    }
+    ViewMoveRight "view.move_right" {
+        en: t("Move to right sidebar"),
+        fr: t("Déplacer dans la barre latérale droite"),
+    }
+    ViewMoveBottom "view.move_bottom" {
+        en: t("Move to bottom panel"),
+        fr: t("Déplacer dans le panneau du bas"),
+    }
+    ViewMovePage "view.move_page" {
+        en: t("Move to page area"),
+        fr: t("Déplacer dans la zone des pages"),
+    }
+    ViewSplitOff "view.split_off" {
+        en: t("Split from group"),
+        fr: t("Séparer du groupe"),
+    }
+    ViewHide "view.hide" {
+        en: t("Hide"),
+        fr: t("Masquer"),
+    }
+    LayoutMenu "layout.menu" {
+        en: t("Layout"),
+        fr: t("Disposition"),
+    }
+    LayoutGroup "layout.group" {
+        en: t("Group {n}"),
+        fr: t("Groupe {n}"),
+    }
+    LayoutWebviewHidden "layout.webview_hidden" {
+        en: t("Hidden while you rearrange the layout."),
+        fr: t("Masqué pendant la réorganisation de la disposition."),
+    }
+    LayoutMovedLeft "layout.moved.left" {
+        en: t("View moved to the left sidebar: {view}"),
+        fr: t("Vue déplacée dans la barre latérale gauche\u{202f}: {view}"),
+    }
+    LayoutMovedRight "layout.moved.right" {
+        en: t("View moved to the right sidebar: {view}"),
+        fr: t("Vue déplacée dans la barre latérale droite\u{202f}: {view}"),
+    }
+    LayoutMovedBottom "layout.moved.bottom" {
+        en: t("View moved to the bottom panel: {view}"),
+        fr: t("Vue déplacée dans le panneau du bas\u{202f}: {view}"),
+    }
+    LayoutMovedPage "layout.moved.page" {
+        en: t("View moved to the page area: {view}"),
+        fr: t("Vue déplacée dans la zone des pages\u{202f}: {view}"),
+    }
+    LayoutHidden "layout.hidden" {
+        en: t("View hidden: {view}"),
+        fr: t("Vue masquée\u{202f}: {view}"),
+    }
+    LayoutResetDone "layout.reset_done" {
+        en: t("Layout reset."),
+        fr: t("Disposition réinitialisée."),
     }
     PaletteRecent "palette.recent" {
         en: t("Recent"),
@@ -1230,8 +1326,8 @@ catalogue! {
         fr: t("Rétablir"),
     }
     CmdZoom "cmd.zoom" {
-        en: t("Zoom tool window"),
-        fr: t("Agrandir la fenêtre d\u{2019}outil"),
+        en: t("Maximize focused area"),
+        fr: t("Agrandir au maximum la zone active"),
     }
     CmdSetStatus "cmd.set_status" {
         en: t("Set status: {status}"),
@@ -1270,8 +1366,8 @@ catalogue! {
         fr: t("Changer de projet\u{2026}"),
     }
     CmdToggleSidebar "cmd.toggle_sidebar" {
-        en: t("Toggle sidebar"),
-        fr: t("Afficher ou masquer la barre latérale"),
+        en: t("Toggle left sidebar"),
+        fr: t("Afficher ou masquer la barre latérale gauche"),
     }
     CmdToggleTerminal "cmd.toggle_terminal" {
         en: t("Toggle terminal"),
@@ -1281,41 +1377,89 @@ catalogue! {
         en: t("Toggle chat"),
         fr: t("Afficher ou masquer le chat"),
     }
-    CmdTerminalBottom "cmd.terminal_bottom" {
-        en: t("Move terminal to bottom"),
-        fr: t("Placer le terminal en bas"),
+    CmdToggleRight "cmd.toggle_right" {
+        en: t("Toggle right sidebar"),
+        fr: t("Afficher ou masquer la barre latérale droite"),
     }
-    CmdTerminalRight "cmd.terminal_right" {
-        en: t("Move terminal to right"),
-        fr: t("Placer le terminal à droite"),
-    }
-    CmdChatBottom "cmd.chat_bottom" {
-        en: t("Move chat to bottom"),
-        fr: t("Placer le chat en bas"),
-    }
-    CmdChatRight "cmd.chat_right" {
-        en: t("Move chat to right"),
-        fr: t("Placer le chat à droite"),
+    CmdToggleBottom "cmd.toggle_bottom" {
+        en: t("Toggle bottom panel"),
+        fr: t("Afficher ou masquer le panneau du bas"),
     }
     CmdRestartTerminal "cmd.restart_terminal" {
         en: t("Restart terminal here"),
         fr: t("Redémarrer le terminal ici"),
     }
-    CmdWidenSidebar "cmd.widen_sidebar" {
-        en: t("Widen sidebar"),
-        fr: t("Élargir la barre latérale"),
+    CmdViewShow "cmd.view_show" {
+        en: t("{view}: Show"),
+        fr: t("{view}\u{202f}: afficher"),
     }
-    CmdNarrowSidebar "cmd.narrow_sidebar" {
-        en: t("Narrow sidebar"),
-        fr: t("Rétrécir la barre latérale"),
+    CmdViewHide "cmd.view_hide" {
+        en: t("{view}: Hide"),
+        fr: t("{view}\u{202f}: masquer"),
     }
-    CmdWidenTerminal "cmd.widen_terminal" {
-        en: t("Widen terminal"),
-        fr: t("Élargir le terminal"),
+    CmdViewLeft "cmd.view_left" {
+        en: t("{view}: Move to left sidebar"),
+        fr: t("{view}\u{202f}: déplacer dans la barre latérale gauche"),
     }
-    CmdNarrowTerminal "cmd.narrow_terminal" {
-        en: t("Narrow terminal"),
-        fr: t("Rétrécir le terminal"),
+    CmdViewRight "cmd.view_right" {
+        en: t("{view}: Move to right sidebar"),
+        fr: t("{view}\u{202f}: déplacer dans la barre latérale droite"),
+    }
+    CmdViewBottom "cmd.view_bottom" {
+        en: t("{view}: Move to bottom panel"),
+        fr: t("{view}\u{202f}: déplacer dans le panneau du bas"),
+    }
+    CmdViewPage "cmd.view_page" {
+        en: t("{view}: Move to page area"),
+        fr: t("{view}\u{202f}: déplacer dans la zone des pages"),
+    }
+    CmdViewSplitOff "cmd.view_split_off" {
+        en: t("{view}: Split from group"),
+        fr: t("{view}\u{202f}: séparer du groupe"),
+    }
+    CmdSplitRight "cmd.split_right" {
+        en: t("Split right"),
+        fr: t("Diviser vers la droite"),
+    }
+    CmdSplitDown "cmd.split_down" {
+        en: t("Split down"),
+        fr: t("Diviser vers le bas"),
+    }
+    CmdTabNextGroup "cmd.tab_next_group" {
+        en: t("Move tab to next group"),
+        fr: t("Déplacer l’onglet dans le groupe suivant"),
+    }
+    CmdTabPrevGroup "cmd.tab_prev_group" {
+        en: t("Move tab to previous group"),
+        fr: t("Déplacer l’onglet dans le groupe précédent"),
+    }
+    CmdJoinGroups "cmd.join_groups" {
+        en: t("Join groups"),
+        fr: t("Réunir les groupes"),
+    }
+    CmdNextArea "cmd.next_area" {
+        en: t("Focus next area"),
+        fr: t("Aller à la zone suivante"),
+    }
+    CmdPrevArea "cmd.prev_area" {
+        en: t("Focus previous area"),
+        fr: t("Aller à la zone précédente"),
+    }
+    CmdGrowArea "cmd.grow_area" {
+        en: t("Grow focused area"),
+        fr: t("Agrandir la zone active"),
+    }
+    CmdShrinkArea "cmd.shrink_area" {
+        en: t("Shrink focused area"),
+        fr: t("Réduire la zone active"),
+    }
+    CmdLayoutUndo "cmd.layout_undo" {
+        en: t("Undo layout change"),
+        fr: t("Annuler le changement de disposition"),
+    }
+    CmdLayoutReset "cmd.layout_reset" {
+        en: t("Reset layout"),
+        fr: t("Réinitialiser la disposition"),
     }
     CmdSetup "cmd.setup" {
         en: t("Set up Claude Code"),
@@ -1572,6 +1716,14 @@ catalogue! {
     SettingsReadingWidthWide "settings.reading_width.wide" {
         en: t("Wide"),
         fr: t("Large"),
+    }
+    SettingsLayout "settings.layout" {
+        en: t("Layout"),
+        fr: t("Disposition"),
+    }
+    SettingsLayoutDesc "settings.layout.desc" {
+        en: t("Puts every view and panel back where it was on a new install. You can undo it right after."),
+        fr: t("Remet chaque vue et chaque panneau à sa place d’origine. Vous pouvez annuler juste après."),
     }
     SettingsTerminalSize "settings.terminal_size" {
         en: t("Terminal text size"),
@@ -2062,8 +2214,8 @@ catalogue! {
         fr: t("Général"),
     }
     ShortcutsGroupTabs "shortcuts.group.tabs" {
-        en: t("Tabs and tool windows"),
-        fr: t("Onglets et fenêtres d\u{2019}outils"),
+        en: t("Tabs, views and layout"),
+        fr: t("Onglets, vues et disposition"),
     }
     ShortcutsGroupLists "shortcuts.group.lists" {
         en: t("Lists and tree"),

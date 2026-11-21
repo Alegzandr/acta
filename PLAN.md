@@ -11,7 +11,7 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 | M4 | Integrated terminal running Claude Code | v0.3.0 | doing (docked; live Claude Code session to verify) |
 | M5 | Claude chat panel beside the work (Windows and macOS; link on Linux; ADR 0009) | v0.5.0 | doing |
 | M6 | Notes inbox and notes-to-topics flow | v0.6.0 | todo |
-| M8 | VS Code-style docking layout; agent browser for Claude Code (ADR 0010) | v0.5.0 | todo |
+| M8 | VS Code-style docking layout; agent browser for Claude Code (ADR 0010) | v0.5.0 | doing |
 | M7 | Polish | v1.0.0 | doing |
 
 ## M0 - Research and spikes
@@ -76,6 +76,10 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 - [x] Inbox UI: the Filed list (it was empty before), links to the topic or epic, "by Claude Code", back to inbox
 - [ ] Headless `claude -p` triage run: a temporary `CLAUDE_CONFIG_DIR` has no login, and copying credentials into it was refused; needs the lead's call
 - [ ] "File with Claude Code" button (screens.md 8.2): needs a way to run a command in the terminal dock
+
+## M8 - Workbench layout and agent browser
+- [ ] Workbench layout of workbench.md 4.8 - built on `gpui-engineer/m8-workbench` (Windows; macOS and Linux by cross-target clippy only): layout model, persistence and M7 migration, areas, area headers and view tabs, view and area toggles, Layout and view menus, page groups (up to three) and their tab bars, resize handles with snap to hide, drag and drop with drop zones and preview, Inbox and Knowledge as views, the chat web view moved (never recreated) and hidden during drags, undo of every layout step (Mod+Z and "Undo layout change"), the move toast, Reset layout (menu, palette, toast, Settings), narrow folding. Left: dragging and dropping by hand (needs real input), the overflow chevron of view tabs, Linux/macOS runs
+- [ ] Agent browser (ADR 0010)
 
 ## M7 - Polish
 - [x] Design review of every screen against DESIGN.md (6 blockers, 21 should, 8 nice)

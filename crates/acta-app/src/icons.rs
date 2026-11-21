@@ -80,6 +80,10 @@ icons! {
     SquareTerminal => "square-terminal",
     Trash2 => "trash-2",
     ExternalLink => "external-link",
+    ListTree => "list-tree",
+    PanelBottom => "panel-bottom",
+    PanelRight => "panel-right",
+    PanelsTopLeft => "panels-top-left",
 }
 
 /// The app mark, shown in the updater window only (docs/design/components-app.md 5).

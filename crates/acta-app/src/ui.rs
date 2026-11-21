@@ -101,6 +101,50 @@ pub fn tip(
     }
 }
 
+/// A tooltip with its shortcut as kbd hints after the label
+/// (docs/design/components.md 5, Tooltip).
+pub struct TipKeys(SharedString, Vec<&'static str>);
+
+impl gpui_kit::Render for TipKeys {
+    fn render(
+        &mut self,
+        _: &mut gpui_kit::Window,
+        cx: &mut gpui_kit::Context<Self>,
+    ) -> impl IntoElement {
+        let t = cx.global::<Tokens>();
+        type_scale::SMALL
+            .el()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(8.))
+            .px(px(8.))
+            .py(px(4.))
+            .whitespace_nowrap()
+            .bg(t.bg_overlay)
+            .border_1()
+            .border_color(t.border_default)
+            .rounded(px(RADIUS_MD))
+            .shadow(vec![t.shadow_overlay()])
+            .text_color(t.text_primary)
+            .child(self.0.clone())
+            .child(kbd(&self.1, t))
+    }
+}
+
+/// The builder `.tooltip()` takes, for `text` and its `keys`.
+pub fn tip_keys(
+    text: impl Into<SharedString>,
+    keys: Vec<&'static str>,
+) -> impl Fn(&mut gpui_kit::Window, &mut gpui_kit::App) -> gpui_kit::AnyView + 'static {
+    let text = text.into();
+    move |_, cx| {
+        use gpui_kit::AppContext as _;
+        let (text, keys) = (text.clone(), keys.clone());
+        cx.new(|_| TipKeys(text, keys)).into()
+    }
+}
+
 /// Keyboard shortcut hint: each key in its own 18-high box, `type.small`
 /// with `tnum` in `text.tertiary`, 2 apart (docs/design/components.md 5, kbd).
 pub fn kbd(keys: &[&str], tokens: &Tokens) -> Div {
@@ -502,8 +546,94 @@ pub fn column() -> Div {
         .flex_col()
 }
 
+thread_local! {
+    /// The side padding of the page being laid out: 32, or 16 in a narrow
+    /// page group (workbench.md 4.8.8). Set around a group's page by
+    /// [`NarrowPage`].
+    static PAGE_PADDING: std::cell::Cell<f32> = const { std::cell::Cell::new(32.) };
+}
+
+/// The side padding of pages (docs/design/layout.md 4.2; 16 in a page
+/// group under 452 wide, workbench.md 4.8.8).
+pub fn page_padding() -> f32 {
+    PAGE_PADDING.with(|p| p.get())
+}
+
+/// The page of a group, laid out with the side padding its group's width
+/// allows: pages render while they are laid out, so the padding is set
+/// around that and put back after.
+pub struct NarrowPage {
+    child: gpui_kit::AnyElement,
+    narrow: bool,
+}
+
+impl NarrowPage {
+    pub fn new(child: gpui_kit::AnyElement, narrow: bool) -> Self {
+        Self { child, narrow }
+    }
+}
+
+impl gpui_kit::IntoElement for NarrowPage {
+    type Element = Self;
+
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+impl gpui_kit::Element for NarrowPage {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&gpui_kit::GlobalElementId>,
+        _: Option<&gpui_kit::InspectorElementId>,
+        window: &mut gpui_kit::Window,
+        cx: &mut gpui_kit::App,
+    ) -> (gpui_kit::LayoutId, ()) {
+        let before = PAGE_PADDING.with(|p| p.replace(if self.narrow { 16. } else { 32. }));
+        let id = self.child.request_layout(window, cx);
+        PAGE_PADDING.with(|p| p.set(before));
+        (id, ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&gpui_kit::GlobalElementId>,
+        _: Option<&gpui_kit::InspectorElementId>,
+        _: gpui_kit::Bounds<gpui_kit::Pixels>,
+        _: &mut (),
+        window: &mut gpui_kit::Window,
+        cx: &mut gpui_kit::App,
+    ) {
+        self.child.prepaint(window, cx);
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&gpui_kit::GlobalElementId>,
+        _: Option<&gpui_kit::InspectorElementId>,
+        _: gpui_kit::Bounds<gpui_kit::Pixels>,
+        _: &mut (),
+        _: &mut (),
+        window: &mut gpui_kit::Window,
+        cx: &mut gpui_kit::App,
+    ) {
+        self.child.paint(window, cx);
+    }
+}
+
 /// The scrolling page area that centres the column, with 32 of side
-/// padding (docs/design/layout.md 4.2).
+/// padding (docs/design/layout.md 4.2), 16 in a narrow page group.
 pub fn page_scroll(id: impl Into<ElementId>) -> Stateful<Div> {
     div()
         .id(id.into())
@@ -512,7 +642,25 @@ pub fn page_scroll(id: impl Into<ElementId>) -> Stateful<Div> {
         .flex()
         .flex_col()
         .items_center()
-        .px(px(32.))
+        .px(px(page_padding()))
+}
+
+/// A view's scrolling content in a side area or the bottom panel
+/// (workbench.md 4.8.3): it starts 12 below the area header, with side
+/// padding 12, and takes the full width.
+pub fn view_scroll(id: impl Into<ElementId>) -> Stateful<Div> {
+    div()
+        .id(id.into())
+        .size_full()
+        .overflow_y_scroll()
+        .flex()
+        .flex_col()
+        .p(px(12.))
+}
+
+/// The column of a view: the full width, no page title.
+pub fn view_column() -> Div {
+    div().w_full().flex().flex_col()
 }
 
 /// A row of the properties block (docs/design/components-records.md 5):

@@ -6,6 +6,7 @@
 use acta_core::model::Status;
 
 use crate::i18n::{Arg, Key, KeyName, Locale, text, tr};
+use crate::layout::{Place, Side, ViewAction, ViewId};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Command {
@@ -26,20 +27,29 @@ pub enum Command {
     Forward,
     Undo,
     ToggleSidebar,
-    WidenSidebar,
-    NarrowSidebar,
+    ToggleRight,
+    ToggleBottom,
     ToggleTerminal,
-    WidenTerminal,
-    NarrowTerminal,
     // The chat panel exists on Windows only (ADR 0009); elsewhere the one
     // chat command opens claude.ai in the browser.
     #[cfg(windows)]
     ToggleChat,
-    #[cfg(windows)]
-    ChatBottom,
-    #[cfg(windows)]
-    ChatRight,
     ChatBrowser,
+    /// "{view}: Show", "{view}: Move to left sidebar" and the rest
+    /// (workbench.md 4.8.7).
+    View(ViewAction, ViewId),
+    SplitRight,
+    SplitDown,
+    TabNextGroup,
+    TabPreviousGroup,
+    JoinGroups,
+    NextArea,
+    PreviousArea,
+    Zoom,
+    GrowArea,
+    ShrinkArea,
+    LayoutUndo,
+    LayoutReset,
     #[cfg(windows)]
     ChatSignOut,
     RestartTerminal,
@@ -63,6 +73,17 @@ pub enum Command {
     Language(Locale),
 }
 
+/// Where a view is, for its palette commands (4.8.7).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ViewState {
+    /// Its area; Inbox and Knowledge while they are pages say the page
+    /// area. `None` when hidden.
+    pub place: Option<Place>,
+    pub visible: bool,
+    /// "Split from group" applies.
+    pub can_split: bool,
+}
+
 /// What the palette needs to know about the page to offer page commands.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Context {
@@ -71,12 +92,45 @@ pub struct Context {
     pub on_record: bool,
     pub can_back: bool,
     pub can_forward: bool,
-    /// The chat panel is in the bottom dock.
-    #[cfg(windows)]
-    pub chat_bottom: bool,
     /// More than one tab is open; a closed tab can be reopened.
     pub tabs: bool,
     pub closed_tab: bool,
+    /// Each view of this build, by `ViewId as usize`.
+    pub views: [Option<ViewState>; 5],
+    /// The view keyboard focus is in: its commands rank first.
+    pub focused_view: Option<ViewId>,
+    /// The page groups, and whether "Split right" / "Split down" apply.
+    pub groups: usize,
+    pub can_split_right: bool,
+    pub can_split_down: bool,
+    /// A layout change can be undone.
+    pub layout_undo: bool,
+}
+
+/// The palette commands of one view, in the order of 4.8.7.
+fn view_commands(view: ViewId, state: ViewState) -> Vec<Command> {
+    let mut out = vec![Command::View(
+        if state.visible {
+            ViewAction::Hide
+        } else {
+            ViewAction::Show
+        },
+        view,
+    )];
+    for place in [
+        Place::Side(Side::Left),
+        Place::Side(Side::Right),
+        Place::Side(Side::Bottom),
+        Place::Page,
+    ] {
+        if state.place != Some(place) {
+            out.push(Command::View(ViewAction::MoveTo(place), view));
+        }
+    }
+    if state.can_split {
+        out.push(Command::View(ViewAction::SplitOff, view));
+    }
+    out
 }
 
 impl Command {
@@ -110,8 +164,6 @@ impl Command {
             out.extend([
                 Command::SetFolder,
                 Command::ToggleTerminal,
-                Command::WidenTerminal,
-                Command::NarrowTerminal,
                 Command::RestartTerminal,
                 Command::TerminalLarger,
                 Command::TerminalSmaller,
@@ -120,14 +172,7 @@ impl Command {
         // components-app.md 5: on macOS and Linux there is no panel, only
         // the link.
         #[cfg(windows)]
-        out.extend([
-            Command::ToggleChat,
-            if ctx.chat_bottom {
-                Command::ChatRight
-            } else {
-                Command::ChatBottom
-            },
-        ]);
+        out.push(Command::ToggleChat);
         out.push(Command::ChatBrowser);
         #[cfg(windows)]
         out.push(Command::ChatSignOut);
@@ -144,11 +189,51 @@ impl Command {
         if ctx.closed_tab {
             out.push(Command::ReopenTab);
         }
+        out.push(Command::Undo);
+        // The workbench layout (4.8): the focused view's commands first,
+        // then the areas, every other view, the page groups, recovery.
+        if let Some(focused) = ctx.focused_view
+            && let Some(state) = ctx.views[focused as usize]
+        {
+            out.extend(view_commands(focused, state));
+        }
         out.extend([
-            Command::Undo,
             Command::ToggleSidebar,
-            Command::WidenSidebar,
-            Command::NarrowSidebar,
+            Command::ToggleRight,
+            Command::ToggleBottom,
+        ]);
+        for view in ViewId::ALL {
+            if Some(view) != ctx.focused_view
+                && let Some(state) = ctx.views[view as usize]
+            {
+                out.extend(view_commands(view, state));
+            }
+        }
+        if ctx.can_split_right {
+            out.push(Command::SplitRight);
+        }
+        if ctx.can_split_down {
+            out.push(Command::SplitDown);
+        }
+        if ctx.groups > 1 {
+            out.extend([
+                Command::TabNextGroup,
+                Command::TabPreviousGroup,
+                Command::JoinGroups,
+            ]);
+        }
+        out.extend([
+            Command::NextArea,
+            Command::PreviousArea,
+            Command::Zoom,
+            Command::GrowArea,
+            Command::ShrinkArea,
+        ]);
+        if ctx.layout_undo {
+            out.push(Command::LayoutUndo);
+        }
+        out.push(Command::LayoutReset);
+        out.extend([
             Command::Export,
             Command::Import,
             Command::Trash,
@@ -184,17 +269,36 @@ impl Command {
             Command::Forward => Key::CmdForward,
             Command::Undo => Key::CmdUndo,
             Command::ToggleSidebar => Key::CmdToggleSidebar,
+            Command::ToggleRight => Key::CmdToggleRight,
+            Command::ToggleBottom => Key::CmdToggleBottom,
             Command::ToggleTerminal => Key::CmdToggleTerminal,
-            Command::WidenSidebar => Key::CmdWidenSidebar,
-            Command::NarrowSidebar => Key::CmdNarrowSidebar,
-            Command::WidenTerminal => Key::CmdWidenTerminal,
-            Command::NarrowTerminal => Key::CmdNarrowTerminal,
             #[cfg(windows)]
             Command::ToggleChat => Key::CmdToggleChat,
-            #[cfg(windows)]
-            Command::ChatBottom => Key::CmdChatBottom,
-            #[cfg(windows)]
-            Command::ChatRight => Key::CmdChatRight,
+            Command::SplitRight => Key::CmdSplitRight,
+            Command::SplitDown => Key::CmdSplitDown,
+            Command::TabNextGroup => Key::CmdTabNextGroup,
+            Command::TabPreviousGroup => Key::CmdTabPrevGroup,
+            Command::JoinGroups => Key::CmdJoinGroups,
+            Command::NextArea => Key::CmdNextArea,
+            Command::PreviousArea => Key::CmdPrevArea,
+            Command::Zoom => Key::CmdZoom,
+            Command::GrowArea => Key::CmdGrowArea,
+            Command::ShrinkArea => Key::CmdShrinkArea,
+            Command::LayoutUndo => Key::CmdLayoutUndo,
+            Command::LayoutReset => Key::CmdLayoutReset,
+            Command::View(action, view) => {
+                let key = match action {
+                    ViewAction::Show => Key::CmdViewShow,
+                    ViewAction::Hide => Key::CmdViewHide,
+                    ViewAction::MoveTo(Place::Side(Side::Left)) => Key::CmdViewLeft,
+                    ViewAction::MoveTo(Place::Side(Side::Right)) => Key::CmdViewRight,
+                    ViewAction::MoveTo(Place::Side(Side::Bottom)) => Key::CmdViewBottom,
+                    ViewAction::MoveTo(Place::Page) => Key::CmdViewPage,
+                    ViewAction::SplitOff => Key::CmdViewSplitOff,
+                };
+                let name = text(locale, crate::shell::view_name(view));
+                return tr(locale, key, &[("view", Arg::Text(&name))]);
+            }
             Command::ChatBrowser => Key::ChatBrowser,
             #[cfg(windows)]
             Command::ChatSignOut => Key::ChatSignout,
@@ -267,6 +371,12 @@ impl Command {
             Command::NewDocument => vec![m, shift, "D"],
             Command::NewMemory => vec![m, shift, "M"],
             Command::ToggleSidebar => vec![m, "B"],
+            Command::ToggleRight => vec![m, shift, "B"],
+            Command::ToggleBottom => vec![m, "J"],
+            Command::SplitRight => vec![m, "\\"],
+            Command::NextArea => vec!["F6"],
+            Command::PreviousArea => vec![shift, "F6"],
+            Command::Zoom => vec![m, shift, KeyName::Enter.label(locale, macos)],
             Command::ToggleTerminal => vec![KeyName::Ctrl.label(locale, macos), "`"],
             #[cfg(windows)]
             Command::ToggleChat => vec![m, shift, "H"],
@@ -317,8 +427,6 @@ pub fn reading_width_key(width: crate::ui::ReadingWidth) -> Key {
 mod tests {
     use super::*;
 
-    // `..Context::default()` fills the Windows-only `chat_bottom`.
-    #[allow(clippy::needless_update)]
     #[test]
     fn page_commands_appear_only_where_they_act() {
         let none = Command::available(Context::default());
@@ -338,7 +446,6 @@ mod tests {
         assert!(!topic.contains(&Command::Forward));
     }
 
-    #[allow(clippy::needless_update)]
     #[test]
     fn labels_come_from_the_catalogue_in_both_languages() {
         assert_eq!(
@@ -384,17 +491,64 @@ mod tests {
         );
     }
 
-    #[cfg(windows)]
     #[test]
-    fn the_chat_commands_follow_the_dock() {
-        let right = Command::available(Context::default());
-        let bottom = Command::available(Context {
-            chat_bottom: true,
+    fn view_commands_follow_where_each_view_is() {
+        let mut views = [None; 5];
+        views[ViewId::Terminal as usize] = Some(ViewState {
+            place: Some(Place::Side(Side::Right)),
+            visible: true,
+            can_split: true,
+        });
+        views[ViewId::Projects as usize] = Some(ViewState {
+            place: None,
+            visible: false,
+            can_split: false,
+        });
+        let commands = Command::available(Context {
+            views,
+            focused_view: Some(ViewId::Terminal),
             ..Context::default()
         });
+        let terminal = |a| Command::View(a, ViewId::Terminal);
+        assert!(commands.contains(&terminal(ViewAction::Hide)));
+        assert!(!commands.contains(&terminal(ViewAction::Show)));
+        assert!(!commands.contains(&terminal(ViewAction::MoveTo(Place::Side(Side::Right)))));
+        assert!(commands.contains(&terminal(ViewAction::MoveTo(Place::Side(Side::Bottom)))));
+        assert!(commands.contains(&terminal(ViewAction::SplitOff)));
+        assert!(commands.contains(&Command::View(ViewAction::Show, ViewId::Projects)));
+        // The focused view's commands rank before the others.
+        let first_terminal = commands
+            .iter()
+            .position(|c| matches!(c, Command::View(_, ViewId::Terminal)));
+        let first_projects = commands
+            .iter()
+            .position(|c| matches!(c, Command::View(_, ViewId::Projects)));
+        assert!(first_terminal < first_projects);
+        assert!(commands.contains(&Command::LayoutReset));
+        assert!(!commands.contains(&Command::JoinGroups), "one group");
+        assert_eq!(
+            terminal(ViewAction::MoveTo(Place::Side(Side::Bottom))).label(Locale::Fr),
+            "Terminal\u{202f}: déplacer dans le panneau du bas"
+        );
+        assert_eq!(
+            Command::View(ViewAction::Show, ViewId::Projects).label(Locale::En),
+            "Projects: Show"
+        );
+        assert_eq!(
+            Command::ToggleRight.shortcut(Locale::En, false),
+            ["Ctrl", "Shift", "B"]
+        );
+        assert_eq!(
+            Command::SplitRight.shortcut(Locale::En, true),
+            ["\u{2318}", "\\"]
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_chat_commands_exist_on_windows() {
+        let right = Command::available(Context::default());
         assert!(right.contains(&Command::ToggleChat));
-        assert!(right.contains(&Command::ChatBottom) && !right.contains(&Command::ChatRight));
-        assert!(bottom.contains(&Command::ChatRight) && !bottom.contains(&Command::ChatBottom));
         assert!(right.contains(&Command::ChatSignOut));
         assert_eq!(
             Command::ToggleChat.label(Locale::Fr),

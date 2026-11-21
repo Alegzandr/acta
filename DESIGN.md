@@ -54,7 +54,7 @@ Load only the part a task needs. Section numbers are global: "4.7" or "DESIGN 4.
 | [interaction.md](docs/design/interaction.md) | 6 | Keyboard map (6.1), focus (6.2), motion and latency budgets (6.3), writes, undo and confirmation (6.4), changes from other processes (6.5). |
 | [screens.md](docs/design/screens.md) | 8 | Wireframes: topic page (8.1), inbox (8.2), palette (8.3), terminal (8.4), first run (8.5), knowledge (8.6, 8.7, 8.10), import preview (8.8), key loss (8.9), working folders (8.11), settings (8.12), chat (8.13), epic (8.14), tab bar (8.15), updater (8.16), workbench with the right sidebar (8.17), dragging a view (8.18), split page area and views moved (8.19). |
 | [copy.md](docs/design/copy.md) | 7, 10.1 to 10.3 | Voice; languages, French conventions, dates, times and numbers, layout under longer text. |
-| [catalogue.md](docs/design/catalogue.md) | 10.4, 10.4.1 | Every UI string by key, English and French. Code and tests read 10.4; 10.4.1 holds the keys of 4.8 until it is implemented. |
+| [catalogue.md](docs/design/catalogue.md) | 10.4, 10.4.1 | Every UI string by key, English and French. Code and tests read 10.4; 10.4.1 notes how the keys of 4.8 moved into it. |
 | [data.md](docs/design/data.md) | 11 | What model data every element shows; data model requests. |
 
 Sections 1 (principles), 9 (review checklist) and the Direction are in this file. The token table (2.1), the contrast table (2.2) and the catalogue (10.4) are parsed by tests in `crates/acta-app` (`theme.rs`, `i18n/mod.rs`): keep their headings and table shapes.

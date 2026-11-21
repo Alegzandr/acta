@@ -480,7 +480,7 @@ impl Render for SettingsPage {
             .flex()
             .flex_col()
             .items_center()
-            .px(px(32.))
+            .px(px(ui::page_padding()))
             .child(
                 div()
                     .w_full()
@@ -525,6 +525,22 @@ impl Render for SettingsPage {
                         text(locale, Key::SettingsLanguage),
                         text(locale, Key::SettingsLanguageHint),
                         language,
+                        &t,
+                    ))
+                    .child(setting_row(
+                        text(locale, Key::SettingsLayout),
+                        text(locale, Key::SettingsLayoutDesc),
+                        // workbench.md 4.8.13: undoable, so it asks nothing.
+                        ui::button(
+                            "settings-layout-reset",
+                            text(locale, Key::CmdLayoutReset),
+                            ui::Variant::Secondary,
+                            false,
+                            &t,
+                        )
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(Box::new(crate::shell::ResetLayout), cx)
+                        }),
                         &t,
                     ))
                     .child(setting_row(

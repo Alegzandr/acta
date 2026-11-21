@@ -90,6 +90,9 @@ pub fn groups(locale: Locale, macos: bool) -> Vec<(Key, Vec<Row>)> {
         r(Key::ShortcutsNextTab, vec![vec![ctrl, tab]]),
         r(Key::ShortcutsPreviousTab, vec![vec![ctrl, shift, tab]]),
         c(Command::ToggleSidebar),
+        c(Command::ToggleRight),
+        c(Command::ToggleBottom),
+        c(Command::SplitRight),
         Row {
             label: Command::ToggleTerminal.label(locale),
             keys: vec![vec![ctrl, "`"], vec![m, shift, "J"]],

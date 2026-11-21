@@ -177,6 +177,9 @@ pub struct KnowledgePage {
     filters: Filters,
     menu: Option<FilterMenu>,
     open_memory: Option<KbId>,
+    /// Shown as the Knowledge view (workbench.md 4.8.3): no title, no
+    /// meta line, following the active project.
+    as_view: bool,
     seen_revision: u64,
     _load: Task<()>,
     _search: Task<()>,
@@ -196,6 +199,28 @@ impl KnowledgePage {
         ws: Entity<Workspace>,
         project: ProjectId,
         filters: Filters,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::build(ws, project, filters, false, window, cx)
+    }
+
+    /// Knowledge as a view of a side area or the bottom panel.
+    pub fn new_view(
+        ws: Entity<Workspace>,
+        project: ProjectId,
+        filters: Filters,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::build(ws, project, filters, true, window, cx)
+    }
+
+    fn build(
+        ws: Entity<Workspace>,
+        project: ProjectId,
+        filters: Filters,
+        as_view: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -225,6 +250,7 @@ impl KnowledgePage {
             filters,
             menu: None,
             open_memory: None,
+            as_view,
             seen_revision: 0,
             _load: Task::ready(()),
             _search: Task::ready(()),
@@ -485,69 +511,74 @@ impl Render for KnowledgePage {
                 .collect()
         };
         let query = self.search.read(cx).value().to_string();
-        let mut column = ui::column()
-            .child(
-                type_scale::TITLE
-                    .el()
-                    .text_color(t.text_primary)
-                    .child(text(locale, Key::TreeKnowledge)),
-            )
-            .child(
-                type_scale::SMALL
-                    .el()
-                    .mt(px(8.))
-                    .text_color(t.text_tertiary)
-                    .child(scope),
-            )
-            .child(
-                div()
-                    .mt(px(24.))
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(8.))
-                    .h(px(28.))
-                    .px(px(8.))
-                    .rounded(px(RADIUS_SM))
-                    .bg(t.bg_raised)
-                    .border_1()
-                    .border_color(t.border_strong)
-                    .child(icon(Icon::Search, 16., t.text_tertiary))
-                    .child(
-                        div().flex_1().child(
-                            Input::new(&self.search)
-                                .appearance(false)
-                                .px(px(0.))
-                                .text_size(px(type_scale::UI.size)),
-                        ),
+        let as_view = self.as_view;
+        let mut column = if as_view {
+            ui::view_column()
+        } else {
+            ui::column()
+                .child(
+                    type_scale::TITLE
+                        .el()
+                        .text_color(t.text_primary)
+                        .child(text(locale, Key::TreeKnowledge)),
+                )
+                .child(
+                    type_scale::SMALL
+                        .el()
+                        .mt(px(8.))
+                        .text_color(t.text_tertiary)
+                        .child(scope),
+                )
+        }
+        .child(
+            div()
+                .mt(px(if as_view { 0. } else { 24. }))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(8.))
+                .h(px(28.))
+                .px(px(8.))
+                .rounded(px(RADIUS_SM))
+                .bg(t.bg_raised)
+                .border_1()
+                .border_color(t.border_strong)
+                .child(icon(Icon::Search, 16., t.text_tertiary))
+                .child(
+                    div().flex_1().child(
+                        Input::new(&self.search)
+                            .appearance(false)
+                            .px(px(0.))
+                            .text_size(px(type_scale::UI.size)),
                     ),
-            )
-            .child(
-                div()
-                    .mt(px(12.))
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(8.))
-                    .child(self.filter_button(FilterMenu::Level, locale, &t, cx))
-                    .child(self.filter_button(FilterMenu::Kind, locale, &t, cx))
-                    .child(self.filter_button(FilterMenu::Author, locale, &t, cx))
-                    .when(!self.filters.is_default(), |this| {
-                        this.child(
-                            ui::button(
-                                "kb-clear",
-                                text(locale, Key::CommonClear),
-                                Variant::Ghost,
-                                false,
-                                &t,
-                            )
-                            .on_click(cx.listener(|page, _, _, cx| {
-                                page.filters = Filters::default();
-                                cx.notify();
-                            })),
+                ),
+        )
+        .child(
+            div()
+                .mt(px(12.))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(8.))
+                .child(self.filter_button(FilterMenu::Level, locale, &t, cx))
+                .child(self.filter_button(FilterMenu::Kind, locale, &t, cx))
+                .child(self.filter_button(FilterMenu::Author, locale, &t, cx))
+                .when(!self.filters.is_default(), |this| {
+                    this.child(
+                        ui::button(
+                            "kb-clear",
+                            text(locale, Key::CommonClear),
+                            Variant::Ghost,
+                            false,
+                            &t,
                         )
-                    }),
-            );
+                        .on_click(cx.listener(|page, _, _, cx| {
+                            page.filters = Filters::default();
+                            cx.notify();
+                        })),
+                    )
+                }),
+        );
         if self.hits.is_some() {
             let line = if shown.is_empty() {
                 tr(
@@ -677,7 +708,15 @@ impl Render for KnowledgePage {
                 index += 1;
             }
         }
-        ui::page_scroll("knowledge-page").child(column)
+        if as_view {
+            ui::view_scroll("knowledge-view")
+                .child(column)
+                .into_any_element()
+        } else {
+            ui::page_scroll("knowledge-page")
+                .child(column)
+                .into_any_element()
+        }
     }
 }
 

@@ -8,7 +8,7 @@ Part of the Acta design system. [DESIGN.md](../../DESIGN.md) is the index: direc
 
 Decided by the user on 2026-11-21 (Direction, amendment): everything around the page can be shown, hidden, resized and moved, the way it can in VS Code, and nothing the user moves or closes is ever hard to put back. This section is the model; 4.2 to 4.5 describe the default arrangement it produces. Where they disagree, this section wins.
 
-Implementation lands after the M7 polish pass. Until then 4.2 to 4.5 describe what ships, and the catalogue rows of this section wait in 10.4.1.
+Implemented in M8; the catalogue rows of this section are in 10.4.
 
 #### 4.8.1 Vocabulary
 

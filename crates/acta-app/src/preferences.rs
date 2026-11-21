@@ -25,6 +25,7 @@ use serde::{Deserialize, Serialize};
 use acta_core::paths::{self, BaseDirs, Os};
 
 use crate::i18n::Locale;
+use crate::layout::{Old, Saved, migrate};
 use crate::theme::ThemeSetting;
 use crate::type_scale::TextSize;
 use crate::ui::ReadingWidth;
@@ -33,27 +34,20 @@ pub const FILE_NAME: &str = "preferences.json";
 /// The schema version this build reads and writes.
 pub const VERSION: u32 = 1;
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Preferences {
     pub theme: ThemeSetting,
     pub language: Locale,
-    /// The page shown at quit, as a route key (`T-42`, `inbox:P-1`): a
-    /// record id or a fixed page key, never a title.
-    pub page: Option<String>,
     /// Record ids of the projects and epics folded in the tree.
     pub collapsed: Vec<String>,
     /// Keys of the "3 closed" groups unfolded in the tree (`closed:E-3`).
     pub closed_shown: Vec<String>,
-    /// Whether the sidebar is hidden (`Mod+B`).
-    pub sidebar_hidden: bool,
     /// Terminal text size, 11 to 18; `None` is the default 13.
     pub terminal_text_size: Option<u8>,
     /// The size of reading text (typography.md 3.2) and the width of the
     /// content column (3.3).
     pub text_size: TextSize,
     pub reading_width: ReadingWidth,
-    /// The chat panel lives in the bottom dock (default: the right one).
-    pub chat_bottom: bool,
     /// The user has opened claude.ai in the panel: showing it starts the
     /// web view without asking again. Cleared by "Sign out and clear".
     pub chat_started: bool,
@@ -62,19 +56,14 @@ pub struct Preferences {
     /// "Sign out and clear" has not finished deleting the web view's
     /// profile: it is deleted at the next launch, before any web view.
     pub chat_clear_pending: bool,
-    /// Pane sizes set by dragging a resize handle (docs/design/layout.md
-    /// 4.2, 4.5); `None` is the default size.
-    pub sidebar_width: Option<u16>,
-    pub terminal_width: Option<u16>,
-    pub chat_width: Option<u16>,
-    pub chat_height: Option<u16>,
     /// The version that last ran ("0.4.1"): a launch on another version
     /// shows "Updated to ..." in the status bar for that session.
     pub last_version: Option<String>,
-    /// The open tabs, as route keys (record ids or fixed page keys, never a
-    /// title), when there are two or more; and the active one's index.
-    pub tabs: Vec<String>,
-    pub active_tab: usize,
+    /// The workbench layout (docs/design/workbench.md 4.8.12): areas,
+    /// sizes, where each view is, the page groups and their tabs as route
+    /// keys (record ids or fixed page keys, never a title). `None` until
+    /// the layout first changes: the defaults.
+    pub layout: Option<Saved>,
 }
 
 /// The file as stored. Every field but the version may be missing (it then
@@ -86,13 +75,15 @@ struct Stored {
     theme: StoredTheme,
     #[serde(default)]
     language: StoredLanguage,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// This and the other M7 pane fields are read for the migration of
+    /// 4.8.12 only, and no longer written.
+    #[serde(default, skip_serializing)]
     page: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     collapsed: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     closed_shown: Vec<String>,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[serde(default, skip_serializing)]
     sidebar_hidden: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     terminal_text_size: Option<u8>,
@@ -100,7 +91,7 @@ struct Stored {
     text_size: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     reading_width: Option<String>,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[serde(default, skip_serializing)]
     chat_bottom: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     chat_started: bool,
@@ -108,24 +99,24 @@ struct Stored {
     chat_help_dismissed: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     chat_clear_pending: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing)]
     sidebar_width: Option<u16>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing)]
     terminal_width: Option<u16>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing)]
     chat_width: Option<u16>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing)]
     chat_height: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     last_version: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing)]
     tabs: Vec<String>,
-    #[serde(default, skip_serializing_if = "is_zero")]
+    #[serde(default, skip_serializing)]
     active_tab: usize,
-}
-
-fn is_zero(n: &usize) -> bool {
-    *n == 0
+    /// Read forgivingly on its own: a damaged layout never makes the rest
+    /// of the file unreadable (4.8.12).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    layout: Option<serde_json::Value>,
 }
 
 /// A stored version ("0.4.1", "1.0.0-rc.1"): ASCII letters, digits, dots
@@ -256,10 +247,32 @@ pub fn parse(text: &str) -> Result<Preferences, LoadError> {
         return Err(LoadError::UnsupportedVersion(versioned.version));
     }
     let stored: Stored = serde_json::from_str(text).map_err(|_| LoadError::Malformed)?;
+    let layout = match &stored.layout {
+        Some(value) => Saved::from_value(value, is_reference),
+        None => {
+            // 4.8.12, Migration: the fields M7 wrote.
+            let old = Old {
+                sidebar_hidden: stored.sidebar_hidden,
+                sidebar_width: pane_size(stored.sidebar_width),
+                terminal_width: pane_size(stored.terminal_width),
+                chat_width: pane_size(stored.chat_width),
+                chat_bottom: stored.chat_bottom,
+                chat_height: pane_size(stored.chat_height),
+                tabs: stored
+                    .tabs
+                    .iter()
+                    .filter(|k| is_reference(k))
+                    .cloned()
+                    .collect(),
+                active_tab: stored.active_tab,
+                page: stored.page.clone().filter(|key| is_reference(key)),
+            };
+            (!old.is_empty()).then(|| migrate(&old))
+        }
+    };
     Ok(Preferences {
         theme: stored.theme.into(),
         language: stored.language.into(),
-        page: stored.page.filter(|key| is_reference(key)),
         collapsed: stored
             .collapsed
             .into_iter()
@@ -270,27 +283,16 @@ pub fn parse(text: &str) -> Result<Preferences, LoadError> {
             .into_iter()
             .filter(|k| is_reference(k))
             .collect(),
-        sidebar_hidden: stored.sidebar_hidden,
         terminal_text_size: stored
             .terminal_text_size
             .filter(|size| (11..=18).contains(size)),
         text_size: text_size_of(stored.text_size.as_deref()),
         reading_width: reading_width_of(stored.reading_width.as_deref()),
-        chat_bottom: stored.chat_bottom,
         chat_started: stored.chat_started,
         chat_help_dismissed: stored.chat_help_dismissed,
         chat_clear_pending: stored.chat_clear_pending,
-        sidebar_width: pane_size(stored.sidebar_width),
-        terminal_width: pane_size(stored.terminal_width),
-        chat_width: pane_size(stored.chat_width),
-        chat_height: pane_size(stored.chat_height),
         last_version: stored.last_version.filter(|v| is_version(v)),
-        tabs: stored
-            .tabs
-            .into_iter()
-            .filter(|k| is_reference(k))
-            .collect(),
-        active_tab: stored.active_tab,
+        layout,
     })
 }
 
@@ -300,24 +302,25 @@ pub fn serialize(prefs: &Preferences) -> String {
         version: VERSION,
         theme: prefs.theme.into(),
         language: prefs.language.into(),
-        page: prefs.page.clone(),
+        page: None,
         collapsed: prefs.collapsed.clone(),
         closed_shown: prefs.closed_shown.clone(),
-        sidebar_hidden: prefs.sidebar_hidden,
+        sidebar_hidden: false,
         terminal_text_size: prefs.terminal_text_size,
         text_size: text_size_name(prefs.text_size),
         reading_width: reading_width_name(prefs.reading_width),
-        chat_bottom: prefs.chat_bottom,
+        chat_bottom: false,
         chat_started: prefs.chat_started,
         chat_help_dismissed: prefs.chat_help_dismissed,
         chat_clear_pending: prefs.chat_clear_pending,
-        sidebar_width: prefs.sidebar_width,
-        terminal_width: prefs.terminal_width,
-        chat_width: prefs.chat_width,
-        chat_height: prefs.chat_height,
+        sidebar_width: None,
+        terminal_width: None,
+        chat_width: None,
+        chat_height: None,
         last_version: prefs.last_version.clone(),
-        tabs: prefs.tabs.clone(),
-        active_tab: prefs.active_tab,
+        tabs: Vec::new(),
+        active_tab: 0,
+        layout: prefs.layout.as_ref().map(Saved::to_value),
     };
     // A struct of plain enums and numbers always serializes.
     let mut text = serde_json::to_string_pretty(&stored).unwrap_or_default();
@@ -514,24 +517,21 @@ mod tests {
         let prefs = Preferences {
             theme: ThemeSetting::Light,
             language: Locale::Fr,
-            page: Some("T-42".into()),
             collapsed: vec!["P-1".into(), "E-3".into()],
             closed_shown: vec!["closed:E-3".into()],
-            sidebar_hidden: true,
             terminal_text_size: Some(15),
             text_size: TextSize::Large,
             reading_width: ReadingWidth::Narrow,
-            chat_bottom: true,
             chat_started: true,
             chat_help_dismissed: true,
             chat_clear_pending: true,
-            sidebar_width: Some(300),
-            terminal_width: Some(520),
-            chat_width: Some(480),
-            chat_height: Some(240),
             last_version: Some("0.3.0".into()),
-            tabs: vec!["T-42".into(), "settings".into()],
-            active_tab: 1,
+            layout: Some(migrate(&Old {
+                tabs: vec!["T-42".into(), "settings".into()],
+                active_tab: 1,
+                sidebar_width: Some(300),
+                ..Old::default()
+            })),
         };
         save_to(&path, &prefs).unwrap();
         assert_eq!(load_from(&path).unwrap(), prefs);
@@ -593,7 +593,7 @@ mod tests {
             "{\"version\": 1, \"page\": \"Embed the terminal\", \"collapsed\": [\"P-1\", \"my secret title\"], \"terminal_text_size\": 40}",
         )
         .unwrap();
-        assert_eq!(prefs.page, None);
+        assert_eq!(prefs.layout, None, "a title is not a page key");
         assert_eq!(prefs.collapsed, ["P-1"]);
         assert_eq!(prefs.terminal_text_size, None);
     }
@@ -626,13 +626,47 @@ mod tests {
     }
 
     #[test]
-    fn implausible_pane_sizes_are_dropped() {
-        let prefs =
-            parse(r#"{"version":1,"sidebar_width":12,"terminal_width":520,"chat_height":9000}"#)
-                .unwrap();
-        assert_eq!(prefs.sidebar_width, None);
-        assert_eq!(prefs.terminal_width, Some(520));
-        assert_eq!(prefs.chat_height, None);
+    fn the_m7_pane_fields_migrate_once_and_are_no_longer_written() {
+        let prefs = parse(
+            r#"{"version":1,"sidebar_width":12,"terminal_width":520,"chat_height":9000,"chat_bottom":true,"tabs":["T-42","settings","Alexandre wrote"],"active_tab":1}"#,
+        )
+        .unwrap();
+        let saved = prefs.layout.clone().expect("migrated");
+        let l = &saved.layout;
+        assert_eq!(l.left.size, 260., "an implausible width is dropped");
+        assert_eq!(l.right.size, 520.);
+        assert_eq!(l.bottom.size, 320.);
+        assert_eq!(
+            l.bottom.groups[0].tabs,
+            [crate::layout::Tab::View(crate::layout::ViewId::Chat)]
+        );
+        assert_eq!(saved.pages.len(), 2, "a title is never a page key");
+        let text = serialize(&prefs);
+        for old in [
+            "sidebar_width",
+            "terminal_width",
+            "chat_height",
+            "chat_bottom",
+            "active_tab",
+        ] {
+            assert!(!text.contains(old), "{old} written again");
+        }
+        let back = parse(&text).unwrap();
+        assert_eq!(back.layout.map(|s| s.layout), Some(saved.layout));
+    }
+
+    #[test]
+    fn a_damaged_layout_gives_the_defaults_and_keeps_the_rest() {
+        let prefs = parse(r#"{"version":1,"theme":"dark","layout":{"v":1,"areas":7}}"#).unwrap();
+        assert_eq!(prefs.theme, ThemeSetting::Dark);
+        assert!(prefs.layout.is_some());
+        let prefs = parse(r#"{"version":1,"theme":"dark","layout":"nonsense"}"#).unwrap();
+        assert_eq!(prefs.theme, ThemeSetting::Dark);
+        assert_eq!(prefs.layout, None);
+    }
+
+    #[test]
+    fn implausible_versions_are_dropped() {
         let rc = parse(r#"{"version":1,"last_version":"1.0.0-rc.1"}"#).unwrap();
         assert_eq!(rc.last_version.as_deref(), Some("1.0.0-rc.1"));
         let odd = parse(r#"{"version":1,"last_version":"Alexandre wrote"}"#).unwrap();
