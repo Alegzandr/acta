@@ -171,7 +171,8 @@ impl Render for Capture {
                     .child(
                         ui::button(
                             "capture-add",
-                            text(locale, Key::ComposerAdd),
+                            // A note, not a timeline entry: "Add".
+                            text(locale, Key::InboxAdd),
                             ui::Variant::Primary,
                             false,
                             &t,
