@@ -184,11 +184,15 @@ Two known sources of failure that are not necessarily a bug in Acta:
   rather than loosening the test.
 - **GitHub API rate limit.** `GithubSource` calls the API without a token: 60
   requests per hour per IP, shared with whatever else ran on that runner's address.
-  A refused check logs "update: check failed: <kind>; retrying at next
-  launch"; the test starts the app again twice, then fails with "did not restart as
-  `<to>`" and only "check failed" lines in the log. Re-run the failed job; if it
-  keeps happening, the rate limit is biting real users too (ADR 0004 revisit
-  condition).
+  A refused check logs "update: check failed: network error; retrying at next
+  launch" (from 0.1.4 on, "network error (HTTP 403)" or "(HTTP 429)"). The update step
+  prints the runner's remaining quota (`/rate_limit`, which costs nothing) before the
+  first launch and again when it fails. It stops at once with "quota ... is spent"
+  when fewer than 3 requests are left, since one update needs that many. Seen on
+  2026-11-21 (run 44847527497, 0.1.0 to 0.1.3): macOS and Linux logged only "check
+  failed: network error" three times while Windows updated; the 0.1.0 log could not
+  say more. Re-run the failed job; if it keeps happening, the rate limit is biting
+  real users too (ADR 0004 revisit condition).
 
 ## Yank a bad release
 
