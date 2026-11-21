@@ -761,6 +761,14 @@ catalogue! {
         en: t("Created from file"),
         fr: t("Créée depuis un fichier"),
     }
+    HistoryCreatedDocument "history.created.document" {
+        en: t("Created"),
+        fr: t("Créé"),
+    }
+    HistoryCreatedMemory "history.created.memory" {
+        en: t("Created"),
+        fr: t("Créée"),
+    }
     FoldersTitle "folders.title" {
         en: t("Working folders"),
         fr: t("Dossiers de travail"),

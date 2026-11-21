@@ -198,6 +198,8 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `history.edited.memory` | Edited | Modifiée |
 | `history.from_file.document` | Created from file | Créé depuis un fichier |
 | `history.from_file.memory` | Created from file | Créée depuis un fichier |
+| `history.created.document` | Created | Créé |
+| `history.created.memory` | Created | Créée |
 | `folders.title` | Working folders | Dossiers de travail |
 | `folders.from_epic` | from epic {name} | de l'epic {name} |
 | `folders.from_project` | from project {name} | du projet {name} |

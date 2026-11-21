@@ -939,11 +939,12 @@ impl Shell {
     ) {
         match event {
             PageEvent::Open(route) => self.navigate(*route, true, window, cx),
-            PageEvent::Replace(route) => {
+            PageEvent::Saved(route) => {
                 if let Some(bench) = self.bench() {
-                    bench.history.replace(*route);
+                    bench.history.open(*route);
                 }
                 self.save_layout(cx);
+                cx.notify();
             }
             PageEvent::NewKb(draft) => self.new_kb_draft(*draft, window, cx),
             PageEvent::Located(project) => {
@@ -1265,15 +1266,15 @@ impl Shell {
 
     fn focus_page(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(bench) = self.bench() else { return };
-        let handle = match &bench.page {
-            PageView::Record(page) => Some(page.read(cx).focus_handle(cx)),
-            _ => None,
-        };
-        let handle = handle.unwrap_or_else(|| bench.page_focus.clone());
         // Pages that focus their own editor on open (inbox, editor) keep it.
-        if !matches!(bench.page, PageView::Inbox(_) | PageView::Doc(_)) {
-            window.focus(&handle, cx);
-        }
+        let handle = match &bench.page {
+            PageView::Record(page) => page.read(cx).focus_handle(cx),
+            PageView::Doc(page) if page.read(cx).editing() => return,
+            PageView::Doc(page) => page.read(cx).focus_handle(cx),
+            PageView::Inbox(_) => return,
+            _ => bench.page_focus.clone(),
+        };
+        window.focus(&handle, cx);
     }
 
     /// The page's record, for the terminal and the folder commands.

@@ -44,9 +44,9 @@ use crate::workspace::{FolderRef, Undo, Workspace};
 #[derive(Clone, Debug, PartialEq)]
 pub enum PageEvent {
     Open(Route),
-    /// The page now stands for another route, without a history step (a
-    /// draft that was just saved).
-    Replace(Route),
+    /// A draft was saved as `route`: the history steps to it (the draft
+    /// itself took no step, so Back returns to where it was started).
+    Saved(Route),
     /// Start a document or memory owned by this page's record.
     NewKb(crate::kb_page::Draft),
     /// The page learned which project it belongs to (a document opened by
