@@ -635,3 +635,85 @@ New with the tree's redesign (2026-11-21). They stay here, outside the table the
 | `tree.empty` | No projects yet. | Aucun projet pour l'instant. |
 | `tree.collapse_all` | Collapse all | Tout replier |
 | `cmd.tree_collapse_all` | Projects: Collapse all | Projets : tout replier |
+
+### 10.4.3 Keys of folder sets and commit modes (ADR 0011), pending
+
+New with ADR 0011 (2026-11-21). They stay here, outside the table the tests read, until the folders UI of ADR 0011 is implemented; the implementing change applies the three lists below to 10.4 and to `catalogue.rs` in the same commit.
+
+**Removed** from 10.4 (the concepts are gone): `folders.primary`, `folders.include`, `folders.not_used`, `folders.set_here`, `folders.uses`, `folders.make_primary`, `cmd.folder_primary`, `cmd.folders_include`, `cmd.folders_exclude`, `terminal.missing.body` (replaced by the three level keys below).
+
+**Changed** text in 10.4:
+
+| Key | English | French |
+|---|---|---|
+| `folders.hint` | Claude Code starts in the active folder and may also read and edit the others. | Claude Code démarre dans le dossier actif et peut aussi lire et modifier les autres. |
+
+**New**, placed after `folders.picker` (folders), after `terminal.restart.title` (terminal), after `cmd.folders_bulk` (commands) after `settings.not_found` (settings) and after the last `import.` key (import):
+
+| Key | English | French |
+|---|---|---|
+| `folders.active` | Active | Actif |
+| `folders.set_active` | Set as active here | Définir comme actif ici |
+| `folders.edit` | Edit folders... | Modifier les dossiers... |
+| `folders.settings` | Folder settings... | Réglages du dossier... |
+| `folders.group.topic` | This topic | Ce sujet |
+| `folders.group.epic` | This epic | Cet epic |
+| `folders.group.project` | This project | Ce projet |
+| `folders.group.from_epic` | From epic {name} | De l'epic {name} |
+| `folders.group.from_project` | From project {name} | Du projet {name} |
+| `folders.no_own` | No folders of its own. | Aucun dossier propre. |
+| `folders.not_found_short` | Not found | Introuvable |
+| `folders.other_checkout` | Another checkout of the same repository as {name}. Not passed to Claude Code here. | Autre copie de travail du même dépôt que {name}. Non transmise à Claude Code ici. |
+| `folders.git.detached` | detached at {commit} | détaché sur {commit} |
+| `folders.git.changed` | {n} changed | {n} modifié · {n} modifiés |
+| `folders.git.auto_commit` | Claude Code commits automatically here | Claude Code commite automatiquement ici |
+| `folders.git.auto_push` | Claude Code commits and pushes automatically here | Claude Code commite et pousse automatiquement ici |
+| `folders.name` | Name | Nom |
+| `folders.icon` | Icon | Icône |
+| `folders.icon.auto` | Automatic | Automatique |
+| `folders.icon.auto_hint` | Automatic: a branch for a git worktree, a git folder for a repository, a folder otherwise | Automatique : une branche pour un worktree git, un dossier git pour un dépôt, un dossier sinon |
+| `folders.icon.folder` | Folder | Dossier |
+| `folders.icon.repo` | Git repository | Dépôt git |
+| `folders.icon.worktree` | Git worktree | Worktree git |
+| `folders.icon.code` | Code | Code |
+| `folders.icon.docs` | Documentation | Documentation |
+| `folders.icon.package` | Package | Paquet |
+| `folders.icon.server` | Server | Serveur |
+| `folders.icon.web` | Web | Web |
+| `folders.icon.mobile` | Mobile | Mobile |
+| `folders.icon.data` | Data | Données |
+| `folders.icon.lab` | Experiments | Expériences |
+| `folders.icon.design` | Design | Design |
+| `folders.commits` | Commits by Claude Code | Commits par Claude Code |
+| `folders.commit.manual` | Manual | Manuel |
+| `folders.commit.commit` | Commit | Commit |
+| `folders.commit.push` | Commit and push | Commit et push |
+| `folders.commit.manual_hint` | Claude Code commits only when you ask. | Claude Code ne commite que si vous le demandez. |
+| `folders.commit.commit_hint` | After each finished, tested change, Claude Code commits it. | Après chaque modification terminée et testée, Claude Code la commite. |
+| `folders.commit.push_hint` | After each commit, Claude Code also pushes to the branch's upstream. Never forced; it stops and tells you if a push is rejected or needs a sign-in. | Après chaque commit, Claude Code pousse aussi vers la branche amont. Jamais en force ; il s'arrête et vous prévient si un push est refusé ou demande une connexion. |
+| `folders.commit.as_user` | Commit in my name, without Co-Authored-By Claude | Commiter en mon nom, sans Co-Authored-By Claude |
+| `folders.commit.on_default` | Also on {branch} | Aussi sur {branch} |
+| `folders.commit.identity` | Commits use your git identity: {name}. | Les commits utilisent votre identité git : {name}. |
+| `folders.commit.no_identity` | Git has no user name for this folder, so commits will fail. Acta does not set it. | Git n'a pas de nom d'utilisateur pour ce dossier : les commits échoueront. Acta ne le définit pas. |
+| `folders.commit.file` | Acta writes these rules to .claude/settings.local.json in this folder, kept out of git. | Acta écrit ces règles dans le .claude/settings.local.json de ce dossier, exclu de git. |
+| `folders.commit.tracked` | This folder's .claude/settings.local.json is tracked by git, so Acta does not write it: Claude Code will ask before each commit. | Le .claude/settings.local.json de ce dossier est suivi par git, Acta ne l'écrit donc pas : Claude Code demandera avant chaque commit. |
+| `folders.commit.user_key` | Your own {key} setting in .claude/settings.local.json is kept. | Votre propre réglage {key} dans .claude/settings.local.json est conservé. |
+| `folders.commit.root_wins` | The repository's own local settings set attribution, and that setting wins. | Les réglages locaux du dépôt définissent attribution, et ce réglage l'emporte. |
+| `terminal.missing.body.topic` | Claude Code was not started. This is the active folder of topic {name}, and it is not on this computer: | Claude Code n'a pas été lancé. C'est le dossier actif du sujet {name}, et il n'est pas sur cet ordinateur : |
+| `terminal.missing.body.epic` | Claude Code was not started. This is the active folder of epic {name}, and it is not on this computer: | Claude Code n'a pas été lancé. C'est le dossier actif de l'epic {name}, et il n'est pas sur cet ordinateur : |
+| `terminal.missing.body.project` | Claude Code was not started. This is the active folder of project {name}, and it is not on this computer: | Claude Code n'a pas été lancé. C'est le dossier actif du projet {name}, et il n'est pas sur cet ordinateur : |
+| `terminal.missing.other` | Or start in another folder: | Ou démarrer dans un autre dossier : |
+| `terminal.running_in` | (running in {name}) | (lancé dans {name}) |
+| `terminal.restart_in` | Restart in {name} | Redémarrer dans {name} |
+| `cmd.folder_switch` | Switch active folder... | Changer de dossier actif... |
+| `cmd.folder_active` | Make folder active | Rendre le dossier actif |
+| `cmd.folder_settings` | Folder settings... | Réglages du dossier... |
+| `cmd.commit_mode` | Set commit mode... | Définir le mode de commit... |
+| `cmd.commit_mode.manual` | Manual | Manuel |
+| `cmd.commit_mode.commit` | Commit automatically | Commiter automatiquement |
+| `cmd.commit_mode.push` | Commit and push automatically | Commiter et pousser automatiquement |
+| `settings.auto_commit` | Automatic commits | Commits automatiques |
+| `settings.auto_commit.hint` | The default for folders set to commit automatically. Each folder can choose otherwise in its folder settings. Commits always use your own git identity. | La valeur par défaut des dossiers qui commitent automatiquement. Chaque dossier peut en décider autrement dans ses réglages. Les commits utilisent toujours votre propre identité git. |
+| `import.auto_commit` | {n} working folder lets Claude Code commit automatically. Acta writes its rules only once the folder is found on this computer. · {n} working folders let Claude Code commit automatically. Acta writes their rules only once each folder is found on this computer. | {n} dossier de travail laisse Claude Code commiter automatiquement. Acta n'écrit ses règles qu'une fois le dossier trouvé sur cet ordinateur. · {n} dossiers de travail laissent Claude Code commiter automatiquement. Acta n'écrit leurs règles qu'une fois chaque dossier trouvé sur cet ordinateur. |
+
+The checkbox of `settings.auto_commit` reuses `folders.commit.as_user`. `{branch}` is the default branch's name as git has it, never translated; `{key}` is a settings key (`attribution`, `env`), never translated.

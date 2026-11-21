@@ -27,10 +27,17 @@ Nothing on screen is illustrative. Every value comes from the model of ADRs 0005
 | Drafts of unsaved editors | Request 15. |
 | Entries column of the topic table | Count of timeline entries of the topic. |
 | Knowledge rows, summaries, kinds, levels, history | `kb_entries` and `kb_revisions` (ADR 0007). |
-| Folders, origin label, not-found state | The `folders` table and inheritance rule of ADR 0008; existence is checked on this machine. |
+| Folders, origin label, not-found state | The `folders` table and the inheritance rule of ADR 0011 (own, then epic's, then project's); existence is checked on this machine. |
+| Folder name and icon | `folders.name` (empty: the last path segment) and `folders.icon` (empty: automatic, from the git detection below). |
+| Active folder, "Active" | The page's `active_folder_id` if it names a folder the page sees, else the default rule of ADR 0011 (first own folder, else the parent's active folder). |
+| Git state: branch, "3 changed", worktree icon | Read on this machine, never stored: `.git`, `HEAD` and `commondir` through `agent::git::inspect`; changed files from `git status --porcelain` with a 2 s timeout. |
+| "Another checkout of the same repository" | Computed at display and launch: same git common directory as the active folder, different worktree root. |
+| Commit mode, "Commit in my name", "Also on main" | `folders.commit_mode`, `folders.commit_as_user` (empty: the Settings default, a local value), `folders.commit_on_default`; the default branch's name from `refs/remotes/origin/HEAD`, else `main` or `master`. |
+| "Commits use your git identity: Alexandre" | `git config user.name` read in that folder when the form opens; never stored, never written. |
+| "Acta writes these rules..." and its alternatives | The settings ledger (local values) and the state of the folder's `.claude/settings.local.json` (tracked by git, user-set keys). |
 | Breadcrumb | The page's project and epic. |
 | Tabs | A preference: per window, a list of typed references (a record id, or a fixed page key with its project id where it has one). |
-| Terminal header context | The page the session was started from, held by the app while the session lives. |
+| Terminal header context and switcher | The page the session was started from, the folder it runs in and the commit mode it started with, held by the app while the session lives; compared with the stored values for the mismatch (4.5). |
 | Status bar: Claude Code status | `acta setup --check` (ADR 0005) and whether the active project has a working folder. Tooltip: the latest write authored by Claude Code in the project. |
 | Status bar: version, update | The running build and the updater's state (ADR 0004). |
 | Settings: last export, snapshots, trash count, database path | Export history, the snapshot list and the trash of ADR 0006; the storage location of ADR 0003. |
