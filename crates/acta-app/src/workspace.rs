@@ -126,7 +126,7 @@ impl Undo {
             }
             Undo::KbRevision { id, expect, .. } => store.kb_entry(*id)?.rev == *expect,
             Undo::Reorder { record, expect, .. } => store.order_index(*record)? == *expect,
-            Undo::Unfile(id) => store.note(*id)?.filed_topic.is_some(),
+            Undo::Unfile(id) => !store.note(*id)?.is_open(),
             Undo::Many(all) => {
                 for undo in all {
                     if !undo.matches(store)? {

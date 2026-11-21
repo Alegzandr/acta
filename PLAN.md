@@ -69,8 +69,12 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 - [ ] Side panel with a persistent session, toggled from the keyboard
 
 ## M6 - Notes
-- [ ] Per-project inbox, quick capture
-- [ ] Claude Code turns notes into topics and epics; human refines in the UI
+- [ ] Per-project inbox, quick capture (inbox page and Mod+N in M2)
+- [x] Agent triage: `find(kind="note")` lists the inbox; one all-or-nothing `create` call turns notes into topics (draft, in an existing epic or an epic of the same call with `epic="@k"`), epics, or entries of existing topics, and `dismiss` closes the rest; `update(N-n, status=open)` puts a note back. Schema 2: notes keep `filed_epic_id` and `filed_by`. CLI: `acta create entry|dismiss|plan`. Proven by an end-to-end stdio test
+- [x] `/acta:triage` skill: read, group, propose one compact plan, apply after confirmation (or with `go`), report ids
+- [x] Inbox UI: the Filed list (it was empty before), links to the topic or epic, "by Claude Code", back to inbox
+- [ ] Headless `claude -p` triage run: a temporary `CLAUDE_CONFIG_DIR` has no login, and copying credentials into it was refused; needs the lead's call
+- [ ] "File with Claude Code" button (screens.md 8.2): needs a way to run a command in the terminal dock
 
 ## M7 - Polish
 - [ ] Design review of every screen against DESIGN.md

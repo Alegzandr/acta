@@ -1,9 +1,11 @@
 //! A project's notes inbox (docs/design/screens.md 8.2): the capture editor
 //! (focused when the inbox opens), the Open / Filed filter, and the notes,
-//! newest first. Filing a note by hand ("Make topic") is here; letting
-//! Claude Code file them is M6.
+//! newest first. Filing a note by hand ("Make topic") is here; Claude Code
+//! files them through the agent tools (`create` with `from_notes`). Filed
+//! notes link to where they went, say who filed them, and go back to the
+//! inbox with one click.
 
-use acta_core::model::{Author, Note, NoteId, PageReq, ProjectId, Record, Status};
+use acta_core::model::{Author, Note, NoteFate, NoteId, PageReq, ProjectId, Record, Status};
 use acta_core::store::NewTopic;
 use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -46,6 +48,9 @@ pub struct InboxPage {
     pub project: ProjectId,
     project_title: String,
     notes: Vec<Note>,
+    /// Filed and dismissed notes, most recently filed first, with the title
+    /// of the topic or epic each went to.
+    filed: Vec<(Note, Option<String>)>,
     total_open: i64,
     show_filed: bool,
     capture: Entity<TextareaState>,
@@ -109,6 +114,7 @@ impl InboxPage {
             project,
             project_title,
             notes: Vec::new(),
+            filed: Vec::new(),
             total_open: 0,
             show_filed: false,
             capture,
@@ -123,19 +129,30 @@ impl InboxPage {
     fn reload(&mut self, cx: &mut Context<Self>) {
         let project = self.project;
         let task = self.ws.read(cx).db.run(cx, move |store| {
-            let notes = store.inbox(project, PageReq::first(PageReq::MAX_LIMIT))?;
-            Ok(notes)
+            let open = store.inbox(project, PageReq::first(PageReq::MAX_LIMIT))?;
+            let filed = store.filed_notes(project, PageReq::first(PageReq::MAX_LIMIT))?;
+            // A target in the trash shows its id alone.
+            let filed = filed
+                .items
+                .into_iter()
+                .map(|n| {
+                    let title = match n.fate() {
+                        NoteFate::Topic(t) => store.topic(t).ok().map(|t| t.title),
+                        NoteFate::Epic(e) => store.epic(e).ok().map(|e| e.title),
+                        NoteFate::Open | NoteFate::Dismissed => None,
+                    };
+                    (n, title)
+                })
+                .collect::<Vec<_>>();
+            Ok((open, filed))
         });
         self._load = cx.spawn(async move |page, cx| {
             let loaded = task.await;
             let _ = page.update(cx, |page, cx| {
-                if let Ok(notes) = loaded {
-                    page.total_open = notes
-                        .items
-                        .iter()
-                        .filter(|n| n.filed_topic.is_none())
-                        .count() as i64;
-                    page.notes = notes.items;
+                if let Ok((open, filed)) = loaded {
+                    page.total_open = open.total;
+                    page.notes = open.items;
+                    page.filed = filed;
                 }
                 cx.notify();
             });
@@ -171,8 +188,20 @@ impl InboxPage {
         let record = Record::Note(id);
         let project = Some(self.project);
         self.notes.retain(|n| n.id != id);
+        self.filed.retain(|(n, _)| n.id != id);
         cx.notify();
         self.ws.update(cx, |ws, cx| ws.delete(record, project, cx));
+    }
+
+    /// Back to the inbox. What filing created (topic, epic, entries) stays:
+    /// it may already hold the human's refinements.
+    fn unfile(&mut self, id: NoteId, cx: &mut Context<Self>) {
+        self.ws.update(cx, |ws, cx| {
+            ws.write(cx, Key::ErrorSave, move |store| {
+                store.unfile_note(id, Author::Human)
+            })
+            .detach();
+        });
     }
 
     /// File a note by hand: a Draft topic titled from its first line, with
@@ -214,12 +243,14 @@ impl InboxPage {
     fn card(
         &self,
         note: &Note,
+        target_title: Option<&str>,
         index: usize,
         locale: Locale,
         t: &Tokens,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let filed = note.filed_topic.is_some();
+        let fate = note.fate();
+        let filed = fate != NoteFate::Open;
         let group = SharedString::from(format!("note-{index}"));
         let id = note.id;
         let for_topic = note.clone();
@@ -236,25 +267,53 @@ impl InboxPage {
                     .text_color(t.text_tertiary)
                     .child(when::long_alone(locale, note.stamp.created_at)),
             );
-        if let Some(topic) = note.filed_topic {
+        let target = match fate {
+            NoteFate::Topic(t) => Some((t.to_string(), Route::Topic(t))),
+            NoteFate::Epic(e) => Some((e.to_string(), Route::Epic(e))),
+            NoteFate::Open | NoteFate::Dismissed => None,
+        };
+        if let Some((label, route)) = target {
+            let label = match target_title {
+                Some(title) => format!("{label} {title}"),
+                None => label,
+            };
             meta = meta
                 .child(
                     type_scale::SMALL
                         .el()
+                        .flex_none()
                         .text_color(t.text_tertiary)
                         .child(text(locale, Key::InboxFiledAs)),
                 )
                 .child(
                     div()
-                        .id(("note-topic", index))
+                        .id(("note-target", index))
+                        .min_w_0()
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .whitespace_nowrap()
                         .text_color(t.accent)
                         .text_size(px(12.))
                         .cursor_pointer()
-                        .on_click(cx.listener(move |_, _, _, cx| {
-                            cx.emit(PageEvent::Open(Route::Topic(topic)))
-                        }))
-                        .child(topic.to_string()),
+                        .on_click(cx.listener(move |_, _, _, cx| cx.emit(PageEvent::Open(route))))
+                        .child(label),
                 );
+        } else if fate == NoteFate::Dismissed {
+            meta = meta.child(
+                type_scale::SMALL
+                    .el()
+                    .text_color(t.text_tertiary)
+                    .child(text(locale, Key::InboxDismissed)),
+            );
+        }
+        if filed && note.filed_by == Some(Author::Claude) {
+            meta = meta.child(
+                type_scale::SMALL
+                    .el()
+                    .flex_none()
+                    .text_color(t.text_tertiary)
+                    .child(text(locale, Key::InboxByClaude)),
+            );
         }
         let actions = div()
             .flex()
@@ -274,6 +333,20 @@ impl InboxPage {
                         t,
                     )
                     .on_click(cx.listener(move |page, _, _, cx| page.make_topic(&for_topic, cx))),
+                )
+            })
+            .when(filed, |this| {
+                this.child(
+                    ui::ghost_icon_button(
+                        format!("note-unfile-{index}"),
+                        Icon::Inbox,
+                        24.,
+                        false,
+                        false,
+                        true,
+                        t,
+                    )
+                    .on_click(cx.listener(move |page, _, _, cx| page.unfile(id, cx))),
                 )
             })
             .child(
@@ -396,12 +469,11 @@ impl Render for InboxPage {
                         .on_click(cx.listener(|page, _, window, cx| page.add(window, cx))),
                     ),
             );
-        let shown: Vec<Note> = self
-            .notes
-            .iter()
-            .filter(|n| n.filed_topic.is_some() == self.show_filed)
-            .cloned()
-            .collect();
+        let shown: Vec<(Note, Option<String>)> = if self.show_filed {
+            self.filed.clone()
+        } else {
+            self.notes.iter().map(|n| (n.clone(), None)).collect()
+        };
         let mut list = div().flex().flex_col().gap(px(8.)).mt(px(12.));
         if shown.is_empty() && !self.show_filed {
             list = list.child(
@@ -412,8 +484,8 @@ impl Render for InboxPage {
                     .child(text(locale, Key::InboxEmpty)),
             );
         }
-        for (i, note) in shown.iter().enumerate() {
-            list = list.child(self.card(note, i, locale, &t, cx));
+        for (i, (note, title)) in shown.iter().enumerate() {
+            list = list.child(self.card(note, title.as_deref(), i, locale, &t, cx));
         }
         ui::page_scroll("inbox-page").child(
             ui::column()
