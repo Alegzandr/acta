@@ -257,6 +257,10 @@ catalogue! {
         en: p_by("total", "{done} of {total} topic done", "{done} of {total} topics done"),
         fr: p_by("done", "{done} sujet terminé sur {total}", "{done} sujets terminés sur {total}"),
     }
+    ProgressNone "progress.none" {
+        en: t("No topics yet"),
+        fr: t("Aucun sujet"),
+    }
     KindDocument "kind.document" {
         en: t("Document"),
         fr: t("Document"),
@@ -304,6 +308,14 @@ catalogue! {
     DescriptionPlaceholder "description.placeholder" {
         en: t("What is this topic about, and what does done look like?"),
         fr: t("De quoi s\u{2019}agit-il, et à quoi verra-t-on que c\u{2019}est terminé\u{202f}?"),
+    }
+    DescriptionPlaceholderEpic "description.placeholder.epic" {
+        en: t("What is this epic about?"),
+        fr: t("De quoi parle cet epic\u{202f}?"),
+    }
+    DescriptionPlaceholderProject "description.placeholder.project" {
+        en: t("What is this project about?"),
+        fr: t("De quoi parle ce projet\u{202f}?"),
     }
     TimelineAll "timeline.all" {
         en: t("All"),
@@ -416,6 +428,10 @@ catalogue! {
     TopicEmptyProject "topic.empty_project" {
         en: t("No topics yet. Capture notes and let Claude Code file them, or start one yourself."),
         fr: t("Aucun sujet pour l\u{2019}instant. Saisissez des notes et laissez Claude Code les classer, ou créez-en un vous-même."),
+    }
+    TopicEmptyHeading "topic.empty.heading" {
+        en: t("No topics yet"),
+        fr: t("Aucun sujet pour l’instant"),
     }
     ErrorSaveEntry "error.save_entry" {
         en: t("Could not save the entry. The database is locked by another process."),
@@ -545,6 +561,10 @@ catalogue! {
         en: t("{n} more from epic and project"),
         fr: p("{n} autre hérité de l\u{2019}epic et du projet", "{n} autres hérités de l\u{2019}epic et du projet"),
     }
+    KbMoreInheritedProject "kb.more_inherited.project" {
+        en: t("{n} more from project {name}"),
+        fr: p("{n} autre hérité du projet {name}", "{n} autres hérités du projet {name}"),
+    }
     KbMoreEpic "kb.more_epic" {
         en: t("{n} more in the topics of this epic"),
         fr: t("{n} de plus dans les sujets de cet epic"),
@@ -556,6 +576,14 @@ catalogue! {
     KbEmpty "kb.empty" {
         en: t("Nothing here yet. Documents and memories for this topic appear here."),
         fr: t("Rien ici pour l\u{2019}instant. Les documents et mémoires de ce sujet apparaîtront ici."),
+    }
+    KbEmptyEpic "kb.empty.epic" {
+        en: t("Nothing here yet. Documents and memories for this epic appear here."),
+        fr: t("Rien ici pour l’instant. Les documents et mémoires de cet epic apparaîtront ici."),
+    }
+    KbEmptyProject "kb.empty.project" {
+        en: t("Nothing here yet. Documents and memories for this project appear here."),
+        fr: t("Rien ici pour l’instant. Les documents et mémoires de ce projet apparaîtront ici."),
     }
     KbSummaryMemory "kb.summary.memory" {
         en: t("One line: the fact, in short"),

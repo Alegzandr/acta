@@ -125,6 +125,29 @@ pub fn kbd(keys: &[&str], tokens: &Tokens) -> Div {
         }))
 }
 
+/// The kbd hint inside a primary button (components.md 5, kbd): no border,
+/// `text.on-accent` at weight 400.
+pub fn kbd_on_accent(keys: &[&str], tokens: &Tokens) -> Div {
+    div()
+        .flex()
+        .flex_row()
+        .flex_shrink_0()
+        .gap(px(2.))
+        .children(keys.iter().map(|key| {
+            type_scale::SMALL
+                .el()
+                .font_features(type_scale::tabular())
+                .h(px(18.))
+                .min_w(px(18.))
+                .px(px(4.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_color(tokens.text_on_accent)
+                .child(key.to_string())
+        }))
+}
+
 /// A ghost icon button (docs/design/components.md 5, Button): `size` is 28, or 24 compact.
 /// `selected` is the active state of a tool-window toggle. In an inactive
 /// window its icon drops to `text.tertiary` (docs/design/layout.md 4.3).

@@ -1472,3 +1472,33 @@ fn the_last_claude_write_names_the_topic_claude_code_touched_last() {
     let (id, title, _) = t.store.last_claude_write(p).unwrap().unwrap();
     assert_eq!((id, title.as_str()), (a, "Embed the terminal"));
 }
+
+#[test]
+fn an_entry_is_edited_in_place_and_system_events_are_refused() {
+    let mut t = open();
+    let p = t.store.create_project("Acta", "", H).unwrap();
+    let a = topic(&mut t.store, p, None, "Embed the terminal");
+    let e = t
+        .store
+        .log(a, entry(EntryKind::Progress, "Alexandre wrote this"), H)
+        .unwrap();
+    t.store
+        .update_entry(e.id, "Alexandre decided this", EntryKind::Decision, H)
+        .unwrap();
+    let back = t.store.entry(e.id).unwrap();
+    assert_eq!(
+        (back.text.as_str(), back.kind),
+        ("Alexandre decided this", EntryKind::Decision)
+    );
+    assert_eq!(back.seq, e.seq);
+    assert!(
+        t.store
+            .update_entry(e.id, "", EntryKind::Progress, H)
+            .is_err()
+    );
+    assert!(
+        t.store
+            .update_entry(e.id, "x", EntryKind::System, H)
+            .is_err()
+    );
+}

@@ -88,6 +88,12 @@ pub enum Undo {
     /// A note put back in the inbox: file it again exactly as it was
     /// (target, time, who), expecting it still open.
     Refile(Box<Note>),
+    /// An entry edited or retyped in place: its text and type before.
+    Entry {
+        id: acta_core::model::EntryId,
+        back: (String, acta_core::model::EntryKind),
+        expect: (String, acta_core::model::EntryKind),
+    },
     /// Several steps taken back as one, all or none.
     Many(Vec<Undo>),
 }
@@ -130,6 +136,10 @@ impl Undo {
             }
             Undo::KbRevision { id, expect, .. } => store.kb_entry(*id)?.rev == *expect,
             Undo::Reorder { record, expect, .. } => store.order_index(*record)? == *expect,
+            Undo::Entry { id, expect, .. } => {
+                let e = store.entry(*id)?;
+                (e.text, e.kind) == *expect
+            }
             Undo::Unfile(id) => !store.note(*id)?.is_open(),
             Undo::Refile(before) => store.note(before.id)?.is_open(),
             Undo::Many(all) => {
@@ -188,6 +198,7 @@ impl Undo {
                 store.kb_restore_revision(*id, *back, me).map(|_| ())
             }
             Undo::Reorder { record, back, .. } => store.reorder(*record, *back, me),
+            Undo::Entry { id, back, .. } => store.update_entry(*id, &back.0, back.1, me),
             Undo::Unfile(id) => store.unfile_note(*id, me),
             Undo::Refile(before) => store.restore_note_fate(before.id, before, me),
             Undo::Many(all) => all.iter().try_for_each(|undo| undo.revert(store)),

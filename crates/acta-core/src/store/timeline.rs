@@ -121,6 +121,28 @@ impl Store {
         self.entry(id)
     }
 
+    /// Edits an entry's text and type in place (the entry menu's Edit and
+    /// Change type). System events are written by Acta and refused.
+    pub fn update_entry(
+        &mut self,
+        id: EntryId,
+        text: &str,
+        kind: EntryKind,
+        author: Author,
+    ) -> Result<()> {
+        let current = self.entry(id)?;
+        if current.kind == EntryKind::System || kind == EntryKind::System {
+            return Err(Error::Invalid("system entries are written by Acta".into()));
+        }
+        let text = required("text", text)?;
+        self.conn.execute(
+            "UPDATE entries SET text = ?2, kind = ?3, updated_at = ?4, updated_by = ?5
+             WHERE id = ?1 AND deleted_at IS NULL",
+            params![id.0, text, kind, now_ms(), author],
+        )?;
+        Ok(())
+    }
+
     pub fn entry(&self, id: EntryId) -> Result<Entry> {
         self.conn
             .query_row(

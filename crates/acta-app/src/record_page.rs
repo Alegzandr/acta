@@ -11,7 +11,8 @@
 use std::path::PathBuf;
 
 use acta_core::model::{
-    Author, Entry, EntryKind, KbId, KbKind, KbSummary, Owner, Record, Status, TopicId, TopicSummary,
+    Author, Entry, EntryId, EntryKind, KbId, KbKind, KbSummary, Owner, Record, Status, TopicId,
+    TopicSummary,
 };
 use acta_core::store::{EpicPatch, NewEntry, ProjectPatch, TopicPatch};
 use gpui_kit::component::input::{Escape, Input, InputEvent, InputState, Textarea, TextareaState};
@@ -80,6 +81,12 @@ pub struct RecordPage {
     composer_open: bool,
     /// The status menu, with its highlighted row.
     status_menu: Option<usize>,
+    /// The entry menu (components-records.md 5, Timeline entry).
+    entry_menu: Option<EntryMenu>,
+    /// An entry being edited in place, with its editor.
+    entry_edit: Option<(EntryId, Entity<TextareaState>)>,
+    /// The knowledge section's New menu, with its highlighted row.
+    kb_new_menu: Option<usize>,
     folders_open: bool,
     table_filter: table::Filter,
     table_sort: Option<table::Sort>,
@@ -90,6 +97,22 @@ pub struct RecordPage {
     _load: Task<()>,
     _subs: Vec<Subscription>,
 }
+
+/// The entry menu: Edit, Copy as Markdown, Change type, Delete; "Change
+/// type" turns it into the three types.
+#[derive(Clone, Debug)]
+struct EntryMenu {
+    entry: Entry,
+    kinds: bool,
+    highlight: usize,
+}
+
+/// The types an entry can be changed to, in menu order.
+const ENTRY_KINDS: [EntryKind; 3] = [
+    EntryKind::Progress,
+    EntryKind::Decision,
+    EntryKind::Discussion,
+];
 
 impl EventEmitter<PageEvent> for RecordPage {}
 
@@ -112,7 +135,7 @@ impl RecordPage {
     #[cfg(windows)]
     /// The status menu is open (the chat's web view hides under it).
     pub fn menu_open(&self) -> bool {
-        self.status_menu.is_some()
+        self.status_menu.is_some() || self.entry_menu.is_some() || self.kb_new_menu.is_some()
     }
 
     pub fn new(
@@ -144,6 +167,9 @@ impl RecordPage {
             composer_kind: EntryKind::Progress,
             composer_open: false,
             status_menu: None,
+            entry_menu: None,
+            entry_edit: None,
+            kb_new_menu: None,
             folders_open: false,
             table_filter: table::Filter::Open,
             table_sort: None,
@@ -486,7 +512,10 @@ impl RecordPage {
     fn cancel_editors(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let had = self.state_edit.take().is_some()
             | self.description_edit.take().is_some()
-            | self.status_menu.take().is_some();
+            | self.status_menu.take().is_some()
+            | self.entry_menu.take().is_some()
+            | self.entry_edit.take().is_some()
+            | self.kb_new_menu.take().is_some();
         if self.composer_open {
             self.composer_open = false;
         }
@@ -566,6 +595,112 @@ impl RecordPage {
             }
         })
         .detach();
+    }
+
+    // ---- the entry menu ----
+
+    fn open_entry_menu(&mut self, entry: Entry, window: &mut Window, cx: &mut Context<Self>) {
+        self.entry_menu = Some(EntryMenu {
+            entry,
+            kinds: false,
+            highlight: 0,
+        });
+        window.focus(&self.focus, cx);
+        cx.notify();
+    }
+
+    /// Choose row `index` of the open entry menu.
+    fn choose_entry_item(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(menu) = self.entry_menu.take() else {
+            return;
+        };
+        let entry = menu.entry;
+        if menu.kinds {
+            if let Some(kind) = ENTRY_KINDS.get(index) {
+                self.write_entry(&entry, entry.text.clone(), *kind, cx);
+            }
+            cx.notify();
+            return;
+        }
+        match index {
+            0 => self.start_entry_edit(entry, window, cx),
+            1 => cx.write_to_clipboard(ClipboardItem::new_string(entry.text.clone())),
+            2 => {
+                let at = ENTRY_KINDS
+                    .iter()
+                    .position(|k| *k == entry.kind)
+                    .unwrap_or(0);
+                self.entry_menu = Some(EntryMenu {
+                    entry,
+                    kinds: true,
+                    highlight: at,
+                });
+            }
+            _ => self.delete_entry(&entry, cx),
+        }
+        cx.notify();
+    }
+
+    /// Edit: the body becomes the multi-line editor in place.
+    fn start_entry_edit(&mut self, entry: Entry, window: &mut Window, cx: &mut Context<Self>) {
+        let id = entry.id;
+        let state = cx.new(|cx| {
+            TextareaState::new(window, cx)
+                .auto_grow(3, 16)
+                .default_value(entry.text.clone())
+        });
+        state.update(cx, |state, cx| state.focus(window, cx));
+        let sub = cx.subscribe_in(
+            &state,
+            window,
+            move |page, editor, event: &InputEvent, window, cx| {
+                if let InputEvent::PressEnter {
+                    secondary: true, ..
+                } = event
+                {
+                    let text = editor.read(cx).value().trim_end().to_owned();
+                    if !text.trim().is_empty() {
+                        page.write_entry(&entry, text, entry.kind, cx);
+                        page.entry_edit = None;
+                        window.focus(&page.focus, cx);
+                        cx.notify();
+                    }
+                }
+            },
+        );
+        self._subs.push(sub);
+        self.entry_edit = Some((id, state));
+        cx.notify();
+    }
+
+    /// Save an entry's text and type, undoably.
+    fn write_entry(
+        &mut self,
+        entry: &Entry,
+        text: String,
+        kind: EntryKind,
+        cx: &mut Context<Self>,
+    ) {
+        if text == entry.text && kind == entry.kind {
+            return;
+        }
+        let id = entry.id;
+        let back = (entry.text.clone(), entry.kind);
+        let project = self.project_id();
+        self.ws.update(cx, |ws, cx| {
+            ws.undoable(cx, project, None, move |store| {
+                store.update_entry(id, &text, kind, Author::Human)?;
+                let now = store.entry(id)?;
+                Ok((
+                    Undo::Entry {
+                        id,
+                        back,
+                        expect: (now.text, now.kind),
+                    },
+                    (),
+                ))
+            });
+        });
     }
 
     fn delete_entry(&mut self, entry: &Entry, cx: &mut Context<Self>) {
@@ -746,6 +881,25 @@ impl RecordPage {
     // ---- keys ----
 
     fn on_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(menu) = self.entry_menu.as_mut() {
+            if event.keystroke.modifiers.modified() {
+                return;
+            }
+            let rows = if menu.kinds { ENTRY_KINDS.len() } else { 4 };
+            match event.keystroke.key.as_str() {
+                "up" => menu.highlight = menu.highlight.saturating_sub(1),
+                "down" => menu.highlight = (menu.highlight + 1).min(rows - 1),
+                "enter" | "space" => {
+                    let at = menu.highlight;
+                    self.choose_entry_item(at, window, cx);
+                }
+                "escape" => self.entry_menu = None,
+                _ => return,
+            }
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
         let Some(highlight) = self.status_menu else {
             return;
         };
@@ -1483,15 +1637,16 @@ impl RecordPage {
     ) -> AnyElement {
         let body: AnyElement = if let Some(editor) = &self.description_edit {
             editor_box(editor, locale, t, cx)
-        } else if data.description.trim().is_empty() && self.topic().is_none() {
-            // The placeholder names a topic; epics and projects show the
-            // label alone, which still opens the editor.
-            div().into_any_element()
         } else if data.description.trim().is_empty() {
+            let placeholder = match self.owner {
+                Owner::Topic(_) => Key::DescriptionPlaceholder,
+                Owner::Epic(_) => Key::DescriptionPlaceholderEpic,
+                Owner::Project(_) => Key::DescriptionPlaceholderProject,
+            };
             type_scale::READING
                 .el()
                 .text_color(t.text_tertiary)
-                .child(text(locale, Key::DescriptionPlaceholder))
+                .child(text(locale, placeholder))
                 .into_any_element()
         } else {
             markdown_view::short("description-body", data.description.clone(), t).into_any_element()
@@ -1649,30 +1804,38 @@ impl RecordPage {
                 )
                 .child(div().flex_1())
                 .child(
-                    ui::ghost_icon_button(
-                        "kb-new-document",
-                        Icon::FileText,
-                        24.,
-                        false,
-                        false,
-                        true,
-                        t,
-                    )
-                    .on_click(cx.listener(|page, _, _, cx| page.new_kb(KbKind::Document, cx))),
-                )
-                .child(
-                    ui::ghost_icon_button("kb-new-memory", Icon::Plus, 24., false, false, true, t)
-                        .on_click(cx.listener(|page, _, _, cx| page.new_kb(KbKind::Memory, cx))),
+                    div()
+                        .child(
+                            ui::ghost_icon_button("kb-new", Icon::Plus, 24., false, false, true, t)
+                                .tooltip(ui::tip(format!(
+                                    "{} / {}",
+                                    text(locale, Key::KbNewDocument),
+                                    text(locale, Key::KbNewMemory)
+                                )))
+                                .on_click(cx.listener(|page, _, window, cx| {
+                                    page.kb_new_menu = Some(0);
+                                    window.focus(&page.focus, cx);
+                                    cx.notify();
+                                })),
+                        )
+                        .children(
+                            self.kb_new_menu
+                                .map(|h| self.render_kb_new_menu(h, locale, t, cx)),
+                        ),
                 ),
         );
-        // The empty line names a topic; epics and projects show nothing.
-        if kb.own.is_empty() && self.topic().is_some() {
+        if kb.own.is_empty() {
+            let empty = match self.owner {
+                Owner::Topic(_) => Key::KbEmpty,
+                Owner::Epic(_) => Key::KbEmptyEpic,
+                Owner::Project(_) => Key::KbEmptyProject,
+            };
             section = section.child(
                 type_scale::UI
                     .el()
                     .mt(px(4.))
                     .text_color(t.text_tertiary)
-                    .child(text(locale, Key::KbEmpty)),
+                    .child(text(locale, empty)),
             );
         }
         let mut index = 0;
@@ -1724,25 +1887,36 @@ impl RecordPage {
                     }
                 }
             } else {
-                section = section.child(
-                    div().ml(px(-12.)).child(
-                        ui::button(
-                            "kb-inherited",
-                            tr(
-                                locale,
-                                Key::KbMoreInherited,
-                                &[("n", Arg::Count(inherited as u64))],
-                            ),
-                            Variant::Ghost,
-                            false,
-                            t,
-                        )
-                        .on_click(cx.listener(|page, _, _, cx| {
+                // From the project alone (an epic, or a topic outside any
+                // epic), the row names it.
+                let only_project = kb
+                    .inherited
+                    .iter()
+                    .all(|(owner, _)| matches!(owner, Owner::Project(_)));
+                let label = if only_project {
+                    tr(
+                        locale,
+                        Key::KbMoreInheritedProject,
+                        &[
+                            ("n", Arg::Count(inherited as u64)),
+                            ("name", Arg::Text(&data.project.1)),
+                        ],
+                    )
+                } else {
+                    tr(
+                        locale,
+                        Key::KbMoreInherited,
+                        &[("n", Arg::Count(inherited as u64))],
+                    )
+                };
+                section = section.child(div().ml(px(-12.)).child(
+                    ui::button("kb-inherited", label, Variant::Ghost, false, t).on_click(
+                        cx.listener(|page, _, _, cx| {
                             page.kb_inherited_open = true;
                             cx.notify();
-                        })),
+                        }),
                     ),
-                );
+                ));
             }
         }
         if data.kb_below > 0 {
@@ -1800,24 +1974,30 @@ impl RecordPage {
             .collect::<Vec<_>>();
         let composer = self.render_composer(locale, t, cx);
         let mut list = div().flex().flex_col().gap(px(24.)).mt(px(24.));
-        if data.entries.is_empty() {
-            list = list.child(
-                type_scale::READING
-                    .el()
-                    .text_color(t.text_tertiary)
-                    .child(text(locale, Key::TimelineEmpty)),
-            );
-        }
         let human = when::initial(&when::human_name(locale));
         // System events other than status changes have no line in the
         // catalogue yet (docs/design/data.md 11, request 10): not shown.
-        let shown = data.entries.iter().filter(|e| {
-            e.kind != EntryKind::System
-                || e.event
-                    .as_ref()
-                    .is_some_and(|ev| ev.kind == acta_core::model::EventKind::Status)
-        });
-        for (i, entry) in shown.enumerate() {
+        let shown: Vec<&Entry> = data
+            .entries
+            .iter()
+            .filter(|e| {
+                e.kind != EntryKind::System
+                    || e.event
+                        .as_ref()
+                        .is_some_and(|ev| ev.kind == acta_core::model::EventKind::Status)
+            })
+            .collect();
+        // The empty state is about what is shown: a timeline of hidden
+        // system events alone is empty too.
+        if shown.iter().all(|e| e.kind == EntryKind::System) {
+            list = list.child(
+                type_scale::READING
+                    .el()
+                    .text_color(t.text_secondary)
+                    .child(text(locale, Key::TimelineEmpty)),
+            );
+        }
+        for (i, entry) in shown.into_iter().enumerate() {
             list = list.child(self.render_entry(entry, i, &human, locale, t, cx));
         }
         div()
@@ -1877,9 +2057,12 @@ impl RecordPage {
             .px(px(16.))
             .py(px(12.))
             .child(
-                type_scale::READING
-                    .el()
-                    .child(Textarea::new(&self.composer).appearance(false)),
+                type_scale::READING.el().child(
+                    Textarea::new(&self.composer)
+                        .appearance(false)
+                        .text_size(px(type_scale::READING.size))
+                        .line_height(px(type_scale::READING.line)),
+                ),
             )
             .when(self.composer_open, |this| {
                 this.child(
@@ -1926,16 +2109,16 @@ impl RecordPage {
     ) -> AnyElement {
         if entry.kind == EntryKind::System {
             let line = system_line(entry, locale);
+            // The gutter shows the glyph of the status it was set to.
+            let glyph = event_status(entry)
+                .map(|s| ui::status_glyph(s, 14., t))
+                .unwrap_or_else(|| icon(Icon::CircleDot, 14., t.text_tertiary));
             return div()
                 .flex()
                 .flex_row()
                 .items_center()
                 .gap(px(12.))
-                .child(div().w(px(20.)).flex().justify_center().child(icon(
-                    Icon::CircleDot,
-                    14.,
-                    t.text_tertiary,
-                )))
+                .child(div().w(px(20.)).flex().justify_center().child(glyph))
                 .child(
                     type_scale::SMALL
                         .el()
@@ -1954,7 +2137,12 @@ impl RecordPage {
                 .text_color(t.text_primary)
                 .child(name),
         };
-        let entry_for_delete = entry.clone();
+        let entry_for_menu = entry.clone();
+        let menu_open = self
+            .entry_menu
+            .as_ref()
+            .is_some_and(|m| m.entry.id == entry.id);
+        let menu = menu_open.then(|| self.render_entry_menu(locale, t, cx));
         let header = div()
             .flex()
             .flex_row()
@@ -1986,25 +2174,41 @@ impl RecordPage {
             .child(div().flex_1())
             .child(
                 div()
-                    .invisible()
-                    .group_hover(SharedString::from(format!("entry-{index}")), |s| {
-                        s.visible()
+                    .when(!menu_open, |this| {
+                        this.invisible()
+                            .group_hover(SharedString::from(format!("entry-{index}")), |s| {
+                                s.visible()
+                            })
                     })
                     .child(
                         ui::ghost_icon_button(
-                            format!("entry-delete-{index}"),
-                            Icon::Trash2,
+                            format!("entry-menu-{index}"),
+                            Icon::Ellipsis,
                             24.,
-                            false,
+                            menu_open,
                             false,
                             true,
                             t,
                         )
-                        .on_click(cx.listener(move |page, _, _, cx| {
-                            page.delete_entry(&entry_for_delete, cx)
-                        })),
-                    ),
+                        .on_click(cx.listener(
+                            move |page, _, window, cx| {
+                                page.open_entry_menu(entry_for_menu.clone(), window, cx)
+                            },
+                        )),
+                    )
+                    .children(menu),
             );
+        let editing = self
+            .entry_edit
+            .as_ref()
+            .filter(|(id, _)| *id == entry.id)
+            .map(|(_, editor)| editor.clone());
+        let body: AnyElement = match editing {
+            Some(editor) => editor_box(&editor, locale, t, cx),
+            None => {
+                markdown_view::short(("entry", index), entry.text.clone(), t).into_any_element()
+            }
+        };
         let content = div()
             .flex()
             .flex_col()
@@ -2012,13 +2216,18 @@ impl RecordPage {
             .flex_1()
             .min_w_0()
             .child(header)
-            .child(markdown_view::short(
-                ("entry", index),
-                entry.text.clone(),
-                t,
-            ));
-        div()
-            .id(("entry-row", index))
+            .child(body);
+        let entry_for_keys = entry.clone();
+        ui::focusable(div().id(("entry-row", index)), t, false)
+            .on_key_down(cx.listener(move |page, event: &KeyDownEvent, window, cx| {
+                // Shift+F10 or the context-menu key: the entry menu.
+                let k = &event.keystroke;
+                if (k.key == "f10" && k.modifiers.shift) || k.key == "menu" {
+                    page.open_entry_menu(entry_for_keys.clone(), window, cx);
+                    cx.stop_propagation();
+                }
+            }))
+            .rounded(px(RADIUS_MD))
             .group(SharedString::from(format!("entry-{index}")))
             .flex()
             .flex_row()
@@ -2072,6 +2281,9 @@ impl RecordPage {
             }
             all
         };
+        if all.is_empty() {
+            return self.render_no_topics(locale, t, cx);
+        }
         let count = all.iter().filter(|t| self.table_filter.keeps(t)).count();
         let toolbar = div()
             .flex()
@@ -2292,43 +2504,176 @@ impl RecordPage {
                 }
             }
         }
-        let empty = all.is_empty().then(|| {
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(12.))
-                .mt(px(12.))
-                .child(
-                    type_scale::READING
-                        .el()
-                        .max_w(px(480.))
-                        .text_color(t.text_secondary)
-                        .child(text(locale, Key::TopicEmptyProject)),
-                )
-                .child(
-                    div().flex().child(
-                        ui::button(
-                            "table-empty-new",
-                            text(locale, Key::TopicNew),
-                            Variant::Primary,
-                            false,
-                            t,
-                        )
-                        .on_click(cx.listener(|_, _, window, cx| {
-                            window.dispatch_action(Box::new(crate::shell::NewTopic), cx);
-                        })),
-                    ),
-                )
-        });
         div()
             .flex()
             .flex_col()
             .mt(px(32.))
             .child(toolbar)
-            .when(!all.is_empty(), |this| this.child(header).child(body))
-            .children(empty)
+            .child(header)
+            .child(body)
             .into_any_element()
     }
+
+    /// No topics at all (components.md 5, Empty state): the heading, one
+    /// sentence, then New topic with its key.
+    fn render_no_topics(&self, locale: Locale, t: &Tokens, cx: &mut Context<Self>) -> AnyElement {
+        let macos = cfg!(target_os = "macos");
+        div()
+            .flex()
+            .flex_col()
+            .mt(px(32.))
+            .child(
+                type_scale::HEADING
+                    .el()
+                    .text_color(t.text_primary)
+                    .child(text(locale, Key::TopicEmptyHeading)),
+            )
+            .child(
+                type_scale::READING
+                    .el()
+                    .mt(px(8.))
+                    .max_w(px(480.))
+                    .text_color(t.text_secondary)
+                    .child(text(locale, Key::TopicEmptyProject)),
+            )
+            .child(
+                div().mt(px(16.)).flex().child(
+                    ui::button(
+                        "table-empty-new",
+                        text(locale, Key::TopicNew),
+                        Variant::Primary,
+                        false,
+                        t,
+                    )
+                    .child(ui::kbd_on_accent(
+                        &[KeyName::Mod.label(locale, macos), "T"],
+                        t,
+                    ))
+                    .on_click(cx.listener(|_, _, window, cx| {
+                        window.dispatch_action(Box::new(crate::shell::NewTopic), cx);
+                    })),
+                ),
+            )
+            .into_any_element()
+    }
+
+    /// The entry menu, under its `ellipsis` button.
+    fn render_entry_menu(&self, locale: Locale, t: &Tokens, cx: &mut Context<Self>) -> AnyElement {
+        let Some(menu) = &self.entry_menu else {
+            return div().into_any_element();
+        };
+        let mut panel =
+            menu::panel("entry-menu", t).on_mouse_down_out(cx.listener(|page, _, _, cx| {
+                page.entry_menu = None;
+                cx.notify();
+            }));
+        if menu.kinds {
+            for (i, kind) in ENTRY_KINDS.into_iter().enumerate() {
+                let (glyph, key) = entry_kind_meta(kind);
+                panel =
+                    panel.child(
+                        menu::item(
+                            ("entry-kind", i),
+                            Some(icon(glyph, 16., t.text_secondary).into_any_element()),
+                            text(locale, key),
+                            (kind == menu.entry.kind).then(|| menu::check(t)),
+                            i == menu.highlight,
+                            t,
+                        )
+                        .on_click(cx.listener(
+                            move |page, _, window, cx| page.choose_entry_item(i, window, cx),
+                        )),
+                    );
+            }
+        } else {
+            let items = [
+                Key::CommonEdit,
+                Key::EntryCopyMarkdown,
+                Key::EntryChangeType,
+                Key::CommonDelete,
+            ];
+            for (i, key) in items.into_iter().enumerate() {
+                let danger = i == 3;
+                if danger {
+                    panel = panel.child(menu::separator(t));
+                }
+                panel =
+                    panel.child(
+                        menu::item(
+                            ("entry-item", i),
+                            None,
+                            text(locale, key),
+                            None,
+                            i == menu.highlight,
+                            t,
+                        )
+                        .when(danger, |this| this.text_color(t.danger))
+                        .on_click(cx.listener(
+                            move |page, _, window, cx| page.choose_entry_item(i, window, cx),
+                        )),
+                    );
+            }
+        }
+        deferred(anchored().offset(point(px(-176.), px(28.))).child(panel))
+            .with_priority(1)
+            .into_any_element()
+    }
+
+    /// The `plus` menu of the knowledge section: New document, New memory,
+    /// with their keys.
+    fn render_kb_new_menu(
+        &self,
+        highlight: usize,
+        locale: Locale,
+        t: &Tokens,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let macos = cfg!(target_os = "macos");
+        let m = KeyName::Mod.label(locale, macos);
+        let shift = KeyName::Shift.label(locale, macos);
+        let rows = [
+            (Key::KbNewDocument, Icon::FileText, "D", KbKind::Document),
+            (Key::KbNewMemory, Icon::Pin, "M", KbKind::Memory),
+        ];
+        let mut panel =
+            menu::panel("kb-new-menu", t).on_mouse_down_out(cx.listener(|page, _, _, cx| {
+                page.kb_new_menu = None;
+                cx.notify();
+            }));
+        for (i, (key, glyph, letter, kind)) in rows.into_iter().enumerate() {
+            panel = panel.child(
+                menu::item(
+                    ("kb-new-item", i),
+                    Some(icon(glyph, 16., t.text_secondary).into_any_element()),
+                    text(locale, key),
+                    Some(ui::kbd(&[m, shift, letter], t).into_any_element()),
+                    i == highlight,
+                    t,
+                )
+                .on_click(cx.listener(move |page, _, _, cx| {
+                    page.kb_new_menu = None;
+                    page.new_kb(kind, cx);
+                })),
+            );
+        }
+        deferred(anchored().offset(point(px(-176.), px(28.))).child(panel))
+            .with_priority(1)
+            .into_any_element()
+    }
+}
+
+/// The status a system event set, if it is a status change.
+fn event_status(entry: &Entry) -> Option<Status> {
+    entry
+        .event
+        .as_ref()
+        .filter(|e| e.kind == acta_core::model::EventKind::Status)
+        .and_then(|e| e.new.as_deref())
+        .and_then(|s| {
+            Status::ALL
+                .into_iter()
+                .find(|st| format!("{st:?}").eq_ignore_ascii_case(s))
+        })
 }
 
 fn owner_label(owner: Owner, data: &Loaded) -> String {
@@ -2342,16 +2687,7 @@ fn owner_label(owner: Owner, data: &Loaded) -> String {
 fn system_line(entry: &Entry, locale: Locale) -> String {
     let author = when::author(locale, entry.author);
     let when = when::long(locale, entry.stamp.created_at);
-    let status = entry
-        .event
-        .as_ref()
-        .filter(|e| e.kind == acta_core::model::EventKind::Status)
-        .and_then(|e| e.new.as_deref())
-        .and_then(|s| {
-            Status::ALL
-                .into_iter()
-                .find(|st| format!("{st:?}").eq_ignore_ascii_case(s))
-        });
+    let status = event_status(entry);
     let what = match status {
         Some(status) => {
             let name = text(locale, ui::status_key(status));
@@ -2368,6 +2704,13 @@ fn system_line(entry: &Entry, locale: Locale) -> String {
 
 fn progress(data: &Loaded, locale: Locale, t: &Tokens) -> AnyElement {
     let (done, total) = data.progress();
+    if total == 0 {
+        // No topic to count: the words alone, no empty bar.
+        return div()
+            .text_color(t.text_tertiary)
+            .child(text(locale, Key::ProgressNone))
+            .into_any_element();
+    }
     let fraction = if total > 0 {
         done as f32 / total as f32
     } else {
@@ -2458,9 +2801,12 @@ fn editor_box(
         .py(px(12.))
         .on_action(cx.listener(|page, _: &Escape, window, cx| page.cancel_editors(window, cx)))
         .child(
-            type_scale::READING
-                .el()
-                .child(Textarea::new(editor).appearance(false)),
+            type_scale::READING.el().child(
+                Textarea::new(editor)
+                    .appearance(false)
+                    .text_size(px(type_scale::READING.size))
+                    .line_height(px(type_scale::READING.line)),
+            ),
         )
         .child(
             div()

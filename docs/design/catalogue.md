@@ -72,6 +72,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `prop.kind` | Kind | Nature |
 | `prop.level` | Level | Niveau |
 | `prop.progress.value` | {done} of {total} topic done · {done} of {total} topics done (form chosen by {total}) | {done} sujet terminé sur {total} · {done} sujets terminés sur {total} (form chosen by {done}) |
+| `progress.none` | No topics yet | Aucun sujet |
 | `kind.document` | Document | Document |
 | `kind.memory` | Memory | Mémoire |
 | `level.project` | Project {name} | Projet {name} |
@@ -84,6 +85,8 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `state.updated` | Updated {when} by {author} | Modifié {when} par {author} |
 | `state.placeholder` | Where does this stand? One or two sentences. | Où en est-on ? Une ou deux phrases. |
 | `description.placeholder` | What is this topic about, and what does done look like? | De quoi s'agit-il, et à quoi verra-t-on que c'est terminé ? |
+| `description.placeholder.epic` | What is this epic about? | De quoi parle cet epic ? |
+| `description.placeholder.project` | What is this project about? | De quoi parle ce projet ? |
 | `timeline.all` | All | Tout |
 | `entry.progress` | Progress | Avancement |
 | `entry.decision` | Decision | Décision |
@@ -112,6 +115,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `project.deleted` | Project deleted. | Projet supprimé. |
 | `topic.restored` | Topic restored. | Sujet restauré. |
 | `topic.empty_project` | No topics yet. Capture notes and let Claude Code file them, or start one yourself. | Aucun sujet pour l'instant. Saisissez des notes et laissez Claude Code les classer, ou créez-en un vous-même. |
+| `topic.empty.heading` | No topics yet | Aucun sujet pour l'instant |
 | `error.save_entry` | Could not save the entry. The database is locked by another process. | Impossible d'enregistrer l'entrée. La base de données est verrouillée par un autre processus. |
 | `error.save` | Could not save the change. Try again. | Impossible d'enregistrer la modification. Réessayez. |
 | `undo.changed` | Not undone: it was changed since. | Non annulé : cela a été modifié depuis. |
@@ -144,9 +148,12 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `kb.from_epic` | From epic {name} | De l'epic {name} |
 | `kb.from_project` | From project {name} | Du projet {name} |
 | `kb.more_inherited` | {n} more from epic and project | {n} autre hérité de l'epic et du projet · {n} autres hérités de l'epic et du projet |
+| `kb.more_inherited.project` | {n} more from project {name} | {n} autre hérité du projet {name} · {n} autres hérités du projet {name} |
 | `kb.more_epic` | {n} more in the topics of this epic | {n} de plus dans les sujets de cet epic |
 | `kb.more_project` | {n} more in this project's epics and topics | {n} de plus dans les epics et sujets de ce projet |
 | `kb.empty` | Nothing here yet. Documents and memories for this topic appear here. | Rien ici pour l'instant. Les documents et mémoires de ce sujet apparaîtront ici. |
+| `kb.empty.epic` | Nothing here yet. Documents and memories for this epic appear here. | Rien ici pour l'instant. Les documents et mémoires de cet epic apparaîtront ici. |
+| `kb.empty.project` | Nothing here yet. Documents and memories for this project appear here. | Rien ici pour l'instant. Les documents et mémoires de ce projet apparaîtront ici. |
 | `kb.summary.memory` | One line: the fact, in short | Une ligne : le fait, en bref |
 | `kb.summary.document` | One line: what this is and when to read it | Une ligne : ce que c'est et quand le lire |
 | `kb.show_history` | Show history | Afficher l'historique |
