@@ -1553,6 +1553,10 @@ catalogue! {
         en: t("Missing"),
         fr: t("À faire"),
     }
+    SettingsCheckUnknown "settings.check.unknown" {
+        en: t("Could not check"),
+        fr: t("Vérification impossible"),
+    }
     SettingsSetup "settings.setup" {
         en: t("Set up Claude Code"),
         fr: t("Configurer Claude Code"),

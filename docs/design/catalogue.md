@@ -396,6 +396,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `settings.check.rule` | Permission rule added | Règle d'autorisation ajoutée |
 | `settings.check.done` | Done | Fait |
 | `settings.check.missing` | Missing | À faire |
+| `settings.check.unknown` | Could not check | Vérification impossible |
 | `settings.setup` | Set up Claude Code | Configurer Claude Code |
 | `settings.setup_again` | Run setup again | Relancer la configuration |
 | `settings.setup_remove` | Remove from Claude Code | Retirer de Claude Code |
