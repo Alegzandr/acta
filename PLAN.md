@@ -7,7 +7,7 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 | M0 | Research, spikes, ADRs, DESIGN.md | - | done |
 | M1 | Pipeline: window that installs silently and updates itself; design foundations; app icon | v0.1.x | done |
 | M2 | Data model and core UI | v0.3.0 | done |
-| M3 | MCP server, CLI, Claude Code setup; Acta tracks itself | v0.3.0 | done (dogfooding pending) |
+| M3 | MCP server, CLI, Claude Code setup; Acta tracks itself | v0.3.0 | done (Acta tracks itself since 2026-11-21: project P-1 linked to this repository) |
 | M4 | Integrated terminal running Claude Code | v0.3.0 | doing (docked; live Claude Code session to verify) |
 | M5 | Claude chat panel beside the work (Windows and macOS; link on Linux; ADR 0009) | v0.3.x | done on Windows (user checks pending: keyboard in the page, a real sign-in) |
 | M6 | Notes inbox and notes-to-topics flow | v0.3.x | done |
