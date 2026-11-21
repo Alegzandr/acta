@@ -8,13 +8,17 @@
 use crate::open::Opener;
 use acta_core::agent::{Agent, Launch, PRE_COMPACT, Session, hook_json};
 use acta_core::model::Author;
+use acta_core::paths::Os;
+use acta_core::{claude_settings, folder_path, git_guard};
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Event {
     SessionStart,
     PreCompact,
+    /// `PreToolUse` on `git commit` / `git push` (ADR 0011, the guard).
+    PreGit,
 }
 
 impl Event {
@@ -22,6 +26,7 @@ impl Event {
         match s {
             "session-start" => Some(Event::SessionStart),
             "pre-compact" => Some(Event::PreCompact),
+            "pre-git" => Some(Event::PreGit),
             _ => None,
         }
     }
@@ -33,6 +38,12 @@ struct Input {
     session_id: Option<String>,
     cwd: Option<String>,
     source: Option<String>,
+    tool_input: Option<ToolInput>,
+}
+
+#[derive(Default, serde::Deserialize)]
+struct ToolInput {
+    command: Option<String>,
 }
 
 /// What the hook prints on stdout; `None` prints nothing.
@@ -48,6 +59,11 @@ pub fn run(event: Event, stdin: &str, opener: &Opener) -> Option<String> {
         return None;
     }
     match event {
+        Event::PreGit => {
+            let command = input.tool_input?.command?;
+            let dir = launch.dir?;
+            pre_git(&command, &dir, opener)
+        }
         Event::PreCompact => Some(PRE_COMPACT.to_owned()),
         Event::SessionStart => {
             let mut store = opener.open().ok()?;
@@ -61,6 +77,20 @@ pub fn run(event: Event, stdin: &str, opener: &Opener) -> Option<String> {
             Some(hook_json("SessionStart", &text))
         }
     }
+}
+
+/// The guard: only for a folder whose commit settings are automatic; it
+/// answers deny or nothing, never allow.
+fn pre_git(command: &str, dir: &Path, opener: &Opener) -> Option<String> {
+    let stored = folder_path::canonical(dir)
+        .unwrap_or_else(|_| folder_path::normalize(Os::CURRENT, &dir.to_string_lossy()));
+    let store = opener.open().ok()?;
+    let (_, settings) = claude_settings::commit_settings_for(&store, &stored).ok()??;
+    if !settings.mode.automatic() {
+        return None;
+    }
+    let info = acta_core::agent::git::inspect(dir)?;
+    git_guard::check(command, &settings, &info).map(|r| git_guard::deny_json(&r))
 }
 
 /// Reads at most 1 MiB of stdin: hook payloads are small, and a hook must

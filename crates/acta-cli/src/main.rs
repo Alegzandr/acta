@@ -8,6 +8,7 @@
 //! visible to other processes (CLAUDE.md).
 
 mod browser;
+mod folders;
 mod hook;
 mod link;
 mod mcp;
@@ -63,8 +64,13 @@ enum Command {
         #[command(subcommand)]
         server: Option<McpServer>,
     },
-    /// Run a Claude Code hook: session-start or pre-compact (hook JSON on stdin)
+    /// Run a Claude Code hook: session-start, pre-compact or pre-git (hook JSON on stdin)
     Hook { event: String },
+    /// Folder settings set by the user
+    Folders {
+        #[command(subcommand)]
+        action: FoldersAction,
+    },
     /// Install Acta in Claude Code: plugin, MCP server, hooks, skills, allow rule
     Setup {
         /// Report each step without changing anything
@@ -272,6 +278,23 @@ enum SnapshotAction {
     Restore {
         /// A name from `acta snapshot list`, or "latest"
         name: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum FoldersAction {
+    /// Set an attached folder's commit mode: manual, commit or push
+    Commit {
+        /// manual, commit (commit automatically) or push (commit and push automatically)
+        mode: String,
+        /// The folder (default: this repository)
+        path: Option<PathBuf>,
+        /// Commit in my name, without Co-Authored-By Claude
+        #[arg(long)]
+        as_me: bool,
+        /// Also commit and push automatically on the default branch
+        #[arg(long)]
+        on_default: bool,
     },
 }
 
@@ -609,6 +632,24 @@ fn run_on(store: &mut acta_core::Store, command: Command) -> Result<String, Stri
             };
             return link::run(store, args, &cwd, session.author);
         }
+        Command::Folders {
+            action:
+                FoldersAction::Commit {
+                    mode,
+                    path,
+                    as_me,
+                    on_default,
+                },
+        } => {
+            let cwd = launch.dir.clone().unwrap_or_default();
+            let args = folders::CommitArgs {
+                mode,
+                path,
+                as_me,
+                on_default,
+            };
+            return folders::commit(store, args, &cwd, author());
+        }
         Command::Export { path, project } => return export(store, &path, project),
         Command::Import { path, dry_run } => return import(store, &path, dry_run),
         Command::Snapshot { action } => return snapshot(store, action),
@@ -792,6 +833,7 @@ fn run_on(store: &mut acta_core::Store, command: Command) -> Result<String, Stri
         | Command::Hook { .. }
         | Command::Setup { .. }
         | Command::Link { .. }
+        | Command::Folders { .. }
         | Command::Export { .. }
         | Command::Import { .. }
         | Command::Snapshot { .. }
