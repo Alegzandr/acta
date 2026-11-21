@@ -482,6 +482,7 @@ impl Store {
             tx.rollback()?;
         } else {
             tx.commit()?;
+            let _ = self.refresh_link_index();
         }
         Ok(report)
     }

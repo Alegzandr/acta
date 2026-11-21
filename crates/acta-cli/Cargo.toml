@@ -14,3 +14,14 @@ path = "src/main.rs"
 [dependencies]
 acta-core.workspace = true
 clap = { version = "4.6", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
+# ADR 0005: rmcp pinned by Cargo.lock, transport kept behind `mcp.rs`.
+rmcp = { version = "3.11.0", default-features = false, features = ["server", "macros", "schemars", "transport-io"] }
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+# preserve_order: `acta setup` edits the user's settings.json and must keep
+# its key order.
+serde_json = { version = "1", features = ["preserve_order"] }
+tokio = { version = "1", default-features = false, features = ["rt", "macros", "io-std", "time"] }
+
+[dev-dependencies]
+tempfile = "3"

@@ -732,6 +732,7 @@ fn search_finds_live_records_with_snippets() {
         text: text.into(),
         project: Some(p),
         kinds,
+        ..SearchQuery::default()
     };
     let hits = store.search(&q("keych", vec![]), all()).unwrap();
     assert_eq!(hits.total, 4);
@@ -1198,6 +1199,7 @@ fn search_reports_whether_the_total_is_capped() {
         text: "keychain".into(),
         project: Some(p),
         kinds: vec![],
+        ..SearchQuery::default()
     };
     let page = store.search(&q, all()).unwrap();
     assert_eq!((page.total, page.capped), (3, false));
