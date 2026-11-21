@@ -66,7 +66,7 @@ Palette commands for working folders (exact labels): "Set working folder...", "A
 
 **Quick capture** (`Mod+N`): a palette-sized overlay (640 wide, same position and surface) containing one multi-line editor with the placeholder "Note for Acta" and the project name as a chip. `Mod+Enter` saves to that project's inbox and closes, with no toast (the inbox count increments, which is feedback enough); `Esc` closes and keeps the draft. Works while the terminal is focused via the palette. Capture never navigates away from what the user was reading.
 
-**Quick entry** (`Mod+E`): focuses the composer at the top of the timeline, scrolling it into view if needed, with the type preset to Progress; `Alt+1/2/3` switches Progress / Decision / Discussion; `Mod+Enter` saves and returns focus to where it was.
+**Quick entry** (`Mod+E`): focuses the composer at the top of the timeline, scrolling it into view if needed, with the type preset to Progress; `Alt+1/2/3` switches Progress / Decision / Discussion; `Mod+Enter` saves and returns focus to where it was. An entry opened for editing (`Enter` or Edit) scrolls the page by the least amount that shows its editor whole, or brings its top into view when it is taller than the page, so an entry near the bottom never opens its editor below the fold.
 
 ### 6.2 Focus
 

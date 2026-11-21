@@ -140,6 +140,8 @@ actions!(
         Undo,
         /// `Mod+Shift+Z`, also `Ctrl+Y` on Windows and Linux.
         Redo,
+        /// `Mod+Shift+O`: the open document's headings.
+        GoToHeading,
         /// ``Ctrl+` `` or `Mod+Shift+J`.
         ToggleTerminal,
         /// `Mod+1`.
@@ -271,6 +273,7 @@ fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new(m("cmd-shift-m", "ctrl-shift-m"), NewMemory, app),
         KeyBinding::new(m("cmd-z", "ctrl-z"), Undo, plain),
         KeyBinding::new(m("cmd-shift-z", "ctrl-shift-z"), Redo, plain),
+        KeyBinding::new(m("cmd-shift-o", "ctrl-shift-o"), GoToHeading, app),
         KeyBinding::new("ctrl-`", ToggleTerminal, None),
         KeyBinding::new(m("cmd-shift-j", "ctrl-shift-j"), ToggleTerminal, None),
         KeyBinding::new(m("cmd-1", "ctrl-1"), FocusSidebar, None),
@@ -1646,6 +1649,7 @@ impl Shell {
             has_project: bench.active_project.is_some(),
             on_topic: matches!(bench.history.current(), Some(Route::Topic(_))),
             on_record: matches!(bench.page, PageView::Record(_)),
+            on_doc: matches!(bench.history.current(), Some(Route::Kb(_))),
             can_back: bench.history.can_go_back(),
             can_forward: bench.history.can_go_forward(),
             tabs: bench.layout.page_tabs().len() > 1,
@@ -1804,6 +1808,17 @@ impl Shell {
             Command::Capture => self.open_capture(window, cx),
             Command::GoInbox => self.go_project_page(Route::Inbox, window, cx),
             Command::GoKnowledge => self.go_project_page(Route::Knowledge, window, cx),
+            Command::GoHeading | Command::SaveFile | Command::KbMoveTo => {
+                if let Some(bench) = self.bench()
+                    && let PageView::Doc(page) = &bench.page
+                {
+                    page.update(cx, |page, cx| match command {
+                        Command::GoHeading => page.go_to_heading(cx),
+                        Command::SaveFile => page.save_as_file(cx),
+                        _ => page.move_to(cx),
+                    });
+                }
+            }
             Command::ReviewMemories => {
                 let Some(bench) = self.bench() else { return };
                 let Some(project) = bench.active_project else {
@@ -4397,6 +4412,9 @@ impl Render for Shell {
             .on_action(cx.listener(|s, _: &Forward, w, cx| s.forward(w, cx)))
             .on_action(cx.listener(|s, _: &Undo, w, cx| s.undo(w, cx)))
             .on_action(cx.listener(|s, _: &Redo, w, cx| s.redo(w, cx)))
+            .on_action(
+                cx.listener(|s, _: &GoToHeading, w, cx| s.run_command(Command::GoHeading, w, cx)),
+            )
             .on_action(cx.listener(|s, _: &ExportData, w, cx| s.open_export(w, cx)))
             .on_action(cx.listener(|s, _: &ImportData, w, cx| s.import(w, cx)))
             .on_action(cx.listener(|s, _: &RestoreSnapshot, w, cx| s.open_snapshots(w, cx)))

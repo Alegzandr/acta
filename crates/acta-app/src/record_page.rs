@@ -91,6 +91,10 @@ pub struct RecordPage {
     entry_menu: Option<EntryMenu>,
     /// An entry being edited in place, with its editor.
     entry_edit: Option<(EntryId, Entity<TextareaState>)>,
+    /// The page's scroll, and a newly opened entry editor to bring into
+    /// view once it is laid out (it may open near the bottom).
+    scroll: gpui_kit::ScrollHandle,
+    reveal_editor: std::rc::Rc<std::cell::Cell<bool>>,
     /// The knowledge section's New menu, with its highlighted row.
     kb_new_menu: Option<usize>,
     folders_open: bool,
@@ -175,6 +179,8 @@ impl RecordPage {
             status_menu: None,
             entry_menu: None,
             entry_edit: None,
+            scroll: gpui_kit::ScrollHandle::new(),
+            reveal_editor: Default::default(),
             kb_new_menu: None,
             folders_open: false,
             table_filter: table::Filter::Open,
@@ -620,6 +626,7 @@ impl RecordPage {
         );
         self._subs.push(sub);
         self.entry_edit = Some((id, state));
+        self.reveal_editor.set(true);
         cx.notify();
     }
 
@@ -2162,7 +2169,22 @@ impl RecordPage {
             .filter(|(id, _)| *id == entry.id)
             .map(|(_, editor)| editor.clone());
         let body: AnyElement = match editing {
-            Some(editor) => editor_box(&editor, locale, t, cx),
+            // Scrolled into view once laid out, by the least amount
+            // (an entry near the bottom opens its editor below the fold).
+            Some(editor) => {
+                let reveal = std::rc::Rc::clone(&self.reveal_editor);
+                let scroll = self.scroll.clone();
+                div()
+                    .relative()
+                    .child(editor_box(&editor, locale, t, cx))
+                    .child(ui::measure(move |bounds, window| {
+                        if reveal.replace(false) {
+                            ui::scroll_into_view(&scroll, bounds, ui::Reveal::Whole);
+                            window.refresh();
+                        }
+                    }))
+                    .into_any_element()
+            }
             None => {
                 markdown_view::short(("entry", index), entry.text.clone(), t).into_any_element()
             }
@@ -2831,6 +2853,7 @@ impl Render for RecordPage {
             }
         }
         ui::page_scroll("record-page")
+            .track_scroll(&self.scroll)
             .track_focus(&self.focus)
             .key_context("RecordPage")
             .on_action(cx.listener(|page, _: &OpenStatusMenu, window, cx| {

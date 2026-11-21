@@ -173,6 +173,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `kb.move_to` | Move to... | Déplacer vers... |
 | `kb.change_kind` | Change kind | Changer de nature |
 | `kb.save_file` | Save as file | Enregistrer comme fichier |
+| `kb.saved_file` | Saved {name}. The file is not encrypted. | {name} enregistré. Le fichier n'est pas chiffré. |
 | `kb.moved.project.document` | Moved to project {name}. | Déplacé vers le projet {name}. |
 | `kb.moved.project.memory` | Moved to project {name}. | Déplacée vers le projet {name}. |
 | `kb.moved.epic.document` | Moved to epic {name}. | Déplacé vers l'epic {name}. |
@@ -196,6 +197,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `doc.editing` | Editing | Modification en cours |
 | `doc.needs` | A document needs a title and a summary. | Un document doit avoir un titre et un résumé. |
 | `doc.go_heading` | Go to heading | Aller au titre |
+| `doc.section_lines` | {n} line · {n} lines | {n} ligne · {n} lignes |
 | `history.version` | Version from {datetime} by {author} | Version du {datetime} par {author} |
 | `history.text` | Text | Texte |
 | `history.changes` | Changes | Modifications |

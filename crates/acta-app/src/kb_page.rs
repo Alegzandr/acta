@@ -800,6 +800,10 @@ pub struct DocPage {
     show_theirs: bool,
     /// The `ellipsis` menu of the reading view is open.
     doc_menu: bool,
+    /// The page's scroll, and where each heading of the body was laid out
+    /// (by its index in the outline), for "Go to heading".
+    scroll: gpui_kit::ScrollHandle,
+    headings: std::rc::Rc<std::cell::RefCell<Vec<Option<gpui_kit::Bounds<gpui_kit::Pixels>>>>>,
     /// The reading view's focus: where the keyboard goes when the editor
     /// closes, so `Mod+Z` reaches the window (interaction.md 6.4).
     focus: FocusHandle,
@@ -894,6 +898,8 @@ impl DocPage {
             saving: false,
             conflict: None,
             doc_menu: false,
+            scroll: gpui_kit::ScrollHandle::new(),
+            headings: Default::default(),
             focus: cx.focus_handle(),
             show_theirs: false,
             seen_revision: 0,
@@ -1190,6 +1196,173 @@ impl DocPage {
         cx.notify();
     }
 
+    /// "Go to heading..." (`Mod+Shift+O`): the palette as a picker of the
+    /// body's headings, each with its size; the chosen one scrolls to the
+    /// top of the page.
+    pub fn go_to_heading(&mut self, cx: &mut Context<Self>) {
+        let Some(entry) = &self.entry else { return };
+        if self.mode != Mode::Read {
+            return;
+        }
+        let locale = settings::locale(cx);
+        let sections = acta_core::markdown::outline(&entry.body);
+        if sections.is_empty() {
+            return;
+        }
+        let choices = sections
+            .iter()
+            .map(|s| crate::palette::Choice {
+                title: format!("{}{}", "  ".repeat(s.level.saturating_sub(1)), s.title),
+                detail: format!(
+                    "{} \u{b7} {}",
+                    s.number,
+                    tr(
+                        locale,
+                        Key::DocSectionLines,
+                        &[("n", Arg::Count((s.end - s.start) as u64))],
+                    )
+                ),
+                lead: crate::palette::Lead::Icon(Icon::FileText),
+            })
+            .collect();
+        let page = cx.entity().downgrade();
+        let on_pick = crate::palette::OnPick::new(move |i, _, cx| {
+            let _ = page.update(cx, |page, cx| page.scroll_to_heading(i, cx));
+        });
+        cx.emit(PageEvent::Pick(
+            crate::palette::Picker {
+                label: text(locale, Key::DocGoHeading),
+                choices,
+            },
+            on_pick,
+        ));
+    }
+
+    fn scroll_to_heading(&mut self, index: usize, cx: &mut Context<Self>) {
+        let bounds = self.headings.borrow().get(index).copied().flatten();
+        if let Some(bounds) = bounds {
+            ui::scroll_into_view(&self.scroll, bounds, ui::Reveal::Top);
+            cx.notify();
+        }
+    }
+
+    /// "Save as file...": the platform's save dialog, then the Markdown is
+    /// written off the UI thread; the toast says the file is not encrypted.
+    pub fn save_as_file(&mut self, cx: &mut Context<Self>) {
+        let Some(entry) = &self.entry else { return };
+        let name = kb_model::file_name(&entry.title);
+        let content = kb_model::file_text(&entry.title, &entry.body);
+        let start = crate::paths_view::home()
+            .map(std::path::PathBuf::from)
+            .unwrap_or_default();
+        let chosen = cx.prompt_for_new_path(&start, Some(&name));
+        let ws = self.ws.clone();
+        cx.spawn(async move |_, cx| {
+            let Ok(Ok(Some(path))) = chosen.await else {
+                return;
+            };
+            let target = path.clone();
+            let written = cx
+                .background_executor()
+                .spawn(async move { std::fs::write(&target, content) })
+                .await;
+            ws.update(cx, |ws, cx| {
+                let locale = settings::locale(cx);
+                match written {
+                    Ok(()) => {
+                        let shown = path
+                            .file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_default();
+                        let message = tr(locale, Key::KbSavedFile, &[("name", Arg::Text(&shown))]);
+                        ws.toast(message, crate::workspace::ToastKind::Done, cx);
+                    }
+                    Err(err) => {
+                        crate::log::line(&format!("save as file failed: {:?}", err.kind()));
+                        ws.toast_error(Key::ErrorSave, cx);
+                    }
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// "Move to...": the palette as a picker of the other levels of the
+    /// project; the move is one undo step, toasted with Undo.
+    pub fn move_to(&mut self, cx: &mut Context<Self>) {
+        let (Some(id), Some(entry)) = (self.id, &self.entry) else {
+            return;
+        };
+        let locale = settings::locale(cx);
+        let kind = entry.kind;
+        let Some(tree) = self
+            .ws
+            .read(cx)
+            .projects
+            .iter()
+            .find(|t| t.project.id == entry.project)
+            .cloned()
+        else {
+            return;
+        };
+        let targets = kb_model::move_targets(&tree, entry.owner);
+        let choices = targets
+            .iter()
+            .map(|(owner, name, path)| crate::palette::Choice {
+                title: name.clone(),
+                detail: path.clone(),
+                lead: match owner {
+                    Owner::Project(_) => crate::palette::Lead::Icon(Icon::Folder),
+                    Owner::Epic(_) => crate::palette::Lead::Icon(Icon::Layers),
+                    Owner::Topic(t) => crate::palette::Lead::Status(
+                        tree.loose_topics
+                            .iter()
+                            .chain(tree.epics.iter().flat_map(|(_, ts)| ts))
+                            .find(|x| x.id == *t)
+                            .map_or(acta_core::model::Status::Draft, |x| x.status),
+                    ),
+                },
+            })
+            .collect();
+        let ws = self.ws.clone();
+        let project = self.project;
+        let on_pick = crate::palette::OnPick::new(move |i, _, cx| {
+            let Some((owner, name, _)) = targets.get(i).cloned() else {
+                return;
+            };
+            let key = match (owner, kind) {
+                (Owner::Project(_), KbKind::Document) => Key::KbMovedProjectDocument,
+                (Owner::Project(_), KbKind::Memory) => Key::KbMovedProjectMemory,
+                (Owner::Epic(_), KbKind::Document) => Key::KbMovedEpicDocument,
+                (Owner::Epic(_), KbKind::Memory) => Key::KbMovedEpicMemory,
+                (Owner::Topic(_), KbKind::Document) => Key::KbMovedTopicDocument,
+                (Owner::Topic(_), KbKind::Memory) => Key::KbMovedTopicMemory,
+            };
+            let message = tr(locale, key, &[("name", Arg::Text(&name))]);
+            ws.update(cx, |ws, cx| {
+                ws.undoable(cx, project, Some(message), move |store| {
+                    let back = store.kb_entry(id)?.owner;
+                    store.kb_move(id, owner, Author::Human)?;
+                    Ok((
+                        Undo::KbOwner {
+                            id,
+                            back,
+                            expect: owner,
+                        },
+                        (),
+                    ))
+                });
+            });
+        });
+        cx.emit(PageEvent::Pick(
+            crate::palette::Picker {
+                label: text(locale, Key::KbMoveTo),
+                choices,
+            },
+            on_pick,
+        ));
+    }
+
     fn delete(&mut self, cx: &mut Context<Self>) {
         let (Some(id), Some(entry)) = (self.id, &self.entry) else {
             return;
@@ -1388,6 +1561,35 @@ impl DocPage {
             out = out.child(div().mt(px(16.)).child(shown));
         }
         out.into_any_element()
+    }
+}
+
+impl DocPage {
+    /// The body in parts cut at its headings, each heading's place kept
+    /// for "Go to heading"; 16 between parts, as between paragraphs.
+    fn render_body(&self, body: &str, t: &Tokens) -> AnyElement {
+        let parts = kb_model::body_parts(body);
+        let headings = std::rc::Rc::clone(&self.headings);
+        let count = parts.iter().filter(|(h, _)| h.is_some()).count();
+        headings.borrow_mut().resize(count, None);
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(16.))
+            .children(parts.into_iter().enumerate().map(|(i, (heading, text))| {
+                let headings = std::rc::Rc::clone(&headings);
+                div()
+                    .relative()
+                    .children(heading.map(|h| {
+                        ui::measure(move |bounds, _| {
+                            if let Some(slot) = headings.borrow_mut().get_mut(h) {
+                                *slot = Some(bounds);
+                            }
+                        })
+                    }))
+                    .child(markdown_view::document(("doc-body", i), text, t))
+            }))
+            .into_any_element()
     }
 }
 
@@ -1620,9 +1822,8 @@ impl Render for DocPage {
                             })),
                         )
                         .child(
-                            // components-knowledge.md 5: Delete lives in the
-                            // ellipsis menu, last and in danger. Go to heading,
-                            // Save as file and Move are not built yet.
+                            // components-knowledge.md 5: Go to heading, Save
+                            // as file, Move, then Delete, last and in danger.
                             div()
                                 .child(
                                     ui::ghost_icon_button(
@@ -1656,6 +1857,77 @@ impl Render for DocPage {
                                                         ))
                                                         .child(
                                                             menu::item(
+                                                                "doc-heading",
+                                                                None,
+                                                                text(locale, Key::DocGoHeading),
+                                                                Some(
+                                                                    ui::kbd(
+                                                                        &[
+                                                                            KeyName::Mod.label(
+                                                                                locale,
+                                                                                cfg!(
+                                                                                    target_os =
+                                                                                        "macos"
+                                                                                ),
+                                                                            ),
+                                                                            KeyName::Shift.label(
+                                                                                locale,
+                                                                                cfg!(
+                                                                                    target_os =
+                                                                                        "macos"
+                                                                                ),
+                                                                            ),
+                                                                            "O",
+                                                                        ],
+                                                                        &t,
+                                                                    )
+                                                                    .into_any_element(),
+                                                                ),
+                                                                false,
+                                                                &t,
+                                                            )
+                                                            .on_click(cx.listener(
+                                                                |page, _, _, cx| {
+                                                                    page.doc_menu = false;
+                                                                    page.go_to_heading(cx)
+                                                                },
+                                                            )),
+                                                        )
+                                                        .child(
+                                                            menu::item(
+                                                                "doc-save-file",
+                                                                None,
+                                                                text(locale, Key::KbSaveFile),
+                                                                None,
+                                                                false,
+                                                                &t,
+                                                            )
+                                                            .on_click(cx.listener(
+                                                                |page, _, _, cx| {
+                                                                    page.doc_menu = false;
+                                                                    page.save_as_file(cx)
+                                                                },
+                                                            )),
+                                                        )
+                                                        .child(
+                                                            menu::item(
+                                                                "doc-move",
+                                                                None,
+                                                                text(locale, Key::KbMoveTo),
+                                                                None,
+                                                                false,
+                                                                &t,
+                                                            )
+                                                            .on_click(cx.listener(
+                                                                |page, _, _, cx| {
+                                                                    page.doc_menu = false;
+                                                                    page.move_to(cx)
+                                                                },
+                                                            )),
+                                                        )
+                                                        .child(menu::separator(&t))
+                                                        .child(
+                                                            menu::item(
                                                                 "doc-delete",
                                                                 None,
                                                                 text(locale, Key::CommonDelete),
@@ -1682,7 +1954,7 @@ impl Render for DocPage {
                 .child(div().mt(px(24.)).child(if self.mode == Mode::History {
                     self.render_history(entry, locale, &t, cx)
                 } else {
-                    markdown_view::document("doc-body", entry.body.clone(), &t).into_any_element()
+                    self.render_body(&entry.body, &t)
                 }));
         }
         let save_bar = editing.then(|| {
@@ -1755,10 +2027,11 @@ impl Render for DocPage {
                 }
             }))
             .child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .child(ui::page_scroll("doc-page").child(column)),
+                div().flex_1().min_h_0().child(
+                    ui::page_scroll("doc-page")
+                        .track_scroll(&self.scroll)
+                        .child(column),
+                ),
             )
             .children(save_bar)
     }

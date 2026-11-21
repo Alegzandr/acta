@@ -75,6 +75,7 @@ pub fn groups(locale: Locale, macos: bool) -> Vec<(Key, Vec<Row>)> {
             Command::GoKnowledge,
             Command::NewDocument,
             Command::NewMemory,
+            Command::GoHeading,
             Command::Back,
             Command::Forward,
             Command::Undo,

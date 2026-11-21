@@ -84,6 +84,12 @@ pub enum Undo {
         back: i64,
         expect: i64,
     },
+    /// A knowledge entry moved to another owner.
+    KbOwner {
+        id: KbId,
+        back: Owner,
+        expect: Owner,
+    },
     /// A record moved among its siblings.
     Reorder {
         record: Record,
@@ -149,6 +155,7 @@ impl Undo {
                 current == !*back
             }
             Undo::KbRevision { id, expect, .. } => store.kb_entry(*id)?.rev == *expect,
+            Undo::KbOwner { id, expect, .. } => store.kb_entry(*id)?.owner == *expect,
             Undo::Reorder { record, expect, .. } => store.order_index(*record)? == *expect,
             Undo::Entry { id, expect, .. } => {
                 let e = store.entry(*id)?;
@@ -278,6 +285,14 @@ impl Undo {
                     id: *id,
                     back: *expect,
                     expect: store.kb_entry(*id)?.rev,
+                }
+            }
+            Undo::KbOwner { id, back, expect } => {
+                store.kb_move(*id, *back, me)?;
+                Undo::KbOwner {
+                    id: *id,
+                    back: *expect,
+                    expect: store.kb_entry(*id)?.owner,
                 }
             }
             Undo::Reorder {
@@ -1331,6 +1346,38 @@ mod tests {
         let filed = store.note(note).unwrap();
         assert!(!filed.is_open());
         assert_eq!(filed.filed_by, Some(Author::Human));
+    }
+
+    #[test]
+    fn a_knowledge_move_undoes_and_redoes() {
+        let mut temp = temp_store();
+        let store = &mut temp.store;
+        let (project, id) = topic(store);
+        let kb = store
+            .kb_create(
+                acta_core::store::NewKb {
+                    owner: Owner::Topic(id),
+                    kind: acta_core::model::KbKind::Memory,
+                    title: "Alexandre prefers tabs".into(),
+                    summary: "Tabs, not spaces".into(),
+                    body: "Tabs.".into(),
+                    from_file: false,
+                },
+                Author::Human,
+            )
+            .unwrap();
+        store
+            .kb_move(kb, Owner::Project(project), Author::Human)
+            .unwrap();
+        let undo = Undo::KbOwner {
+            id: kb,
+            back: Owner::Topic(id),
+            expect: Owner::Project(project),
+        };
+        let redo = undo.apply(store).unwrap().expect("undone");
+        assert_eq!(store.kb_entry(kb).unwrap().owner, Owner::Topic(id));
+        redo.apply(store).unwrap().expect("redone");
+        assert_eq!(store.kb_entry(kb).unwrap().owner, Owner::Project(project));
     }
 
     #[test]

@@ -683,6 +683,78 @@ impl gpui_kit::Element for NarrowPage {
     }
 }
 
+/// An element over its parent that reports the parent's bounds when it is
+/// laid out (where a heading or an editor is, to scroll to it).
+pub fn measure(
+    record: impl Fn(gpui_kit::Bounds<gpui_kit::Pixels>, &mut gpui_kit::Window) + 'static,
+) -> gpui_kit::AnyElement {
+    gpui_kit::canvas(
+        move |bounds, window, _| record(bounds, window),
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
+    .into_any_element()
+}
+
+/// How a scroll brings something into view.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reveal {
+    /// Its top at the top of the viewport, less a margin (Go to heading).
+    Top,
+    /// The least scroll that shows it whole, or its top when it is taller
+    /// than the viewport (an editor opened near the bottom).
+    Whole,
+}
+
+/// The vertical scroll offset (0 or negative, as GPUI keeps it) that
+/// brings the span `top..bottom` into the viewport `view_top..view_bottom`.
+/// Positions are in window coordinates measured at `offset`; `max` is the
+/// furthest the content scrolls (positive).
+pub fn reveal_offset(
+    how: Reveal,
+    offset: f32,
+    (view_top, view_bottom): (f32, f32),
+    (top, bottom): (f32, f32),
+    max: f32,
+) -> f32 {
+    const MARGIN: f32 = 24.;
+    let to_top = offset - (top - view_top) + MARGIN;
+    let target = match how {
+        Reveal::Top => to_top,
+        Reveal::Whole => {
+            if bottom - top > view_bottom - view_top - 2. * MARGIN || top < view_top {
+                to_top
+            } else if bottom > view_bottom {
+                offset - (bottom - view_bottom) - MARGIN
+            } else {
+                offset
+            }
+        }
+    };
+    target.clamp(-max.max(0.), 0.)
+}
+
+/// Scroll `handle` so the span measured as `bounds` shows, by `how`.
+pub fn scroll_into_view(
+    handle: &gpui_kit::ScrollHandle,
+    bounds: gpui_kit::Bounds<gpui_kit::Pixels>,
+    how: Reveal,
+) {
+    let view = handle.bounds();
+    let offset = handle.offset();
+    let y = reveal_offset(
+        how,
+        f32::from(offset.y),
+        (f32::from(view.top()), f32::from(view.bottom())),
+        (f32::from(bounds.top()), f32::from(bounds.bottom())),
+        f32::from(handle.max_offset().y),
+    );
+    handle.set_offset(gpui_kit::point(offset.x, px(y)));
+}
+
 /// The scrolling page area that centres the column, with 32 of side
 /// padding (docs/design/layout.md 4.2), 16 in a narrow page group.
 pub fn page_scroll(id: impl Into<ElementId>) -> Stateful<Div> {
@@ -795,6 +867,39 @@ pub fn ghost_value(id: impl Into<ElementId>, tokens: &Tokens) -> Stateful<Div> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_target_is_scrolled_to_the_top_or_just_into_view() {
+        let view = (100., 600.);
+        // A heading further down comes to the top, less the margin.
+        assert_eq!(
+            reveal_offset(Reveal::Top, 0., view, (900., 930.), 2000.),
+            -776.
+        );
+        // Never past the end of the content, never above the start.
+        assert_eq!(
+            reveal_offset(Reveal::Top, 0., view, (900., 930.), 500.),
+            -500.
+        );
+        assert_eq!(
+            reveal_offset(Reveal::Top, -300., view, (120., 150.), 2000.),
+            -296.
+        );
+        assert_eq!(
+            reveal_offset(Reveal::Top, -10., view, (110., 140.), 2000.),
+            0.
+        );
+        // An editor half below the viewport scrolls just enough.
+        assert_eq!(
+            reveal_offset(Reveal::Whole, 0., view, (500., 700.), 2000.),
+            -124.
+        );
+        // Already whole on screen: no scroll.
+        assert_eq!(
+            reveal_offset(Reveal::Whole, -40., view, (200., 400.), 2000.),
+            -40.
+        );
+    }
 
     #[test]
     fn rows_take_two_lines_in_a_column_under_520() {

@@ -661,6 +661,10 @@ catalogue! {
         en: t("Save as file"),
         fr: t("Enregistrer comme fichier"),
     }
+    KbSavedFile "kb.saved_file" {
+        en: t("Saved {name}. The file is not encrypted."),
+        fr: t("{name} enregistré. Le fichier n\u{2019}est pas chiffré."),
+    }
     KbMovedProjectDocument "kb.moved.project.document" {
         en: t("Moved to project {name}."),
         fr: t("Déplacé vers le projet {name}."),
@@ -752,6 +756,10 @@ catalogue! {
     DocGoHeading "doc.go_heading" {
         en: t("Go to heading"),
         fr: t("Aller au titre"),
+    }
+    DocSectionLines "doc.section_lines" {
+        en: p("{n} line", "{n} lines"),
+        fr: p("{n} ligne", "{n} lignes"),
     }
     HistoryVersion "history.version" {
         en: t("Version from {datetime} by {author}"),
