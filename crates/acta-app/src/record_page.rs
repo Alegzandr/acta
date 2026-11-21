@@ -44,9 +44,9 @@ use crate::workspace::{FolderRef, Undo, Workspace};
 #[derive(Clone, Debug, PartialEq)]
 pub enum PageEvent {
     Open(Route),
-    /// The page now stands for another route, without a history step (a
-    /// draft that was just saved).
-    Replace(Route),
+    /// A draft was saved as `route`: the history steps to it (the draft
+    /// itself took no step, so Back returns to where it was started).
+    Saved(Route),
     /// Start a document or memory owned by this page's record.
     NewKb(crate::kb_page::Draft),
     /// The page learned which project it belongs to (a document opened by
@@ -318,63 +318,7 @@ impl RecordPage {
         }
         self.saving_title = true;
         let owner = self.owner;
-        let project = self.project_id();
-        let task = self.ws.update(cx, |ws, cx| {
-            ws.write_undoable(cx, project, None, move |store| {
-                let me = Author::Human;
-                let undo = match owner {
-                    Owner::Topic(id) => {
-                        let back = store.topic(id)?.title;
-                        store.update_topic(
-                            id,
-                            TopicPatch {
-                                title: Some(new.clone()),
-                                ..TopicPatch::default()
-                            },
-                            me,
-                        )?;
-                        Undo::TopicTitle {
-                            id,
-                            back,
-                            expect: store.topic(id)?.title,
-                        }
-                    }
-                    Owner::Epic(id) => {
-                        let back = store.epic(id)?.title;
-                        store.update_epic(
-                            id,
-                            EpicPatch {
-                                title: Some(new.clone()),
-                                ..EpicPatch::default()
-                            },
-                            me,
-                        )?;
-                        Undo::EpicTitle {
-                            id,
-                            back,
-                            expect: store.epic(id)?.title,
-                        }
-                    }
-                    Owner::Project(id) => {
-                        let back = store.project(id)?.title;
-                        store.update_project(
-                            id,
-                            ProjectPatch {
-                                title: Some(new.clone()),
-                                ..ProjectPatch::default()
-                            },
-                            me,
-                        )?;
-                        Undo::ProjectTitle {
-                            id,
-                            back,
-                            expect: store.project(id)?.title,
-                        }
-                    }
-                };
-                Ok((undo, ()))
-            })
-        });
+        let task = self.ws.update(cx, |ws, cx| ws.rename(owner, new, cx));
         cx.spawn_in(window, async move |page, cx| {
             let saved = task.await.is_ok();
             let _ = page.update_in(cx, |page, window, cx| {
@@ -1190,9 +1134,11 @@ impl RecordPage {
             } else {
                 name.clone()
             };
+            // Narrow windows end it with an ellipsis rather than cut it.
             type_scale::SMALL
                 .el()
-                .flex_shrink_0()
+                .min_w_0()
+                .truncate()
                 .text_color(t.text_tertiary)
                 .child(tr(locale, key, &[("name", Arg::Text(&short))]))
         });
@@ -1984,16 +1930,20 @@ impl RecordPage {
         let human = when::initial(&when::human_name(locale));
         // System events other than status changes have no line in the
         // catalogue yet (docs/design/data.md 11, request 10): not shown.
-        let shown: Vec<&Entry> = data
-            .entries
-            .iter()
-            .filter(|e| {
-                e.kind != EntryKind::System
-                    || e.event
-                        .as_ref()
-                        .is_some_and(|ev| ev.kind == acta_core::model::EventKind::Status)
-            })
-            .collect();
+        // Status changes in quick succession read as one line, and a
+        // change undone leaves none (components-records.md 5).
+        let shown: Vec<Entry> = record::collapse_status_events(
+            data.entries
+                .iter()
+                .filter(|e| {
+                    e.kind != EntryKind::System
+                        || e.event
+                            .as_ref()
+                            .is_some_and(|ev| ev.kind == acta_core::model::EventKind::Status)
+                })
+                .cloned()
+                .collect(),
+        );
         // The empty state is about what is shown: a timeline of hidden
         // system events alone is empty too.
         if shown.iter().all(|e| e.kind == EntryKind::System) {
@@ -2004,7 +1954,7 @@ impl RecordPage {
                     .child(text(locale, Key::TimelineEmpty)),
             );
         }
-        for (i, entry) in shown.into_iter().enumerate() {
+        for (i, entry) in shown.iter().enumerate() {
             list = list.child(self.render_entry(entry, i, &human, locale, t, cx));
         }
         div()

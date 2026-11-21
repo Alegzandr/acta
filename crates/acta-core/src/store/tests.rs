@@ -378,6 +378,32 @@ fn topic_changes_are_recorded_as_system_events() {
 }
 
 #[test]
+fn a_timeline_write_updates_the_topic() {
+    let TestStore { mut store, .. } = open();
+    let p = store.create_project("Acta", "", H).unwrap();
+    let t = topic(&mut store, p, None, "Keys");
+    let created = store.topic(t).unwrap().stamp;
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    let e = store
+        .log(t, entry(EntryKind::Progress, "Alexandre tried it"), C)
+        .unwrap();
+    let logged = store.topic(t).unwrap().stamp;
+    assert!(logged.updated_at > created.updated_at);
+    assert_eq!(logged.updated_by, C);
+    assert_eq!(
+        store.tree(p).unwrap().loose_topics[0].updated_at,
+        logged.updated_at
+    );
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    store
+        .update_entry(e.id, "Alexandre tried it twice", EntryKind::Progress, H)
+        .unwrap();
+    let edited = store.topic(t).unwrap().stamp;
+    assert!(edited.updated_at > logged.updated_at);
+    assert_eq!(edited.updated_by, H);
+}
+
+#[test]
 fn log_numbers_entries_and_refreshes_state() {
     let TestStore { mut store, .. } = open();
     let p = store.create_project("Acta", "", H).unwrap();

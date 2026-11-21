@@ -193,6 +193,18 @@ catalogue! {
         en: t("No epic"),
         fr: t("Sans epic"),
     }
+    TreeRename "tree.rename" {
+        en: t("Rename"),
+        fr: t("Renommer"),
+    }
+    TreeSetStatus "tree.set_status" {
+        en: t("Set status"),
+        fr: t("Changer le statut"),
+    }
+    TreeMoveEpic "tree.move_epic" {
+        en: t("Move to epic"),
+        fr: t("Déplacer vers un epic"),
+    }
     StatusDraft "status.draft" {
         en: t("Draft"),
         fr: t("Brouillon"),
@@ -761,6 +773,14 @@ catalogue! {
         en: t("Created from file"),
         fr: t("Créée depuis un fichier"),
     }
+    HistoryCreatedDocument "history.created.document" {
+        en: t("Created"),
+        fr: t("Créé"),
+    }
+    HistoryCreatedMemory "history.created.memory" {
+        en: t("Created"),
+        fr: t("Créée"),
+    }
     FoldersTitle "folders.title" {
         en: t("Working folders"),
         fr: t("Dossiers de travail"),
@@ -1261,6 +1281,10 @@ catalogue! {
         en: t("{keys} open in new tab"),
         fr: t("{keys} ouvrir dans un nouvel onglet"),
     }
+    PaletteHintCreate "palette.hint.create" {
+        en: t("{keys} create"),
+        fr: t("{keys} créer"),
+    }
     PaletteHintClose "palette.hint.close" {
         en: t("{keys} close"),
         fr: t("{keys} fermer"),
@@ -1342,8 +1366,8 @@ catalogue! {
         fr: t("Nouvel epic\u{2026}"),
     }
     CmdSwitchProject "cmd.switch_project" {
-        en: t("Switch project"),
-        fr: t("Changer de projet"),
+        en: t("Switch project\u{2026}"),
+        fr: t("Changer de projet\u{2026}"),
     }
     CmdToggleSidebar "cmd.toggle_sidebar" {
         en: t("Toggle left sidebar"),
@@ -1752,6 +1776,10 @@ catalogue! {
     SettingsCheckMissing "settings.check.missing" {
         en: t("Missing"),
         fr: t("À faire"),
+    }
+    SettingsCheckUnknown "settings.check.unknown" {
+        en: t("Could not check"),
+        fr: t("Vérification impossible"),
     }
     SettingsSetup "settings.setup" {
         en: t("Set up Claude Code"),
@@ -2204,5 +2232,81 @@ catalogue! {
     ShortcutsGroupTerminal "shortcuts.group.terminal" {
         en: t("Terminal and chat"),
         fr: t("Terminal et chat"),
+    }
+    ShortcutsPalette "shortcuts.palette" {
+        en: t("Command palette"),
+        fr: t("Palette de commandes"),
+    }
+    ShortcutsNextTab "shortcuts.next_tab" {
+        en: t("Next tab"),
+        fr: t("Onglet suivant"),
+    }
+    ShortcutsPreviousTab "shortcuts.previous_tab" {
+        en: t("Previous tab"),
+        fr: t("Onglet précédent"),
+    }
+    ShortcutsFocusProjects "shortcuts.focus_projects" {
+        en: t("Focus Projects"),
+        fr: t("Aller aux projets"),
+    }
+    ShortcutsFocusPage "shortcuts.focus_page" {
+        en: t("Focus the page area"),
+        fr: t("Aller à la zone des pages"),
+    }
+    ShortcutsFocusTerminal "shortcuts.focus_terminal" {
+        en: t("Focus the terminal"),
+        fr: t("Aller au terminal"),
+    }
+    ShortcutsFocusChat "shortcuts.focus_chat" {
+        en: t("Focus the chat"),
+        fr: t("Aller au chat"),
+    }
+    ShortcutsNextArea "shortcuts.next_area" {
+        en: t("Focus next area (reserved)"),
+        fr: t("Aller à la zone suivante (réservé)"),
+    }
+    ShortcutsPreviousArea "shortcuts.previous_area" {
+        en: t("Focus previous area (reserved)"),
+        fr: t("Aller à la zone précédente (réservé)"),
+    }
+    ShortcutsMaximize "shortcuts.maximize" {
+        en: t("Maximize focused area (reserved)"),
+        fr: t("Agrandir au maximum la zone active (réservé)"),
+    }
+    ShortcutsListMove "shortcuts.list.move" {
+        en: t("Move the cursor"),
+        fr: t("Déplacer le curseur"),
+    }
+    ShortcutsListEnds "shortcuts.list.ends" {
+        en: t("First or last row"),
+        fr: t("Première ou dernière ligne"),
+    }
+    ShortcutsListFold "shortcuts.list.fold" {
+        en: t("Collapse or expand"),
+        fr: t("Replier ou déplier"),
+    }
+    ShortcutsListPreview "shortcuts.list.preview" {
+        en: t("Preview, focus stays in the list"),
+        fr: t("Aperçu, le focus reste dans la liste"),
+    }
+    ShortcutsListStatus "shortcuts.list.status" {
+        en: t("Set status, then 1 to 6"),
+        fr: t("Changer le statut, puis 1 à 6"),
+    }
+    ShortcutsListReorder "shortcuts.list.reorder" {
+        en: t("Move up or down"),
+        fr: t("Monter ou descendre"),
+    }
+    ShortcutsListMenu "shortcuts.list.menu" {
+        en: t("Open the menu"),
+        fr: t("Ouvrir le menu"),
+    }
+    ShortcutsEditorSave "shortcuts.editor.save" {
+        en: t("Save the editor in focus"),
+        fr: t("Enregistrer l\u{2019}éditeur actif"),
+    }
+    ShortcutsEditorCancel "shortcuts.editor.cancel" {
+        en: t("Cancel the edit"),
+        fr: t("Annuler la modification"),
     }
 }

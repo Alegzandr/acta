@@ -414,7 +414,7 @@ pub fn render(
                 MouseButton::Right,
                 cx.listener(move |shell, e: &MouseDownEvent, _, cx| {
                     let (x, y) = menu_at(e);
-                    shell.open_menu(crate::shell::MenuKind::View(view), x - 200., y, cx)
+                    shell.open_menu(crate::shell::LayoutMenu::View(view), x - 200., y, cx)
                 }),
             ),
         );
@@ -444,7 +444,7 @@ pub fn render(
                 MouseButton::Right,
                 cx.listener(move |shell, e: &MouseDownEvent, _, cx| {
                     let (x, y) = menu_at(e);
-                    shell.open_menu(crate::shell::MenuKind::Layout, x - 240., y, cx)
+                    shell.open_menu(crate::shell::LayoutMenu::Layout, x - 240., y, cx)
                 }),
             ),
         );
@@ -458,7 +458,7 @@ pub fn render(
         .on_click(cx.listener(move |shell, e: &gpui_kit::ClickEvent, _, cx| {
             let p = e.position();
             shell.open_menu(
-                crate::shell::MenuKind::Layout,
+                crate::shell::LayoutMenu::Layout,
                 f32::from(p.x) - 240.,
                 f32::from(p.y) + 12.,
                 cx,

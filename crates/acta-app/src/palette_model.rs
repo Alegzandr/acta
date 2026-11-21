@@ -108,11 +108,28 @@ pub fn fuzzy(query: &str, text: &str) -> Option<(i64, Vec<usize>)> {
     Some((score, matched))
 }
 
+/// Where a topic goes while the query is empty, with its score: under
+/// Recent when it was opened lately (`recent_rank`); otherwise, in a
+/// palette scoped to topics ("Go to topic...", `Mod+P`), under Topics with
+/// the newest write first, so the list is never empty.
+pub fn idle_topic(
+    recent_rank: Option<usize>,
+    scope: Option<Group>,
+    updated_at: i64,
+) -> Option<(Group, i64)> {
+    match recent_rank {
+        Some(rank) => Some((Group::Recent, -(rank as i64))),
+        None if scope == Some(Group::Topics) => Some((Group::Topics, updated_at)),
+        None => None,
+    }
+}
+
 /// Order items: fixed group order, then score, then their given order
-/// (recency for topics), and keep at most `limit` per group.
+/// (recency for topics), and keep at most `limit` per group. A scope to
+/// topics keeps the recent ones, which are topics too.
 pub fn arrange(mut items: Vec<Item>, scope: Option<Group>, limit: usize) -> Vec<Item> {
     if let Some(scope) = scope {
-        items.retain(|i| i.group == scope);
+        items.retain(|i| i.group == scope || (scope == Group::Topics && i.group == Group::Recent));
     }
     // Stable: equal scores keep their given order.
     items.sort_by(|a, b| {
@@ -196,6 +213,28 @@ mod tests {
         let topics = arrange(items.clone(), Some(Group::Topics), 10);
         assert_eq!(topics.len(), 2);
         assert_eq!(arrange(items, None, 1).len(), 3);
+    }
+
+    #[test]
+    fn go_to_topic_lists_topics_before_anything_is_typed() {
+        // Recent first, then every other topic, newest write first.
+        assert_eq!(idle_topic(Some(1), None, 5), Some((Group::Recent, -1)));
+        assert_eq!(idle_topic(None, None, 5), None);
+        assert_eq!(
+            idle_topic(None, Some(Group::Topics), 5),
+            Some((Group::Topics, 5))
+        );
+        let items = vec![
+            item(Group::Topics, "Older", 1),
+            item(Group::Recent, "Opened lately", 0),
+            item(Group::Topics, "Newer", 2),
+            item(Group::Commands, "Toggle terminal", 0),
+        ];
+        let titles: Vec<_> = arrange(items, Some(Group::Topics), 10)
+            .into_iter()
+            .map(|i| i.title)
+            .collect();
+        assert_eq!(titles, ["Opened lately", "Newer", "Older"]);
     }
 
     #[test]

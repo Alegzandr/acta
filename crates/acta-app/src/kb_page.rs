@@ -11,9 +11,9 @@ use acta_core::store::{
 use gpui_kit::component::input::{Escape, Input, InputEvent, InputState, Textarea, TextareaState};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, AppContext, Context, Entity, EventEmitter, InteractiveElement, IntoElement,
-    ParentElement, Render, StatefulInteractiveElement, Styled, Subscription, Task, Window,
-    anchored, deferred, div, point, px,
+    AnyElement, App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable,
+    InteractiveElement, IntoElement, ParentElement, Render, StatefulInteractiveElement, Styled,
+    Subscription, Task, Window, anchored, deferred, div, point, px,
 };
 
 use crate::diff::{self, Change};
@@ -759,6 +759,9 @@ pub struct DocPage {
     show_theirs: bool,
     /// The `ellipsis` menu of the reading view is open.
     doc_menu: bool,
+    /// The reading view's focus: where the keyboard goes when the editor
+    /// closes, so `Mod+Z` reaches the window (interaction.md 6.4).
+    focus: FocusHandle,
     seen_revision: u64,
     _load: Task<()>,
     _subs: Vec<Subscription>,
@@ -766,11 +769,27 @@ pub struct DocPage {
 
 impl EventEmitter<PageEvent> for DocPage {}
 
+impl Focusable for DocPage {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
+    }
+}
+
 impl DocPage {
     #[cfg(windows)]
     /// The ellipsis menu is open (the chat's web view hides under it).
     pub fn menu_open(&self) -> bool {
         self.doc_menu
+    }
+
+    /// The editor is open.
+    pub fn editing(&self) -> bool {
+        self.mode == Mode::Edit
+    }
+
+    /// The kind of a document or memory not saved yet.
+    pub fn draft_kind(&self) -> Option<KbKind> {
+        self.draft.filter(|_| self.id.is_none()).map(|d| d.kind)
     }
 
     /// The entry's owner and title, once loaded (the breadcrumb, and the
@@ -834,6 +853,7 @@ impl DocPage {
             saving: false,
             conflict: None,
             doc_menu: false,
+            focus: cx.focus_handle(),
             show_theirs: false,
             seen_revision: 0,
             _load: Task::ready(()),
@@ -891,7 +911,12 @@ impl DocPage {
                 .auto_grow(12, 400)
                 .default_value(body)
         });
-        title_state.update(cx, |s, cx| s.focus(window, cx));
+        // Editing an entry starts in its body; a new one needs a title first.
+        if self.entry.is_some() {
+            body_state.update(cx, |s, cx| s.focus(window, cx));
+        } else {
+            title_state.update(cx, |s, cx| s.focus(window, cx));
+        }
         for state in [&title_state, &summary_state] {
             self._subs.push(cx.subscribe_in(
                 state,
@@ -932,7 +957,7 @@ impl DocPage {
         filled(&self.title) && filled(&self.summary)
     }
 
-    fn cancel(&mut self, cx: &mut Context<Self>) {
+    fn cancel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.mode == Mode::Edit && self.id.is_none() {
             // A draft never saved: back to where it was started from.
             if let Some(draft) = self.draft {
@@ -943,6 +968,7 @@ impl DocPage {
         self.title = None;
         self.summary = None;
         self.body = None;
+        window.focus(&self.focus, cx);
         cx.notify();
     }
 
@@ -995,10 +1021,13 @@ impl DocPage {
             });
             cx.spawn_in(window, async move |page, cx| {
                 let result = task.await;
-                let _ = page.update_in(cx, |page, _, cx| {
+                let _ = page.update_in(cx, |page, window, cx| {
                     page.saving = false;
                     match result {
-                        Ok(()) => page.close_editor(cx),
+                        Ok(()) => {
+                            page.close_editor(cx);
+                            window.focus(&page.focus, cx);
+                        }
                         Err(WriteError::Stale) => page.load_conflict(cx),
                         Err(WriteError::Failed) => {}
                     }
@@ -1025,14 +1054,14 @@ impl DocPage {
             });
             cx.spawn_in(window, async move |page, cx| {
                 let result = task.await;
-                let _ = page.update_in(cx, |page, _, cx| {
+                let _ = page.update_in(cx, |page, window, cx| {
                     page.saving = false;
                     if let Ok(id) = result {
                         page.id = Some(id);
                         page.draft = None;
                         page.close_editor(cx);
-                        page.reload(cx);
-                        cx.emit(PageEvent::Replace(Route::Kb(id)));
+                        window.focus(&page.focus, cx);
+                        cx.emit(PageEvent::Saved(Route::Kb(id)));
                     }
                     cx.notify();
                 });
@@ -1142,6 +1171,13 @@ impl DocPage {
                 locale,
                 Key::HistoryReplaced,
                 &[("name", Arg::Text(section.unwrap_or_default()))],
+            ),
+            ChangeKind::Created => text(
+                locale,
+                match kind {
+                    KbKind::Document => Key::HistoryCreatedDocument,
+                    KbKind::Memory => Key::HistoryCreatedMemory,
+                },
             ),
             ChangeKind::CreatedFromFile => text(
                 locale,
@@ -1264,16 +1300,21 @@ impl DocPage {
                 );
             out = out.child(
                 div().mt(px(24.)).child(
-                    ui::notice(None, version, t).child(toggle).child(
-                        ui::button(
-                            "history-restore",
-                            text(locale, Key::HistoryRestore),
-                            Variant::Secondary,
-                            false,
-                            t,
-                        )
-                        .on_click(cx.listener(|page, _, _, cx| page.restore_selected(cx))),
-                    ),
+                    // Narrow windows wrap the controls under the version
+                    // line instead of clipping it.
+                    ui::notice(None, version, t)
+                        .flex_wrap()
+                        .child(toggle)
+                        .child(
+                            ui::button(
+                                "history-restore",
+                                text(locale, Key::HistoryRestore),
+                                Variant::Secondary,
+                                false,
+                                t,
+                            )
+                            .on_click(cx.listener(|page, _, _, cx| page.restore_selected(cx))),
+                        ),
                 ),
             );
             let shown: AnyElement = if self.show_changes {
@@ -1645,7 +1686,7 @@ impl Render for DocPage {
                         false,
                         &t,
                     )
-                    .on_click(cx.listener(|page, _, _, cx| page.cancel(cx))),
+                    .on_click(cx.listener(|page, _, window, cx| page.cancel(window, cx))),
                 )
                 .child(
                     ui::button(
@@ -1663,12 +1704,13 @@ impl Render for DocPage {
             .size_full()
             .flex()
             .flex_col()
-            .on_action(cx.listener(|page, _: &Escape, _, cx| {
+            .track_focus(&self.focus)
+            .on_action(cx.listener(|page, _: &Escape, window, cx| {
                 if page.mode == Mode::History {
                     page.mode = Mode::Read;
                     cx.notify();
                 } else {
-                    page.cancel(cx);
+                    page.cancel(window, cx);
                 }
             }))
             .child(
@@ -1678,5 +1720,25 @@ impl Render for DocPage {
                     .child(ui::page_scroll("doc-page").child(column)),
             )
             .children(save_bar)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_first_version_reads_created() {
+        let label = |change, kind| DocPage::change_label(Locale::En, change, None, kind);
+        assert_eq!(label(ChangeKind::Created, KbKind::Document), "Created");
+        assert_eq!(
+            DocPage::change_label(Locale::Fr, ChangeKind::Created, None, KbKind::Memory),
+            "Créée"
+        );
+        assert_eq!(label(ChangeKind::Edited, KbKind::Document), "Edited");
+        assert_eq!(
+            label(ChangeKind::CreatedFromFile, KbKind::Memory),
+            "Created from file"
+        );
     }
 }

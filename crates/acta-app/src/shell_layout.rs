@@ -169,7 +169,7 @@ pub(super) struct Resize {
 
 /// The menus the layout opens (4.8.4, 4.8.5).
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum MenuKind {
+pub(crate) enum LayoutMenu {
     Layout,
     View(ViewId),
     /// The tab menu of an Inbox or Knowledge page tab.
@@ -182,7 +182,7 @@ pub(crate) enum MenuKind {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct Menu {
-    pub kind: MenuKind,
+    pub kind: LayoutMenu,
     x: f32,
     y: f32,
 }
@@ -1275,7 +1275,7 @@ impl Shell {
 
     // ---- menus ----
 
-    pub(crate) fn open_menu(&mut self, kind: MenuKind, x: f32, y: f32, cx: &mut Context<Self>) {
+    pub(crate) fn open_menu(&mut self, kind: LayoutMenu, x: f32, y: f32, cx: &mut Context<Self>) {
         if let Some(ui) = self.layout_ui() {
             ui.menu = match ui.menu {
                 Some(m) if m.kind == kind => None,
@@ -1714,7 +1714,7 @@ impl Shell {
                 cx.listener(move |shell, e: &MouseDownEvent, _, cx| {
                     cx.stop_propagation();
                     shell.open_menu(
-                        MenuKind::View(active),
+                        LayoutMenu::View(active),
                         f32::from(e.position.x),
                         f32::from(e.position.y),
                         cx,
@@ -1740,7 +1740,7 @@ impl Shell {
                             let p = e.position();
                             if let Place::Side(side) = place {
                                 shell.open_menu(
-                                    MenuKind::FoldedSide(side),
+                                    LayoutMenu::FoldedSide(side),
                                     f32::from(p.x) - 180.,
                                     f32::from(p.y) + 12.,
                                     cx,
@@ -1768,7 +1768,7 @@ impl Shell {
                         move |shell, e: &gpui_kit::ClickEvent, _, cx| {
                             let p = e.position();
                             shell.open_menu(
-                                MenuKind::View(active),
+                                LayoutMenu::View(active),
                                 f32::from(p.x) - 200.,
                                 f32::from(p.y) + 12.,
                                 cx,
@@ -1862,7 +1862,7 @@ impl Shell {
             cx.listener(move |shell, e: &MouseDownEvent, _, cx| {
                 cx.stop_propagation();
                 shell.open_menu(
-                    MenuKind::View(view),
+                    LayoutMenu::View(view),
                     f32::from(e.position.x),
                     f32::from(e.position.y),
                     cx,
@@ -2177,7 +2177,8 @@ impl Shell {
                 Tab::Page(id) => {
                     let route = self.route_of(id);
                     let Some(route) = route else { continue };
-                    let (glyph, status, title) = self.tab_label(route, locale, cx);
+                    let (glyph, status, title) =
+                        self.tab_label(route, self.is_current(id), locale, cx);
                     let leading = match status {
                         Some(status) => ui::status_glyph(status, 14., t).into_any_element(),
                         None => icon(glyph, 14., t.text_secondary).into_any_element(),
@@ -2261,9 +2262,9 @@ impl Shell {
                     cx.listener(move |shell, e: &MouseDownEvent, _, cx| {
                         let (x, y) = (f32::from(e.position.x), f32::from(e.position.y));
                         match (tab_v, view_kind) {
-                            (Tab::View(v), _) => shell.open_menu(MenuKind::View(v), x, y, cx),
+                            (Tab::View(v), _) => shell.open_menu(LayoutMenu::View(v), x, y, cx),
                             (Tab::Page(id), Some(v)) => {
-                                shell.open_menu(MenuKind::PageTab(id, v), x, y, cx)
+                                shell.open_menu(LayoutMenu::PageTab(id, v), x, y, cx)
                             }
                             _ => {}
                         }
@@ -2302,7 +2303,7 @@ impl Shell {
                         |shell, e: &gpui_kit::ClickEvent, _, cx| {
                             let p = e.position();
                             shell.open_menu(
-                                MenuKind::Folded,
+                                LayoutMenu::Folded,
                                 f32::from(p.x) - 200.,
                                 f32::from(p.y) + 12.,
                                 cx,
@@ -2313,6 +2314,11 @@ impl Shell {
             );
         }
         bar.into_any_element()
+    }
+
+    /// Whether `tab` is the checked-out page tab.
+    fn is_current(&self, tab: TabId) -> bool {
+        matches!(&self.content, Content::Workbench(b) if b.current == tab)
     }
 
     /// The route a page tab shows.
@@ -2427,7 +2433,7 @@ impl Shell {
             Tab::View(v) => (view_icon(v), text(locale, view_name(v))),
             Tab::Page(id) => {
                 let route = self.route_of(id)?;
-                let (glyph, _, title) = self.tab_label(route, locale, cx);
+                let (glyph, _, title) = self.tab_label(route, self.is_current(id), locale, cx);
                 (glyph, title)
             }
         };
@@ -2550,7 +2556,7 @@ impl Shell {
             .min_w(px(240.))
             .on_mouse_down_out(cx.listener(|shell, _, _, cx| shell.close_menu(cx)));
         match menu.kind {
-            MenuKind::Layout => {
+            LayoutMenu::Layout => {
                 for view in views() {
                     let visible = layout.is_visible(view);
                     panel = panel.child(
@@ -2674,7 +2680,7 @@ impl Shell {
                         })),
                     );
             }
-            MenuKind::View(view) => {
+            LayoutMenu::View(view) => {
                 let place = layout.locate(Tab::View(view)).map(|s| s.place);
                 panel = move_items(panel, place, view, None, &t, locale, cx);
                 let can_split = layout.can_split_off(view);
@@ -2713,10 +2719,10 @@ impl Shell {
                         )),
                     );
             }
-            MenuKind::PageTab(tab, view) => {
+            LayoutMenu::PageTab(tab, view) => {
                 panel = move_items(panel, Some(Place::Page), view, Some(tab), &t, locale, cx);
             }
-            MenuKind::Folded => {
+            LayoutMenu::Folded => {
                 for (gi, g) in layout.page.groups.iter().enumerate() {
                     panel = panel.child(
                         type_scale::LABEL
@@ -2735,7 +2741,9 @@ impl Shell {
                         let label = match *tab {
                             Tab::View(v) => text(locale, view_name(v)),
                             Tab::Page(id) => match self.route_of(id) {
-                                Some(route) => self.tab_label(route, locale, cx).2,
+                                Some(route) => {
+                                    self.tab_label(route, self.is_current(id), locale, cx).2
+                                }
                                 None => continue,
                             },
                         };
@@ -2759,7 +2767,7 @@ impl Shell {
                     }
                 }
             }
-            MenuKind::FoldedSide(side) => {
+            LayoutMenu::FoldedSide(side) => {
                 for (gi, g) in layout.side(side).groups.iter().enumerate() {
                     for (i, tab) in g.tabs.iter().enumerate() {
                         let Tab::View(v) = *tab else { continue };
@@ -2868,7 +2876,7 @@ impl Shell {
         match event {
             PageEvent::Open(route) => self.navigate(*route, true, window, cx),
             PageEvent::NewKb(draft) => self.new_kb_draft(*draft, window, cx),
-            PageEvent::Replace(_) | PageEvent::Located(_) => cx.notify(),
+            PageEvent::Saved(_) | PageEvent::Located(_) => cx.notify(),
         }
     }
 }

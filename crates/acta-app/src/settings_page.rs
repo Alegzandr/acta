@@ -961,6 +961,19 @@ impl SettingsPage {
     }
 }
 
+/// The word after a setup check: nothing until the first check answers;
+/// "Could not check" when the check itself could not run (the `acta`
+/// command missing next to the app), rather than claiming a step is
+/// missing; then Done or Missing.
+fn check_word(checked: bool, answered: bool, done: bool) -> Option<Key> {
+    match (checked, answered, done) {
+        (_, _, true) => Some(Key::SettingsCheckDone),
+        (false, _, false) => None,
+        (true, false, false) => Some(Key::SettingsCheckUnknown),
+        (true, true, false) => Some(Key::SettingsCheckMissing),
+    }
+}
+
 impl SettingsPage {
     /// Claude Code (components-app.md 5, Settings): the four checks of
     /// `acta setup --check`, then Set up (primary while anything is
@@ -972,7 +985,8 @@ impl SettingsPage {
         cx: &mut Context<Self>,
     ) -> Vec<gpui_kit::AnyElement> {
         let state = crate::claude_setup::state(cx);
-        let check = state.and_then(|s| s.check).unwrap_or_default();
+        let answer = state.and_then(|s| s.check);
+        let check = answer.unwrap_or_default();
         let checked = state.is_some_and(|s| s.checked);
         let busy = state.is_some_and(|s| s.busy);
         let mut out = vec![
@@ -991,17 +1005,11 @@ impl SettingsPage {
             (Key::SettingsCheckRule, check.rule),
         ];
         for (key, done) in rows {
-            // Until the first check answers, nothing is claimed either way.
-            let (glyph, color, word) = if done {
-                (Icon::Check, t.success, Some(Key::SettingsCheckDone))
-            } else if checked {
-                (
-                    Icon::CircleDashed,
-                    t.text_tertiary,
-                    Some(Key::SettingsCheckMissing),
-                )
+            let word = check_word(checked, answer.is_some(), done);
+            let (glyph, color) = if done {
+                (Icon::Check, t.success)
             } else {
-                (Icon::CircleDashed, t.text_tertiary, None)
+                (Icon::CircleDashed, t.text_tertiary)
             };
             out.push(
                 div()
@@ -1195,6 +1203,21 @@ fn about_section(locale: Locale, t: &Tokens) -> Vec<gpui_kit::AnyElement> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_check_that_could_not_run_claims_nothing_missing() {
+        // The `acta` command is not next to the app: no answer.
+        assert_eq!(
+            check_word(true, false, false),
+            Some(Key::SettingsCheckUnknown)
+        );
+        assert_eq!(
+            check_word(true, true, false),
+            Some(Key::SettingsCheckMissing)
+        );
+        assert_eq!(check_word(true, true, true), Some(Key::SettingsCheckDone));
+        assert_eq!(check_word(false, false, false), None);
+    }
 
     #[test]
     fn arrows_move_between_theme_segments_without_wrapping() {
