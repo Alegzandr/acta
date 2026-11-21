@@ -791,7 +791,28 @@ impl Render for InboxPage {
                 .mt(px(24.))
                 .flex()
                 .flex_wrap()
-                .child(ui::segmented(&t).children(filters)),
+                .items_center()
+                .justify_between()
+                .gap(px(8.))
+                .child(ui::segmented(&t).children(filters))
+                .child({
+                    // 8.2: the single secondary button, disabled with the
+                    // Open list empty.
+                    let none = self.notes.is_empty();
+                    let project = self.project;
+                    ui::button(
+                        "inbox-file-claude",
+                        text(locale, Key::InboxFile),
+                        Variant::Secondary,
+                        none,
+                        &t,
+                    )
+                    .when(!none, |this| {
+                        this.on_click(
+                            cx.listener(move |_, _, _, cx| cx.emit(PageEvent::Triage(project))),
+                        )
+                    })
+                }),
         )
         .child(list);
         if self.as_view {

@@ -54,6 +54,30 @@ enum Pane {
     NotFound { origin: Origin },
 }
 
+/// What running a command in a project's session comes to (the inbox's
+/// "File with Claude Code", screens.md 8.2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Send {
+    /// Claude Code was idle at its prompt: the command was typed there.
+    Typed,
+    /// There was no live session: one starts on the command.
+    Started,
+    /// Claude Code is mid-task: nothing was typed. A new session on the
+    /// command needs the restart confirmation (interaction.md 6.4).
+    Busy,
+}
+
+/// The rule: type into a live session only when it is idle at its prompt;
+/// with no live session start one on the command; never type into one
+/// that is mid-task.
+pub fn send_rule(live: bool, idle: bool) -> Send {
+    match (live, idle) {
+        (false, _) => Send::Started,
+        (true, true) => Send::Typed,
+        (true, false) => Send::Busy,
+    }
+}
+
 pub enum DockEvent {
     /// "Restart here": the shell restarts with the active page's origin
     /// (after the confirmation when a process runs).
@@ -67,6 +91,9 @@ pub struct TerminalDock {
     unsaved: HashMap<ProjectId, PathBuf>,
     /// The newest launch of each project.
     generations: HashMap<ProjectId, u64>,
+    /// A first prompt the next launch of a project starts Claude Code on;
+    /// kept until a session actually starts (a folder may be asked first).
+    prompts: HashMap<ProjectId, String>,
     pub project: Option<ProjectId>,
     /// The page shown now, set by the shell, to mark a mismatch.
     pub active: Option<Origin>,
@@ -117,6 +144,7 @@ impl TerminalDock {
             panes: HashMap::new(),
             unsaved: HashMap::new(),
             generations: HashMap::new(),
+            prompts: HashMap::new(),
             project: None,
             active: None,
             focus: cx.focus_handle(),
@@ -151,10 +179,55 @@ impl TerminalDock {
         self.launch(origin, window, cx);
     }
 
+    /// Run `command` (a slash command) in the session of `origin.project`
+    /// by [`send_rule`]. On `Busy` nothing happens; the caller confirms
+    /// and calls [`TerminalDock::restart_on`].
+    pub fn send(
+        &mut self,
+        origin: Origin,
+        command: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Send {
+        let project = origin.project;
+        self.project = Some(project);
+        let live = match self.panes.get(&project) {
+            Some(Pane::Running { view, .. }) if view.read(cx).is_running() => Some(view.clone()),
+            _ => None,
+        };
+        let idle = live
+            .as_ref()
+            .is_some_and(|view| view.read(cx).idle_at_prompt());
+        let step = send_rule(live.is_some(), idle);
+        match (step, live) {
+            (Send::Typed, Some(view)) => {
+                view.update(cx, |view, _| view.send_line(command));
+                view.read(cx).focus_handle(cx).focus(window, cx);
+            }
+            (Send::Started, _) => self.restart_on(origin, command, window, cx),
+            _ => {}
+        }
+        cx.notify();
+        step
+    }
+
+    /// End the project's session and start Claude Code on `command`.
+    pub fn restart_on(
+        &mut self,
+        origin: Origin,
+        command: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.prompts.insert(origin.project, command.to_owned());
+        self.restart(origin, window, cx);
+    }
+
     fn launch(&mut self, origin: Origin, window: &mut Window, cx: &mut Context<Self>) {
         let project = origin.project;
         let owner = origin.owner;
         let unsaved = self.unsaved.get(&project).cloned();
+        let prompt = self.prompts.get(&project).cloned();
         // Each launch of a project gets a number; a result that arrives
         // after a newer launch started is dropped.
         let generation = {
@@ -196,7 +269,11 @@ impl TerminalDock {
                 .background_executor()
                 .spawn(async move {
                     let paths: Vec<PathBuf> = folders.iter().map(|(p, _)| p.clone()).collect();
-                    acta_terminal::launch_spec_for_claude(&paths, &focus_of(owner, project, epic))
+                    acta_terminal::launch_spec_for_claude_with(
+                        &paths,
+                        &focus_of(owner, project, epic),
+                        prompt.as_deref(),
+                    )
                 })
                 .await;
             let _ = dock.update_in(cx, |dock, window, cx| {
@@ -205,6 +282,7 @@ impl TerminalDock {
                 }
                 let pane = match result {
                     Ok(launch) => {
+                        dock.prompts.remove(&project);
                         if !launch.left_out.is_empty() {
                             let locale = settings::locale(cx);
                             for folder in &launch.left_out {
@@ -785,5 +863,13 @@ mod tests {
         assert_eq!(f.topic.as_deref(), Some("T-42"));
         let f = focus_of(Owner::Project(ProjectId(2)), ProjectId(2), None);
         assert_eq!((f.epic, f.topic), (None, None));
+    }
+
+    #[test]
+    fn a_command_is_typed_only_into_an_idle_session() {
+        assert_eq!(send_rule(true, true), Send::Typed);
+        assert_eq!(send_rule(true, false), Send::Busy, "never mid-task");
+        assert_eq!(send_rule(false, false), Send::Started);
+        assert_eq!(send_rule(false, true), Send::Started);
     }
 }

@@ -6,6 +6,7 @@
 //! adjustable 11 to 18. The app registers the bundled fonts.
 
 use std::ops::Range;
+use std::time::Instant;
 
 use alacritty_terminal::grid::Scroll;
 use alacritty_terminal::index::Side;
@@ -119,6 +120,8 @@ pub struct TerminalView {
     /// IME composition in progress, drawn at the cursor.
     marked: Option<String>,
     scroll_remainder: f32,
+    /// When the session last printed something (idle detection).
+    last_output: Instant,
     /// Started before the first layout: spawned once the grid size is known.
     start_pending: bool,
     _start: Task<()>,
@@ -156,6 +159,7 @@ impl TerminalView {
             selecting: false,
             marked: None,
             scroll_remainder: 0.0,
+            last_output: Instant::now(),
             start_pending: false,
             _start: Task::ready(()),
             _resize: Task::ready(()),
@@ -180,6 +184,30 @@ impl TerminalView {
     /// only then, interaction.md 6.4).
     pub fn is_running(&self) -> bool {
         self.session.is_some() && self.exited.is_none()
+    }
+
+    /// Whether Claude Code sits idle at an empty prompt (see
+    /// [`crate::idle::claude_idle`]): only then may a command be typed in.
+    pub fn idle_at_prompt(&self) -> bool {
+        let Some(session) = self.session.as_ref().filter(|_| self.exited.is_none()) else {
+            return false;
+        };
+        let Some(cursor) = session.cursor() else {
+            return false;
+        };
+        let screen = session.text();
+        let row = screen.lines().nth(cursor.row).unwrap_or_default();
+        crate::idle::claude_idle(&screen, row, self.last_output.elapsed())
+    }
+
+    /// Type `line` and Enter into the session, as if from the keyboard.
+    /// Callers check [`TerminalView::idle_at_prompt`] first.
+    pub fn send_line(&mut self, line: &str) {
+        if let Some(session) = &self.session {
+            let mut bytes = line.as_bytes().to_vec();
+            bytes.push(b'\r');
+            session.input(bytes);
+        }
     }
 
     pub fn title(&self) -> Option<&str> {
@@ -271,6 +299,7 @@ impl TerminalView {
     fn on_session_event(&mut self, event: SessionEvent, cx: &mut Context<Self>) {
         match event {
             SessionEvent::Wakeup => {
+                self.last_output = Instant::now();
                 if let Some(session) = &self.session {
                     session.take_wakeup();
                 }

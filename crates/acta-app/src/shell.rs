@@ -191,6 +191,9 @@ actions!(
     ]
 );
 
+/// The command "File with Claude Code" runs (the plugin's triage skill).
+const TRIAGE_COMMAND: &str = "/acta:triage";
+
 /// The active project as the status bar reports it (layout.md 4.6).
 #[derive(Clone, Debug)]
 struct ProjectFacts {
@@ -427,6 +430,9 @@ struct Bench {
     create_in: Option<(ProjectId, Option<EpicId>)>,
     /// What the open picker does with the row chosen.
     on_pick: Option<crate::palette::OnPick>,
+    /// "File with Claude Code" found Claude Code mid-task: the restart
+    /// confirmation, when accepted, starts a session on the triage.
+    pending_triage: Option<Origin>,
     recent: Vec<TopicId>,
     overlay: Option<Overlay>,
     /// Where focus returns when the overlay closes.
@@ -638,6 +644,7 @@ impl Shell {
             active_project: None,
             create_in: None,
             on_pick: None,
+            pending_triage: None,
             recent: Vec::new(),
             overlay: None,
             return_focus: None,
@@ -1175,6 +1182,7 @@ impl Shell {
             PageEvent::Pick(picker, on_pick) => {
                 self.open_picker(picker.clone(), on_pick.clone(), window, cx)
             }
+            PageEvent::Triage(project) => self.file_with_claude(*project, window, cx),
             PageEvent::Located(project) => {
                 let project = *project;
                 if current == Some(tab)
@@ -1915,10 +1923,18 @@ impl Shell {
             &dialog,
             window,
             |shell, _, event: &DialogEvent, window, cx| match event {
-                DialogEvent::Close => shell.close_overlay(window, cx),
+                DialogEvent::Close => {
+                    if let Some(bench) = shell.bench() {
+                        bench.pending_triage = None;
+                    }
+                    shell.close_overlay(window, cx)
+                }
                 DialogEvent::RestartTerminal => {
                     shell.close_overlay(window, cx);
-                    shell.do_restart_terminal(window, cx);
+                    match shell.bench().and_then(|b| b.pending_triage.take()) {
+                        Some(origin) => shell.start_triage(origin, window, cx),
+                        None => shell.do_restart_terminal(window, cx),
+                    }
                 }
                 DialogEvent::RemoveSetup => {
                     shell.close_overlay(window, cx);
@@ -2162,6 +2178,60 @@ impl Shell {
             .dock
             .update(cx, |dock, cx| dock.restart(origin, window, cx));
         cx.notify();
+    }
+
+    /// "File with Claude Code" (screens.md 8.2): the terminal shows, and
+    /// the triage command runs in the project's session, typed there only
+    /// when Claude Code is idle at its prompt. Mid-task, nothing is typed:
+    /// the restart confirmation asks before a new session starts on it.
+    fn file_with_claude(
+        &mut self,
+        project: ProjectId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(bench) = self.bench() else { return };
+        let projects = bench.ws.read(cx).projects.clone();
+        let Some(name) = tree::locate_project(&projects, project).and_then(|l| l.project) else {
+            return;
+        };
+        let origin = Origin {
+            owner: Owner::Project(project),
+            project,
+            name: name.1,
+        };
+        self.show_terminal_for_command(window, cx);
+        let Some(bench) = self.bench() else { return };
+        let dock = bench.dock.clone();
+        let sent = dock.update(cx, |dock, cx| {
+            dock.send(origin.clone(), TRIAGE_COMMAND, window, cx)
+        });
+        if sent == crate::terminal_dock::Send::Busy {
+            if let Some(bench) = self.bench() {
+                bench.pending_triage = Some(origin);
+            }
+            self.open_dialog(DialogKind::RestartTerminal, window, cx);
+        }
+    }
+
+    fn start_triage(&mut self, origin: Origin, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_terminal_for_command(window, cx);
+        let Some(bench) = self.bench() else { return };
+        bench.dock.update(cx, |dock, cx| {
+            dock.restart_on(origin, TRIAGE_COMMAND, window, cx)
+        });
+        cx.notify();
+    }
+
+    /// Show the Terminal view without starting a session from the page:
+    /// the command decides which session runs.
+    fn show_terminal_for_command(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(bench) = self.bench() {
+            bench.ui.terminal_shown = true;
+        }
+        self.change_layout(None, window, cx, |l| {
+            l.show_view(ViewId::Terminal).is_some()
+        });
     }
 
     fn terminal_size(&mut self, by: f32, cx: &mut Context<Self>) {

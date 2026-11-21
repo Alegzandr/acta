@@ -55,6 +55,9 @@ pub enum PageEvent {
     /// Show the palette as a picker of these rows; the chosen one is
     /// handed to the page's callback.
     Pick(crate::palette::Picker, crate::palette::OnPick),
+    /// "File with Claude Code" (screens.md 8.2): run the triage command in
+    /// the project's terminal.
+    Triage(acta_core::model::ProjectId),
 }
 
 gpui_kit::actions!(

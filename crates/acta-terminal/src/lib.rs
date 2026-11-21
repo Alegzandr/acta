@@ -12,6 +12,7 @@
 //! other bindings out of the [`view::KEY_CONTEXT`] context (`!Terminal`).
 
 pub mod boxes;
+pub mod idle;
 pub mod keys;
 pub mod launch;
 pub mod mouse;
@@ -20,6 +21,9 @@ pub mod theme;
 pub mod url;
 pub mod view;
 
-pub use launch::{ClaudeLaunch, Focus, LaunchError, LaunchSpec, launch_spec_for_claude};
+pub use launch::{
+    ClaudeLaunch, Focus, LaunchError, LaunchSpec, launch_spec_for_claude,
+    launch_spec_for_claude_with,
+};
 pub use theme::TerminalTheme;
 pub use view::{TerminalEvent, TerminalView};
