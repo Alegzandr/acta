@@ -12,9 +12,11 @@ Decided by the user on 2026-11-20. Acta takes its structure from three tools its
 
 | From | Acta takes | Acta leaves, and why |
 |---|---|---|
-| **Obsidian** | The tree sidebar with collapsible nodes. Chrome that recedes behind content the user owns. Markdown as the format people and the agent write, rendered at rest and raw while editing. A properties block at the top of a page. Tabs. The quick switcher. A neutral grey dark theme. | Split panes: the terminal and the chat are the companions that sit beside a page, and a second page column would push everything under its minimum at common widths. Backlinks: links between records are not in the model yet (11). An outline pane: "Go to heading" in the palette is the outline, the same one the agent sees. Graph, canvas, ribbon, plugins, community themes: nothing in Acta's data asks for them. |
+| **Obsidian** | The tree sidebar with collapsible nodes. Chrome that recedes behind content the user owns. Markdown as the format people and the agent write, rendered at rest and raw while editing. A properties block at the top of a page. Tabs. The quick switcher. A neutral grey dark theme. | Backlinks: links between records are not in the model yet (11). An outline pane: "Go to heading" in the palette is the outline, the same one the agent sees. Graph, canvas, ribbon, plugins, community themes: nothing in Acta's data asks for them. |
 | **Notion** | A page is a title, typed properties, then the body. A generous measure. The breadcrumb in a top bar. Controls revealed on hover. A slash menu in editors. Collections of records as quiet tables with filter and sort. A near-white light theme and unshowy type. | Blocks as the storage model: text stays Markdown, which Claude Code writes natively (ADR 0007). Boards: six statuses do not fit a page column, and `S` already changes a status in one key. User-defined properties, page icons, covers, emoji, comments: each makes the agent's writes less predictable or adds decoration. |
-| **JetBrains IDEs (new UI)** | Tool windows docked right or bottom, each with a header, a toggle shortcut and a remembered size. The terminal as a tool window. Search everywhere: one palette with scopes. A slim status bar. Compact density. Unambiguous focus and selection. A top bar that stays out of the way. | Icon stripes: three tool windows do not pay for 80px of permanent chrome, so their toggles live in the titlebar. Menu bar, action toolbar, gutter icons, hover popups, double-Shift: an IDE's density of affordances is wrong for a record that is mostly read. |
+| **JetBrains IDEs (new UI)** | Tool windows in areas around the page, each with a header, a toggle shortcut and a remembered size. The terminal as a tool window. Search everywhere: one palette with scopes. A slim status bar. Compact density. Unambiguous focus and selection. A top bar that stays out of the way. | Icon stripes: a few views do not pay for 80px of permanent chrome, so their toggles live in the titlebar. Menu bar, action toolbar, gutter icons, hover popups, double-Shift: an IDE's density of affordances is wrong for a record that is mostly read. |
+
+**Amendment, decided by the user on 2026-11-21: the workbench is rearrangeable, as in VS Code.** Every area around the page can be shown, hidden and resized, every view (the tree, the inbox, knowledge, the terminal, the chat, the agent browser) can be dragged to another area or into the page area as a tab, and the page area can be split into up to three groups. This replaces two earlier refusals: split panes (left out of Obsidian above, because a second page column did not fit at common widths; it is now allowed, and folds back to one group when it does not fit) and "one tool window per dock". The user added the condition that makes it acceptable: **nothing moved or closed is ever hard to put back**: every view keeps a visible toggle, every layout change is undoable, and Reset layout is one click away. The model, the defaults and the recovery rules are in 4.8 ([workbench.md](docs/design/workbench.md)); the default arrangement is the workbench described here, unchanged.
 
 The synthesis is one object, a workbench, not three apps side by side: one tree (projects, epics, topics, with each project's inbox and knowledge), pages that read like documents (a topic is a page with properties, a current state and a timeline; a knowledge entry is a Markdown document), tool windows for the terminal and the chat panel, tabs only when more than one page is open, one palette, one status bar.
 
@@ -43,15 +45,16 @@ Load only the part a task needs. Section numbers are global: "4.7" or "DESIGN 4.
 | [color.md](docs/design/color.md) | 2 | Themes, the colour token table (2.1), measured contrast (2.2), topic statuses (2.3), terminal palette (2.4). |
 | [typography.md](docs/design/typography.md) | 3 | Families (3.1), the type scale and roles (3.2), long-form text and documents (3.3). |
 | [layout.md](docs/design/layout.md) | 4 | Spacing, heights, radii, icons (4.1); app shell (4.2), titlebar (4.3), tabs (4.4), tool windows (4.5), status bar (4.6), `preferences.json` (4.7). |
+| [workbench.md](docs/design/workbench.md) | 4.8 | Workbench layout: areas, views, area header and view tabs, showing and hiding, resizing, moving views by drag and drop and by command, page groups, web views during drags, narrow windows, recovering the layout, persistence, defaults and Reset layout. |
 | [components.md](docs/design/components.md) | 5 | States and focus ring; button, inputs, editors, list / tree row, status indicator, segmented control, slash menu, notice, checkbox, palette, menus, tooltip, toast, dialog, empty state, scrollbar, resize handle, kbd, update indicator. |
 | [components-records.md](docs/design/components-records.md) | 5 | Timeline entry, current-state panel, note card, properties block, topic table. |
 | [components-knowledge.md](docs/design/components-knowledge.md) | 5 | Knowledge section, knowledge base page, document reading view and editor, history. |
 | [components-folders.md](docs/design/components-folders.md) | 5 | Working folders: rows, inheritance, not found and repair, picker, paths, terminal launch. |
 | [components-app.md](docs/design/components-app.md) | 5 | Chat panel, settings page, shortcuts page, export, import, trash, snapshot restore, key-loss recovery, updater window. |
 | [interaction.md](docs/design/interaction.md) | 6 | Keyboard map (6.1), focus (6.2), motion and latency budgets (6.3), writes, undo and confirmation (6.4), changes from other processes (6.5). |
-| [screens.md](docs/design/screens.md) | 8 | Wireframes: topic page (8.1), inbox (8.2), palette (8.3), terminal (8.4), first run (8.5), knowledge (8.6, 8.7, 8.10), import preview (8.8), key loss (8.9), working folders (8.11), settings (8.12), chat (8.13), epic (8.14), tab bar (8.15), updater (8.16). |
+| [screens.md](docs/design/screens.md) | 8 | Wireframes: topic page (8.1), inbox (8.2), palette (8.3), terminal (8.4), first run (8.5), knowledge (8.6, 8.7, 8.10), import preview (8.8), key loss (8.9), working folders (8.11), settings (8.12), chat (8.13), epic (8.14), tab bar (8.15), updater (8.16), workbench with the right sidebar (8.17), dragging a view (8.18), split page area and views moved (8.19). |
 | [copy.md](docs/design/copy.md) | 7, 10.1 to 10.3 | Voice; languages, French conventions, dates, times and numbers, layout under longer text. |
-| [catalogue.md](docs/design/catalogue.md) | 10.4 | Every UI string by key, English and French. Code and tests read it. |
+| [catalogue.md](docs/design/catalogue.md) | 10.4, 10.4.1 | Every UI string by key, English and French. Code and tests read 10.4; 10.4.1 holds the keys of 4.8 until it is implemented. |
 | [data.md](docs/design/data.md) | 11 | What model data every element shows; data model requests. |
 
 Sections 1 (principles), 9 (review checklist) and the Direction are in this file. The token table (2.1), the contrast table (2.2) and the catalogue (10.4) are parsed by tests in `crates/acta-app` (`theme.rs`, `i18n/mod.rs`): keep their headings and table shapes.
@@ -74,7 +77,8 @@ Run against every screen, in dark and in light, in English and in French. One fa
 - [ ] No box inside a box; no divider where spacing already separates.
 - [ ] Works at 880 x 560 with the terminal open, and at 200% scale; no horizontal scroll outside code blocks.
 - [ ] Titlebar follows 4.3 on the platform under review; window controls are where the platform puts them.
-- [ ] Workbench: a page's location (project, epic) appears only in the titlebar breadcrumb; no tab bar with a single tab; one tool window per dock, each with its 28 header; the status bar holds only project, Claude Code status, update and version.
+- [ ] Workbench: a page's location (project, epic) appears only in the titlebar breadcrumb; no tab bar with a single tab in a single group; every side area and the bottom panel has its 28 header per group, with view tabs when it holds two views or more; the status bar holds only project, Claude Code status, update and version.
+- [ ] Layout (4.8): every area respects its size range and every view its minimum, in every area it can be moved to; the page area keeps 420 (400 per group); narrow windows give way in the order of 4.8.10 and nothing of it is saved; a page that is not Inbox or Knowledge never leaves the page area.
 
 **States**
 - [ ] Each interactive element has default, hover, pressed, keyboard focus and disabled, as specified in 5.
@@ -87,6 +91,15 @@ Run against every screen, in dark and in light, in English and in French. One fa
 - [ ] Every action on the screen is reachable without a pointer and is in the palette with its shortcut shown.
 - [ ] Focus is visible at every step, moves in reading order, and returns to its origin when an overlay closes.
 - [ ] `Esc` goes one level out and never navigates; no shortcut steals a shell key while the terminal is focused.
+
+**Layout and recovery** (4.8.11, run after moving each view to each area and back)
+- [ ] Every view has a toggle in the titlebar that is visible while the view is hidden, in a hidden area or in a folded group, and it brings the view back to its last place and its area's remembered size; the Layout menu and "{view}: Show" do the same.
+- [ ] Reset layout is one click from the Layout menu, the move toast and Settings, is in the palette, and is undoable; it keeps tabs, sessions and the chat's sign-in.
+- [ ] Every layout change (move, hide, show, resize, split, join, tab move, reset) is one step of `Mod+Z` and of "Undo layout change"; moves and hides from a view menu toast with Undo and Reset layout.
+- [ ] During a drag the preview shows the exact landing bounds before release; a drop lands exactly there; `Esc`, a drop outside every zone or on the view's own place changes nothing and toasts nothing.
+- [ ] No view can be lost: hiding an area keeps its views' toggles; an area left empty hides; a preferences file naming a view twice or an unknown place loads with every view placed once.
+- [ ] Web views (chat, agent browser) are hidden with their placeholder line for the whole of a drag, return at their new bounds without reloading, and never cover a resize handle or a drop zone.
+- [ ] Keyboard: every move has a palette command and a view-menu item; `F6` / `Shift+F6` visit every shown area and group in order; every toggle key works from the page, and the kept keys of 6.1 from the terminal and the chat.
 
 **Behaviour**
 - [ ] Feedback on the next frame; nothing in the "never animates" list animates; budgets in 6.3 hold with 10,000 topics.
