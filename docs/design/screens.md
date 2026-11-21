@@ -623,3 +623,61 @@ Annotations: the pointer is on the 24 strip along the bottom of the page area, w
 ```
 
 Annotations: the Inbox was dragged from its page tab into the left sidebar's header, so it became the Inbox view and follows the active project ("Acta" is its context). It drops its page title; its capture editor and cards take the full 276 of width. The second page group was made by dragging "Resize protocol" to the right edge of the page area. Each group is at least 400 wide; a narrower window folds the split (4.8.10) and lists "Group 2" in the tab bar's menu. The right sidebar is hidden; its toggle in the titlebar still shows, as do the Terminal and Chat toggles.
+
+### 8.20 Project page with its Overview
+
+At rest, something needs attention (Saturday 21 Nov 2026):
+
+```
+        Acta                                                       <- type.title
+    12  Progress   14 of 31 topics done  [====--------]            <- properties block
+        Due        None
+        Folders    > [f] ~\dev\acta
+        Updated    2 h ago by Claude Code
+    24  Overview                                       [More v]    28  header, type.label
+     4  (=)  2 blocked topics                                      32  circle-pause, warning
+        (!)  1 overdue topic                                       32  clock-alert, warning
+        (.)  3 active topics with no activity for 7 days           32  circle-dot, text.secondary
+        [i]  6 notes in the inbox, the oldest for 12 days          32  inbox, text.secondary
+    32  Description
+        ...
+```
+
+At rest, nothing needs attention:
+
+```
+    24  Overview  Nothing needs attention.                [More v]    28  the whole section
+    32  Description
+```
+
+"More" expanded:
+
+```
+    24  Overview  Nothing needs attention.                [Less ^]
+    16  Last 7 days                                                16  type.small, text.tertiary
+     4  [4 topics done] · [2 decisions] · [3 new topics]           28  inline ghost links
+    16  Epics
+     4  No epic           [==========--]   5 of 6                  28
+        Terminal          [====--------]   3 of 7   ! 18 Nov       28  overdue epic date, warning
+        Core UI           [=-----------]   1 of 9      Tue         28
+        2 complete epics                                           28  text.tertiary, not a control
+    16  Knowledge
+     4  5 memories not updated for 90 days                         28
+        |<- name, fills ->|<- 120 ->|12|<- 56 ->|<- 88 ->|
+```
+
+Epic page, the mini version collapsed (the default) and expanded:
+
+```
+        Terminal                                                   <- type.title
+    12  Progress   3 of 7 topics done  [====--------]
+        ...
+    24  > Needs attention  2                                       28  collapsed
+    32  Description
+
+    24  v Needs attention  2                                       28  expanded
+     4  (=)  1 blocked topic                                       32
+        (!)  1 overdue topic                                       32
+```
+
+Annotations: no figure is drawn at zero and no line exists for a normal state; a fresh inbox (newest note 2 days old) shows nothing here, because the tree's Inbox count already says it. The Overview spends no accent: colour is `warning` on the two glyphs that mean a real problem, nothing else. Every line, link and epic row opens the list behind its number (components-records.md 5); the topic table then shows a filter chip in place of its segmented control, for example `[Blocked x]  2 topics`. An epic with nothing to report has no section at all.
