@@ -36,13 +36,11 @@ Hard constraint: Rust + GPUI on Windows, macOS, Linux. Facts checked on 2026-11-
 ## Decision
 1. Depend on **`gpui-kit = "=0.10.0"`** from crates.io, default features, and nothing else for UI. It brings
    `gpui-pre =0.3.12`. Import GPUI as `gpui_kit::*`. Commit `Cargo.lock`; build with `--locked`.
-2. Pin the toolchain in `rust-toolchain.toml` to the current stable release (1.100.0 since 2026-11-20).
-   The spike built with 1.97.1 on Windows; the first CI run showed that cannot build on macOS:
-   `gpui-pre`'s macOS backend calls `map_or_default`, stable only since Rust 1.98.0 (RELEASES.md,
-   1.98.0 "Stabilized APIs"). Bump the pin when a dependency needs it, and fix new clippy lints
-   rather than allowing them.
+2. Pin the toolchain in `rust-toolchain.toml` to the current stable release (1.100.0). `gpui-pre`'s macOS
+   backend calls `map_or_default`, stable since Rust 1.98.0. Bump the pin when a dependency needs it, and fix
+   new clippy lints rather than allowing them.
 3. Use gpui-component's behavior-heavy pieces (inputs, textarea/editor, virtual list, popover, command,
-   resizable) and **own the look**: `DESIGN.md` tokens are written into `Theme` at startup from one module.
+   resizable) and **own the look**: the design tokens (`docs/design/color.md` 2.1) are written into `Theme` at startup from one module.
    Where a styled component cannot be made to match, build ours on `gpui-base` primitives or plain `div`s;
    no component is used with its default look unreviewed.
 4. Notes and timeline entries use `Textarea`; revisit `Editor` + `tree-sitter-markdown` in M5.
@@ -73,44 +71,13 @@ Hard constraint: Rust + GPUI on Windows, macOS, Linux. Facts checked on 2026-11-
 - Windows builds need `fxc.exe` (Windows SDK, present with VS Build Tools and on `windows-latest`);
   runtime needs Direct3D 11. Linux runtime needs a Vulkan driver.
 - Revisit when Zed resumes publishing `gpui` + `gpui_platform`, or if gpui-kit stops tracking upstream.
+- CI builds and smoke-runs on all three systems through `ci.yml` and `scripts/ci/linux-deps.sh` (ADR 0004),
+  which replace the spike CI job first proposed here. macOS needs no offline `metal` compiler: gpui-kit
+  enables `runtime_shaders`.
 
-### CI job for the release engineer (unverified, see Evidence)
-```yaml
-spike-gpui-window:
-  strategy:
-    fail-fast: false
-    matrix:
-      os: [windows-latest, macos-latest, ubuntu-24.04]
-  runs-on: ${{ matrix.os }}
-  env:
-    CARGO_PROFILE_DEV_DEBUG: 0
-  defaults:
-    run:
-      working-directory: spikes/gpui-window
-  steps:
-    - uses: actions/checkout@v4
-    - uses: dtolnay/rust-toolchain@1.100.0
-    - uses: Swatinem/rust-cache@v2
-      with:
-        workspaces: spikes/gpui-window
-    - name: Linux system packages
-      if: runner.os == 'Linux'
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y gcc g++ clang libfontconfig-dev libwayland-dev \
-          libxkbcommon-x11-dev libx11-xcb-dev libssl-dev libzstd-dev libasound2-dev libvulkan1
-    - uses: rui314/setup-mold@v1   # no-op off Linux
-    # macOS: no extra step. gpui-kit enables `runtime_shaders`, so the offline `metal` compiler is not
-    # needed; the runner's preinstalled Xcode command line tools are enough.
-    - run: cargo build --release --locked
-    - name: Smoke run under Xvfb with software Vulkan (Linux)
-      if: runner.os == 'Linux'
-      run: |
-        sudo apt-get install -y xvfb mesa-vulkan-drivers
-        xvfb-run -a timeout 10 ./target/release/acta-spike-gpui-window; test $? -eq 124
-```
-The apt list is gpui-kit's own CI list (`script/install-linux.sh`, Ubuntu 24.04) minus WebKit. Our lockfile
-has no `openssl-sys`, `alsa-sys` or `zstd-sys`, so `libssl-dev libzstd-dev libasound2-dev` can probably go.
+## Changelog
+- 2026-11-20: accepted; toolchain pin raised from 1.97.1 (the spike's) to 1.100.0 after the first macOS CI
+  run failed on `map_or_default`.
 
 ## Evidence
 Spike: `spikes/gpui-window` (standalone, own lockfile). Run on Windows 11, rustc 1.97.1 MSVC:
@@ -122,10 +89,10 @@ Spike: `spikes/gpui-window` (standalone, own lockfile). Run on Windows 11, rustc
 - PE header subsystem = 2 (GUI), so no console window.
 
 Not verified:
-- macOS and Linux: nothing built or run. The CI job above and the package list are untested.
+- macOS and Linux: nothing built or run by the spike.
 - Typing, IME, HiDPI/multi-monitor, custom title bar, blur, window state restore: read in source only.
 - Theming depth: eight colour tokens, radius and font were overridden on one component. Whether every
-  component can reach `DESIGN.md` fidelity is unproven until `DESIGN.md` exists.
+  component can reach the design system's fidelity is unproven.
 - `Textarea`, `Editor`, virtual list, command palette: present in the crate, not exercised.
 - Binary size and build time on CI runners; size with fat LTO or `opt-level = "s"`.
 

@@ -109,7 +109,7 @@ until an X11-only, WebKitGTK-linked build is judged acceptable.
   WebView2 does not forward to the host: the route is `ICoreWebView2Controller::AcceleratorKeyPressed`
   through `WebViewExtWindows::controller()`), a first sign-in by the user on each OS, and a macOS build.
 - If the keyboard route fails, the panel can still be closed with the pointer but breaks DESIGN.md
-  principle 4; that would be a reason to stop.
+  principle 4 (keyboard first); that would be a reason to stop.
 - Memory is the price: about 360 to 430 MB private in 9 WebView2 processes for the login page alone, more
   with a conversation open, against 89 MB for the host. Hiding the panel does not free it. Paid only by
   users who open the panel.
@@ -121,14 +121,18 @@ until an X11-only, WebKitGTK-linked build is judged acceptable.
 - Windows without the WebView2 runtime: panel shows the fallback line; Acta itself is unaffected. No
   bootstrapper is bundled.
 - A second place where account cookies live on disk, protected only by the user profile's permissions,
-  like any browser profile. CLAUDE.md's "no plaintext user data on disk" needs this stated exception.
+  like any browser profile. CLAUDE.md states it as the one exception to "no plaintext user data on disk".
 - We depend on a site we do not control: a bot check, a user-agent rule or a terms change can end the
   feature without notice. The panel must fail to the link, never to a blank pane.
-- DESIGN.md has no specification for this panel: where it sits relative to the terminal dock, its toggle
-  and shortcut, the placeholder under overlays, the failure and sign-in help states and their copy. The
-  product designer must add it before UI work starts.
+- The panel's design (dock placement beside the terminal, toggle and shortcut, placeholder under overlays,
+  failure and sign-in help states, copy) is in `docs/design/components-app.md` (Chat panel) and
+  `docs/design/screens.md` 8.13.
 - macOS ad-hoc signing (ADR 0004) gives a new code identity per build; whether WKWebView's data store and
   cookies survive an update under those conditions is unknown.
+
+## Changelog
+- 2026-11-20: proposed as "go with limits"; accepted with the conditions in the status line.
+- 2026-11-20: the panel's design was specified; CLAUDE.md records the web view profile exception.
 
 ## Evidence
 Spike: `spikes/chat-panel` (standalone, own lockfile, README with the commands). Windows 11 26300, rustc

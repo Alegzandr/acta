@@ -37,7 +37,7 @@ If nothing is attached anywhere up the chain, the terminal asks for a folder onc
 - Schema (M2): a `folders` table (owner level and id, path, position, include-inherited flag on the owner). Additive.
 - ADR 0005 binding is extended: project resolution becomes "deepest attached folder, any level"; `acta link` grows level options; the salted-hash file covers all folders.
 - The same folder attached to two topics is ambiguous for the reverse direction: allowed, but then the session gets the project or epic focus and the briefing lists the candidate topics.
-- DESIGN.md needs the folder row, the inherited-from label, the unresolved state and the picker flow before the M2 screens are built.
+- The folder row, the inherited-from label, the unresolved state and the picker flow are specified in `docs/design/components-folders.md` and `docs/design/screens.md` 8.11.
 - Folder settings arrive with M2 (data and UI), CLI and hook resolution with M3, terminal launch with M4.
 
 ## Rulings after the design pass (2026-11-20)
