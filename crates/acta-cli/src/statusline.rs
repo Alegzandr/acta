@@ -10,6 +10,7 @@
 //! segment: the user's line is never lost. Fast path only: no database, no
 //! keychain.
 
+use acta_core::process::Tree;
 use acta_core::usage;
 use std::io::{Read, Write};
 use std::path::Path;
@@ -200,7 +201,7 @@ pub fn run_original(command: &Command, input: &str, limit: Duration) -> Option<S
         cmd.process_group(0);
     }
     let mut child = cmd.spawn().ok()?;
-    let tree = tree::Tree::of(&child);
+    let tree = Tree::of(&child);
     let mut stdin = child.stdin.take()?;
     let input = input.to_owned();
     std::thread::spawn(move || {
@@ -232,135 +233,6 @@ pub fn run_original(command: &Command, input: &str, limit: Duration) -> Option<S
     match rx.recv_timeout(left.max(Duration::from_millis(50))) {
         Ok(out) => Some(String::from_utf8_lossy(&out).into_owned()),
         Err(_) => killed(&mut child),
-    }
-}
-
-/// The process tree of a status line command.
-mod tree {
-    use std::process::Child;
-
-    #[cfg(windows)]
-    pub struct Tree(Option<windows_sys::Win32::Foundation::HANDLE>);
-
-    #[cfg(windows)]
-    impl Tree {
-        /// A job object holding the child (and everything it starts),
-        /// closed with the job (`KILL_ON_JOB_CLOSE`).
-        pub fn of(child: &Child) -> Tree {
-            use std::os::windows::io::AsRawHandle as _;
-            use windows_sys::Win32::System::JobObjects::{
-                AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-                JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
-                SetInformationJobObject,
-            };
-            // SAFETY: plain Win32 calls; the job handle is owned by `Tree`
-            // and closed in `Drop` (or here when it could not take the
-            // child); the info struct lives on this frame.
-            let tree = unsafe {
-                let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
-                if job.is_null() {
-                    Tree(None)
-                } else {
-                    let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
-                    info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-                    let limited = SetInformationJobObject(
-                        job,
-                        JobObjectExtendedLimitInformation,
-                        &info as *const _ as *const core::ffi::c_void,
-                        std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-                    ) != 0;
-                    if limited && AssignProcessToJobObject(job, child.as_raw_handle() as _) != 0 {
-                        Tree(Some(job))
-                    } else {
-                        // Not in a job: `kill` falls back to the child alone.
-                        windows_sys::Win32::Foundation::CloseHandle(job);
-                        Tree(None)
-                    }
-                }
-            };
-            resume(child.id());
-            tree
-        }
-
-        pub fn kill(&self, child: &mut Child) {
-            use windows_sys::Win32::System::JobObjects::TerminateJobObject;
-            match self.0 {
-                // SAFETY: `job` is the live handle created in `of`.
-                Some(job) => unsafe {
-                    TerminateJobObject(job, 1);
-                },
-                None => {
-                    let _ = child.kill();
-                }
-            }
-        }
-    }
-
-    /// Resumes the threads of a process started suspended (std has no
-    /// handle to its first thread; there is one at this point).
-    #[cfg(windows)]
-    fn resume(pid: u32) {
-        use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
-        use windows_sys::Win32::System::Diagnostics::ToolHelp::{
-            CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
-        };
-        use windows_sys::Win32::System::Threading::{
-            OpenThread, ResumeThread, THREAD_SUSPEND_RESUME,
-        };
-        // SAFETY: a snapshot walked with a correctly sized entry; every
-        // handle opened here is closed here.
-        unsafe {
-            let snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
-            if snap == INVALID_HANDLE_VALUE {
-                return;
-            }
-            let mut entry: THREADENTRY32 = std::mem::zeroed();
-            entry.dwSize = std::mem::size_of::<THREADENTRY32>() as u32;
-            let mut more = Thread32First(snap, &mut entry) != 0;
-            while more {
-                if entry.th32OwnerProcessID == pid {
-                    let thread = OpenThread(THREAD_SUSPEND_RESUME, 0, entry.th32ThreadID);
-                    if !thread.is_null() {
-                        ResumeThread(thread);
-                        CloseHandle(thread);
-                    }
-                }
-                more = Thread32Next(snap, &mut entry) != 0;
-            }
-            CloseHandle(snap);
-        }
-    }
-
-    #[cfg(windows)]
-    impl Drop for Tree {
-        fn drop(&mut self) {
-            if let Some(job) = self.0 {
-                // SAFETY: closed once, here.
-                unsafe {
-                    windows_sys::Win32::Foundation::CloseHandle(job);
-                }
-            }
-        }
-    }
-
-    #[cfg(unix)]
-    pub struct Tree(u32);
-
-    #[cfg(unix)]
-    impl Tree {
-        /// The child leads its own process group (`process_group(0)`).
-        pub fn of(child: &Child) -> Tree {
-            Tree(child.id())
-        }
-
-        pub fn kill(&self, child: &mut Child) {
-            let _ = std::process::Command::new("kill")
-                .args(["-KILL", "--", &format!("-{}", self.0)])
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status();
-            let _ = child.kill();
-        }
     }
 }
 
