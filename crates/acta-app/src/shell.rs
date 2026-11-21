@@ -3376,15 +3376,18 @@ fn tree_row(
             } else {
                 t.text_tertiary
             };
-            el.child(ui::status_glyph(*status, 14., t)).child(title(
-                if selected {
-                    type_scale::UI_STRONG
-                } else {
-                    type_scale::UI
-                },
-                name.clone(),
-                color,
-            ))
+            // The 14 glyph sits in a 16 slot, so topic titles line up
+            // with the Inbox and Knowledge titles above them.
+            el.child(icon_slot(ui::status_glyph(*status, 14., t)))
+                .child(title(
+                    if selected {
+                        type_scale::UI_STRONG
+                    } else {
+                        type_scale::UI
+                    },
+                    name.clone(),
+                    color,
+                ))
         }
         Row::Closed {
             count: n,
@@ -3394,7 +3397,9 @@ fn tree_row(
         } => {
             let key = group.key();
             let _ = shown;
+            // Under the titles of its group, not under their glyphs.
             el.on_click(cx.listener(move |shell, _, _, cx| shell.toggle_fold(key.clone(), cx)))
+                .child(div().w(px(16.)).flex_shrink_0())
                 .child(type_scale::SMALL.el().text_color(t.text_tertiary).child(tr(
                     locale,
                     Key::TreeClosed,
@@ -3423,6 +3428,18 @@ fn tree_row(
             );
     }
     el.into_any_element()
+}
+
+/// A 16 slot centring a smaller glyph, so rows with 14 and 16 icons keep
+/// one title column.
+fn icon_slot(glyph: impl IntoElement) -> gpui_kit::Div {
+    div()
+        .size(px(16.))
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(glyph)
 }
 
 /// A pinned row of the sidebar (docs/design/components.md 5, list / tree row).

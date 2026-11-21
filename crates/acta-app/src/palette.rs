@@ -508,8 +508,9 @@ impl Render for Palette {
                         type_scale::READING.el().flex_1().child(
                             Input::new(&self.input)
                                 .appearance(false)
-                                .text_size(px(type_scale::READING.size))
-                                .line_height(px(type_scale::READING.line)),
+                                .px(px(0.))
+                                .text_size(px(type_scale::READING.size()))
+                                .line_height(px(type_scale::READING.line())),
                         ),
                     ),
             )

@@ -962,7 +962,7 @@ impl RecordPage {
                 .on_action(
                     cx.listener(|page, _: &Escape, window, cx| page.cancel_title(window, cx)),
                 )
-                .child(Input::new(state).appearance(false))
+                .child(Input::new(state).appearance(false).px(px(0.)))
                 .into_any_element();
         }
         type_scale::TITLE
@@ -1655,13 +1655,19 @@ impl RecordPage {
             .id("description")
             .flex()
             .flex_col()
-            .gap(px(8.))
-            .mt(px(24.))
+            .gap(px(4.))
+            .mt(px(32.))
             .when(self.description_edit.is_none(), |this| {
                 this.cursor_text()
                     .on_click(cx.listener(|page, _, window, cx| page.open_editor(true, window, cx)))
             })
-            .child(ui::label(text(locale, Key::SectionDescription), t))
+            .child(
+                div()
+                    .h(px(28.))
+                    .flex()
+                    .items_center()
+                    .child(ui::label(text(locale, Key::SectionDescription), t)),
+            )
             .child(body)
             .into_any_element()
     }
@@ -1974,7 +1980,7 @@ impl RecordPage {
             })
             .collect::<Vec<_>>();
         let composer = self.render_composer(locale, t, cx);
-        let mut list = div().flex().flex_col().gap(px(24.)).mt(px(24.));
+        let mut list = div().flex().flex_col().gap(px(32.)).mt(px(32.));
         let human = when::initial(&when::human_name(locale));
         // System events other than status changes have no line in the
         // catalogue yet (docs/design/data.md 11, request 10): not shown.
@@ -2058,11 +2064,11 @@ impl RecordPage {
             .px(px(16.))
             .py(px(12.))
             .child(
-                type_scale::READING.el().child(
+                type_scale::READING.el().mx(px(-10.)).my(px(-8.)).child(
                     Textarea::new(&self.composer)
                         .appearance(false)
-                        .text_size(px(type_scale::READING.size))
-                        .line_height(px(type_scale::READING.line)),
+                        .text_size(px(type_scale::READING.size()))
+                        .line_height(px(type_scale::READING.line())),
                 ),
             )
             .when(self.composer_open, |this| {
@@ -2249,8 +2255,12 @@ impl RecordPage {
             .flex()
             .flex_row()
             .gap(px(12.))
+            // The box hangs into the gutter by its padding and border, so
+            // its author mark and text stay in the same columns as every
+            // other entry's.
             .when(decision, |this| {
                 this.px(px(16.))
+                    .mx(px(-17.))
                     .py(px(12.))
                     .rounded(px(RADIUS_LG))
                     .border_1()
@@ -2821,11 +2831,11 @@ fn editor_box(
         .py(px(12.))
         .on_action(cx.listener(|page, _: &Escape, window, cx| page.cancel_editors(window, cx)))
         .child(
-            type_scale::READING.el().child(
+            type_scale::READING.el().mx(px(-10.)).my(px(-8.)).child(
                 Textarea::new(editor)
                     .appearance(false)
-                    .text_size(px(type_scale::READING.size))
-                    .line_height(px(type_scale::READING.line)),
+                    .text_size(px(type_scale::READING.size()))
+                    .line_height(px(type_scale::READING.line())),
             ),
         )
         .child(

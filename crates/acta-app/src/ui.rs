@@ -358,21 +358,32 @@ pub fn notice(
     div()
         .flex()
         .flex_row()
-        .items_center()
+        .items_start()
         .gap(px(8.))
         .w_full()
         .px(px(12.))
-        .py(px(8.))
+        .py(px(6.))
         .rounded(px(RADIUS_LG))
         .bg(tokens.bg_raised)
         .border_1()
         .border_color(tokens.border_subtle)
-        .children(glyph.map(|(glyph, color)| icon(glyph, 16., color)))
+        // Icon, message and actions share a 28 first line, so a message
+        // that wraps keeps its icon on the first line and a one-line
+        // message stays level with the ghost actions.
+        .children(glyph.map(|(glyph, color)| {
+            div()
+                .flex_shrink_0()
+                .h(px(28.))
+                .flex()
+                .items_center()
+                .child(icon(glyph, 16., color))
+        }))
         .child(
             type_scale::UI
                 .el()
                 .flex_1()
                 .min_w_0()
+                .py(px(4.))
                 .text_color(tokens.text_primary)
                 .child(message.into()),
         )

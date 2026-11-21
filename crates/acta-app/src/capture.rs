@@ -146,11 +146,11 @@ impl Render for Capture {
                 ),
             )
             .child(
-                type_scale::READING.el().child(
+                type_scale::READING.el().mx(px(-10.)).my(px(-8.)).child(
                     Textarea::new(&self.editor)
                         .appearance(false)
-                        .text_size(px(type_scale::READING.size))
-                        .line_height(px(type_scale::READING.line)),
+                        .text_size(px(type_scale::READING.size()))
+                        .line_height(px(type_scale::READING.line())),
                 ),
             )
             .child(

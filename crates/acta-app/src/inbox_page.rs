@@ -437,6 +437,8 @@ impl InboxPage {
             .child(match self.editing.as_ref().filter(|(e, _)| *e == id) {
                 Some((_, editor)) => type_scale::READING
                     .el()
+                    .mx(px(-10.))
+                    .my(px(-8.))
                     .on_action(cx.listener(|page, _: &Escape, _, cx| {
                         page.editing = None;
                         cx.notify();
@@ -444,12 +446,12 @@ impl InboxPage {
                     .child(
                         Textarea::new(editor)
                             .appearance(false)
-                            .text_size(px(type_scale::READING.size))
-                            .line_height(px(type_scale::READING.line)),
+                            .text_size(px(type_scale::READING.size()))
+                            .line_height(px(type_scale::READING.line())),
                     )
                     .into_any_element(),
                 None => div()
-                    .max_h(px(144.))
+                    .max_h(px(type_scale::READING.line() * 6.))
                     .overflow_hidden()
                     .text_color(if filed {
                         t.text_secondary
@@ -515,11 +517,11 @@ impl Render for InboxPage {
             .px(px(16.))
             .py(px(12.))
             .child(
-                type_scale::READING.el().child(
+                type_scale::READING.el().mx(px(-10.)).my(px(-8.)).child(
                     Textarea::new(&self.capture)
                         .appearance(false)
-                        .text_size(px(type_scale::READING.size))
-                        .line_height(px(type_scale::READING.line)),
+                        .text_size(px(type_scale::READING.size()))
+                        .line_height(px(type_scale::READING.line())),
                 ),
             )
             .child(

@@ -514,9 +514,12 @@ impl Render for KnowledgePage {
                     .border_color(t.border_strong)
                     .child(icon(Icon::Search, 16., t.text_tertiary))
                     .child(
-                        div()
-                            .flex_1()
-                            .child(Input::new(&self.search).appearance(false)),
+                        div().flex_1().child(
+                            Input::new(&self.search)
+                                .appearance(false)
+                                .px(px(0.))
+                                .text_size(px(type_scale::UI.size)),
+                        ),
                     ),
             )
             .child(
@@ -1341,7 +1344,7 @@ impl Render for DocPage {
                             .text_size(px(24.))
                             .line_height(px(30.))
                             .font_weight(gpui_kit::FontWeight::SEMIBOLD)
-                            .child(Input::new(title).appearance(false)),
+                            .child(Input::new(title).appearance(false).px(px(0.))),
                     )
                     .child(
                         div()
@@ -1361,9 +1364,12 @@ impl Render for DocPage {
                     )
                     .child(div().mt(px(24.)).h(px(1.)).bg(t.border_subtle))
                     .child(
+                        // The editor's own padding (10 x 8) is taken back, so
+                        // the text sits where the reading view puts it.
                         type_scale::DOCUMENT
                             .el()
-                            .mt(px(24.))
+                            .mt(px(16.))
+                            .mx(px(-10.))
                             .child(Textarea::new(body).appearance(false)),
                     );
             }

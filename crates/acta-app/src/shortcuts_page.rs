@@ -118,7 +118,12 @@ impl Render for ShortcutsPage {
                     .bg(t.bg_raised)
                     .border_1()
                     .border_color(t.border_strong)
-                    .child(Input::new(&self.filter).appearance(false)),
+                    .child(
+                        Input::new(&self.filter)
+                            .appearance(false)
+                            .px(px(0.))
+                            .text_size(px(type_scale::UI.size)),
+                    ),
             );
         let mut any = false;
         for (group, commands) in groups() {

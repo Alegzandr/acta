@@ -243,13 +243,17 @@ fn setting_row(label: String, description: String, control: impl IntoElement, t:
                 .flex_1()
                 .min_w_0()
                 .child(type_scale::UI.el().text_color(t.text_primary).child(label))
-                .child(
-                    type_scale::SMALL
-                        .el()
-                        .max_w(px(420.))
-                        .text_color(t.text_tertiary)
-                        .child(description),
-                ),
+                // No description, no empty line under the label: the label
+                // then centres on the control like the others.
+                .when(!description.is_empty(), |this| {
+                    this.child(
+                        type_scale::SMALL
+                            .el()
+                            .max_w(px(420.))
+                            .text_color(t.text_tertiary)
+                            .child(description),
+                    )
+                }),
         )
         .child(div().flex_shrink_0().child(control))
 }
