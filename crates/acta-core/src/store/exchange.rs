@@ -114,6 +114,11 @@ pub struct XNote {
     pub author: Author,
     pub filed_topic: Option<String>,
     pub filed_at: Option<i64>,
+    /// Added in schema 2; absent from older files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filed_epic: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filed_by: Option<Author>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -352,8 +357,9 @@ impl Store {
         let notes = collect(
             conn,
             &format!(
-                "SELECT {STAMP_SQL}, p.uuid, x.text, x.author, t.uuid, x.filed_at
+                "SELECT {STAMP_SQL}, p.uuid, x.text, x.author, t.uuid, x.filed_at, e.uuid, x.filed_by
                  FROM notes x JOIN projects p ON p.id = x.project_id LEFT JOIN topics t ON t.id = x.filed_topic_id
+                 LEFT JOIN epics e ON e.id = x.filed_epic_id
                  WHERE 1 = 1{} ORDER BY x.uuid",
                 only("x.project_id")
             ),
@@ -365,6 +371,8 @@ impl Store {
                     author: r.get(8)?,
                     filed_topic: r.get(9)?,
                     filed_at: r.get(10)?,
+                    filed_epic: r.get(11)?,
+                    filed_by: r.get(12)?,
                 })
             },
         )?;
@@ -735,12 +743,14 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile) -> Result<ImportReport> {
         count(&mut rep.notes, &action);
         let project = local_id(tx, "projects", &x.project)?;
         let filed = opt_id(tx, "topics", &x.filed_topic)?;
+        let filed_epic = opt_id(tx, "epics", &x.filed_epic)?;
         match action {
             Action::Insert => {
                 tx.execute(
                     "INSERT INTO notes (uuid, project_id, text, author, filed_topic_id, filed_at,
+                                        filed_epic_id, filed_by,
                                         created_at, updated_at, updated_by, deleted_at, deleted_by)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
                     params![
                         s.uuid,
                         project,
@@ -748,6 +758,8 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile) -> Result<ImportReport> {
                         x.author,
                         filed,
                         x.filed_at,
+                        filed_epic,
+                        x.filed_by,
                         s.created_at,
                         s.updated_at,
                         s.updated_by,
@@ -761,8 +773,9 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile) -> Result<ImportReport> {
                 tx.execute(
                     "UPDATE notes SET text = ?2, filed_topic_id = ?3, filed_at = ?4, updated_at = ?5, updated_by = ?6,
                             deleted_at = ?7, deleted_by = ?8,
-                            deleted_batch = CASE WHEN deleted_at IS ?7 THEN deleted_batch ELSE NULL END WHERE id = ?1",
-                    params![l.id, x.text, filed, x.filed_at, s.updated_at, s.updated_by, d, db],
+                            deleted_batch = CASE WHEN deleted_at IS ?7 THEN deleted_batch ELSE NULL END,
+                            filed_epic_id = ?9, filed_by = ?10 WHERE id = ?1",
+                    params![l.id, x.text, filed, x.filed_at, s.updated_at, s.updated_by, d, db, filed_epic, x.filed_by],
                 )?;
             }
             Action::Skip => {}

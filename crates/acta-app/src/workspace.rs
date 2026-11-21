@@ -14,7 +14,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use acta_core::model::{
-    Author, EpicId, FolderId, KbId, NoteId, Owner, ProjectId, ProjectTree, Record, Status, TopicId,
+    Author, EpicId, FolderId, KbId, Note, NoteId, Owner, ProjectId, ProjectTree, Record, Status,
+    TopicId,
 };
 use acta_core::store::{EpicPatch, ProjectPatch, TopicPatch};
 use acta_core::{ChangeWatcher, Store};
@@ -84,6 +85,9 @@ pub enum Undo {
     },
     /// A note filed by hand: back to the inbox (expects it filed).
     Unfile(NoteId),
+    /// A note put back in the inbox: file it again exactly as it was
+    /// (target, time, who), expecting it still open.
+    Refile(Box<Note>),
     /// Several steps taken back as one, all or none.
     Many(Vec<Undo>),
 }
@@ -126,7 +130,8 @@ impl Undo {
             }
             Undo::KbRevision { id, expect, .. } => store.kb_entry(*id)?.rev == *expect,
             Undo::Reorder { record, expect, .. } => store.order_index(*record)? == *expect,
-            Undo::Unfile(id) => store.note(*id)?.filed_topic.is_some(),
+            Undo::Unfile(id) => !store.note(*id)?.is_open(),
+            Undo::Refile(before) => store.note(before.id)?.is_open(),
             Undo::Many(all) => {
                 for undo in all {
                     if !undo.matches(store)? {
@@ -184,6 +189,7 @@ impl Undo {
             }
             Undo::Reorder { record, back, .. } => store.reorder(*record, *back, me),
             Undo::Unfile(id) => store.unfile_note(*id, me),
+            Undo::Refile(before) => store.restore_note_fate(before.id, before, me),
             Undo::Many(all) => all.iter().try_for_each(|undo| undo.revert(store)),
         }
     }
@@ -823,6 +829,34 @@ mod tests {
         store.delete(Record::Topic(id), Author::Human).unwrap();
         assert!(Undo::Restore(Record::Topic(id)).apply(store).unwrap());
         assert!(store.topic(id).is_ok());
+    }
+
+    #[test]
+    fn undo_of_back_to_inbox_files_the_note_again_exactly() {
+        let mut temp = temp_store();
+        let store = &mut temp.store;
+        let (project, id) = topic(store);
+        let note = store
+            .add_note(project, "Alexandre: embed the terminal", Author::Human)
+            .unwrap();
+        store.file_notes(&[note], id, Author::Claude).unwrap();
+        let before = store.note(note).unwrap();
+        store.unfile_note(note, Author::Human).unwrap();
+        let step = Undo::Refile(Box::new(before.clone()));
+        assert!(step.apply(store).unwrap());
+        let after = store.note(note).unwrap();
+        assert_eq!(
+            (after.fate(), after.filed_at, after.filed_by),
+            (before.fate(), before.filed_at, Some(Author::Claude))
+        );
+        // Filed again by someone else in between: the undo is skipped.
+        store.unfile_note(note, Author::Human).unwrap();
+        store.dismiss_notes(&[note], Author::Claude).unwrap();
+        assert!(!step.apply(store).unwrap());
+        assert_eq!(
+            store.note(note).unwrap().fate(),
+            acta_core::model::NoteFate::Dismissed
+        );
     }
 
     #[test]

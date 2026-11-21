@@ -493,6 +493,14 @@ catalogue! {
         en: t("Filed as"),
         fr: t("Classée dans"),
     }
+    InboxDismissed "inbox.dismissed" {
+        en: t("Dismissed"),
+        fr: t("Écartée"),
+    }
+    InboxByClaude "inbox.by_claude" {
+        en: t("by Claude Code"),
+        fr: t("par Claude Code"),
+    }
     InboxMakeTopic "inbox.make_topic" {
         en: t("Make topic"),
         fr: t("Créer un sujet"),

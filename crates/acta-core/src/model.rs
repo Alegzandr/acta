@@ -317,10 +317,41 @@ pub struct Note {
     pub project: ProjectId,
     pub text: String,
     pub author: Author,
-    /// Set once the note has been turned into, or filed under, a topic.
+    /// The topic the note was turned into, or added to as an entry.
     pub filed_topic: Option<TopicId>,
+    /// The epic the note was turned into.
+    pub filed_epic: Option<EpicId>,
+    /// Set once the note has left the inbox: filed, or dismissed when
+    /// neither `filed_topic` nor `filed_epic` is set.
     pub filed_at: Option<i64>,
+    /// Who filed or dismissed it; `None` for notes filed before it was kept.
+    pub filed_by: Option<Author>,
     pub stamp: Stamp,
+}
+
+/// Where a note went when it left the inbox.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NoteFate {
+    Open,
+    Topic(TopicId),
+    Epic(EpicId),
+    Dismissed,
+}
+
+impl Note {
+    pub fn fate(&self) -> NoteFate {
+        // `filed_at` decides: a target without it (an old import) is open.
+        match (self.filed_at, self.filed_topic, self.filed_epic) {
+            (None, _, _) => NoteFate::Open,
+            (Some(_), Some(t), _) => NoteFate::Topic(t),
+            (Some(_), None, Some(e)) => NoteFate::Epic(e),
+            (Some(_), None, None) => NoteFate::Dismissed,
+        }
+    }
+
+    pub fn is_open(&self) -> bool {
+        self.fate() == NoteFate::Open
+    }
 }
 
 /// A knowledge entry without its body: what lists show (ADR 0005 `kb`).

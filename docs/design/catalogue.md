@@ -131,6 +131,8 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `inbox.filter.filed` | Filed | Classées |
 | `inbox.file` | File with Claude Code | Classer avec Claude Code |
 | `inbox.filed_as` | Filed as | Classée dans |
+| `inbox.dismissed` | Dismissed | Écartée |
+| `inbox.by_claude` | by Claude Code | par Claude Code |
 | `inbox.make_topic` | Make topic | Créer un sujet |
 | `inbox.empty` | Inbox is empty. Notes you capture land here until they become topics. | La boîte de réception est vide. Les notes que vous saisissez arrivent ici jusqu'à devenir des sujets. |
 | `kb.new_document` | New document | Nouveau document |

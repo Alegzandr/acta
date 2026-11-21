@@ -84,7 +84,7 @@ dependencies = [
 
 [[package]]
 name = "acta-app"
-version = "0.1.4"
+version = "0.3.0"
 dependencies = [
  "acta-core",
  "acta-terminal",
@@ -108,7 +108,7 @@ dependencies = [
 
 [[package]]
 name = "acta-cli"
-version = "0.1.4"
+version = "0.3.0"
 dependencies = [
  "acta-core",
  "clap",
@@ -122,7 +122,7 @@ dependencies = [
 
 [[package]]
 name = "acta-core"
-version = "0.1.4"
+version = "0.3.0"
 dependencies = [
  "getrandom 0.4.3",
  "keyring",
@@ -138,7 +138,7 @@ dependencies = [
 
 [[package]]
 name = "acta-terminal"
-version = "0.1.4"
+version = "0.3.0"
 dependencies = [
  "alacritty_terminal",
  "async-channel",

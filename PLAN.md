@@ -6,9 +6,9 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 |---|-----------|---------|--------|
 | M0 | Research, spikes, ADRs, DESIGN.md | - | done |
 | M1 | Pipeline: window that installs silently and updates itself; design foundations; app icon | v0.1.x | done |
-| M2 | Data model and core UI | v0.2.0 | doing |
-| M3 | MCP server, CLI, Claude Code setup; Acta tracks itself | v0.3.0 | doing |
-| M4 | Integrated terminal running Claude Code | v0.4.0 | todo |
+| M2 | Data model and core UI | v0.3.0 | done |
+| M3 | MCP server, CLI, Claude Code setup; Acta tracks itself | v0.3.0 | done (dogfooding pending) |
+| M4 | Integrated terminal running Claude Code | v0.3.0 | doing (docked; live Claude Code session to verify) |
 | M5 | Claude chat panel beside the work (Windows and macOS; link on Linux; ADR 0009) | v0.5.0 | doing |
 | M6 | Notes inbox and notes-to-topics flow | v0.6.0 | todo |
 | M7 | Polish | v1.0.0 | todo |
@@ -69,8 +69,12 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 - [ ] Side panel with a persistent session, toggled from the keyboard - built on `gpui-engineer/m5-chat` (Windows only): chat tool window in the right or bottom dock, lazy web view with profile in `<data dir>/webview`, allow-list, hidden under overlays, runtime-missing / could-not-open / sign-in help states, kept keys routed through WebView2's `AcceleratorKeyPressed`, macOS Edit menu, Linux link; the kept-key route, a real sign-in and macOS are not yet exercised
 
 ## M6 - Notes
-- [ ] Per-project inbox, quick capture
-- [ ] Claude Code turns notes into topics and epics; human refines in the UI
+- [ ] Per-project inbox, quick capture (inbox page and Mod+N in M2)
+- [x] Agent triage: `find(kind="note")` lists the inbox; one all-or-nothing `create` call turns notes into topics (draft, in an existing epic or an epic of the same call with `epic="@k"`), epics, or entries of existing topics, and `dismiss` closes the rest; `update(N-n, status=open)` puts a note back. Schema 2: notes keep `filed_epic_id` and `filed_by`. CLI: `acta create entry|dismiss|plan`. Proven by an end-to-end stdio test
+- [x] `/acta:triage` skill: read, group, propose one compact plan, apply after confirmation (or with `go`), report ids
+- [x] Inbox UI: the Filed list (it was empty before), links to the topic or epic, "by Claude Code", back to inbox
+- [ ] Headless `claude -p` triage run: a temporary `CLAUDE_CONFIG_DIR` has no login, and copying credentials into it was refused; needs the lead's call
+- [ ] "File with Claude Code" button (screens.md 8.2): needs a way to run a command in the terminal dock
 
 ## M7 - Polish
 - [ ] Design review of every screen against DESIGN.md
@@ -80,3 +84,5 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 ## Settled with the user
 - 2026-11-20: design direction is inspired by Obsidian, Notion and JetBrains IDEs: a workbench (tree, document-like pages, tool windows for the terminal and the chat panel, search everywhere). A "Project Ledger" direction (parchment, serif, engravings) was briefed and withdrawn by the user the same day; do not revive it. Kept from that brief as functional requirements: Light / Dark / System setting, UI in English (default) and French from a central string table. DESIGN.md is being revised on `product-designer/workbench`.
 - 2026-11-20: no spending at all. No code-signing certificate, no Apple Developer membership, no paid runners or services. Builds are unsigned; only free tooling.
+
+- 2026-11-21: v0.3.0 released (M2 store + UI, M3 MCP/CLI/setup, docked terminal). Self-update through the API-free source proven on Windows, macOS and Linux (update-e2e run 44870763799, 0.1.4 -> 0.3.0). Items the M2 UI simplified (memory editing in place, pane resize handles, folder drag reorder, persistent palette recents, revision line counts) move to M7.

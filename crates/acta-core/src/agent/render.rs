@@ -45,6 +45,8 @@ pub mod limit {
     /// document grows section by section.
     pub const DOCUMENT_WRITE: usize = 16_000;
     pub const CREATE_ITEMS: usize = 10;
+    /// Notes one `create` call may file or dismiss.
+    pub const CREATE_NOTES: usize = 40;
     pub const QUERY: usize = 200;
 }
 

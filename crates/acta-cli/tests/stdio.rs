@@ -320,6 +320,104 @@ fn every_tool_over_stdio_within_budget() {
     assert!(ok && out.contains("progress claude"), "{out}");
 }
 
+/// The `/acta:triage` flow over stdio: notes captured by the human (CLI),
+/// read and filed by the agent (MCP) in one call, checked and partly
+/// undone from the CLI.
+#[test]
+fn a_full_triage_over_stdio() {
+    let tmp = tempfile::tempdir().unwrap();
+    let data = tmp.path().join("data");
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    assert!(cli(&data, &repo, &["link"], "").0);
+    let (ok, out, err) = cli(&data, &repo, &["create", "epic"], "Storage");
+    assert!(ok && out.starts_with("ok E-1"), "{out}{err}");
+    let (ok, out, _) = cli(
+        &data,
+        &repo,
+        &["create", "topic", "--epic", "E-1"],
+        "Encrypted storage",
+    );
+    assert!(ok && out.starts_with("ok T-1"), "{out}");
+    for text in [
+        "Sync between two laptops",
+        "Conflict handling when both edit the same topic",
+        "Quick capture from the tray",
+        "Capture should keep the last project",
+        "WAL checkpoint runs too often on battery",
+        "Quick capture from the tray (again)",
+    ] {
+        let (ok, out, err) = cli(&data, &repo, &["create", "note"], text);
+        assert!(ok && out.starts_with("ok N-"), "{out}{err}");
+    }
+
+    let mut m = Mcp::start(&data, &repo, false);
+    let (err, inbox) = m.call("find", json!({"kind": "note"}));
+    assert!(!err && inbox.contains("N-6 note  Quick capture from the tray (again)"));
+    assert!(
+        inbox.ends_with("6 hits") && chars(&inbox) <= 2_000,
+        "{inbox}"
+    );
+    let plan = json!({
+        "items": [
+            {"kind": "epic", "title": "Sync", "from_notes": ["N-1"]},
+            {"kind": "topic", "title": "Conflict handling", "epic": "@1", "from_notes": ["N-2"]},
+            {"kind": "topic", "title": "Quick capture", "epic": "E-1", "from_notes": ["N-3", "N-4"]},
+            {"kind": "entry", "topic": "T-1", "from_notes": ["N-5"]}
+        ],
+        "dismiss": ["N-6"]
+    });
+    // One bad note id refuses the whole plan.
+    let mut bad = plan.clone();
+    bad["dismiss"] = json!(["N-6", "N-1"]);
+    let (err, text) = m.call("create", bad);
+    assert!(err && text.contains("N-1 is used twice"), "{text}");
+    let (err, ack) = m.call("create", plan);
+    assert!(!err, "{ack}");
+    assert_eq!(
+        ack,
+        "ok E-2 (N-1) · T-2 draft in E-2 (N-2) · T-3 draft in E-1 (N-3 N-4) · T-1 +1 entry (N-5) · dismissed N-6"
+    );
+    assert!(chars(&ack) <= 320);
+    let (_, inbox) = m.call("find", json!({"kind": "note"}));
+    assert_eq!(inbox, "0 hits");
+    let (_, brief) = m.call("brief", json!({"id": "E-2"}));
+    assert!(brief.contains("T-2 draft  Conflict handling"), "{brief}");
+    let (_, entries) = m.call("entries", json!({"topic": "T-1"}));
+    assert!(
+        entries.contains("#1 ") && entries.contains("discussion"),
+        "{entries}"
+    );
+    let (err, back) = m.call("update", json!({"id": "N-3", "status": "open"}));
+    assert!(
+        !err && back == "ok N-3 updated: back in the inbox",
+        "{back}"
+    );
+    drop(m);
+
+    // The CLI equivalents: the inbox, a plan as JSON, dismiss.
+    let (ok, out, _) = cli(&data, &repo, &["find", "--kind", "note"], "");
+    assert!(ok && out.contains("N-3 note  Quick capture"), "{out}");
+    let (ok, out, err) = cli(&data, &repo, &["create", "note"], "Tray icon in dark mode");
+    assert!(ok && out.starts_with("ok N-7"), "{out}{err}");
+    let (ok, out, err) = cli(
+        &data,
+        &repo,
+        &["create", "plan"],
+        r#"{"items":[{"kind":"entry","topic":"T-3","from_notes":["N-3"]}]}"#,
+    );
+    assert!(ok && out.trim() == "ok T-3 +1 entry (N-3)", "{out}{err}");
+    let (ok, out, err) = cli(
+        &data,
+        &repo,
+        &["create", "dismiss", "--from-notes", "N-7"],
+        "",
+    );
+    assert!(ok && out.trim() == "ok dismissed N-7", "{out}{err}");
+    let (ok, out, _) = cli(&data, &repo, &["find", "--kind", "note"], "");
+    assert!(ok && out.trim() == "0 hits", "{out}");
+}
+
 #[test]
 fn hooks_exit_fast_and_silently_outside_linked_folders() {
     let tmp = tempfile::tempdir().unwrap();

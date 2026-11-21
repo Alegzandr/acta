@@ -128,7 +128,7 @@ impl Store {
             "SELECT p.id, p.title, p.position, p.updated_at,
                (SELECT count(*) FROM topics t WHERE t.project_id = p.id AND t.deleted_at IS NULL AND t.status = 'done'),
                (SELECT count(*) FROM topics t WHERE t.project_id = p.id AND t.deleted_at IS NULL AND t.status <> 'dropped'),
-               (SELECT count(*) FROM notes n WHERE n.project_id = p.id AND n.deleted_at IS NULL AND n.filed_topic_id IS NULL),
+               (SELECT count(*) FROM notes n WHERE n.project_id = p.id AND n.deleted_at IS NULL AND n.filed_at IS NULL),
                (SELECT count(*) FROM kb_entries k WHERE k.project_id = p.id AND k.deleted_at IS NULL)
              FROM projects p WHERE p.deleted_at IS NULL ORDER BY p.position, p.id",
         )?;

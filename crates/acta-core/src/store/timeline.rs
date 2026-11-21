@@ -4,8 +4,8 @@ use super::records::{TopicPatch, apply_topic_patch};
 use super::{STAMP_COLS, Store, new_uuid, required, stamp};
 use crate::error::{Error, Result};
 use crate::model::{
-    Author, Entry, EntryId, EntryKind, EventKind, Note, NoteId, Page, PageReq, ProjectId, Status,
-    SystemEvent, TopicId,
+    Author, Entry, EntryId, EntryKind, EpicId, EventKind, Note, NoteId, Page, PageReq, ProjectId,
+    Status, SystemEvent, TopicId,
 };
 use crate::time::now_ms;
 use rusqlite::{OptionalExtension, params};
@@ -52,7 +52,8 @@ fn entry_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Entry> {
     })
 }
 
-const NOTE_COLS: &str = "id, project_id, text, author, filed_topic_id, filed_at";
+const NOTE_COLS: &str =
+    "id, project_id, text, author, filed_topic_id, filed_at, filed_epic_id, filed_by";
 
 fn note_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Note> {
     Ok(Note {
@@ -62,7 +63,9 @@ fn note_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Note> {
         author: r.get(3)?,
         filed_topic: r.get::<_, Option<i64>>(4)?.map(TopicId),
         filed_at: r.get(5)?,
-        stamp: stamp(r, 6)?,
+        filed_epic: r.get::<_, Option<i64>>(6)?.map(EpicId),
+        filed_by: r.get(7)?,
+        stamp: stamp(r, 8)?,
     })
 }
 
@@ -224,8 +227,34 @@ impl Store {
 
     /// The project's notes not yet filed, newest first.
     pub fn inbox(&self, project: ProjectId, page: PageReq) -> Result<Page<Note>> {
+        self.notes_where(
+            project,
+            "filed_at IS NULL",
+            "created_at DESC, id DESC",
+            page,
+        )
+    }
+
+    /// The project's notes that left the inbox (filed or dismissed), most
+    /// recently filed first.
+    pub fn filed_notes(&self, project: ProjectId, page: PageReq) -> Result<Page<Note>> {
+        self.notes_where(
+            project,
+            "filed_at IS NOT NULL",
+            "filed_at DESC, id DESC",
+            page,
+        )
+    }
+
+    fn notes_where(
+        &self,
+        project: ProjectId,
+        cond: &str,
+        order: &str,
+        page: PageReq,
+    ) -> Result<Page<Note>> {
         let (offset, limit) = page.clamped();
-        let where_ = "project_id = ?1 AND deleted_at IS NULL AND filed_topic_id IS NULL";
+        let where_ = format!("project_id = ?1 AND deleted_at IS NULL AND {cond}");
         let total: i64 = self.conn.query_row(
             &format!("SELECT count(*) FROM notes WHERE {where_}"),
             [project.0],
@@ -233,7 +262,7 @@ impl Store {
         )?;
         let mut stmt = self.conn.prepare(&format!(
             "SELECT {NOTE_COLS}, {STAMP_COLS} FROM notes WHERE {where_}
-             ORDER BY created_at DESC, id DESC LIMIT {limit} OFFSET {offset}"
+             ORDER BY {order} LIMIT {limit} OFFSET {offset}"
         ))?;
         let items = stmt
             .query_map([project.0], note_row)?
@@ -246,7 +275,6 @@ impl Store {
         })
     }
 
-    /// Marks notes as turned into, or filed under, a topic of their project.
     /// Files a note as a new topic in one transaction: the topic is created
     /// (title and description from the caller) and the note filed under it.
     pub fn note_to_topic(
@@ -269,38 +297,130 @@ impl Store {
         })
     }
 
-    /// Puts a filed note back in the inbox (the undo of filing it).
+    /// Puts a filed or dismissed note back in the inbox (the undo of
+    /// filing it). What filing created stays: the topic, epic or entries.
     pub fn unfile_note(&mut self, id: NoteId, author: Author) -> Result<()> {
         let tx = self.write()?;
         read_note(&tx, id)?;
         tx.execute(
-            "UPDATE notes SET filed_topic_id = NULL, filed_at = NULL, updated_at = ?2, updated_by = ?3 WHERE id = ?1",
+            "UPDATE notes SET filed_topic_id = NULL, filed_epic_id = NULL, filed_at = NULL,
+                    filed_by = NULL, updated_at = ?2, updated_by = ?3 WHERE id = ?1",
             params![id.0, now_ms(), author],
         )?;
         tx.commit()?;
         Ok(())
     }
 
+    /// Marks open notes as turned into, or filed under, a topic of their
+    /// project.
     pub fn file_notes(&mut self, notes: &[NoteId], topic: TopicId, author: Author) -> Result<()> {
         let tx = self.write()?;
         let project = super::records::read_topic(&tx, topic)?.project;
-        for id in notes {
-            if read_note(&tx, *id)?.project != project {
-                return Err(Error::Invalid(format!(
-                    "{id} belongs to another project than {topic}"
-                )));
-            }
-        }
-        let now = now_ms();
-        for id in notes {
-            tx.execute(
-                "UPDATE notes SET filed_topic_id = ?2, filed_at = ?3, updated_at = ?3, updated_by = ?4 WHERE id = ?1",
-                params![id.0, topic.0, now, author],
-            )?;
-        }
+        set_fate(
+            &tx,
+            notes,
+            project,
+            &topic.to_string(),
+            Some(topic.0),
+            None,
+            author,
+        )?;
         tx.commit()?;
         Ok(())
     }
+
+    /// Marks open notes as turned into an epic of their project.
+    pub fn file_notes_in_epic(
+        &mut self,
+        notes: &[NoteId],
+        epic: EpicId,
+        author: Author,
+    ) -> Result<()> {
+        let tx = self.write()?;
+        let project = super::records::read_epic(&tx, epic)?.project;
+        set_fate(
+            &tx,
+            notes,
+            project,
+            &epic.to_string(),
+            None,
+            Some(epic.0),
+            author,
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Takes open notes out of the inbox without filing them anywhere
+    /// (duplicates, done, noise). `unfile_note` brings one back.
+    pub fn dismiss_notes(&mut self, notes: &[NoteId], author: Author) -> Result<()> {
+        let Some(first) = notes.first() else {
+            return Ok(());
+        };
+        let tx = self.write()?;
+        let project = read_note(&tx, *first)?.project;
+        set_fate(&tx, notes, project, &first.to_string(), None, None, author)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Sets a note's fate exactly as it was (the undo of putting it back in
+    /// the inbox): target, time and who filed it.
+    pub fn restore_note_fate(&mut self, id: NoteId, before: &Note, author: Author) -> Result<()> {
+        let tx = self.write()?;
+        read_note(&tx, id)?;
+        tx.execute(
+            "UPDATE notes SET filed_topic_id = ?2, filed_epic_id = ?3, filed_at = ?4, filed_by = ?5,
+                    updated_at = ?6, updated_by = ?7 WHERE id = ?1",
+            params![
+                id.0,
+                before.filed_topic.map(|t| t.0),
+                before.filed_epic.map(|e| e.0),
+                before.filed_at,
+                before.filed_by,
+                now_ms(),
+                author
+            ],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+}
+
+/// Inside the caller's transaction: every note must be live, in `project`
+/// and still open (read here, so a note filed by another process since the
+/// caller looked is refused), then all are stamped.
+fn set_fate(
+    tx: &rusqlite::Connection,
+    notes: &[NoteId],
+    project: ProjectId,
+    target: &str,
+    topic: Option<i64>,
+    epic: Option<i64>,
+    author: Author,
+) -> Result<()> {
+    for id in notes {
+        let note = read_note(tx, *id)?;
+        if note.project != project {
+            return Err(Error::Invalid(format!(
+                "{id} belongs to another project than {target}"
+            )));
+        }
+        if !note.is_open() {
+            return Err(Error::Invalid(format!(
+                "{id} is no longer in the inbox (filed or dismissed since)"
+            )));
+        }
+    }
+    let now = now_ms();
+    for id in notes {
+        tx.execute(
+            "UPDATE notes SET filed_topic_id = ?2, filed_epic_id = ?3, filed_at = ?4, filed_by = ?5,
+                    updated_at = ?4, updated_by = ?5 WHERE id = ?1",
+            params![id.0, topic, epic, now, author],
+        )?;
+    }
+    Ok(())
 }
 
 fn read_note(conn: &rusqlite::Connection, id: NoteId) -> Result<Note> {
