@@ -389,6 +389,39 @@ fn set_commit_writes_the_file_and_is_refused_for_claude() {
 }
 
 #[test]
+fn settings_left_in_an_offline_folder_are_still_guarded() {
+    let mut t = open();
+    let tmp = tempfile::tempdir().unwrap();
+    let s = &mut t.store;
+    let f = tmp.path().join("r");
+    fs::create_dir_all(&f).unwrap();
+    let id = attach(s, &f);
+    let f = PathBuf::from(stored(&f));
+    set_commit(s, id, CommitMode::Push, Some(false), true, Author::Human).unwrap();
+    // Offline: the switch to Manual cannot reach the file.
+    let away = tmp.path().join("away");
+    fs::rename(&f, &away).unwrap();
+    set_commit(s, id, CommitMode::Manual, None, false, Author::Human).unwrap();
+    let got = commit_settings_for(s, &f.to_string_lossy())
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        got.settings.mode,
+        CommitMode::Push,
+        "the file's rules still hold"
+    );
+    assert!(!got.settings.on_default, "the stricter option");
+    // Back: the next sync writes Manual and the column decides again.
+    fs::rename(&away, &f).unwrap();
+    assert_eq!(sync_all(s).unwrap(), (1, 0));
+    assert!(!f.join(LOCAL_SETTINGS).exists());
+    let got = commit_settings_for(s, &f.to_string_lossy())
+        .unwrap()
+        .unwrap();
+    assert_eq!(got.settings.mode, CommitMode::Manual);
+}
+
+#[test]
 fn one_path_at_two_levels_takes_the_strictest() {
     let mut t = open();
     let tmp = tempfile::tempdir().unwrap();
@@ -454,6 +487,19 @@ fn an_import_and_a_locate_bring_the_files_in_line() {
     c.store.import_by(&file, false, Author::Claude).unwrap();
     let cid = c.store.all_folders().unwrap()[0].id;
     assert_eq!(c.store.folder(cid).unwrap().commit_mode, CommitMode::Manual);
+    // A Claude Code import keeps an existing folder's local path and
+    // writes nothing.
+    let moved = tmp.path().join("moved");
+    fs::create_dir_all(&moved).unwrap();
+    c.store.set_folder_path(cid, &moved, Author::Human).unwrap();
+    let before = c.store.folder(cid).unwrap().path;
+    let mut newer = file.clone();
+    newer.folders[0].stamp.updated_at += 1_000;
+    newer.folders[0].commit_mode = CommitMode::Push;
+    c.store.import_by(&newer, false, Author::Claude).unwrap();
+    assert_eq!(c.store.folder(cid).unwrap().path, before);
+    assert_eq!(c.store.folder(cid).unwrap().commit_mode, CommitMode::Manual);
+    assert!(!moved.join(LOCAL_SETTINGS).exists());
 
     // Locate: a folder set to commit while not found is written once found.
     let mut d = open();

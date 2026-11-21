@@ -342,7 +342,19 @@ pub fn commit_settings_for(store: &Store, dir: &str) -> crate::Result<Option<Fol
                 .unwrap_or(&best)
                 .to_owned()
         });
-    let settings = settings_of(&here, as_user_default(store)?);
+    let mut settings = settings_of(&here, as_user_default(store)?);
+    // What the file still holds when it could not be brought in line (the
+    // folder was offline): the stricter of the two is enforced, so a
+    // switch to Manual still guards the rules left in the file.
+    if let Some(recorded) = read_ledger(store, Path::new(&best))?.and_then(|l| l.commit)
+        && recorded.mode.rank() > settings.mode.rank()
+    {
+        settings = CommitSettings {
+            mode: recorded.mode,
+            as_user: recorded.as_user,
+            on_default: recorded.on_default && settings.on_default,
+        };
+    }
     Ok(Some(FolderCommit {
         path: best,
         name,
