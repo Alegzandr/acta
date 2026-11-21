@@ -26,8 +26,6 @@ use crate::type_scale;
 use crate::ui::{self, Variant};
 use crate::workspace::{FolderRef, ToastKind, Undo, Workspace};
 
-/// docs/design/layout.md 4.5: the right dock is 648 wide (80 columns).
-pub const WIDTH: f32 = 648.;
 /// The header of a tool window.
 const HEADER: f32 = 28.;
 
@@ -671,13 +669,8 @@ impl TerminalDock {
             .track_focus(&self.focus)
             .flex()
             .flex_col()
-            .flex_shrink_0()
-            .w(px(WIDTH))
-            .min_w(px(400.))
-            .h_full()
+            .size_full()
             .bg(surface)
-            .border_l_1()
-            .border_color(t.border_subtle)
             .child(header)
             .child(body)
             .into_any_element()

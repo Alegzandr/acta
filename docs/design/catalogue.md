@@ -394,12 +394,14 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `settings.export.never` | Never exported | Jamais exporté |
 | `settings.snapshots.today` | {n} snapshot kept; the newest is from today, {time} · {n} snapshots kept; the newest is from today, {time} | {n} instantané conservé ; le plus récent date d'aujourd'hui à {time} · {n} instantanés conservés ; le plus récent date d'aujourd'hui à {time} |
 | `settings.snapshots.older` | {n} snapshot kept; the newest is from {datetime} · {n} snapshots kept; the newest is from {datetime} | {n} instantané conservé ; le plus récent date du {datetime} · {n} instantanés conservés ; le plus récent date du {datetime} |
+| `settings.snapshots` | Snapshots | Instantanés |
 | `settings.trash_count` | {n} item · {n} items | {n} élément · {n} éléments |
 | `settings.database` | Database | Base de données |
 | `settings.chat` | Chat | Chat |
 | `settings.about` | About | À propos |
 | `settings.release_notes` | Release notes | Notes de version |
 | `settings.licences` | Licences | Licences |
+| `settings.licences.hint` | Inter and JetBrains Mono under the SIL Open Font License, Lucide under ISC. | Inter et JetBrains Mono sous licence SIL Open Font License, Lucide sous licence ISC. |
 | `statusbar.not_set_up` | Claude Code: not set up | Claude Code : non configuré |
 | `statusbar.not_found` | Claude Code: not found | Claude Code : introuvable |
 | `statusbar.no_folder` | Claude Code: no folder for this project | Claude Code : aucun dossier pour ce projet |
@@ -465,6 +467,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `keyloss.title` | Acta cannot open its database | Acta ne peut pas ouvrir sa base de données |
 | `keyloss.body` | The database is on this computer and intact, but its key is missing from {keychain}. (`keychain.*`) This usually follows a system reinstall, a new user profile or a move to another machine. | La base de données est sur cet ordinateur et intacte, mais sa clé est absente {keychain}. Cela arrive généralement après une réinstallation du système, la création d'un nouveau profil utilisateur ou un changement de machine. |
 | `keyloss.body.m` | The database is on this computer and intact, but its key file is missing from Acta's data folder. This usually follows a restore from a backup that left it out, a new user profile or a move to another machine. | La base de données est sur cet ordinateur et intacte, mais son fichier de clé manque dans le dossier de données d'Acta. Cela suit en général une restauration de sauvegarde qui l'a omis, un nouveau profil utilisateur ou un changement de machine. |
+| `keyloss.body.unreadable` | Acta found its key, but the database cannot be read with it: the file may be damaged, or the key belongs to another database. This can follow a disk error or a copy of the file from another computer. | Acta a trouvé sa clé, mais elle ne permet pas de lire la base de données : le fichier est peut-être endommagé, ou la clé appartient à une autre base. Cela peut suivre une erreur de disque ou une copie du fichier depuis un autre ordinateur. |
 | `keychain.w` | Windows Credential Manager | du Gestionnaire d'identification Windows |
 | `keychain.m` | the macOS Keychain | du trousseau macOS |
 | `keychain.l` | the Secret Service keyring | du service Secret Service |
@@ -475,6 +478,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `openfail.title` | Acta could not open its database | Acta n'a pas pu ouvrir sa base de données |
 | `openfail.body` | Something on this computer kept Acta from reading its data. Nothing was changed. Try again; if it keeps failing, the log in the data folder says what failed. | Quelque chose sur cet ordinateur empêche Acta de lire ses données. Rien n'a été modifié. Réessayez ; si l'échec se répète, le journal du dossier de données indique la cause. |
 | `openfail.nodir` | Acta could not find where to keep its data on this computer. | Acta ne trouve pas où conserver ses données sur cet ordinateur. |
+| `openfail.show_log` | Show the log | Afficher le journal |
 | `firstrun.title` | Start with a project | Commencez par un projet |
 | `firstrun.body` | A project is a folder you work on with Claude Code. Acta keeps its topics, decisions and notes next to the work. | Un projet est un dossier sur lequel vous travaillez avec Claude Code. Acta garde ses sujets, ses décisions et ses notes à côté du travail. |
 | `firstrun.choose` | Choose a folder | Choisir un dossier |

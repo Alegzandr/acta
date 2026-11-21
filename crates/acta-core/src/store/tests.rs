@@ -111,8 +111,11 @@ fn a_lost_key_is_refused_and_the_file_left_untouched() {
     assert!(t.keys.load().unwrap().is_none());
 
     // Recovery: the file is kept aside, intact, and a new database starts.
-    let aside = crate::db::set_aside_unreadable(&config.data_dir).unwrap();
+    let name = crate::db::unreadable_name(1_795_250_112_000);
+    assert_eq!(name, "acta.unreadable-2026-11-21-083512.db");
+    let aside = crate::db::set_aside_unreadable(&config.data_dir, &name).unwrap();
     assert_eq!(std::fs::read(&aside).unwrap(), before);
+    assert!(aside.ends_with(&name));
     let fresh = Store::open(&config).unwrap();
     assert!(fresh.was_created());
     assert!(fresh.projects().unwrap().is_empty());
@@ -1455,4 +1458,17 @@ fn a_version_1_database_with_notes_migrates_to_version_2() {
     assert_eq!(filed.total, 1);
     assert_eq!(filed.items[0].fate(), NoteFate::Topic(k));
     assert_eq!(filed.items[0].filed_by, None);
+}
+
+#[test]
+fn the_last_claude_write_names_the_topic_claude_code_touched_last() {
+    let mut t = open();
+    let p = t.store.create_project("Acta", "", H).unwrap();
+    let a = topic(&mut t.store, p, None, "Embed the terminal");
+    assert_eq!(t.store.last_claude_write(p).unwrap(), None);
+    t.store
+        .log(a, entry(EntryKind::Progress, "Alexandre's note"), C)
+        .unwrap();
+    let (id, title, _) = t.store.last_claude_write(p).unwrap().unwrap();
+    assert_eq!((id, title.as_str()), (a, "Embed the terminal"));
 }

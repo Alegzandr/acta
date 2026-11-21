@@ -31,10 +31,7 @@ use crate::theme::{RADIUS_MD, Tokens};
 use crate::type_scale;
 use crate::ui::{self, Variant};
 
-/// docs/design/layout.md 4.5: the right dock is 648 wide, the bottom one
-/// 320 high.
-const WIDTH: f32 = 648.;
-const HEIGHT: f32 = 320.;
+/// docs/design/layout.md 4.5: the header of a tool window.
 const HEADER: f32 = 28.;
 /// components-app.md 5: the starting line appears after 400 ms.
 const STARTING_LINE: Duration = Duration::from_millis(400);
@@ -900,13 +897,8 @@ impl Render for ChatPanel {
             .track_focus(&self.focus)
             .flex()
             .flex_col()
-            .flex_shrink_0()
+            .size_full()
             .bg(t.bg_sunken)
-            .border_color(t.border_subtle)
-            .map(|this| match self.dock {
-                Dock::Right => this.w(px(WIDTH)).min_w(px(400.)).h_full().border_l_1(),
-                Dock::Bottom => this.h(px(HEIGHT)).min_h(px(160.)).w_full().border_t_1(),
-            })
             .child(header)
             .child(div().flex().flex_col().flex_1().min_h_0().child(body))
     }

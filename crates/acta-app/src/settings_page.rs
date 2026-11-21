@@ -1,10 +1,11 @@
-//! The Settings page (docs/design/components-app.md 5, Settings page; 8.12), as far as M1 goes:
-//! the Appearance section with Theme and Language. Everything applies the
-//! moment it changes; there is no Save button.
+//! The Settings page (docs/design/components-app.md 5, Settings page; 8.12):
+//! Appearance, Claude Code, Working folders, Data, Chat and About.
+//! Everything applies the moment it changes; there is no Save button.
 //!
-//! Left out until they can work, since docs/design/components-app.md defines no "not available"
-//! state for a setting: Terminal text size (no terminal), and the Working
-//! folders, Claude Code, Data, Chat and About sections.
+//! Left out: the "Turn off Claude Code's own memory in attached folders"
+//! checkbox. Only `acta link` writes `autoMemoryEnabled` today; the app
+//! attaches folders without touching them, so the setting would have
+//! nothing to turn off.
 //!
 //! Both controls take keyboard focus (`Tab`), with the focus ring of
 //! docs/design/components.md 5 shown for keyboard focus only. On the theme control `Left` /
@@ -15,8 +16,8 @@
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     App, Context, Div, Entity, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent,
-    ParentElement, Render, Stateful, StatefulInteractiveElement, Styled, Subscription, Task,
-    Window, anchored, deferred, div, point, px, transparent_black,
+    ParentElement, Render, StatefulInteractiveElement, Styled, Subscription, Task, Window,
+    anchored, deferred, div, point, px,
 };
 
 use crate::first_run::COLUMN_MAX;
@@ -97,6 +98,9 @@ pub struct SettingsPage {
     seen_revision: u64,
     _load: Task<()>,
     _ws_sub: Option<Subscription>,
+    /// The `acta` command, found off the UI thread.
+    cli: Option<std::path::PathBuf>,
+    _cli: Task<()>,
 }
 
 impl SettingsPage {
@@ -115,6 +119,16 @@ impl SettingsPage {
                 cx.notify();
             }
         });
+        let find = cx
+            .background_executor()
+            .spawn(async move { crate::claude_setup::cli_path() });
+        let cli_task = cx.spawn(async move |page, cx| {
+            let path = find.await;
+            let _ = page.update(cx, |page, cx| {
+                page.cli = path;
+                cx.notify();
+            });
+        });
         Self {
             theme_focus: cx.focus_handle(),
             language_focus,
@@ -126,6 +140,8 @@ impl SettingsPage {
             seen_revision: 0,
             _load: Task::ready(()),
             _ws_sub: None,
+            cli: None,
+            _cli: cli_task,
         }
     }
 
@@ -138,22 +154,7 @@ impl SettingsPage {
     }
 }
 
-/// The focus ring of docs/design/components.md 5 around a control of radius `radius`: 2px
-/// `focus.ring`, 1px outside the control's edge, radius plus 1 outside it,
-/// shown for keyboard focus only. It takes no layout space.
-fn focus_ring(id: &'static str, handle: &FocusHandle, radius: f32, t: &Tokens) -> Stateful<Div> {
-    let ring = t.focus_ring;
-    div()
-        .id(id)
-        .track_focus(handle)
-        .tab_index(0)
-        .m(px(-3.))
-        .p(px(1.))
-        .border_2()
-        .border_color(transparent_black())
-        .rounded(px(radius + 3.))
-        .focus_visible(move |style| style.border_color(ring))
-}
+use crate::ui::focus_ring;
 
 /// A setting row: label and description at the left, the control at the
 /// right; at least 44 high with 8 of vertical padding; no boxes, no lines.
@@ -364,7 +365,9 @@ impl Render for SettingsPage {
         let theme_control = self.theme_control(locale, theme, &t);
         let language = self.language_control(locale, &t, cx);
         let text_size = self.text_size_control(&t, cx);
+        let claude = self.claude_section(locale, &t, cx);
         let data = self.data_sections(locale, &t, cx);
+        let about = about_section(locale, &t);
 
         div()
             .id("settings")
@@ -414,7 +417,9 @@ impl Render for SettingsPage {
                         text_size,
                         &t,
                     ))
-                    .children(data),
+                    .children(claude)
+                    .children(data)
+                    .children(about),
             )
     }
 }
@@ -592,6 +597,8 @@ impl SettingsPage {
             ui::button(id, label, ui::Variant::Secondary, false, t)
                 .on_click(move |_, window, cx| window.dispatch_action(act.boxed_clone(), cx))
         };
+        // Working folders: the one place folders not found are listed
+        // across projects (present only when some exist).
         if !facts.missing.is_empty() {
             out.push(subtitle(Key::SettingsFolders));
             let home = crate::paths_view::home();
@@ -709,11 +716,11 @@ impl SettingsPage {
         };
         out.push(
             setting_row(
-                text(locale, Key::CmdSnapshot),
+                text(locale, Key::SettingsSnapshots),
                 snapshots,
                 action(
                     "settings-snapshots",
-                    text(locale, Key::CommonRestore),
+                    text(locale, Key::CmdSnapshot),
                     Box::new(crate::shell::RestoreSnapshot),
                 ),
                 t,
@@ -737,23 +744,58 @@ impl SettingsPage {
             )
             .into_any_element(),
         );
+        // The path, middle-truncated by folder, in full in the tooltip;
+        // "Show in Explorer" (Finder, file manager) reveals the file.
+        let database = facts.database.clone();
+        let shown = crate::paths_view::fit(&database, crate::paths_view::budget(420.));
+        let reveal_key = if cfg!(windows) {
+            Key::FoldersShowW
+        } else if cfg!(target_os = "macos") {
+            Key::FoldersShowM
+        } else {
+            Key::FoldersShowL
+        };
+        let reveal_path = database.clone();
         out.push(
             div()
                 .flex()
-                .flex_col()
+                .flex_row()
+                .items_center()
+                .justify_between()
+                .gap(px(24.))
                 .min_h(px(44.))
                 .py(px(8.))
                 .child(
-                    type_scale::UI
-                        .el()
-                        .text_color(t.text_primary)
-                        .child(text(locale, Key::SettingsDatabase)),
+                    div()
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .min_w_0()
+                        .child(
+                            type_scale::UI
+                                .el()
+                                .text_color(t.text_primary)
+                                .child(text(locale, Key::SettingsDatabase)),
+                        )
+                        .child(
+                            type_scale::CODE
+                                .el()
+                                .id("settings-database-path")
+                                .truncate()
+                                .text_color(t.text_secondary)
+                                .tooltip(ui::tip(database))
+                                .child(shown),
+                        ),
                 )
                 .child(
-                    type_scale::CODE
-                        .el()
-                        .text_color(t.text_secondary)
-                        .child(facts.database.clone()),
+                    ui::button(
+                        "settings-database-show",
+                        text(locale, reveal_key),
+                        ui::Variant::Ghost,
+                        false,
+                        t,
+                    )
+                    .on_click(move |_, _, cx| cx.reveal_path(std::path::Path::new(&reveal_path))),
                 )
                 .into_any_element(),
         );
@@ -785,6 +827,210 @@ impl SettingsPage {
         out.push(chat_row.into_any_element());
         out
     }
+}
+
+impl SettingsPage {
+    /// Claude Code (components-app.md 5, Settings): the four checks of
+    /// `acta setup --check`, then Set up (primary while anything is
+    /// missing, then a secondary "Run setup again") and Remove.
+    fn claude_section(
+        &self,
+        locale: Locale,
+        t: &Tokens,
+        cx: &mut Context<Self>,
+    ) -> Vec<gpui_kit::AnyElement> {
+        let state = crate::claude_setup::state(cx);
+        let check = state.and_then(|s| s.check).unwrap_or_default();
+        let checked = state.is_some_and(|s| s.checked);
+        let busy = state.is_some_and(|s| s.busy);
+        let mut out = vec![
+            type_scale::SUBTITLE
+                .el()
+                .mt(px(32.))
+                .mb(px(8.))
+                .text_color(t.text_primary)
+                .child(text(locale, Key::SettingsClaude))
+                .into_any_element(),
+        ];
+        let rows = [
+            (Key::SettingsCheckCli, check.claude),
+            (Key::SettingsCheckFiles, check.files),
+            (Key::SettingsCheckPlugin, check.plugin),
+            (Key::SettingsCheckRule, check.rule),
+        ];
+        for (key, done) in rows {
+            // Until the first check answers, nothing is claimed either way.
+            let (glyph, color, word) = if done {
+                (Icon::Check, t.success, Some(Key::SettingsCheckDone))
+            } else if checked {
+                (
+                    Icon::CircleDashed,
+                    t.text_tertiary,
+                    Some(Key::SettingsCheckMissing),
+                )
+            } else {
+                (Icon::CircleDashed, t.text_tertiary, None)
+            };
+            out.push(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(8.))
+                    .h(px(28.))
+                    .child(icon(glyph, 14., color))
+                    .child(
+                        type_scale::UI
+                            .el()
+                            .flex_1()
+                            .text_color(t.text_primary)
+                            .child(text(locale, key)),
+                    )
+                    .children(word.map(|w| {
+                        type_scale::UI
+                            .el()
+                            .text_color(if done {
+                                t.text_primary
+                            } else {
+                                t.text_tertiary
+                            })
+                            .child(text(locale, w))
+                    }))
+                    .into_any_element(),
+            );
+        }
+        let complete = check.complete();
+        let (setup_key, setup_variant) = if complete {
+            (Key::SettingsSetupAgain, ui::Variant::Secondary)
+        } else {
+            (Key::SettingsSetup, ui::Variant::Primary)
+        };
+        out.push(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(8.))
+                .mt(px(8.))
+                .child(
+                    ui::button(
+                        "settings-setup",
+                        text(locale, setup_key),
+                        setup_variant,
+                        busy,
+                        t,
+                    )
+                    .when(!busy, |this| {
+                        this.on_click(|_, _, cx| crate::claude_setup::run_install(cx))
+                    }),
+                )
+                .child(
+                    ui::button(
+                        "settings-setup-remove",
+                        text(locale, Key::SettingsSetupRemove),
+                        ui::Variant::Ghost,
+                        busy,
+                        t,
+                    )
+                    .when(!busy, |this| {
+                        this.on_click(|_, _, cx| crate::claude_setup::run_remove(cx))
+                    }),
+                )
+                .into_any_element(),
+        );
+        out.push(
+            type_scale::SMALL
+                .el()
+                .mt(px(8.))
+                .max_w(px(420.))
+                .text_color(t.text_tertiary)
+                .child(text(locale, Key::SettingsSetupHint))
+                .into_any_element(),
+        );
+        if let Some(path) = &self.cli {
+            let full = path.to_string_lossy().into_owned();
+            let copy = full.clone();
+            out.push(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(8.))
+                    .mt(px(8.))
+                    .child(
+                        type_scale::CODE
+                            .el()
+                            .id("settings-cli-path")
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_color(t.text_secondary)
+                            .tooltip(ui::tip(full.clone()))
+                            .child(crate::paths_view::fit(
+                                &full,
+                                crate::paths_view::budget(420.),
+                            )),
+                    )
+                    .child(
+                        ui::button(
+                            "settings-cli-copy",
+                            text(locale, Key::FoldersCopyPath),
+                            ui::Variant::Ghost,
+                            false,
+                            t,
+                        )
+                        .on_click(move |_, _, cx| {
+                            cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(copy.clone()))
+                        }),
+                    )
+                    .into_any_element(),
+            );
+        }
+        out
+    }
+}
+
+/// The Acta repository's releases: "Release notes".
+const RELEASES: &str = "https://github.com/Alegzandr/acta/releases";
+
+/// About (components-app.md 5, Settings): the version, the release notes
+/// and the licences of what Acta ships.
+fn about_section(locale: Locale, t: &Tokens) -> Vec<gpui_kit::AnyElement> {
+    let version = crate::i18n::tr(
+        locale,
+        Key::StatusbarVersion,
+        &[("version", crate::i18n::Arg::Text(acta_core::VERSION))],
+    );
+    vec![
+        type_scale::SUBTITLE
+            .el()
+            .mt(px(32.))
+            .mb(px(8.))
+            .text_color(t.text_primary)
+            .child(text(locale, Key::SettingsAbout))
+            .into_any_element(),
+        setting_row(
+            version,
+            String::new(),
+            ui::button(
+                "settings-release-notes",
+                text(locale, Key::SettingsReleaseNotes),
+                ui::Variant::Secondary,
+                false,
+                t,
+            )
+            .on_click(|_, _, cx| cx.open_url(RELEASES)),
+            t,
+        )
+        .into_any_element(),
+        setting_row(
+            text(locale, Key::SettingsLicences),
+            text(locale, Key::SettingsLicencesHint),
+            div(),
+            t,
+        )
+        .into_any_element(),
+    ]
 }
 
 #[cfg(test)]

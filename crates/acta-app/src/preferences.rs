@@ -56,6 +56,12 @@ pub struct Preferences {
     /// "Sign out and clear" has not finished deleting the web view's
     /// profile: it is deleted at the next launch, before any web view.
     pub chat_clear_pending: bool,
+    /// Pane sizes set by dragging a resize handle (docs/design/layout.md
+    /// 4.2, 4.5); `None` is the default size.
+    pub sidebar_width: Option<u16>,
+    pub terminal_width: Option<u16>,
+    pub chat_width: Option<u16>,
+    pub chat_height: Option<u16>,
 }
 
 /// The file as stored. Every field but the version may be missing (it then
@@ -85,6 +91,19 @@ struct Stored {
     chat_help_dismissed: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     chat_clear_pending: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sidebar_width: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    terminal_width: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    chat_width: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    chat_height: Option<u16>,
+}
+
+/// A stored pane size: kept only when it is a plausible number of pixels.
+fn pane_size(size: Option<u16>) -> Option<u16> {
+    size.filter(|s| (100..=8000).contains(s))
 }
 
 #[derive(Clone, Copy, Default, Serialize, Deserialize)]
@@ -189,6 +208,10 @@ pub fn parse(text: &str) -> Result<Preferences, LoadError> {
         chat_started: stored.chat_started,
         chat_help_dismissed: stored.chat_help_dismissed,
         chat_clear_pending: stored.chat_clear_pending,
+        sidebar_width: pane_size(stored.sidebar_width),
+        terminal_width: pane_size(stored.terminal_width),
+        chat_width: pane_size(stored.chat_width),
+        chat_height: pane_size(stored.chat_height),
     })
 }
 
@@ -207,6 +230,10 @@ pub fn serialize(prefs: &Preferences) -> String {
         chat_started: prefs.chat_started,
         chat_help_dismissed: prefs.chat_help_dismissed,
         chat_clear_pending: prefs.chat_clear_pending,
+        sidebar_width: prefs.sidebar_width,
+        terminal_width: prefs.terminal_width,
+        chat_width: prefs.chat_width,
+        chat_height: prefs.chat_height,
     };
     // A struct of plain enums and numbers always serializes.
     let mut text = serde_json::to_string_pretty(&stored).unwrap_or_default();
@@ -412,6 +439,10 @@ mod tests {
             chat_started: true,
             chat_help_dismissed: true,
             chat_clear_pending: true,
+            sidebar_width: Some(300),
+            terminal_width: Some(520),
+            chat_width: Some(480),
+            chat_height: Some(240),
         };
         save_to(&path, &prefs).unwrap();
         assert_eq!(load_from(&path).unwrap(), prefs);
@@ -476,6 +507,16 @@ mod tests {
         assert_eq!(prefs.page, None);
         assert_eq!(prefs.collapsed, ["P-1"]);
         assert_eq!(prefs.terminal_text_size, None);
+    }
+
+    #[test]
+    fn implausible_pane_sizes_are_dropped() {
+        let prefs =
+            parse(r#"{"version":1,"sidebar_width":12,"terminal_width":520,"chat_height":9000}"#)
+                .unwrap();
+        assert_eq!(prefs.sidebar_width, None);
+        assert_eq!(prefs.terminal_width, Some(520));
+        assert_eq!(prefs.chat_height, None);
     }
 
     #[test]

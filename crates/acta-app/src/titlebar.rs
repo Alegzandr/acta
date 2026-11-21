@@ -218,6 +218,9 @@ pub fn render(
         .collect()
     };
 
+    // First run, key loss and open failed (screens.md 8.5, 8.9): only the
+    // name and the window controls.
+    let bare = shell.bare_titlebar();
     let button = |id, glyph, selected, disabled| {
         ui::ghost_icon_button(id, glyph, BUTTON, selected, disabled, active, &tokens)
     };
@@ -264,7 +267,7 @@ pub fn render(
         .min_w_0()
         .h_full()
         .items_center()
-        .pl(px(8.))
+        .pl(px(if bare { content_start } else { 8. }))
         .window_control_area(WindowControlArea::Drag)
         .when(!windows, |this| {
             // Windows moves and zooms the window itself from the drag
@@ -373,9 +376,9 @@ pub fn render(
         .bg(tokens.bg_sunken)
         .border_b_1()
         .border_color(tokens.border_subtle)
-        .child(leading)
+        .when(!bare, |this| this.child(leading))
         .child(drag_area)
-        .child(trailing)
+        .when(!bare, |this| this.child(trailing))
         .children(
             controls
                 .into_iter()

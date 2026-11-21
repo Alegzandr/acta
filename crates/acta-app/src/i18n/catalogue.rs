@@ -1545,6 +1545,10 @@ catalogue! {
         en: p("{n} snapshot kept; the newest is from {datetime}", "{n} snapshots kept; the newest is from {datetime}"),
         fr: p("{n} instantané conservé\u{202f}; le plus récent date du {datetime}", "{n} instantanés conservés\u{202f}; le plus récent date du {datetime}"),
     }
+    SettingsSnapshots "settings.snapshots" {
+        en: t("Snapshots"),
+        fr: t("Instantanés"),
+    }
     SettingsTrashCount "settings.trash_count" {
         en: p("{n} item", "{n} items"),
         fr: p("{n} élément", "{n} éléments"),
@@ -1568,6 +1572,10 @@ catalogue! {
     SettingsLicences "settings.licences" {
         en: t("Licences"),
         fr: t("Licences"),
+    }
+    SettingsLicencesHint "settings.licences.hint" {
+        en: t("Inter and JetBrains Mono under the SIL Open Font License, Lucide under ISC."),
+        fr: t("Inter et JetBrains Mono sous licence SIL Open Font License, Lucide sous licence ISC."),
     }
     StatusbarNotSetUp "statusbar.not_set_up" {
         en: t("Claude Code: not set up"),
@@ -1829,6 +1837,10 @@ catalogue! {
         en: t("The database is on this computer and intact, but its key file is missing from Acta\u{2019}s data folder. This usually follows a restore from a backup that left it out, a new user profile or a move to another machine."),
         fr: t("La base de données est sur cet ordinateur et intacte, mais son fichier de clé manque dans le dossier de données d\u{2019}Acta. Cela suit en général une restauration de sauvegarde qui l\u{2019}a omis, un nouveau profil utilisateur ou un changement de machine."),
     }
+    KeylossBodyUnreadable "keyloss.body.unreadable" {
+        en: t("Acta found its key, but the database cannot be read with it: the file may be damaged, or the key belongs to another database. This can follow a disk error or a copy of the file from another computer."),
+        fr: t("Acta a trouvé sa clé, mais elle ne permet pas de lire la base de données\u{202f}: le fichier est peut-être endommagé, ou la clé appartient à une autre base. Cela peut suivre une erreur de disque ou une copie du fichier depuis un autre ordinateur."),
+    }
     KeychainW "keychain.w" {
         en: t("Windows Credential Manager"),
         fr: t("du Gestionnaire d\u{2019}identification Windows"),
@@ -1868,6 +1880,10 @@ catalogue! {
     OpenfailNodir "openfail.nodir" {
         en: t("Acta could not find where to keep its data on this computer."),
         fr: t("Acta ne trouve pas où conserver ses données sur cet ordinateur."),
+    }
+    OpenfailShowLog "openfail.show_log" {
+        en: t("Show the log"),
+        fr: t("Afficher le journal"),
     }
     FirstrunTitle "firstrun.title" {
         en: t("Start with a project"),

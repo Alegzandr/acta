@@ -19,7 +19,7 @@ const MAX_BYTES: u64 = 256 * 1024;
 
 /// The log file of this user, resolved once. `None` when the user's
 /// directories are unknown: then nothing is logged.
-fn path() -> Option<&'static Path> {
+pub fn path() -> Option<&'static Path> {
     static PATH: OnceLock<Option<PathBuf>> = OnceLock::new();
     PATH.get_or_init(|| paths::log_file(Os::CURRENT, &BaseDirs::from_env()))
         .as_deref()

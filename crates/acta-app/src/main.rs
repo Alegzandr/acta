@@ -9,6 +9,7 @@ mod chat;
 mod chat_panel;
 #[cfg(windows)]
 mod chat_windows;
+mod claude_setup;
 mod cli_export;
 mod commands;
 mod db;
@@ -30,6 +31,7 @@ mod markdown_view;
 mod menu;
 mod palette;
 mod palette_model;
+mod panes;
 mod paths_view;
 mod preferences;
 mod record;

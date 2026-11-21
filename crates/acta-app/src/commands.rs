@@ -26,7 +26,11 @@ pub enum Command {
     Forward,
     Undo,
     ToggleSidebar,
+    WidenSidebar,
+    NarrowSidebar,
     ToggleTerminal,
+    WidenTerminal,
+    NarrowTerminal,
     // The chat panel exists on Windows only (ADR 0009); elsewhere the one
     // chat command opens claude.ai in the browser.
     #[cfg(windows)]
@@ -97,6 +101,8 @@ impl Command {
             out.extend([
                 Command::SetFolder,
                 Command::ToggleTerminal,
+                Command::WidenTerminal,
+                Command::NarrowTerminal,
                 Command::RestartTerminal,
                 Command::TerminalLarger,
                 Command::TerminalSmaller,
@@ -126,6 +132,8 @@ impl Command {
         out.extend([
             Command::Undo,
             Command::ToggleSidebar,
+            Command::WidenSidebar,
+            Command::NarrowSidebar,
             Command::Export,
             Command::Import,
             Command::Trash,
@@ -160,6 +168,10 @@ impl Command {
             Command::Undo => Key::CmdUndo,
             Command::ToggleSidebar => Key::CmdToggleSidebar,
             Command::ToggleTerminal => Key::CmdToggleTerminal,
+            Command::WidenSidebar => Key::CmdWidenSidebar,
+            Command::NarrowSidebar => Key::CmdNarrowSidebar,
+            Command::WidenTerminal => Key::CmdWidenTerminal,
+            Command::NarrowTerminal => Key::CmdNarrowTerminal,
             #[cfg(windows)]
             Command::ToggleChat => Key::CmdToggleChat,
             #[cfg(windows)]
