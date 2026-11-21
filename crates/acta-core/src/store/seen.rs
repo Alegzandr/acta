@@ -197,6 +197,30 @@ mod tests {
     }
 
     #[test]
+    fn imported_records_count_as_seen() {
+        let (_a, mut source) = store();
+        let t = topic(&mut source, Author::Claude);
+        let project = source.topic(t).unwrap().project;
+        source
+            .kb_create(
+                NewKb {
+                    owner: Owner::Project(project),
+                    kind: KbKind::Memory,
+                    title: "Alexandre's memory".into(),
+                    summary: "Imported".into(),
+                    body: "Imported.".into(),
+                    from_file: false,
+                },
+                Author::Claude,
+            )
+            .unwrap();
+        let file = source.export(None).unwrap();
+        let (_b, mut target) = store();
+        target.import(&file, false).unwrap();
+        assert_eq!(target.unread().unwrap(), Unread::default());
+    }
+
+    #[test]
     fn records_present_at_the_migration_count_as_seen() {
         let dir = tempfile::tempdir().unwrap();
         let keys = crate::keys::MemoryKeyStore::new();
