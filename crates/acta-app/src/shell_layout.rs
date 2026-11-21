@@ -443,7 +443,35 @@ impl Shell {
         self.sync_page_views(window, cx);
         self.sync_tool_views(window, cx);
         self.save_layout(cx);
+        self.refocus_lost_view(window, cx);
         cx.notify();
+    }
+
+    /// Keyboard focus left in a view the change took off screen returns to
+    /// the page, so the next key acts (a web view gives the keyboard back
+    /// to the window first).
+    fn refocus_lost_view(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(lost) =
+            views().find(|v| self.view_has_focus(*v, window, cx) && !self.view_drawn(*v, window))
+        else {
+            return;
+        };
+        #[cfg(windows)]
+        if let Some(bench) = self.bench() {
+            match lost {
+                ViewId::Chat => bench.chat.read(cx).release_keyboard(cx),
+                ViewId::AgentBrowser => bench.browser.read(cx).release_keyboard(cx),
+                _ => {}
+            }
+        }
+        self.focus_page(window, cx);
+        // A page that keeps no focus of its own: its group takes it.
+        if self.view_has_focus(lost, window, cx)
+            && let Some(bench) = self.bench()
+        {
+            let handle = bench.group_focus[bench.layout.focused.min(2)].clone();
+            window.focus(&handle, cx);
+        }
     }
 
     /// Make `tab` the page the window acts on (the focused group's page):
