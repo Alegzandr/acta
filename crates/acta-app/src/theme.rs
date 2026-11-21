@@ -24,9 +24,16 @@ pub const FONT_SANS: &str = ".SystemUIFont";
 pub const FONT_SANS: &str = "Inter";
 pub const FONT_MONO: &str = "JetBrains Mono NL";
 
-pub const RADIUS_SM: f32 = 4.;
-pub const RADIUS_MD: f32 = 6.;
-pub const RADIUS_LG: f32 = 8.;
+/// docs/design/layout.md 4.1, radii. `xs` for the small marks (kbd, inline
+/// code, checkbox, the Claude Code mark), `sm` for controls and rows, `md`
+/// for tooltips and code blocks, `lg` for panels, cards, menus and toasts,
+/// `xl` for the palette and dialogs. A row inside a padded container uses
+/// the container's radius minus its padding, so the corners stay concentric.
+pub const RADIUS_XS: f32 = 4.;
+pub const RADIUS_SM: f32 = 6.;
+pub const RADIUS_MD: f32 = 8.;
+pub const RADIUS_LG: f32 = 10.;
+pub const RADIUS_XL: f32 = 12.;
 
 /// Every colour token of docs/design/color.md 2.1. Field names are the token names with
 /// `.` and `-` replaced by `_`.

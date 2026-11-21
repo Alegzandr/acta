@@ -120,6 +120,7 @@ fn kb_row(
         .gap(px(8.))
         .h(px(32.))
         .px(px(8.))
+        .mx(px(-8.))
         .rounded(px(RADIUS_SM))
         .hover({
             let hover = t.fill_hover;
@@ -600,6 +601,7 @@ impl Render for KnowledgePage {
                     .justify_between()
                     .h(px(28.))
                     .px(px(8.))
+                    .mx(px(-8.))
                     .child(
                         type_scale::SMALL
                             .el()
@@ -1135,6 +1137,7 @@ impl DocPage {
                 .gap(px(8.))
                 .h(px(32.))
                 .px(px(8.))
+                .mx(px(-8.))
                 .rounded(px(RADIUS_SM))
                 .when(selected, |this| this.bg(t.fill_selected))
                 .hover({
@@ -1316,7 +1319,7 @@ impl Render for DocPage {
                         div()
                             .mb(px(16.))
                             .p(px(12.))
-                            .rounded(px(crate::theme::RADIUS_MD))
+                            .rounded(px(crate::theme::RADIUS_LG))
                             .border_1()
                             .border_color(t.border_subtle)
                             .child(markdown_view::document(

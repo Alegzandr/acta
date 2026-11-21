@@ -34,7 +34,7 @@ use crate::record::{self, EntryFilterKind, Loaded};
 use crate::route::Route;
 use crate::settings;
 use crate::table::{self, Column};
-use crate::theme::{RADIUS_MD, RADIUS_SM, Tokens};
+use crate::theme::{RADIUS_LG, RADIUS_SM, RADIUS_XS, Tokens};
 use crate::type_scale;
 use crate::ui::{self, Variant};
 use crate::when;
@@ -1605,7 +1605,7 @@ impl RecordPage {
             .gap(px(8.))
             .mt(px(24.))
             .p(px(16.))
-            .rounded(px(RADIUS_MD))
+            .rounded(px(RADIUS_LG))
             .bg(t.bg_raised)
             .border_1()
             .border_color(t.border_subtle)
@@ -1685,6 +1685,7 @@ impl RecordPage {
             .gap(px(8.))
             .h(px(32.))
             .px(px(8.))
+            .mx(px(-8.))
             .rounded(px(RADIUS_SM))
             .hover({
                 let hover = t.fill_hover;
@@ -2050,7 +2051,7 @@ impl RecordPage {
         div()
             .flex()
             .flex_col()
-            .rounded(px(RADIUS_MD))
+            .rounded(px(RADIUS_LG))
             .bg(t.bg_raised)
             .border_1()
             .border_color(t.border_strong)
@@ -2243,7 +2244,7 @@ impl RecordPage {
                     cx.stop_propagation();
                 }
             }))
-            .rounded(px(RADIUS_MD))
+            .rounded(px(RADIUS_LG))
             .group(SharedString::from(format!("entry-{index}")))
             .flex()
             .flex_row()
@@ -2251,7 +2252,7 @@ impl RecordPage {
             .when(decision, |this| {
                 this.px(px(16.))
                     .py(px(12.))
-                    .rounded(px(RADIUS_MD))
+                    .rounded(px(RADIUS_LG))
                     .border_1()
                     .border_color(t.border_default)
             })
@@ -2379,6 +2380,7 @@ impl RecordPage {
             .gap(px(8.))
             .h(px(28.))
             .px(px(8.))
+            .mx(px(-8.))
             .mt(px(8.))
             .text_color(t.text_tertiary)
             .border_b_1()
@@ -2431,6 +2433,7 @@ impl RecordPage {
                 .gap(px(8.))
                 .h(px(32.))
                 .px(px(8.))
+                .mx(px(-8.))
                 .rounded(px(RADIUS_SM))
                 .hover({
                     let hover = t.fill_hover;
@@ -2498,6 +2501,7 @@ impl RecordPage {
                     .justify_between()
                     .h(px(28.))
                     .px(px(8.))
+                    .mx(px(-8.))
                     .mt(px(8.))
                     .child(ui::label(name, t))
                     .child(
@@ -2749,13 +2753,13 @@ fn progress(data: &Loaded, locale: Locale, t: &Tokens) -> AnyElement {
             div()
                 .w(px(120.))
                 .h(px(4.))
-                .rounded(px(RADIUS_SM))
+                .rounded(px(RADIUS_XS))
                 .bg(t.fill_selected)
                 .child(
                     div()
                         .h_full()
                         .w(px(120. * fraction))
-                        .rounded(px(RADIUS_SM))
+                        .rounded(px(RADIUS_XS))
                         .bg(t.text_secondary),
                 ),
         )
@@ -2782,7 +2786,7 @@ fn checkbox(checked: bool, t: &Tokens) -> gpui_kit::Div {
         .flex()
         .items_center()
         .justify_center()
-        .rounded(px(RADIUS_SM))
+        .rounded(px(RADIUS_XS))
         .when(checked, |this| {
             this.bg(t.accent)
                 .child(icon(Icon::Check, 12., t.text_on_accent))
@@ -2809,7 +2813,7 @@ fn editor_box(
     div()
         .flex()
         .flex_col()
-        .rounded(px(RADIUS_MD))
+        .rounded(px(RADIUS_LG))
         .bg(t.bg_raised)
         .border_2()
         .border_color(t.focus_ring)

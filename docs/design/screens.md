@@ -26,7 +26,7 @@ Widths are for the default 1440 x 900 window. Every screen exists in both themes
 |       (-) Links      |        | Rendering and input work on Windows. Resize still      |       |
 |       3 closed       |        | drops the last row; fix is in progress.                |       |
 |   > Notes            |        +--------------------------------------------------------+       |
-| > Atlas              |    24   bg.raised, border.subtle, radius.md, padding 16, type.reading   |
+| > Atlas              |    24   bg.raised, border.subtle, radius.lg, padding 16, type.reading   |
 | > Field notes        |        Description                                  <- type.label       |
 |                      |        Run Claude Code inside Acta, in the project directory, so        |
 |                      |        the tracker and the agent share one window.                      |
@@ -104,7 +104,7 @@ Annotations: the capture editor is focused when the inbox opens. Newest note fir
                     +---------------------------------------------------------+
                     | Enter open   Ctrl Enter open in new tab       Esc close | 28  footer, type.small
                     +---------------------------------------------------------+
-                      bg.overlay, border.default, radius.lg, shadow.overlay, no scrim
+                      bg.overlay, border.default, radius.xl, shadow.overlay, no scrim
 ```
 
 Annotations: empty query shows "Recent" (the last 5 topics) then the 5 most relevant commands for the current page. Group order is fixed (Topics, Knowledge, Commands, Projects) so results do not jump between keystrokes; within a group, ranking is match quality then recency. `Up` / `Down` wrap; `Tab` narrows to the group of the selected row (adds the scope chip); `Backspace` on an empty input removes the chip.
@@ -241,7 +241,7 @@ Annotations: the tree keeps the owning topic selected. Edit turns this same page
             | Show what changes                                          |  ghost
          24 |                                        [Cancel]  [Import]  |
             +------------------------------------------------------------+
-              520, bg.overlay, radius.lg, padding 24, over scrim; focus starts on Cancel
+              520, bg.overlay, radius.xl, padding 24, over scrim; focus starts on Cancel
 ```
 
 ### 8.9 Key-loss recovery

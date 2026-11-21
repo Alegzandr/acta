@@ -9,7 +9,7 @@ use gpui_kit::{
 };
 
 use crate::icons::{Icon, icon};
-use crate::theme::{RADIUS_MD, RADIUS_SM, Tokens};
+use crate::theme::{RADIUS_LG, RADIUS_SM, Tokens};
 use crate::type_scale;
 
 /// The floating panel. The caller anchors it (`deferred(anchored()...)`)
@@ -26,7 +26,7 @@ pub fn panel(id: impl Into<ElementId>, tokens: &Tokens) -> Stateful<Div> {
         .bg(tokens.bg_overlay)
         .border_1()
         .border_color(tokens.border_default)
-        .rounded(px(RADIUS_MD))
+        .rounded(px(RADIUS_LG))
         .shadow(vec![tokens.shadow_overlay()])
 }
 

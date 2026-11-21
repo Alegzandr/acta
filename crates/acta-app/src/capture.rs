@@ -12,7 +12,7 @@ use gpui_kit::{
 
 use crate::i18n::{Arg, Key, KeyName, text, tr};
 use crate::settings;
-use crate::theme::{RADIUS_LG, RADIUS_SM, Tokens};
+use crate::theme::{RADIUS_SM, RADIUS_XL, Tokens};
 use crate::type_scale;
 use crate::ui;
 use crate::workspace::Workspace;
@@ -125,7 +125,7 @@ impl Render for Capture {
             .bg(t.bg_overlay)
             .border_1()
             .border_color(t.border_default)
-            .rounded(px(RADIUS_LG))
+            .rounded(px(RADIUS_XL))
             .shadow(vec![t.shadow_overlay()])
             .capture_action(cx.listener(|capture, _: &Escape, _, cx| {
                 capture.close(cx);

@@ -50,7 +50,7 @@ use crate::route::{History, Route};
 use crate::settings;
 use crate::settings_page::SettingsPage;
 use crate::terminal_dock::{DockEvent, Origin, TerminalDock};
-use crate::theme::{self, RADIUS_MD, RADIUS_SM, Tokens};
+use crate::theme::{self, RADIUS_LG, RADIUS_SM, Tokens};
 use crate::titlebar::{self, Crumb};
 use crate::trash_page::TrashPage;
 use crate::tree::{self, Folds, Row};
@@ -2940,7 +2940,7 @@ impl Shell {
                 .bg(t.bg_overlay)
                 .border_1()
                 .border_color(t.border_default)
-                .rounded(px(RADIUS_MD))
+                .rounded(px(RADIUS_LG))
                 .shadow(vec![t.shadow_overlay()])
                 .children(glyph)
                 .child(

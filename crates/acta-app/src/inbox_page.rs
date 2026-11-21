@@ -21,7 +21,7 @@ use crate::markdown_view;
 use crate::record_page::PageEvent;
 use crate::route::Route;
 use crate::settings;
-use crate::theme::{RADIUS_MD, Tokens};
+use crate::theme::{RADIUS_LG, Tokens};
 use crate::type_scale;
 use crate::ui::{self, Variant};
 use crate::when;
@@ -430,7 +430,7 @@ impl InboxPage {
             .gap(px(4.))
             .px(px(16.))
             .py(px(12.))
-            .rounded(px(RADIUS_MD))
+            .rounded(px(RADIUS_LG))
             .bg(t.bg_raised)
             .border_1()
             .border_color(t.border_subtle)
@@ -508,7 +508,7 @@ impl Render for InboxPage {
             .flex()
             .flex_col()
             .mt(px(24.))
-            .rounded(px(RADIUS_MD))
+            .rounded(px(RADIUS_LG))
             .bg(t.bg_raised)
             .border_1()
             .border_color(t.border_strong)

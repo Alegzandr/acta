@@ -10,7 +10,7 @@ use gpui_kit::{
 
 use crate::i18n::Key;
 use crate::icons::{Icon, icon};
-use crate::theme::{RADIUS_MD, RADIUS_SM, Tokens};
+use crate::theme::{RADIUS_LG, RADIUS_MD, RADIUS_SM, RADIUS_XS, Tokens};
 use crate::type_scale;
 
 /// The keyboard focus ring of docs/design/components.md 5, drawn inside
@@ -117,7 +117,7 @@ pub fn kbd(keys: &[&str], tokens: &Tokens) -> Div {
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded(px(RADIUS_SM))
+                .rounded(px(RADIUS_XS))
                 .border_1()
                 .border_color(tokens.border_default)
                 .text_color(tokens.text_tertiary)
@@ -340,7 +340,7 @@ pub fn author_mark(author: Author, human_initial: &str, tokens: &Tokens) -> Div 
             .text_color(tokens.text_primary)
             .child(human_initial.to_owned()),
         Author::Claude => mark
-            .rounded(px(RADIUS_SM))
+            .rounded(px(RADIUS_XS))
             .border_1()
             .border_color(tokens.border_strong)
             .child(icon(Icon::ChevronRight, 12., tokens.text_secondary)),
@@ -361,7 +361,7 @@ pub fn notice(
         .w_full()
         .px(px(12.))
         .py(px(8.))
-        .rounded(px(RADIUS_MD))
+        .rounded(px(RADIUS_LG))
         .bg(tokens.bg_raised)
         .border_1()
         .border_color(tokens.border_subtle)

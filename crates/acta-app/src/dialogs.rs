@@ -18,7 +18,7 @@ use gpui_kit::{
 use crate::i18n::{Arg, Key, Locale, number, text, tr};
 use crate::icons::Icon;
 use crate::settings;
-use crate::theme::{RADIUS_LG, RADIUS_SM, Tokens};
+use crate::theme::{RADIUS_SM, RADIUS_XL, Tokens};
 use crate::type_scale;
 use crate::ui::{self, Variant};
 use crate::when;
@@ -792,7 +792,7 @@ impl Render for Dialog {
                     .bg(t.bg_overlay)
                     .border_1()
                     .border_color(t.border_default)
-                    .rounded(px(RADIUS_LG))
+                    .rounded(px(RADIUS_XL))
                     .shadow(vec![t.shadow_overlay()])
                     .child(
                         type_scale::HEADING

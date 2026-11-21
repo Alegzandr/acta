@@ -69,7 +69,7 @@ Run against every screen, in dark and in light, in English and in French. One fa
 - [ ] Text/surface pairs used are in 2.2 and pass; `text.tertiary` is not on a selected overlay row; no coloured text on `accent.subtle`.
 
 **Layout**
-- [ ] Every gap is on the spacing scale; control heights are 24, 28, 32 or 44; radii are 4, 6 or 8.
+- [ ] Every gap is on the spacing scale; control heights are 24, 28, 32 or 44; radii are 4, 6, 8, 10 or 12.
 - [ ] No shadow on anything that does not float; every floating layer has outline plus shadow.
 - [ ] No box inside a box; no divider where spacing already separates.
 - [ ] Works at 880 x 560 with the terminal open, and at 200% scale; no horizontal scroll outside code blocks.

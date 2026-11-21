@@ -24,7 +24,7 @@ use crate::first_run::COLUMN_MAX;
 use crate::i18n::{Key, Locale, text};
 use crate::icons::{Icon, icon};
 use crate::settings;
-use crate::theme::{RADIUS_MD, RADIUS_SM, ThemeSetting, Tokens};
+use crate::theme::{RADIUS_LG, RADIUS_SM, ThemeSetting, Tokens};
 use crate::type_scale;
 use crate::ui;
 use crate::workspace::Workspace;
@@ -338,7 +338,7 @@ impl SettingsPage {
                         .bg(t.bg_overlay)
                         .border_1()
                         .border_color(t.border_default)
-                        .rounded(px(RADIUS_MD))
+                        .rounded(px(RADIUS_LG))
                         .shadow(vec![t.shadow_overlay()])
                         .on_mouse_down_out(cx.listener(|page, _, _, cx| {
                             page.language_menu_open = false;
