@@ -405,6 +405,16 @@ pub fn render(
                 active,
                 &tokens,
             )
+            .relative()
+            .when(shell.view_busy_hidden(view, window, cx), |this| {
+                this.child(
+                    div()
+                        .absolute()
+                        .top(px(4.))
+                        .right(px(4.))
+                        .child(crate::shell::busy_dot(&tokens)),
+                )
+            })
             .tooltip(ui::tip_keys(
                 name,
                 crate::shell::view_keys(view, macos, locale),

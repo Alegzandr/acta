@@ -584,9 +584,43 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `shortcuts.list.menu` | Open the menu | Ouvrir le menu |
 | `shortcuts.editor.save` | Save the editor in focus | Enregistrer l'éditeur actif |
 | `shortcuts.editor.cancel` | Cancel the edit | Annuler la modification |
+| `view.agent_browser` | Agent browser | Navigateur de l'agent |
+| `browser.address` | Type an address and press Enter | Saisissez une adresse et appuyez sur Entrée |
+| `browser.idle.title` | Claude Code's browser | Le navigateur de Claude Code |
+| `browser.idle.body` | Claude Code opens pages here when it needs a browser: your local dev server, or a site you signed into here. Sign in to a site once in this view and Claude Code reuses the session. It never opens claude.ai and never types passwords. | Claude Code ouvre ici les pages dont il a besoin : votre serveur de développement local, ou un site auquel vous vous êtes connecté ici. Connectez-vous une fois à un site dans cette vue et Claude Code réutilise la session. Il n'ouvre jamais claude.ai et ne saisit jamais de mot de passe. |
+| `browser.idle.memory` | The browser starts on first use and uses about 150 MB of memory until it has been unused for 10 minutes. | Le navigateur démarre à la première utilisation et occupe environ 150 Mo de mémoire jusqu'à 10 minutes sans utilisation. |
+| `browser.starting` | Starting the browser... | Démarrage du navigateur... |
+| `browser.hidden` | The browser is hidden while this is open. | Le navigateur est masqué tant que ceci est ouvert. |
+| `browser.stop` | Stop Claude Code | Arrêter Claude Code |
+| `browser.resume` | Resume | Reprendre |
+| `browser.stopped` | Stopped. Claude Code is told to ask you before it continues. | Arrêté. Claude Code doit vous demander avant de continuer. |
+| `browser.handoff` | Claude Code asks you: {message} | Claude Code vous demande : {message} |
+| `browser.done` | Done | Terminé |
+| `browser.driver` | driven by {session} | piloté par {session} |
+| `browser.driver.unnamed` | driven by Claude Code | piloté par Claude Code |
+| `browser.act.opened` | Claude Code opened {target} | Claude Code a ouvert {target} |
+| `browser.act.reloaded` | Claude Code reloaded the page | Claude Code a rechargé la page |
+| `browser.act.back` | Claude Code went back | Claude Code est revenu en arrière |
+| `browser.act.forward` | Claude Code went forward | Claude Code est allé en avant |
+| `browser.act.clicked` | Claude Code clicked {target} | Claude Code a cliqué sur {target} |
+| `browser.act.typed` | Claude Code typed into {target} | Claude Code a saisi du texte dans {target} |
+| `browser.act.screenshot` | Claude Code took a screenshot | Claude Code a pris une capture d'écran |
+| `browser.act.waiting` | Claude Code is waiting for you | Claude Code vous attend |
+| `browser.clear` | Clear browser data... | Effacer les données du navigateur... |
+| `browser.clear.title` | Clear the browser's data? | Effacer les données du navigateur ? |
+| `browser.clear.body` | This deletes the cookies and site data of Acta's browser from this computer: you are signed out of every site you signed into there. | Cela supprime de cet ordinateur les cookies et les données de site du navigateur d'Acta : vous êtes déconnecté de tous les sites auxquels vous vous y étiez connecté. |
+| `browser.clear.confirm` | Clear data | Effacer les données |
+| `browser.clear_failed` | The browser data could not be deleted. Close what may use it and try again. | Les données du navigateur n'ont pas pu être supprimées. Fermez ce qui peut les utiliser et réessayez. |
+| `browser.refused.title` | Acta did not start its browser | Acta n'a pas démarré son navigateur |
+| `browser.refused.body` | A debugging port is configured for Acta (a WebView2 policy, an environment variable or a DevToolsActivePort file). It would let any program on this computer control the browser. Remove it, then try again. | Un port de débogage est configuré pour Acta (une stratégie WebView2, une variable d'environnement ou un fichier DevToolsActivePort). Il permettrait à n'importe quel programme de cet ordinateur de piloter le navigateur. Supprimez-le, puis réessayez. |
+| `browser.runtime.title` | The agent browser needs WebView2 | Le navigateur de l'agent a besoin de WebView2 |
+| `browser.runtime.body` | Microsoft's WebView2 runtime is not installed on this computer, so Acta cannot open its browser. Everything else in Acta works. | Le composant WebView2 de Microsoft n'est pas installé sur cet ordinateur ; Acta ne peut donc pas ouvrir son navigateur. Tout le reste d'Acta fonctionne. |
+| `browser.failed.title` | The browser could not be started | Le navigateur n'a pas pu être démarré |
+| `browser.pipe.taken` | Claude Code cannot reach this browser: another copy of Acta, or another program, already serves it. Close it and restart Acta. | Claude Code ne peut pas joindre ce navigateur : une autre copie d'Acta, ou un autre programme, le sert déjà. Fermez-le et redémarrez Acta. |
+| `browser.pipe.failed` | Claude Code cannot reach this browser. Restart Acta; the log says why. | Claude Code ne peut pas joindre ce navigateur. Redémarrez Acta ; le journal indique pourquoi. |
 
 Strings that exist in the behaviour sections but are not in this table are a defect of the table: add the row in the same change that adds the string.
 
 ### 10.4.1 Keys of the workbench layout (4.8)
 
-Moved into 10.4 when 4.8 was implemented (M8), with the texts that replaced "Toggle sidebar", "Zoom tool window" and "Tabs and tool windows"; the commands that moved a tool window to a dock and widened or narrowed a pane left with them. `{view}` is always a view's name key (`view.projects`, `tree.inbox`, `tree.knowledge`, `terminal.title`, `chat.title`), never translated twice or inflected: the colon form keeps every sentence whole in French, where a view's gender would otherwise change the participle. `view.agent_browser` ("Agent browser", "Navigateur de l'agent") joins 10.4 with ADR 0010.
+Moved into 10.4 when 4.8 was implemented (M8), with the texts that replaced "Toggle sidebar", "Zoom tool window" and "Tabs and tool windows"; the commands that moved a tool window to a dock and widened or narrowed a pane left with them. `{view}` is always a view's name key (`view.projects`, `tree.inbox`, `tree.knowledge`, `terminal.title`, `chat.title`), never translated twice or inflected: the colon form keeps every sentence whole in French, where a view's gender would otherwise change the participle. `view.agent_browser` ("Agent browser", "Navigateur de l'agent") joined 10.4 with ADR 0010, with the `browser.*` keys of the Agent browser view (components-app.md 5).

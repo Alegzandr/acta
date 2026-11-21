@@ -2,6 +2,10 @@
 //! installs, updates or uninstalls anything (ADR 0004).
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+#[cfg(windows)]
+mod browser_host;
+#[cfg(windows)]
+mod browser_panel;
 mod capture;
 #[cfg(windows)]
 mod chat;

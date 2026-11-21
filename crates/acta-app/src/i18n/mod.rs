@@ -329,6 +329,7 @@ mod tests {
                 part = part
                     .replace("\u{ab} ", "\u{ab}\u{202f}")
                     .replace("400 Mo", "400\u{202f}Mo")
+                    .replace("150 Mo", "150\u{202f}Mo")
                     .replace(" \u{2013} ", "\u{a0}\u{2013} ");
             }
             part

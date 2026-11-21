@@ -30,6 +30,8 @@ use gpui_kit::{
     actions, deferred, div, point, px, size,
 };
 
+#[cfg(windows)]
+use crate::browser_panel::{BrowserEvent, BrowserPanel};
 use crate::capture::{Capture, CaptureEvent};
 #[cfg(windows)]
 use crate::chat::Kept;
@@ -65,7 +67,9 @@ use crate::workspace::{Toast, ToastKind, Workspace, WorkspaceEvent};
 mod layout_ui;
 
 use layout_ui::{CHAT, LayoutUi, ResizeDrag};
-pub(crate) use layout_ui::{LayoutMenu, area_keys, view_icon, view_keys, view_name, views};
+pub(crate) use layout_ui::{
+    LayoutMenu, area_keys, busy_dot, view_icon, view_keys, view_name, views,
+};
 
 /// claude.ai: the chat panel's page, and what "Open claude.ai in your
 /// browser" opens.
@@ -427,6 +431,8 @@ struct Bench {
     dock: Entity<TerminalDock>,
     #[cfg(windows)]
     chat: Entity<ChatPanel>,
+    #[cfg(windows)]
+    browser: Entity<BrowserPanel>,
     _subs: Vec<Subscription>,
     _page_sub: Option<Subscription>,
 }
@@ -560,6 +566,11 @@ impl Shell {
     }
 
     fn start_workbench(&mut self, db: Db, window: &mut Window, cx: &mut Context<Self>) {
+        #[cfg(windows)]
+        let browser = {
+            let db = db.clone();
+            cx.new(|cx| BrowserPanel::new(db, window, cx))
+        };
         let ws = cx.new(|cx| Workspace::new(db, cx));
         let dock = cx.new(|cx| TerminalDock::new(ws.clone(), cx));
         #[cfg(windows)]
@@ -585,6 +596,8 @@ impl Shell {
         ];
         #[cfg(windows)]
         subs.push(cx.subscribe_in(&chat, window, Self::on_chat));
+        #[cfg(windows)]
+        subs.push(cx.subscribe_in(&browser, window, Self::on_browser));
         let first_run = cx.new(|_| FirstRun);
         let first_run_sub = Self::watch_first_run(&first_run, window, cx);
         let bench = Bench {
@@ -627,6 +640,8 @@ impl Shell {
             dock,
             #[cfg(windows)]
             chat,
+            #[cfg(windows)]
+            browser,
             _subs: subs,
             _page_sub: Some(first_run_sub),
         };
@@ -1516,7 +1531,7 @@ impl Shell {
         let Content::Workbench(bench) = &self.content else {
             return commands::Context::default();
         };
-        let mut states = [None; 5];
+        let mut states = [None; ViewId::ALL.len()];
         for view in views() {
             let place = bench.layout.locate(Tab::View(view)).map(|s| s.place);
             states[view as usize] = Some(commands::ViewState {
@@ -1847,6 +1862,14 @@ impl Shell {
                     claude_setup::run_remove(cx);
                 }
                 #[cfg(windows)]
+                DialogEvent::BrowserClear => {
+                    shell.close_overlay(window, cx);
+                    if let Some(bench) = shell.bench() {
+                        let browser = bench.browser.clone();
+                        browser.update(cx, |b, cx| b.clear_data(window, cx));
+                    }
+                }
+                #[cfg(windows)]
                 DialogEvent::ChatSignOut => {
                     shell.close_overlay(window, cx);
                     if let Some(bench) = shell.bench() {
@@ -2112,6 +2135,34 @@ impl Shell {
     }
 
     #[cfg(windows)]
+    fn on_browser(
+        &mut self,
+        browser: &Entity<BrowserPanel>,
+        event: &BrowserEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            BrowserEvent::View(action) => {
+                self.view_action(ViewId::AgentBrowser, *action, window, cx)
+            }
+            BrowserEvent::Clear => self.open_dialog(DialogKind::BrowserClear, window, cx),
+            BrowserEvent::Kept(kept) => {
+                browser.read(cx).release_keyboard(cx);
+                self.run_kept(*kept, window, cx)
+            }
+            BrowserEvent::ClearFailed => {
+                let message = text(settings::locale(cx), Key::BrowserClearFailed);
+                if let Some(bench) = self.bench() {
+                    bench
+                        .ws
+                        .update(cx, |ws, cx| ws.toast(message, ToastKind::Error, cx));
+                }
+            }
+        }
+    }
+
+    #[cfg(windows)]
     /// A key Acta keeps, pressed while the page had the keyboard
     /// (interaction.md 6.1).
     fn run_kept(&mut self, kept: Kept, window: &mut Window, cx: &mut Context<Self>) {
@@ -2161,10 +2212,10 @@ impl Shell {
     }
 
     #[cfg(windows)]
-    /// Whether a GPUI layer that can overlap the chat is open
-    /// (components-app.md 5: palette, quick capture, dialog, menu, the
-    /// sidebar over the page).
-    fn chat_covered(&mut self, cx: &mut Context<Self>) -> bool {
+    /// Whether a GPUI layer that can overlap a web view (the chat or the
+    /// agent browser) is open (components-app.md 5: palette, quick
+    /// capture, dialog, menu, the sidebar over the page).
+    fn web_covered(&mut self, view: ViewId, cx: &mut Context<Self>) -> bool {
         let Some(bench) = self.bench() else {
             return false;
         };
@@ -2187,11 +2238,7 @@ impl Shell {
                 .is_some_and(|v| v.read(cx).menu_open());
         // The move toast sits at the bottom left of the page area.
         let toast_over = bench.toast.is_some()
-            && bench
-                .layout
-                .locate(Tab::View(ViewId::Chat))
-                .map(|s| s.place)
-                == Some(Place::Page);
+            && bench.layout.locate(Tab::View(view)).map(|s| s.place) == Some(Place::Page);
         bench.ui.left_overlay
             || bench.ui.menu.is_some()
             || bench.tree_menu.is_some()
@@ -2199,6 +2246,7 @@ impl Shell {
             || bench.overlay.is_some()
             || any_page_menu
             || bench.chat.read(cx).menu_open()
+            || bench.browser.read(cx).menu_open()
     }
 
     #[cfg(windows)]

@@ -56,6 +56,9 @@ pub enum Kind {
     #[cfg(windows)]
     /// "Sign out and clear chat data?" (components-app.md 5, Chat panel).
     ChatSignOut,
+    #[cfg(windows)]
+    /// "Clear the browser's data?" (components-app.md 5, Agent browser).
+    BrowserClear,
 }
 
 pub enum DialogEvent {
@@ -69,6 +72,9 @@ pub enum DialogEvent {
     #[cfg(windows)]
     /// Deleting the chat panel's profile was confirmed.
     ChatSignOut,
+    #[cfg(windows)]
+    /// Deleting the agent browser's profile was confirmed.
+    BrowserClear,
 }
 
 pub struct Dialog {
@@ -756,6 +762,36 @@ impl Dialog {
                     .into_any_element(),
                 ];
                 (text(locale, Key::ChatSignoutTitle), body, buttons, 440.)
+            }
+            #[cfg(windows)]
+            Kind::BrowserClear => {
+                let body = type_scale::UI
+                    .el()
+                    .text_color(t.text_secondary)
+                    .child(text(locale, Key::BrowserClearBody))
+                    .into_any_element();
+                let buttons = vec![
+                    ui::button(
+                        "dialog-cancel",
+                        text(locale, Key::CommonCancel),
+                        Variant::Secondary,
+                        false,
+                        t,
+                    )
+                    .track_focus(&self.safe)
+                    .on_click(cx.listener(|d, _, _, cx| d.close(cx)))
+                    .into_any_element(),
+                    ui::button(
+                        "browser-clear-confirm",
+                        text(locale, Key::BrowserClearConfirm),
+                        Variant::Primary,
+                        false,
+                        t,
+                    )
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(DialogEvent::BrowserClear)))
+                    .into_any_element(),
+                ];
+                (text(locale, Key::BrowserClearTitle), body, buttons, 440.)
             }
         }
     }
