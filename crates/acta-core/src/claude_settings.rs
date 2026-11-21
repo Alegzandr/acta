@@ -1,0 +1,724 @@
+//! The one writer of Claude Code's per-folder settings (ADR 0011, "What
+//! Acta writes to Claude Code's settings"; ADR 0005, auto memory): Acta's
+//! entries in a folder's `.claude/settings.local.json`.
+//!
+//! Never clobber: the file is parsed (refused if it is not a JSON object),
+//! only what is absent is added, a key, rule or variable the user set is
+//! never changed, the file is written atomically, and a ledger (a local
+//! value per folder, never exported) records exactly what Acta added and
+//! whether it created the file. Changing what Acta wants takes out only
+//! ledger entries still holding Acta's value; the file is deleted only if
+//! Acta created it and it is left empty. A file Acta creates is excluded in
+//! the repository's `info/exclude`; a file tracked by git is never written.
+//!
+//! The ledger also keeps the folder's commit settings as last applied:
+//! they are what the `pre-git` guard enforces, in step with the rules.
+
+use crate::agent::git;
+use crate::folder_path;
+use crate::git_cmd;
+use crate::paths::Os;
+use crate::store::{AUTO_MEMORY_PREFIX, Store};
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value, json};
+use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
+
+/// Local-value prefix of the ledger, followed by the folder's stored path.
+/// The store moves it with its folder when the folder is followed.
+pub const LEDGER_PREFIX: &str = "claudesettings.";
+/// The file, relative to the folder.
+pub const LOCAL_SETTINGS: &str = ".claude/settings.local.json";
+
+const AUTO_MEMORY_KEY: &str = "autoMemoryEnabled";
+const ATTRIBUTION_KEY: &str = "attribution";
+const ALLOW_COMMIT: [&str; 2] = ["Bash(git add *)", "Bash(git commit *)"];
+const ALLOW_PUSH: &str = "Bash(git push)";
+const DENY: [&str; 4] = [
+    "Bash(git * --no-verify*)",
+    "Bash(git push *--force*)",
+    "Bash(git push -f*)",
+    "Bash(git push * -f*)",
+];
+const PUSH_ENV: [(&str, &str); 2] = [("GIT_TERMINAL_PROMPT", "0"), ("GCM_INTERACTIVE", "never")];
+
+/// A folder's commit mode (ADR 0011, section 3).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CommitMode {
+    #[default]
+    Manual,
+    /// Commit automatically.
+    Commit,
+    /// Commit and push automatically.
+    Push,
+}
+
+impl CommitMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CommitMode::Manual => "manual",
+            CommitMode::Commit => "commit",
+            CommitMode::Push => "push",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<CommitMode> {
+        match s {
+            "manual" => Some(CommitMode::Manual),
+            "commit" => Some(CommitMode::Commit),
+            "push" => Some(CommitMode::Push),
+            _ => None,
+        }
+    }
+
+    pub fn automatic(self) -> bool {
+        self != CommitMode::Manual
+    }
+}
+
+/// A folder's commit settings, as the store will hold them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommitSettings {
+    pub mode: CommitMode,
+    /// "Commit in my name, without Co-Authored-By Claude" (resolved: the
+    /// Settings default already applied).
+    #[serde(default)]
+    pub as_user: bool,
+    /// "Also on <default branch>".
+    #[serde(default)]
+    pub on_default: bool,
+}
+
+/// What Acta wants in a folder; `None` leaves that part as it is.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Wanted {
+    /// `autoMemoryEnabled: false` (ADR 0005).
+    pub auto_memory_off: Option<bool>,
+    pub commit: Option<CommitSettings>,
+}
+
+impl Wanted {
+    /// Everything of Acta's out (unlink, setup --remove).
+    pub const NOTHING: Wanted = Wanted {
+        auto_memory_off: Some(false),
+        commit: Some(CommitSettings {
+            mode: CommitMode::Manual,
+            as_user: false,
+            on_default: false,
+        }),
+    };
+}
+
+/// What one write did.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Outcome {
+    /// Entries Acta added, such as `autoMemoryEnabled`, `allow:Bash(git add *)`.
+    pub added: Vec<String>,
+    /// Entries of Acta's taken out.
+    pub removed: Vec<String>,
+    /// Acta's wishes the user's own values decide: `attribution`,
+    /// `autoMemoryEnabled`, `env.GIT_TERMINAL_PROMPT`.
+    pub user_kept: Vec<String>,
+    /// The file is tracked by git: nothing was written ("Claude Code will
+    /// ask before each commit").
+    pub tracked: bool,
+}
+
+impl Outcome {
+    pub fn changed(&self) -> bool {
+        !self.added.is_empty() || !self.removed.is_empty()
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct Ledger {
+    /// Acta created the file.
+    #[serde(default)]
+    created: bool,
+    /// Acta created the `.claude` directory.
+    #[serde(default)]
+    dir_created: bool,
+    /// Top-level keys Acta added.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    keys: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    allow: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    deny: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    env: Vec<String>,
+    /// Containers Acta created: `permissions`, `permissions.allow`,
+    /// `permissions.deny`, `env`; taken out again once empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    made: Vec<String>,
+    /// Wanted state.
+    #[serde(default)]
+    auto_memory_off: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    commit: Option<CommitSettings>,
+}
+
+impl Ledger {
+    fn holds_nothing(&self) -> bool {
+        self.keys.is_empty()
+            && self.allow.is_empty()
+            && self.deny.is_empty()
+            && self.env.is_empty()
+            && self.made.is_empty()
+    }
+
+    fn wants_nothing(&self) -> bool {
+        !self.auto_memory_off && self.commit.is_none_or(|c| !c.mode.automatic())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Entry {
+    Key(&'static str, Value),
+    Allow(&'static str),
+    Deny(&'static str),
+    Env(&'static str, &'static str),
+}
+
+fn attribution_value() -> Value {
+    json!({"commit": "", "pr": "", "sessionUrl": false})
+}
+
+fn key_value(key: &str) -> Option<Value> {
+    match key {
+        AUTO_MEMORY_KEY => Some(json!(false)),
+        ATTRIBUTION_KEY => Some(attribution_value()),
+        _ => None,
+    }
+}
+
+fn env_value(name: &str) -> Option<&'static str> {
+    PUSH_ENV.iter().find(|(n, _)| *n == name).map(|(_, v)| *v)
+}
+
+/// Acta's entries for the wanted state, in writing order.
+fn desired(auto_memory_off: bool, commit: Option<CommitSettings>) -> Vec<Entry> {
+    let mut out = Vec::new();
+    if auto_memory_off {
+        out.push(Entry::Key(AUTO_MEMORY_KEY, json!(false)));
+    }
+    let Some(c) = commit.filter(|c| c.mode.automatic()) else {
+        return out;
+    };
+    out.extend(ALLOW_COMMIT.iter().map(|r| Entry::Allow(r)));
+    if c.mode == CommitMode::Push {
+        out.push(Entry::Allow(ALLOW_PUSH));
+    }
+    out.extend(DENY.iter().map(|r| Entry::Deny(r)));
+    if c.mode == CommitMode::Push {
+        out.extend(PUSH_ENV.iter().map(|(n, v)| Entry::Env(n, v)));
+    }
+    if c.as_user {
+        out.push(Entry::Key(ATTRIBUTION_KEY, attribution_value()));
+    }
+    out
+}
+
+fn ledger_key(folder: &Path) -> String {
+    format!("{LEDGER_PREFIX}{}", folder.to_string_lossy())
+}
+
+fn read_ledger(store: &Store, folder: &Path) -> crate::Result<Option<Ledger>> {
+    Ok(store
+        .local_value(&ledger_key(folder))?
+        .map(|t| serde_json::from_str(&t).unwrap_or_default()))
+}
+
+fn save_ledger(store: &mut Store, folder: &Path, ledger: &Ledger) -> crate::Result<()> {
+    let key = ledger_key(folder);
+    if ledger.holds_nothing() && ledger.wants_nothing() {
+        store.set_local_value(&key, None)
+    } else {
+        let text = serde_json::to_string(ledger).expect("json");
+        store.set_local_value(&key, Some(&text))
+    }
+}
+
+/// Moves the `automemory.<path>` markers of earlier versions into the
+/// ledger. Cheap when there is nothing to move; run by every entry point.
+pub fn migrate_auto_memory_markers(store: &mut Store) -> crate::Result<usize> {
+    let markers = store.local_values(AUTO_MEMORY_PREFIX)?;
+    for (key, how) in &markers {
+        let folder = PathBuf::from(&key[AUTO_MEMORY_PREFIX.len()..]);
+        let mut ledger = read_ledger(store, &folder)?.unwrap_or_default();
+        ledger.auto_memory_off = true;
+        ledger.created |= how == "created";
+        if !ledger.keys.iter().any(|k| k == AUTO_MEMORY_KEY) {
+            ledger.keys.push(AUTO_MEMORY_KEY.to_owned());
+        }
+        save_ledger(store, &folder, &ledger)?;
+        store.set_local_value(key, None)?;
+    }
+    Ok(markers.len())
+}
+
+/// The commit settings that apply in `dir`: those of the deepest folder
+/// with a ledger containing it. Read by the `pre-git` guard.
+pub fn commit_settings_for(
+    store: &Store,
+    dir: &str,
+) -> crate::Result<Option<(String, CommitSettings)>> {
+    let mut best: Option<(usize, String, CommitSettings)> = None;
+    for (key, text) in store.local_values(LEDGER_PREFIX)? {
+        let folder = &key[LEDGER_PREFIX.len()..];
+        let Some(depth) = folder_path::contains(Os::CURRENT, folder, dir) else {
+            continue;
+        };
+        let Ok(ledger) = serde_json::from_str::<Ledger>(&text) else {
+            continue;
+        };
+        if best.as_ref().is_none_or(|(d, _, _)| depth > *d) {
+            best = Some((depth, folder.to_owned(), ledger.commit.unwrap_or_default()));
+        }
+    }
+    Ok(best.map(|(_, f, c)| (f, c)))
+}
+
+/// Brings the folder's local settings to what Acta wants. `folder` is the
+/// folder's stored path. An `Err` is a short reason: nothing was written
+/// and the ledger is unchanged.
+pub fn apply(store: &mut Store, folder: &Path, wanted: Wanted) -> Result<Outcome, String> {
+    migrate_auto_memory_markers(store).map_err(|e| e.to_string())?;
+    let mut ledger = read_ledger(store, folder)
+        .map_err(|e| e.to_string())?
+        .unwrap_or_default();
+    if let Some(off) = wanted.auto_memory_off {
+        ledger.auto_memory_off = off;
+    }
+    if let Some(c) = wanted.commit {
+        ledger.commit = Some(c).filter(|c| c.mode.automatic());
+    }
+    let want = desired(ledger.auto_memory_off, ledger.commit);
+    let mut outcome = Outcome::default();
+    if want.is_empty() && ledger.holds_nothing() {
+        save_ledger(store, folder, &ledger).map_err(|e| e.to_string())?;
+        return Ok(outcome);
+    }
+    if !folder.is_dir() {
+        return Err("the folder is not on this computer".into());
+    }
+    if tracked(folder)? {
+        outcome.tracked = true;
+        save_ledger(store, folder, &ledger).map_err(|e| e.to_string())?;
+        return Ok(outcome);
+    }
+
+    let file = folder.join(LOCAL_SETTINGS);
+    let (mut obj, existed) = match fs::read_to_string(&file) {
+        Ok(t) => match serde_json::from_str::<Value>(&t) {
+            Ok(Value::Object(o)) => (o, true),
+            _ => return Err(format!("{LOCAL_SETTINGS} is not a JSON object")),
+        },
+        Err(e) if e.kind() == io::ErrorKind::NotFound => (Map::new(), false),
+        Err(e) => return Err(format!("cannot read {LOCAL_SETTINGS}: {}", e.kind())),
+    };
+    if !existed {
+        // A ledger may survive a file the user deleted: start afresh.
+        ledger.created = false;
+        ledger.keys.clear();
+        ledger.allow.clear();
+        ledger.deny.clear();
+        ledger.env.clear();
+        ledger.made.clear();
+    }
+    let before = obj.clone();
+    take_out(&mut obj, &mut ledger, &want, &mut outcome)?;
+    put_in(&mut obj, &mut ledger, &want, &mut outcome)?;
+    drop_empty_containers(&mut obj, &mut ledger);
+
+    if obj != before || (!existed && !obj.is_empty()) {
+        let claude_dir = file.parent().expect("parent");
+        if obj.is_empty() && ledger.created {
+            fs::remove_file(&file).map_err(|e| e.kind().to_string())?;
+            ledger.created = false;
+            if ledger.dir_created {
+                // Only an empty directory goes.
+                let _ = fs::remove_dir(claude_dir);
+                ledger.dir_created = false;
+            }
+        } else {
+            if !claude_dir.is_dir() {
+                fs::create_dir_all(claude_dir).map_err(|e| e.kind().to_string())?;
+                ledger.dir_created = true;
+            }
+            let text = serde_json::to_string_pretty(&Value::Object(obj)).expect("json") + "\n";
+            write_atomic(&file, &text).map_err(|e| e.kind().to_string())?;
+            if !existed {
+                ledger.created = true;
+                exclude_from_git(folder);
+            }
+        }
+    }
+    save_ledger(store, folder, &ledger).map_err(|e| e.to_string())?;
+    Ok(outcome)
+}
+
+/// Whether the settings file is tracked by git. Outside a repository, or
+/// where git sees none or is not installed, nothing can be tracked; any
+/// other failure to answer writes nothing.
+fn tracked(folder: &Path) -> Result<bool, String> {
+    if git::inspect(folder).is_none() {
+        return Ok(false);
+    }
+    match git_cmd::is_tracked(folder, LOCAL_SETTINGS) {
+        Ok(t) => Ok(t),
+        Err(git_cmd::GitError::NotARepository | git_cmd::GitError::NoGit) => Ok(false),
+        Err(e) => Err(format!(
+            "cannot tell whether {LOCAL_SETTINGS} is tracked: {e}"
+        )),
+    }
+}
+
+fn entry_label(e: &Entry) -> String {
+    match e {
+        Entry::Key(k, _) => (*k).to_owned(),
+        Entry::Allow(r) => format!("allow:{r}"),
+        Entry::Deny(r) => format!("deny:{r}"),
+        Entry::Env(n, _) => format!("env.{n}"),
+    }
+}
+
+/// Takes out ledger entries no longer wanted, where they still hold Acta's
+/// value; a value the user changed is theirs and stays.
+fn take_out(
+    obj: &mut Map<String, Value>,
+    ledger: &mut Ledger,
+    want: &[Entry],
+    outcome: &mut Outcome,
+) -> Result<(), String> {
+    let wanted_key = |k: &str| {
+        want.iter()
+            .any(|e| matches!(e, Entry::Key(w, _) if *w == k))
+    };
+    for k in std::mem::take(&mut ledger.keys) {
+        let acta = key_value(&k);
+        if wanted_key(&k) && obj.get(&k) == acta.as_ref() {
+            ledger.keys.push(k);
+        } else if !wanted_key(&k) && obj.get(&k).is_some() && obj.get(&k) == acta.as_ref() {
+            obj.remove(&k);
+            outcome.removed.push(k);
+        }
+    }
+    for (list, field) in [(0, "allow"), (1, "deny")] {
+        let entries = std::mem::take(if list == 0 {
+            &mut ledger.allow
+        } else {
+            &mut ledger.deny
+        });
+        let mut keep = Vec::new();
+        for rule in entries {
+            let still = want.iter().any(|e| match e {
+                Entry::Allow(r) => list == 0 && *r == rule,
+                Entry::Deny(r) => list == 1 && *r == rule,
+                _ => false,
+            });
+            let arr = permission_list(obj, field)?;
+            let present = arr.is_some_and(|a| a.iter().any(|v| v.as_str() == Some(&rule)));
+            if still && present {
+                keep.push(rule);
+            } else if !still && present {
+                if let Some(a) = permission_list_mut(obj, field) {
+                    a.retain(|v| v.as_str() != Some(&rule));
+                }
+                outcome.removed.push(format!("{field}:{rule}"));
+            }
+        }
+        if list == 0 {
+            ledger.allow = keep;
+        } else {
+            ledger.deny = keep;
+        }
+    }
+    for name in std::mem::take(&mut ledger.env) {
+        let still = want
+            .iter()
+            .any(|e| matches!(e, Entry::Env(n, _) if *n == name));
+        let env = obj.get("env").and_then(Value::as_object);
+        let cur = env.and_then(|e| e.get(&name)).and_then(Value::as_str);
+        let acta = env_value(&name);
+        if cur.is_none() || cur != acta {
+            continue;
+        }
+        if still {
+            ledger.env.push(name);
+        } else {
+            if let Some(Value::Object(e)) = obj.get_mut("env") {
+                e.remove(&name);
+            }
+            outcome.removed.push(format!("env.{name}"));
+        }
+    }
+    Ok(())
+}
+
+fn permission_list<'a>(
+    obj: &'a Map<String, Value>,
+    field: &str,
+) -> Result<Option<&'a Vec<Value>>, String> {
+    match obj.get("permissions") {
+        None => Ok(None),
+        Some(Value::Object(p)) => match p.get(field) {
+            None => Ok(None),
+            Some(Value::Array(a)) => Ok(Some(a)),
+            Some(_) => Err(format!(
+                "permissions.{field} in {LOCAL_SETTINGS} is not a list"
+            )),
+        },
+        Some(_) => Err(format!("permissions in {LOCAL_SETTINGS} is not an object")),
+    }
+}
+
+fn permission_list_mut<'a>(
+    obj: &'a mut Map<String, Value>,
+    field: &str,
+) -> Option<&'a mut Vec<Value>> {
+    obj.get_mut("permissions")?
+        .as_object_mut()?
+        .get_mut(field)?
+        .as_array_mut()
+}
+
+/// Adds every wanted entry that is absent and records it.
+fn put_in(
+    obj: &mut Map<String, Value>,
+    ledger: &mut Ledger,
+    want: &[Entry],
+    outcome: &mut Outcome,
+) -> Result<(), String> {
+    // Refuse a malformed container before changing anything.
+    permission_list(obj, "allow")?;
+    permission_list(obj, "deny")?;
+    if obj.get("env").is_some_and(|e| !e.is_object()) {
+        return Err(format!("env in {LOCAL_SETTINGS} is not an object"));
+    }
+    for e in want {
+        match e {
+            Entry::Key(k, v) => {
+                if ledger.keys.iter().any(|x| x == k) {
+                    continue;
+                }
+                match obj.get(*k) {
+                    None => {
+                        obj.insert((*k).to_owned(), v.clone());
+                        ledger.keys.push((*k).to_owned());
+                        outcome.added.push(entry_label(e));
+                    }
+                    Some(cur) if cur != v => outcome.user_kept.push((*k).to_owned()),
+                    Some(_) => {}
+                }
+            }
+            Entry::Allow(r) | Entry::Deny(r) => {
+                let (field, recorded) = match e {
+                    Entry::Allow(_) => ("allow", &mut ledger.allow),
+                    _ => ("deny", &mut ledger.deny),
+                };
+                if recorded.iter().any(|x| x == r) {
+                    continue;
+                }
+                if permission_list(obj, field)?
+                    .is_some_and(|a| a.iter().any(|v| v.as_str() == Some(r)))
+                {
+                    continue; // the user's own rule: same effect, not ours
+                }
+                if !obj.contains_key("permissions") {
+                    obj.insert("permissions".into(), json!({}));
+                    ledger.made.push("permissions".into());
+                }
+                let perms = obj["permissions"].as_object_mut().expect("checked");
+                if !perms.contains_key(field) {
+                    perms.insert(field.into(), json!([]));
+                    ledger.made.push(format!("permissions.{field}"));
+                }
+                perms[field].as_array_mut().expect("checked").push(json!(r));
+                recorded.push((*r).to_owned());
+                outcome.added.push(entry_label(e));
+            }
+            Entry::Env(n, v) => {
+                if ledger.env.iter().any(|x| x == n) {
+                    continue;
+                }
+                if !obj.contains_key("env") {
+                    obj.insert("env".into(), json!({}));
+                    ledger.made.push("env".into());
+                }
+                let env = obj["env"].as_object_mut().expect("checked");
+                match env.get(*n) {
+                    None => {
+                        env.insert((*n).to_owned(), json!(v));
+                        ledger.env.push((*n).to_owned());
+                        outcome.added.push(entry_label(e));
+                    }
+                    Some(cur) if cur.as_str() != Some(v) => {
+                        outcome.user_kept.push(format!("env.{n}"));
+                    }
+                    Some(_) => {}
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Containers Acta created and that are now empty go; the others stay.
+fn drop_empty_containers(obj: &mut Map<String, Value>, ledger: &mut Ledger) {
+    let mut made = std::mem::take(&mut ledger.made);
+    for field in ["allow", "deny"] {
+        let name = format!("permissions.{field}");
+        if !made.contains(&name) {
+            continue;
+        }
+        let perms = obj.get_mut("permissions").and_then(Value::as_object_mut);
+        match perms {
+            Some(p) => match p.get(field) {
+                Some(Value::Array(a)) if a.is_empty() => {
+                    p.remove(field);
+                    made.retain(|m| m != &name);
+                }
+                Some(_) => {}
+                None => made.retain(|m| m != &name),
+            },
+            None => made.retain(|m| m != &name),
+        }
+    }
+    for name in ["permissions", "env"] {
+        if !made.iter().any(|m| m == name) {
+            continue;
+        }
+        match obj.get(name) {
+            Some(Value::Object(o)) if o.is_empty() => {
+                obj.remove(name);
+                made.retain(|m| m != name);
+            }
+            Some(_) => {}
+            None => made.retain(|m| m != name),
+        }
+    }
+    ledger.made = made;
+}
+
+/// Takes out everything of Acta's in one folder. `Kept`: not done (folder
+/// not on this computer, file unreadable), the ledger stays to try again.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Restore {
+    Restored,
+    NotNeeded,
+    Kept,
+}
+
+pub fn remove(store: &mut Store, folder: &Path) -> crate::Result<Restore> {
+    migrate_auto_memory_markers(store)?;
+    let Some(ledger) = read_ledger(store, folder)? else {
+        return Ok(Restore::NotNeeded);
+    };
+    if !folder.is_dir() {
+        return Ok(Restore::Kept);
+    }
+    Ok(match apply(store, folder, Wanted::NOTHING) {
+        Ok(o) if o.changed() => Restore::Restored,
+        Ok(_) if ledger.holds_nothing() || !folder.join(LOCAL_SETTINGS).exists() => {
+            Restore::NotNeeded
+        }
+        Ok(o) if o.tracked => Restore::Kept,
+        Ok(_) => Restore::NotNeeded,
+        Err(_) => Restore::Kept,
+    })
+}
+
+/// `acta setup --remove`: everything of Acta's out of every folder with a
+/// ledger. Returns the folders restored and those left as they were.
+pub fn remove_all(store: &mut Store) -> crate::Result<(usize, usize)> {
+    migrate_auto_memory_markers(store)?;
+    let folders: Vec<PathBuf> = store
+        .local_values(LEDGER_PREFIX)?
+        .into_iter()
+        .map(|(k, _)| PathBuf::from(&k[LEDGER_PREFIX.len()..]))
+        .collect();
+    let (mut restored, mut kept) = (0, 0);
+    for folder in folders {
+        match remove(store, &folder)? {
+            Restore::Restored => restored += 1,
+            Restore::NotNeeded => {}
+            Restore::Kept => kept += 1,
+        }
+    }
+    Ok((restored, kept))
+}
+
+/// Keeps a settings file Acta created out of commits: a line in the
+/// repository's local `info/exclude`, never in a tracked `.gitignore` or
+/// the global excludes. Appended only, read as bytes.
+fn exclude_from_git(folder: &Path) {
+    let Some(info) = git::inspect(folder) else {
+        return;
+    };
+    let Ok(rel) = folder.strip_prefix(&info.root) else {
+        return;
+    };
+    let mut line = rel.to_string_lossy().replace('\\', "/");
+    if !line.is_empty() {
+        line.push('/');
+    }
+    let line = format!("/{line}{LOCAL_SETTINGS}");
+    let exclude = info.common_dir.join("info").join("exclude");
+    let cur = match fs::read(&exclude) {
+        Ok(b) => b,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Vec::new(),
+        Err(_) => return,
+    };
+    if cur
+        .split(|b| *b == b'\n')
+        .any(|l| l.trim_ascii() == line.as_bytes())
+    {
+        return;
+    }
+    let mut add = Vec::new();
+    if !cur.is_empty() && !cur.ends_with(b"\n") {
+        add.push(b'\n');
+    }
+    add.extend_from_slice(line.as_bytes());
+    add.push(b'\n');
+    let _ = fs::create_dir_all(exclude.parent().expect("parent"));
+    if let Ok(mut f) = fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(&exclude)
+    {
+        use std::io::Write;
+        let _ = f.write_all(&add);
+    }
+}
+
+/// Replaces a file atomically (a temporary file beside it, then a rename),
+/// following a symbolic link and keeping the file's permissions.
+pub fn write_atomic(path: &Path, text: &str) -> io::Result<()> {
+    let target = match fs::symlink_metadata(path) {
+        Ok(m) if m.file_type().is_symlink() => fs::canonicalize(path)?,
+        _ => path.to_path_buf(),
+    };
+    let permissions = fs::metadata(&target).ok().map(|m| m.permissions());
+    let name = target
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let tmp = target.with_file_name(format!(".{name}.acta-tmp-{}", std::process::id()));
+    let result = fs::write(&tmp, text)
+        .and_then(|()| match permissions {
+            Some(p) => fs::set_permissions(&tmp, p),
+            None => Ok(()),
+        })
+        .and_then(|()| fs::rename(&tmp, &target));
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    result
+}
+
+#[cfg(test)]
+mod tests;

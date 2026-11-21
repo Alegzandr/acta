@@ -321,13 +321,15 @@ impl Store {
                 params![f.id.0, f.new, now, Author::Human],
             )?;
             upsert_meta(&tx, &identity_key(f.id), &f.identity)?;
-            tx.execute(
-                "UPDATE OR IGNORE meta SET key = ?2 WHERE key = ?1",
-                params![
-                    format!("local.{AUTO_MEMORY_PREFIX}{}", f.old),
-                    format!("local.{AUTO_MEMORY_PREFIX}{}", f.new)
-                ],
-            )?;
+            for prefix in [AUTO_MEMORY_PREFIX, crate::claude_settings::LEDGER_PREFIX] {
+                tx.execute(
+                    "UPDATE OR IGNORE meta SET key = ?2 WHERE key = ?1",
+                    params![
+                        format!("local.{prefix}{}", f.old),
+                        format!("local.{prefix}{}", f.new)
+                    ],
+                )?;
+            }
             moved.push(f.id);
         }
         tx.commit()?;

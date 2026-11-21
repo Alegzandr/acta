@@ -1602,6 +1602,10 @@ fn a_renamed_folder_is_followed_with_its_links() {
     store
         .set_local_value(&format!("{AUTO_MEMORY_PREFIX}{old}"), Some("created"))
         .unwrap();
+    let ledger = crate::claude_settings::LEDGER_PREFIX;
+    store
+        .set_local_value(&format!("{ledger}{old}"), Some("{}"))
+        .unwrap();
     assert!(linked(dir.path(), &old));
 
     let mut monitor = Monitor::new();
@@ -1628,6 +1632,17 @@ fn a_renamed_folder_is_followed_with_its_links() {
             .as_deref(),
         Some("created"),
         "the auto-memory marker follows"
+    );
+    assert!(
+        store
+            .local_value(&format!("{ledger}{new}"))
+            .unwrap()
+            .is_some()
+            && store
+                .local_value(&format!("{ledger}{old}"))
+                .unwrap()
+                .is_none(),
+        "the settings ledger follows"
     );
     assert_eq!(
         store
