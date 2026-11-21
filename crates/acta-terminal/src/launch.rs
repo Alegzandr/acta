@@ -29,6 +29,35 @@ pub struct Focus {
     pub topic: Option<String>,
 }
 
+/// Which conversation a launch opens. Claude Code's `--session-id` and
+/// `--resume` take the id (a UUID); Acta keeps it per page, opaque.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Conversation {
+    /// A new conversation under this id (`--session-id`).
+    New(String),
+    /// The page's last conversation (`--resume`).
+    Resume(String),
+}
+
+/// What Acta adds to a launch besides folders and focus (ADR 0008
+/// amendment, 2026-11-21). Everything else (model, permission mode,
+/// settings) is the user's own Claude Code configuration.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ClaudeOptions {
+    /// Acta's plugin directory, loaded with `--plugin-dir` so a session
+    /// started in Acta has Acta's tools and hooks whether or not setup ran.
+    /// A same-named installed plugin is replaced for that session.
+    pub plugin_dir: Option<PathBuf>,
+    pub conversation: Option<Conversation>,
+    /// `ACTA_LAUNCH`: an opaque token naming this terminal, so the app can
+    /// match the session's presence row to it.
+    pub token: Option<String>,
+    /// A first prompt Claude Code starts on (`/acta:triage`), passed as its
+    /// positional argument, last. Left out on the `cmd` shim path when
+    /// `cmd.exe` would interpret it.
+    pub prompt: Option<String>,
+}
+
 /// A launch of Claude Code, with the additional folders that were left out
 /// (ADR 0008: reported, never blocking): missing ones, and on the Windows
 /// `.cmd` shim path those whose name `cmd.exe` would interpret.
@@ -81,16 +110,7 @@ pub enum ClaudeProgram {
 pub fn launch_spec_for_claude(
     folders: &[PathBuf],
     focus: &Focus,
-) -> Result<ClaudeLaunch, LaunchError> {
-    launch_spec_for_claude_with(folders, focus, None)
-}
-
-/// [`launch_spec_for_claude`] with a first prompt Claude Code starts on
-/// (`/acta:triage`), passed as its positional argument.
-pub fn launch_spec_for_claude_with(
-    folders: &[PathBuf],
-    focus: &Focus,
-    prompt: Option<&str>,
+    options: &ClaudeOptions,
 ) -> Result<ClaudeLaunch, LaunchError> {
     // Check the folders first: a missing folder must be reported even when
     // the search for `claude` would also fail.
@@ -98,7 +118,7 @@ pub fn launch_spec_for_claude_with(
         return Err(LaunchError::NoFolder);
     }
     let program = resolve_claude().ok_or(LaunchError::ClaudeNotFound)?;
-    build_claude_launch_with(&program, folders, focus, prompt, |path| path.is_dir())
+    build_claude_launch(&program, folders, focus, options, |path| path.is_dir())
 }
 
 /// The pure part of [`launch_spec_for_claude`], with the program already
@@ -107,18 +127,7 @@ pub fn build_claude_launch(
     program: &ClaudeProgram,
     folders: &[PathBuf],
     focus: &Focus,
-    exists: impl Fn(&Path) -> bool,
-) -> Result<ClaudeLaunch, LaunchError> {
-    build_claude_launch_with(program, folders, focus, None, exists)
-}
-
-/// [`build_claude_launch`] with a first prompt. A prompt `cmd.exe` would
-/// interpret on the shim path is left out rather than passed.
-pub fn build_claude_launch_with(
-    program: &ClaudeProgram,
-    folders: &[PathBuf],
-    focus: &Focus,
-    prompt: Option<&str>,
+    options: &ClaudeOptions,
     exists: impl Fn(&Path) -> bool,
 ) -> Result<ClaudeLaunch, LaunchError> {
     let (primary, additional) = folders.split_first().ok_or(LaunchError::NoFolder)?;
@@ -137,18 +146,38 @@ pub fn build_claude_launch_with(
             left_out.push(folder.clone());
         }
     }
-    if let Some(prompt) = prompt.filter(|p| !p.is_empty()) {
-        let unsafe_for_cmd =
-            matches!(program, ClaudeProgram::CmdShim { .. }) && has_cmd_metachar(prompt);
-        if !unsafe_for_cmd {
-            claude_args.push(prompt.to_owned());
+    let shim = matches!(program, ClaudeProgram::CmdShim { .. });
+    if let Some(dir) = &options.plugin_dir
+        && exists(dir)
+        && !(shim && has_cmd_metachar(&dir.to_string_lossy()))
+    {
+        claude_args.push("--plugin-dir".to_owned());
+        claude_args.push(dir.to_string_lossy().into_owned());
+    }
+    match &options.conversation {
+        Some(Conversation::New(id)) if is_uuid(id) => {
+            claude_args.push("--session-id".to_owned());
+            claude_args.push(id.clone());
         }
+        Some(Conversation::Resume(id)) if is_uuid(id) => {
+            claude_args.push("--resume".to_owned());
+            claude_args.push(id.clone());
+        }
+        _ => {}
+    }
+    if let Some(prompt) = options.prompt.as_deref().filter(|p| !p.is_empty())
+        && !(shim && has_cmd_metachar(prompt))
+    {
+        claude_args.push(prompt.to_owned());
     }
 
     let mut env = vec![
         ("ACTA_TERMINAL".to_owned(), "1".to_owned()),
         ("ACTA_PROJECT".to_owned(), focus.project.clone()),
     ];
+    if let Some(token) = &options.token {
+        env.push(("ACTA_LAUNCH".to_owned(), token.clone()));
+    }
     if let Some(epic) = &focus.epic {
         env.push(("ACTA_EPIC".to_owned(), epic.clone()));
     }
@@ -203,6 +232,66 @@ pub fn build_claude_launch_with(
         },
         left_out,
     })
+}
+
+/// A UUID in its 8-4-4-4-12 hex form: the only form `--session-id` takes,
+/// and nothing a shell would interpret.
+pub fn is_uuid(s: &str) -> bool {
+    let parts: Vec<&str> = s.split('-').collect();
+    parts.len() == 5
+        && parts
+            .iter()
+            .zip([8, 4, 4, 4, 12])
+            .all(|(p, n)| p.len() == n && p.chars().all(|c| c.is_ascii_hexdigit()))
+}
+
+/// Claude Code's configuration directory: `CLAUDE_CONFIG_DIR`, else
+/// `~/.claude`.
+pub fn claude_config_dir() -> Option<PathBuf> {
+    if let Some(dir) = std::env::var_os("CLAUDE_CONFIG_DIR").filter(|v| !v.is_empty()) {
+        return Some(PathBuf::from(dir));
+    }
+    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })?;
+    Some(PathBuf::from(home).join(".claude"))
+}
+
+/// Claude Code's directory name for a working directory: every character
+/// but an ASCII letter or digit becomes `-` (one per UTF-16 unit, as
+/// JavaScript counts them). Names over 200 characters are truncated and
+/// hashed by Claude Code (code.claude.com/docs/en/sessions, "Where
+/// transcripts are stored"); Acta does not reproduce the hash, so `None`.
+pub fn project_dir_name(cwd: &Path) -> Option<String> {
+    let mut name = String::new();
+    for c in cwd.to_string_lossy().chars() {
+        if c.is_ascii_alphanumeric() {
+            name.push(c);
+        } else {
+            for _ in 0..c.len_utf16() {
+                name.push('-');
+            }
+        }
+    }
+    (!name.is_empty() && name.len() <= 200).then_some(name)
+}
+
+/// Whether conversation `id` belongs to `cwd` in Claude Code's storage:
+/// `<config>/projects/<project_dir_name(cwd)>/<id>.jsonl`. Only existence is
+/// checked; nothing is read. A transcript elsewhere (the page's folder
+/// changed) or gone (transcripts age out after 30 days) means a new
+/// conversation: a resume across folders would carry the old folder's
+/// conversation into this one, and one of a missing id ends at once.
+pub fn transcript_exists(config_dir: &Path, cwd: &Path, id: &str) -> bool {
+    if !is_uuid(id) {
+        return false;
+    }
+    let Some(dir) = project_dir_name(cwd) else {
+        return false;
+    };
+    config_dir
+        .join("projects")
+        .join(dir)
+        .join(format!("{id}.jsonl"))
+        .is_file()
 }
 
 /// Characters `cmd.exe` interprets even inside double quotes, or that end
@@ -310,7 +399,14 @@ mod tests {
     fn primary_is_cwd_and_others_are_add_dirs() {
         let program = ClaudeProgram::Exe(PathBuf::from("/bin/claude"));
         let folders = [alexandre("acta"), alexandre("docs"), alexandre("wt")];
-        let launch = build_claude_launch(&program, &folders, &focus(), |_| true).unwrap();
+        let launch = build_claude_launch(
+            &program,
+            &folders,
+            &focus(),
+            &ClaudeOptions::default(),
+            |_| true,
+        )
+        .unwrap();
         assert_eq!(launch.spec.program, "/bin/claude");
         assert_eq!(launch.spec.cwd, alexandre("acta"));
         let docs = alexandre("docs").to_string_lossy().into_owned();
@@ -329,13 +425,123 @@ mod tests {
     }
 
     #[test]
+    fn options_add_the_plugin_the_conversation_and_the_token() {
+        let id = "019a7a6e-1c2d-7f00-8a00-0123456789ab";
+        let plugin = alexandre("acta-data/claude/plugins/acta");
+        let options = ClaudeOptions {
+            plugin_dir: Some(plugin.clone()),
+            conversation: Some(Conversation::Resume(id.into())),
+            token: Some("tok-1".into()),
+            prompt: None,
+        };
+        let program = ClaudeProgram::Exe(PathBuf::from("claude"));
+        let folders = [alexandre("acta")];
+        let launch = build_claude_launch(&program, &folders, &focus(), &options, |_| true).unwrap();
+        let plugin_s = plugin.to_string_lossy().into_owned();
+        assert_eq!(
+            launch.spec.args,
+            ["--plugin-dir", plugin_s.as_str(), "--resume", id]
+        );
+        assert!(
+            launch
+                .spec
+                .env
+                .contains(&("ACTA_LAUNCH".to_owned(), "tok-1".to_owned()))
+        );
+
+        // A new conversation takes --session-id; a missing plugin directory
+        // and an id that is not a UUID are left out, never passed.
+        let options = ClaudeOptions {
+            conversation: Some(Conversation::New(id.into())),
+            ..options
+        };
+        let launch = build_claude_launch(&program, &folders, &focus(), &options, |p| {
+            p != plugin.as_path()
+        })
+        .unwrap();
+        assert_eq!(launch.spec.args, ["--session-id", id]);
+        let options = ClaudeOptions {
+            conversation: Some(Conversation::Resume("x & del".into())),
+            plugin_dir: None,
+            token: None,
+            prompt: None,
+        };
+        let launch = build_claude_launch(&program, &folders, &focus(), &options, |_| true).unwrap();
+        assert!(launch.spec.args.is_empty());
+        assert!(!launch.spec.env.iter().any(|(k, _)| k == "ACTA_LAUNCH"));
+    }
+
+    #[test]
+    fn transcripts_are_found_by_id_in_any_project() {
+        let n = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("acta-launch-{}-{n}", std::process::id()));
+        let id = "019a7a6e-1c2d-7f00-8a00-0123456789ab";
+        let cwd = Path::new("C:\\Users\\alexandre\\acta");
+        assert!(!transcript_exists(&dir, cwd, id));
+        let project = dir.join("projects").join("C--Users-alexandre-acta");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(project.join(format!("{id}.jsonl")), "").unwrap();
+        // Only under the directory of this working directory.
+        let here = if cfg!(windows) {
+            cwd.to_path_buf()
+        } else {
+            PathBuf::from("C:\\Users\\alexandre\\acta")
+        };
+        assert!(transcript_exists(&dir, &here, id));
+        assert!(!transcript_exists(
+            &dir,
+            Path::new("C:\\Users\\alexandre\\other"),
+            id
+        ));
+        assert!(!transcript_exists(
+            &dir,
+            &here,
+            "019a7a6e-1c2d-7f00-8a00-0123456789ac"
+        ));
+        assert!(!transcript_exists(&dir, &here, "../x"));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(is_uuid(id) && !is_uuid("019a7a6e1c2d7f008a000123456789ab"));
+    }
+
+    #[test]
+    fn project_directory_names_follow_claude_codes_layout() {
+        // Seen on disk for a real run (Claude Code 2.1.330, Windows).
+        assert_eq!(
+            project_dir_name(Path::new(
+                "C:\\Users\\Alegzandr\\AppData\\Local\\Temp\\claude\\scratchpad\\ccint\\hl\\proj"
+            ))
+            .as_deref(),
+            Some("C--Users-Alegzandr-AppData-Local-Temp-claude-scratchpad-ccint-hl-proj")
+        );
+        assert_eq!(
+            project_dir_name(Path::new("/home/alexandre/my app.v2")).as_deref(),
+            Some("-home-alexandre-my-app-v2")
+        );
+        assert_eq!(
+            project_dir_name(Path::new("/home/\u{e9}t\u{e9}")).as_deref(),
+            Some("-home--t-")
+        );
+        assert_eq!(project_dir_name(&PathBuf::from("a".repeat(201))), None);
+    }
+
+    #[test]
     fn project_focus_sets_no_epic_or_topic() {
         let program = ClaudeProgram::Exe(PathBuf::from("claude"));
         let focus = Focus {
             project: "P-1".into(),
             ..Focus::default()
         };
-        let launch = build_claude_launch(&program, &[alexandre("acta")], &focus, |_| true).unwrap();
+        let launch = build_claude_launch(
+            &program,
+            &[alexandre("acta")],
+            &focus,
+            &ClaudeOptions::default(),
+            |_| true,
+        )
+        .unwrap();
         assert!(launch.spec.args.is_empty());
         assert!(
             !launch
@@ -351,8 +557,14 @@ mod tests {
         let program = ClaudeProgram::Exe(PathBuf::from("claude"));
         let folders = [alexandre("acta"), alexandre("gone"), alexandre("docs")];
         let gone = alexandre("gone");
-        let launch =
-            build_claude_launch(&program, &folders, &focus(), |p| p != gone.as_path()).unwrap();
+        let launch = build_claude_launch(
+            &program,
+            &folders,
+            &focus(),
+            &ClaudeOptions::default(),
+            |p| p != gone.as_path(),
+        )
+        .unwrap();
         let docs = alexandre("docs").to_string_lossy().into_owned();
         assert_eq!(launch.spec.args, ["--add-dir", &docs]);
         assert_eq!(launch.left_out, [gone]);
@@ -362,18 +574,22 @@ mod tests {
     fn missing_primary_or_no_folder_stops_the_launch() {
         let program = ClaudeProgram::Exe(PathBuf::from("claude"));
         assert_eq!(
-            build_claude_launch(&program, &[], &focus(), |_| true),
+            build_claude_launch(&program, &[], &focus(), &ClaudeOptions::default(), |_| true),
             Err(LaunchError::NoFolder)
         );
         let primary = alexandre("acta");
         assert_eq!(
-            build_claude_launch(&program, std::slice::from_ref(&primary), &focus(), |_| {
-                false
-            }),
+            build_claude_launch(
+                &program,
+                std::slice::from_ref(&primary),
+                &focus(),
+                &ClaudeOptions::default(),
+                |_| { false }
+            ),
             Err(LaunchError::PrimaryMissing(primary))
         );
         assert_eq!(
-            launch_spec_for_claude(&[], &focus()),
+            launch_spec_for_claude(&[], &focus(), &ClaudeOptions::default()),
             Err(LaunchError::NoFolder)
         );
     }
@@ -382,9 +598,22 @@ mod tests {
     fn a_first_prompt_is_the_last_argument() {
         let program = ClaudeProgram::Exe(PathBuf::from("claude"));
         let folders = [alexandre("acta"), alexandre("docs")];
-        let launch =
-            build_claude_launch_with(&program, &folders, &focus(), Some("/acta:triage"), |_| true)
-                .unwrap();
+        let triage = |prompt: &str| ClaudeOptions {
+            prompt: Some(prompt.into()),
+            conversation: Some(Conversation::New(
+                "019a7a6e-1c2d-7f00-8a00-0123456789ab".into(),
+            )),
+            ..ClaudeOptions::default()
+        };
+        let launch = build_claude_launch(
+            &program,
+            &folders,
+            &focus(),
+            &triage("/acta:triage"),
+            |_| true,
+        )
+        .unwrap();
+        // After every option, the conversation's included.
         assert_eq!(
             launch.spec.args.last().map(String::as_str),
             Some("/acta:triage")
@@ -394,11 +623,11 @@ mod tests {
             shim: PathBuf::from("C:\\npm\\claude.cmd"),
         };
         let launch =
-            build_claude_launch_with(&shim, &folders, &focus(), Some("/acta:triage"), |_| true)
+            build_claude_launch(&shim, &folders, &focus(), &triage("/acta:triage"), |_| true)
                 .unwrap();
         assert!(launch.spec.args[3].ends_with(" \"/acta:triage\"\""));
         let launch =
-            build_claude_launch_with(&shim, &folders, &focus(), Some("a&b"), |_| true).unwrap();
+            build_claude_launch(&shim, &folders, &focus(), &triage("a&b"), |_| true).unwrap();
         assert!(!launch.spec.args[3].contains("a&b"), "left out");
     }
 
@@ -409,7 +638,14 @@ mod tests {
             shim: PathBuf::from("C:\\npm\\claude.cmd"),
         };
         let folders = [PathBuf::from("C:\\acta"), PathBuf::from("D:\\docs")];
-        let launch = build_claude_launch(&program, &folders, &focus(), |_| true).unwrap();
+        let launch = build_claude_launch(
+            &program,
+            &folders,
+            &focus(),
+            &ClaudeOptions::default(),
+            |_| true,
+        )
+        .unwrap();
         assert_eq!(launch.spec.program, "C:\\Windows\\system32\\cmd.exe");
         assert!(launch.spec.verbatim_args);
         assert_eq!(
@@ -430,7 +666,14 @@ mod tests {
             PathBuf::from("E:\\x\\\\"),
             PathBuf::from("F:\\docs"),
         ];
-        let launch = build_claude_launch(&program, &folders, &focus(), |_| true).unwrap();
+        let launch = build_claude_launch(
+            &program,
+            &folders,
+            &focus(),
+            &ClaudeOptions::default(),
+            |_| true,
+        )
+        .unwrap();
         let line = &launch.spec.args[3];
         assert_eq!(
             line,
@@ -517,7 +760,14 @@ mod tests {
             PathBuf::from("D:\\100%"),
             PathBuf::from("D:\\my docs"),
         ];
-        let launch = build_claude_launch(&program, &folders, &focus(), |_| true).unwrap();
+        let launch = build_claude_launch(
+            &program,
+            &folders,
+            &focus(),
+            &ClaudeOptions::default(),
+            |_| true,
+        )
+        .unwrap();
         assert_eq!(
             launch.spec.args[3],
             r#"""C:\npm\claude.cmd" "--add-dir" "D:\my docs"""#
@@ -532,7 +782,13 @@ mod tests {
             shim: PathBuf::from("C:\\R&D\\claude.cmd"),
         };
         assert_eq!(
-            build_claude_launch(&bad, &folders[..1], &focus(), |_| true),
+            build_claude_launch(
+                &bad,
+                &folders[..1],
+                &focus(),
+                &ClaudeOptions::default(),
+                |_| true
+            ),
             Err(LaunchError::ClaudeNotFound)
         );
     }
@@ -541,7 +797,14 @@ mod tests {
     fn login_shell_passes_folders_as_positional_words() {
         let program = ClaudeProgram::LoginShell("/bin/zsh".into());
         let folders = [alexandre("acta"), PathBuf::from("/tmp/it's here")];
-        let launch = build_claude_launch(&program, &folders, &focus(), |_| true).unwrap();
+        let launch = build_claude_launch(
+            &program,
+            &folders,
+            &focus(),
+            &ClaudeOptions::default(),
+            |_| true,
+        )
+        .unwrap();
         assert_eq!(launch.spec.program, "/bin/zsh");
         assert_eq!(
             launch.spec.args,

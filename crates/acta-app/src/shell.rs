@@ -183,6 +183,8 @@ actions!(
         OpenShortcuts,
         /// Settings: "Remove from Claude Code" (confirmed, 6.4).
         RemoveClaudeSetup,
+        /// Settings: "Set up Claude Code" (confirmed, with what it touches).
+        SetUpClaude,
         /// `Mod+W`, palette "Close tab" (layout.md 4.4).
         CloseTab,
         /// `Ctrl+Tab` / `Ctrl+Shift+Tab`.
@@ -444,6 +446,7 @@ struct Bench {
     toast: Option<Toast>,
     toast_timer: Task<()>,
     dock: Entity<TerminalDock>,
+    sessions: Entity<crate::sessions_view::SessionsView>,
     #[cfg(windows)]
     chat: Entity<ChatPanel>,
     #[cfg(windows)]
@@ -586,8 +589,17 @@ impl Shell {
             let db = db.clone();
             cx.new(|cx| BrowserPanel::new(db, window, cx))
         };
+        // Session presence (components-app.md 5, Claude Code sessions), the
+        // store for setup's folder links, and this build's plugin files
+        // for the sessions the terminal starts (ADR 0008 amendment).
+        crate::sessions::start(db.clone(), cx);
+        crate::sessions::watch_usage(cx);
+        cx.background_executor()
+            .spawn(async { claude_setup::write_plugin_files() })
+            .detach();
         let ws = cx.new(|cx| Workspace::new(db, cx));
         let dock = cx.new(|cx| TerminalDock::new(ws.clone(), cx));
+        let sessions = cx.new(|cx| crate::sessions_view::SessionsView::new(ws.clone(), cx));
         #[cfg(windows)]
         let chat = cx.new(|cx| ChatPanel::new(window, cx));
         let prefs = settings::current(cx).clone();
@@ -608,6 +620,7 @@ impl Shell {
                     DockEvent::RestartHere => shell.restart_terminal_here(window, cx),
                 },
             ),
+            cx.subscribe_in(&sessions, window, Self::on_sessions),
         ];
         #[cfg(windows)]
         subs.push(cx.subscribe_in(&chat, window, Self::on_chat));
@@ -655,6 +668,7 @@ impl Shell {
             toast: None,
             toast_timer: Task::ready(()),
             dock,
+            sessions,
             #[cfg(windows)]
             chat,
             #[cfg(windows)]
@@ -1234,6 +1248,7 @@ impl Shell {
                 // The breadcrumb and the tree now know the entry's owner.
                 cx.notify();
             }
+            PageEvent::ShowTerminal(project) => self.show_session_terminal(*project, window, cx),
         }
     }
 
@@ -1915,6 +1930,15 @@ impl Shell {
             Command::TextSize(size) => settings::set_text_size(size, cx),
             Command::ReadingWidth(width) => settings::set_reading_width(width, cx),
             Command::Language(locale) => settings::set_language(locale, cx),
+            Command::Claude(setting, on) => {
+                use crate::commands::ClaudeSetting;
+                settings::change(cx, |p| match setting {
+                    ClaudeSetting::Resume => p.new_conversations = !on,
+                    ClaudeSetting::Flash => p.flash_waiting = on,
+                    ClaudeSetting::Usage => p.hide_usage = !on,
+                });
+                cx.refresh_windows();
+            }
         }
     }
 
@@ -1992,6 +2016,10 @@ impl Shell {
                 DialogEvent::RemoveSetup => {
                     shell.close_overlay(window, cx);
                     claude_setup::run_remove(cx);
+                }
+                DialogEvent::Setup(project) => {
+                    shell.close_overlay(window, cx);
+                    claude_setup::run_install(*project, cx);
                 }
                 #[cfg(windows)]
                 DialogEvent::BrowserClear => {
@@ -2203,6 +2231,87 @@ impl Shell {
 
     fn toggle_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.toggle_view(ViewId::Terminal, window, cx);
+    }
+
+    /// "Set up Claude Code": a confirmation that says how many folders of
+    /// the open project setup will touch.
+    fn confirm_setup(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(bench) = self.bench() else { return };
+        let project = bench.active_project;
+        let ws = bench.ws.clone();
+        let name =
+            project.and_then(|p| crate::sessions_view::title_of(ws.read(cx), Owner::Project(p)));
+        let count = ws.read(cx).db.run(cx, move |store| {
+            let Some(p) = project else { return Ok(0) };
+            let mut paths: Vec<String> = store
+                .all_folders()?
+                .into_iter()
+                .filter(|f| f.project == p)
+                .map(|f| f.path)
+                .collect();
+            paths.sort();
+            paths.dedup();
+            Ok(paths.len())
+        });
+        cx.spawn_in(window, async move |shell, cx| {
+            let folders = count.await.unwrap_or(0);
+            let _ = shell.update_in(cx, |shell, window, cx| {
+                let kind = DialogKind::Setup {
+                    project: project.zip(name),
+                    folders,
+                };
+                shell.open_dialog(kind, window, cx);
+            });
+        })
+        .detach();
+    }
+
+    /// The Sessions view's actions (components-app.md 5).
+    fn on_sessions(
+        &mut self,
+        _: &Entity<crate::sessions_view::SessionsView>,
+        event: &crate::sessions_view::SessionsEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::sessions_view::SessionsEvent;
+        match event {
+            SessionsEvent::Open(owner) => {
+                let route = match *owner {
+                    Owner::Topic(id) => Route::Topic(id),
+                    Owner::Epic(id) => Route::Epic(id),
+                    Owner::Project(id) => Route::Project(id),
+                };
+                self.navigate(route, true, window, cx);
+            }
+            SessionsEvent::ShowTerminal(project) => {
+                self.show_session_terminal(*project, window, cx)
+            }
+            SessionsEvent::End(project) => {
+                if let Some(bench) = self.bench() {
+                    bench.dock.update(cx, |dock, cx| dock.end(*project, cx));
+                }
+            }
+        }
+    }
+
+    /// Shows the terminal view on the project's running session.
+    pub(crate) fn show_session_terminal(
+        &mut self,
+        project: ProjectId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.change_layout(None, window, cx, |l| {
+            l.show_view(ViewId::Terminal).is_some()
+        });
+        let Some(bench) = self.bench() else { return };
+        bench.ui.terminal_shown = true;
+        let dock = bench.dock.clone();
+        dock.update(cx, |dock, cx| dock.select(project, cx));
+        let focus = dock.read(cx).focus_handle(cx);
+        window.focus(&focus, cx);
+        cx.notify();
     }
 
     /// "Restart terminal here": confirmed while a process runs (6.4).
@@ -3199,17 +3308,53 @@ impl Shell {
                     &[("when", Arg::Text(&when)), ("topic", Arg::Text(&topic))],
                 )
             });
-        let claude_item = ui::bar_item("status-claude", &tokens)
-            .child(icon(glyph, 14., glyph_color))
-            .child(type_scale::SMALL.el().child(text(locale, key)))
-            .when_some(last_wrote, |this, tip| this.tooltip(ui::tip(tip)))
-            .on_click(cx.listener(move |shell, _, window, cx| {
-                if status == claude_setup::Status::NoFolder {
-                    shell.set_project_folder(window, cx);
-                } else {
-                    shell.open_settings(window, cx);
-                }
-            }));
+        // components-app.md 5, Claude Code sessions: while sessions run, the
+        // item counts them by state and shows the Sessions view.
+        let live = crate::sessions::live(cx).to_vec();
+        let sessions_text = crate::sessions::status_text(locale, crate::sessions::counts(&live));
+        let claude_item = match (sessions_text, crate::sessions::strongest(&live)) {
+            (Some(label), Some(state)) => {
+                let tip = live.first().map(|s| {
+                    let owner = crate::sessions::place(s);
+                    let name = self
+                        .bench()
+                        .and_then(|b| crate::sessions_view::title_of(b.ws.read(cx), owner))
+                        .unwrap_or_default();
+                    format!(
+                        "{}\n{}",
+                        crate::terminal_dock::focus_label(locale, owner, &name),
+                        crate::sessions::detail(locale, s, true)
+                    )
+                });
+                ui::bar_item("status-claude", &tokens)
+                    .child(icon(
+                        Icon::Bot,
+                        14.,
+                        crate::sessions::state_color(state, &tokens),
+                    ))
+                    .child(type_scale::SMALL.el().child(label))
+                    .when_some(tip, |this, tip| this.tooltip(ui::tip(tip)))
+                    .on_click(cx.listener(|shell, _, window, cx| {
+                        shell.view_action(ViewId::Sessions, ViewAction::Show, window, cx)
+                    }))
+            }
+            _ => ui::bar_item("status-claude", &tokens)
+                .child(icon(glyph, 14., glyph_color))
+                .child(type_scale::SMALL.el().child(text(locale, key)))
+                .when_some(last_wrote, |this, tip| this.tooltip(ui::tip(tip)))
+                .on_click(cx.listener(move |shell, _, window, cx| {
+                    if status == claude_setup::Status::NoFolder {
+                        shell.set_project_folder(window, cx);
+                    } else {
+                        shell.open_settings(window, cx);
+                    }
+                })),
+        };
+        let usage_items = if settings::current(cx).hide_usage {
+            Vec::new()
+        } else {
+            usage_items(&tokens, locale, cx)
+        };
         div()
             .flex()
             .flex_row()
@@ -3235,7 +3380,8 @@ impl Shell {
                                 shell.open_palette(Some(Group::Projects), None, window, cx)
                             }))
                     }))
-                    .child(claude_item),
+                    .child(claude_item)
+                    .children(usage_items),
             )
             .child(
                 div()
@@ -4083,6 +4229,9 @@ fn tree_row(
                 })),
             )
     };
+    // components-app.md 5, Claude Code sessions: one `bot` on the row a
+    // live session focuses, in its state's colour.
+    let glyph = session_glyph(row, index, locale, t, cx);
     el = match row {
         Row::Project {
             title: name,
@@ -4091,6 +4240,7 @@ fn tree_row(
         } => el
             .child(chevron(*expanded, pid.to_string(), cx))
             .child(title(type_scale::UI_STRONG, name.clone(), t.text_primary))
+            .children(glyph)
             .child(plus(*pid, None, cx)),
         Row::Inbox { count: n, .. } => el
             .child(icon(Icon::Inbox, 16., rest))
@@ -4124,6 +4274,7 @@ fn tree_row(
         } => el
             .child(chevron(*expanded, eid.to_string(), cx))
             .child(title(type_scale::UI_STRONG, name.clone(), rest))
+            .children(glyph)
             .child(plus(*project, Some(*eid), cx)),
         Row::Topic {
             title: name,
@@ -4147,6 +4298,7 @@ fn tree_row(
                     name.clone(),
                     color,
                 ))
+                .children(glyph)
         }
         Row::Closed {
             count: n,
@@ -4206,6 +4358,122 @@ fn tree_row(
     }
     el.children(menu.map(|menu| div().absolute().top_0().left(px(8. + indent)).child(menu)))
         .into_any_element()
+}
+
+/// The plan usage meters of the status bar (components-app.md 5, Plan
+/// usage): "5h 42%" and "7d 18%", each with a 24 x 4 bar, `warning` above
+/// 80 %, dimmed once its window has reset; "Plan usage: no data yet" until
+/// Claude Code first reports it.
+fn usage_items(t: &Tokens, locale: Locale, cx: &mut Context<Shell>) -> Vec<AnyElement> {
+    let now = acta_core::time::now_ms();
+    let Some(usage) = crate::sessions::plan_usage(cx) else {
+        return vec![
+            ui::bar_item("status-usage", t)
+                .child(type_scale::SMALL.el().child(text(locale, Key::UsageNoData)))
+                .tooltip(ui::tip(text(locale, Key::UsageNoDataTip)))
+                .into_any_element(),
+        ];
+    };
+    let windows = [
+        (
+            "status-usage-5h",
+            usage.five_hour,
+            Key::UsageFiveHour,
+            Key::UsageFiveHourTip,
+        ),
+        (
+            "status-usage-7d",
+            usage.seven_day,
+            Key::UsageSevenDay,
+            Key::UsageSevenDayTip,
+        ),
+    ];
+    windows
+        .into_iter()
+        .filter_map(|(id, w, key, tip_key)| {
+            let m = crate::sessions::meter(w, now)?;
+            let pct = crate::i18n::percent(locale, m.percent as u64);
+            let mut tip = format!(
+                "{}, {}",
+                tr(locale, tip_key, &[("percent", Arg::Text(&pct))]),
+                crate::sessions::resets_text(locale, m.resets_at, now)
+            );
+            if m.stale {
+                tip.push('\n');
+                tip.push_str(&text(locale, Key::UsageStale));
+            }
+            let color = if m.stale {
+                t.text_disabled
+            } else if m.high {
+                t.warning
+            } else {
+                t.text_secondary
+            };
+            let filled = 24. * f32::from(m.percent.min(100)) / 100.;
+            Some(
+                ui::bar_item(id, t)
+                    .gap(px(6.))
+                    .child(
+                        type_scale::SMALL
+                            .el()
+                            .font_features(type_scale::tabular())
+                            .when(m.high && !m.stale, |this| this.text_color(t.warning))
+                            .when(m.stale, |this| this.text_color(t.text_disabled))
+                            .child(tr(locale, key, &[("percent", Arg::Text(&pct))])),
+                    )
+                    .child(
+                        div()
+                            .w(px(24.))
+                            .h(px(4.))
+                            .rounded(px(2.))
+                            .bg(t.fill_selected)
+                            .child(div().w(px(filled)).h_full().rounded(px(2.)).bg(color)),
+                    )
+                    .tooltip(ui::tip(tip))
+                    .into_any_element(),
+            )
+        })
+        .collect()
+}
+
+/// The `bot` glyph of a tree row whose record a live Claude Code session
+/// focuses, with "Claude Code is working here · since 14:05" as tooltip.
+fn session_glyph(
+    row: &Row,
+    index: usize,
+    locale: Locale,
+    t: &Tokens,
+    cx: &App,
+) -> Option<AnyElement> {
+    let owner = match row {
+        Row::Project { id, .. } => Owner::Project(*id),
+        Row::Epic { id, .. } => Owner::Epic(*id),
+        Row::Topic { id, .. } => Owner::Topic(*id),
+        _ => return None,
+    };
+    let live = crate::sessions::live(cx);
+    let here = crate::sessions::here(live, owner)?;
+    let mut tip = crate::sessions::here_text(locale, here);
+    if let Some(first) = live
+        .iter()
+        .filter(|s| crate::sessions::place(s) == owner)
+        .min_by_key(|s| s.started_at)
+    {
+        tip.push_str(" \u{b7} ");
+        tip.push_str(&crate::sessions::since(locale, first.started_at));
+    }
+    Some(
+        div()
+            .id(SharedString::from(format!("tree-claude-{index}")))
+            .flex_shrink_0()
+            .child(icon(
+                Icon::Bot,
+                14.,
+                crate::sessions::state_color(here.state, t),
+            ))
+            .tooltip(ui::tip(tip))
+            .into_any_element(),
+    )
 }
 
 /// The open menu of a tree row (components.md 5, Context menu): the row
@@ -4424,6 +4692,7 @@ impl Render for Shell {
             .on_action(cx.listener(|s, _: &RemoveClaudeSetup, w, cx| {
                 s.open_dialog(DialogKind::RemoveSetup, w, cx)
             }))
+            .on_action(cx.listener(|s, _: &SetUpClaude, w, cx| s.confirm_setup(w, cx)))
             .on_action(cx.listener(|s, _: &NextTab, w, cx| {
                 let focus = !s.terminal_focused(w, cx);
                 s.cycle_tab(true, focus, w, cx)

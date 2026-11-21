@@ -13,6 +13,7 @@ mod link;
 mod mcp;
 mod open;
 mod setup;
+mod statusline;
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -75,6 +76,13 @@ enum Command {
         /// Do not add the allow rule to Claude Code's settings.json
         #[arg(long)]
         no_allow: bool,
+        /// Do not set Acta's status line (plan usage) in Claude Code
+        #[arg(long)]
+        no_statusline: bool,
+        /// Only write the plugin files (Acta loads them with --plugin-dir in
+        /// the sessions it starts); nothing in Claude Code is changed
+        #[arg(long, conflicts_with_all = ["check", "remove"])]
+        files_only: bool,
         /// Structured output
         #[arg(long)]
         json: bool,
@@ -97,6 +105,10 @@ enum Command {
         /// Leave Claude Code's auto memory on in this folder
         #[arg(long)]
         keep_auto_memory: bool,
+        /// The folders already attached in Acta (of --project, or all),
+        /// read from Acta: no path is given
+        #[arg(long, conflicts_with_all = ["path", "epic", "topic", "remove"])]
+        attached: bool,
     },
     /// Where things stand: the focus topic, an epic or the project
     Brief {
@@ -208,6 +220,11 @@ enum Command {
         #[arg(long)]
         dry_run: bool,
     },
+    /// The Claude Code sessions running now in linked folders, and what they do
+    Sessions,
+    /// Claude Code's status line (Claude Code runs it, JSON on stdin): keeps
+    /// the plan's usage for Acta and prints a short line
+    Statusline,
     /// List or restore automatic snapshots
     Snapshot {
         #[command(subcommand)]
@@ -354,13 +371,77 @@ fn run(command: Command) -> ExitCode {
             check,
             remove,
             no_allow,
+            no_statusline,
+            files_only,
             json,
-        } => run_setup(&opener, check, remove, no_allow, json),
+        } => {
+            if files_only {
+                run_plugin_files(&opener, json)
+            } else {
+                run_setup(&opener, check, remove, no_allow, no_statusline, json)
+            }
+        }
+        Command::Statusline => {
+            let input = statusline::read_stdin();
+            let data_dir = opener.data_dir();
+            println!(
+                "{}",
+                statusline::run(&input, data_dir.as_deref(), acta_core::time::now_ms())
+            );
+            ExitCode::SUCCESS
+        }
         other => finish(with_store(&opener, other)),
     }
 }
 
-fn run_setup(opener: &Opener, check: bool, remove: bool, no_allow: bool, json: bool) -> ExitCode {
+/// The `acta` executable written into the plugin: the exported CLI when
+/// there is one (ADR 0004: its path is stable across updates).
+fn plugin_exe(opener: &Opener, base: &BaseDirs) -> Option<PathBuf> {
+    let exported = paths::cli_export_dir(Os::CURRENT, base)
+        .map(|d| d.join(paths::exported_cli_name(Os::CURRENT)))
+        .filter(|p| p.is_file() && !opener.dev);
+    exported.or_else(|| std::env::current_exe().ok())
+}
+
+/// `setup --files-only`: the plugin tree, nothing else. The app runs it
+/// at start and before a terminal launch, so sessions it starts load the
+/// plugin of this very build with `--plugin-dir`, set up or not.
+fn run_plugin_files(opener: &Opener, json: bool) -> ExitCode {
+    let (Some(data_dir), Some(exe)) =
+        (opener.data_dir(), plugin_exe(opener, &BaseDirs::from_env()))
+    else {
+        eprintln!("Acta cannot find its data directory or its executable.");
+        return ExitCode::FAILURE;
+    };
+    struct NoClaude;
+    impl setup::ClaudeCli for NoClaude {
+        fn run(&self, _: &[&str]) -> Result<String, String> {
+            Err("not used".into())
+        }
+    }
+    let s = setup::Setup {
+        plugin_root: data_dir.join("claude"),
+        claude_dir: PathBuf::new(),
+        exe,
+        claude: &NoClaude,
+    };
+    let step = s.plugin_files();
+    println!("{}", setup::render_steps(std::slice::from_ref(&step), json));
+    if step.ok {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
+fn run_setup(
+    opener: &Opener,
+    check: bool,
+    remove: bool,
+    no_allow: bool,
+    no_statusline: bool,
+    json: bool,
+) -> ExitCode {
     let Some(data_dir) = opener.data_dir() else {
         eprintln!(
             "{}",
@@ -388,11 +469,7 @@ fn run_setup(opener: &Opener, check: bool, remove: bool, no_allow: bool, json: b
         eprintln!("Cannot find the home directory.");
         return ExitCode::FAILURE;
     };
-    // Prefer the exported CLI (ADR 0004): its path is stable across updates.
-    let exported = paths::cli_export_dir(Os::CURRENT, &base)
-        .map(|d| d.join(paths::exported_cli_name(Os::CURRENT)))
-        .filter(|p| p.is_file() && !opener.dev);
-    let Some(exe) = exported.or_else(|| std::env::current_exe().ok()) else {
+    let Some(exe) = plugin_exe(opener, &base) else {
         eprintln!("Cannot find the acta executable.");
         return ExitCode::FAILURE;
     };
@@ -410,7 +487,7 @@ fn run_setup(opener: &Opener, check: bool, remove: bool, no_allow: bool, json: b
     } else if remove {
         s.remove()
     } else {
-        s.install(!no_allow)
+        s.install_with(!no_allow, !no_statusline)
     };
     if check {
         steps.push(link_index_step(opener));
@@ -459,24 +536,29 @@ fn link_index_step(opener: &Opener) -> setup::Step {
 /// `setup --remove`: the linked folders where `acta link` turned Claude
 /// Code's auto memory off stay that way until unlinked; say where.
 fn auto_memory_step(opener: &Opener) -> Option<setup::Step> {
-    let store = opener.open_existing()?.ok()?;
-    let folders: Vec<String> = store
-        .local_values(link::AUTO_MEMORY_PREFIX)
-        .ok()?
-        .into_iter()
-        .map(|(k, _)| k[link::AUTO_MEMORY_PREFIX.len()..].to_owned())
-        .collect();
-    if folders.is_empty() {
+    let mut store = opener.open_existing()?.ok()?;
+    let (restored, kept) = match link::restore_all_auto_memory(&mut store) {
+        Ok(counts) => counts,
+        Err(e) => {
+            return Some(setup::Step {
+                name: "auto memory",
+                ok: false,
+                detail: format!("cannot restore: {e}"),
+            });
+        }
+    };
+    if restored == 0 && kept == 0 {
         return None;
     }
     Some(setup::Step {
         name: "auto memory",
         ok: true,
-        detail: format!(
-            "still off in {} linked folder(s): {}. Run `acta link --remove` in each to turn it back on.",
-            folders.len(),
-            folders.join(", ")
-        ),
+        detail: match kept {
+            0 => format!("back on in {restored} folder(s)"),
+            _ => format!(
+                "back on in {restored} folder(s); {kept} left as they were (changed since, or not on this computer)"
+            ),
+        },
     })
 }
 
@@ -510,7 +592,11 @@ fn run_on(store: &mut acta_core::Store, command: Command) -> Result<String, Stri
             add,
             remove,
             keep_auto_memory,
+            attached,
         } => {
+            if attached {
+                return link::run_attached(store, project.as_deref(), keep_auto_memory);
+            }
             let cwd = launch.dir.clone().unwrap_or_default();
             let args = link::LinkArgs {
                 path,
@@ -526,6 +612,10 @@ fn run_on(store: &mut acta_core::Store, command: Command) -> Result<String, Stri
         Command::Export { path, project } => return export(store, &path, project),
         Command::Import { path, dry_run } => return import(store, &path, dry_run),
         Command::Snapshot { action } => return snapshot(store, action),
+        Command::Sessions => {
+            return acta_core::agent::presence::render_sessions(store, acta_core::time::now_ms())
+                .map_err(|e| e.to_string());
+        }
         other => other,
     };
     let mut ag = Agent {
@@ -704,7 +794,9 @@ fn run_on(store: &mut acta_core::Store, command: Command) -> Result<String, Stri
         | Command::Link { .. }
         | Command::Export { .. }
         | Command::Import { .. }
-        | Command::Snapshot { .. } => Err("handled elsewhere".into()),
+        | Command::Snapshot { .. }
+        | Command::Sessions
+        | Command::Statusline => Err("handled elsewhere".into()),
     }
 }
 

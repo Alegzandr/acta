@@ -53,6 +53,12 @@ pub enum Kind {
     RestartTerminal,
     /// "Remove Acta from Claude Code?" (Settings, Claude Code).
     RemoveSetup,
+    /// "Set up Claude Code?" (Settings, Claude Code): the open project
+    /// and how many of its folders setup touches.
+    Setup {
+        project: Option<(acta_core::model::ProjectId, String)>,
+        folders: usize,
+    },
     #[cfg(windows)]
     /// "Sign out and clear chat data?" (components-app.md 5, Chat panel).
     ChatSignOut,
@@ -69,6 +75,8 @@ pub enum DialogEvent {
     RestartTerminal,
     /// Removing Acta from Claude Code was confirmed.
     RemoveSetup,
+    /// Setup was confirmed, linking that project's folders.
+    Setup(Option<acta_core::model::ProjectId>),
     #[cfg(windows)]
     /// Deleting the chat panel's profile was confirmed.
     ChatSignOut,
@@ -703,6 +711,48 @@ impl Dialog {
                     .into_any_element(),
                 ];
                 (text(locale, Key::TerminalRestartTitle), body, buttons, 440.)
+            }
+            Kind::Setup { project, folders } => {
+                let mut sentence = text(locale, Key::SettingsSetupBody);
+                if let Some((_, name)) = project.as_ref().filter(|_| *folders > 0) {
+                    sentence.push(' ');
+                    sentence.push_str(&crate::i18n::tr(
+                        locale,
+                        Key::SettingsSetupFolders,
+                        &[
+                            ("n", crate::i18n::Arg::Count(*folders as u64)),
+                            ("project", crate::i18n::Arg::Text(name)),
+                        ],
+                    ));
+                }
+                let body = type_scale::UI
+                    .el()
+                    .text_color(t.text_secondary)
+                    .child(sentence)
+                    .into_any_element();
+                let id = project.as_ref().map(|(id, _)| *id);
+                let buttons = vec![
+                    ui::button(
+                        "dialog-cancel",
+                        text(locale, Key::CommonCancel),
+                        Variant::Secondary,
+                        false,
+                        t,
+                    )
+                    .track_focus(&self.safe)
+                    .on_click(cx.listener(|d, _, _, cx| d.close(cx)))
+                    .into_any_element(),
+                    ui::button(
+                        "setup-confirm",
+                        text(locale, Key::SettingsSetupConfirm),
+                        Variant::Primary,
+                        false,
+                        t,
+                    )
+                    .on_click(cx.listener(move |_, _, _, cx| cx.emit(DialogEvent::Setup(id))))
+                    .into_any_element(),
+                ];
+                (text(locale, Key::SettingsSetupTitle), body, buttons, 440.)
             }
             Kind::RemoveSetup => {
                 let body = type_scale::UI

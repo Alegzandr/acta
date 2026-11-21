@@ -167,10 +167,13 @@ pub struct KbWriteArgs {
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
 pub struct HookArgs {
-    /// clear, compact or subagent.
+    /// clear, compact or subagent (briefings); prompt, tool, waiting, stop
+    /// or end (session presence).
     pub event: String,
     pub session: Option<String>,
     pub agent: Option<String>,
+    /// tool: the tool name; end: the reason.
+    pub detail: Option<String>,
 }
 
 #[cfg(test)]

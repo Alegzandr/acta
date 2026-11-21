@@ -249,9 +249,9 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `folders.bulk_done` | {n} folder located. · {n} folders located. | {n} dossier localisé. · {n} dossiers localisés. |
 | `folders.picker` | Choose a working folder | Choisir un dossier de travail |
 | `terminal.title` | Terminal | Terminal |
-| `terminal.on_topic` | on topic {name} | sur le sujet {name} |
-| `terminal.on_epic` | on epic {name} | sur l'epic {name} |
-| `terminal.on_project` | on project {name} | sur le projet {name} |
+| `terminal.on_topic` | {id} {name} | {id} {name} |
+| `terminal.on_epic` | {id} {name} | {id} {name} |
+| `terminal.on_project` | project {name} | projet {name} |
 | `terminal.restart_here` | Restart here | Redémarrer ici |
 | `terminal.ended` | Session ended. {keys} to restart. | Session terminée. {keys} pour relancer. |
 | `terminal.ask.title` | Where should Claude Code start? | Où Claude Code doit-il démarrer ? |
@@ -464,9 +464,9 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `settings.setup` | Set up Claude Code | Configurer Claude Code |
 | `settings.setup_again` | Run setup again | Relancer la configuration |
 | `settings.setup_remove` | Remove from Claude Code | Retirer de Claude Code |
-| `settings.setup.hint` | Setup installs Acta's plugin in Claude Code and adds two permission lines (Acta and its browser) to ~/.claude/settings.json. Remove undoes both. | La configuration installe le plugin d'Acta dans Claude Code et ajoute deux lignes d'autorisation (Acta et son navigateur) à ~/.claude/settings.json. Retirer annule les deux. |
+| `settings.setup.hint` | Setup installs Acta's plugin in Claude Code, adds two permission lines (Acta and its browser) and Acta's status line to ~/.claude/settings.json (after your own status line, if you have one), and turns Claude Code's own memory off in the open project's folders. Remove undoes all of it. | La configuration installe le plugin d'Acta dans Claude Code, ajoute deux lignes d'autorisation (Acta et son navigateur) et la ligne d'état d'Acta à ~/.claude/settings.json (après votre propre ligne d'état, si vous en avez une), et désactive la mémoire propre à Claude Code dans les dossiers du projet ouvert. Retirer annule tout cela. |
 | `settings.remove.title` | Remove Acta from Claude Code? | Retirer Acta de Claude Code ? |
-| `settings.remove.body` | This uninstalls Acta's plugin and takes out the permission line setup added to ~/.claude/settings.json. Your projects stay in Acta. | Cela désinstalle le plugin d'Acta et retire la ligne d'autorisation ajoutée par la configuration à ~/.claude/settings.json. Vos projets restent dans Acta. |
+| `settings.remove.body` | This uninstalls Acta's plugin, takes out the permission lines and the status line setup added to ~/.claude/settings.json (your own status line comes back), and turns Claude Code's own memory back on where Acta turned it off. Your projects stay in Acta. | Cela désinstalle le plugin d'Acta, retire les lignes d'autorisation et la ligne d'état ajoutées par la configuration à ~/.claude/settings.json (votre propre ligne d'état revient), et réactive la mémoire propre à Claude Code là où Acta l'avait désactivée. Vos projets restent dans Acta. |
 | `settings.remove.confirm` | Remove | Retirer |
 | `settings.data` | Data | Données |
 | `settings.export.last` | Last export: {days} (`time.days` or `time.today_word`) | Dernier export : {days} |
@@ -627,6 +627,55 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `browser.failed.title` | The browser could not be started | Le navigateur n'a pas pu être démarré |
 | `browser.pipe.taken` | Claude Code cannot reach this browser: another copy of Acta, or another program, already serves it. Close it and restart Acta. | Claude Code ne peut pas joindre ce navigateur : une autre copie d'Acta, ou un autre programme, le sert déjà. Fermez-le et redémarrez Acta. |
 | `browser.pipe.failed` | Claude Code cannot reach this browser. Restart Acta; the log says why. | Claude Code ne peut pas joindre ce navigateur. Redémarrez Acta ; le journal indique pourquoi. |
+| `terminal.claude` | Claude | Claude |
+| `terminal.waiting` | waiting for you | vous attend |
+| `view.sessions` | Claude Code sessions | Sessions Claude Code |
+| `sessions.working` | {n} working | {n} au travail |
+| `sessions.waiting` | {n} waiting for you · {n} waiting for you | {n} vous attend · {n} vous attendent |
+| `sessions.idle` | {n} idle · {n} idle | {n} inactive · {n} inactives |
+| `sessions.running` | {n} running · {n} running | {n} en cours · {n} en cours |
+| `statusbar.sessions` | Claude Code: {list} | Claude Code : {list} |
+| `sessions.state.working` | Working | Au travail |
+| `sessions.state.waiting` | Waiting for you | Vous attend |
+| `sessions.state.idle` | Idle | Inactive |
+| `sessions.since` | since {time} | depuis {time} |
+| `sessions.last` | last: {activity} | dernière action : {activity} |
+| `sessions.last_tool` | last tool: {tool} | dernier outil : {tool} |
+| `sessions.in_acta` | in Acta's terminal | dans le terminal d'Acta |
+| `sessions.outside` | in another terminal | dans un autre terminal |
+| `sessions.empty` | No Claude Code session is running. Sessions started in Acta's terminal, or in any terminal inside an attached folder, appear here. | Aucune session Claude Code n'est en cours. Les sessions lancées dans le terminal d'Acta, ou dans n'importe quel terminal à l'intérieur d'un dossier rattaché, apparaissent ici. |
+| `sessions.show_terminal` | Show terminal | Afficher le terminal |
+| `sessions.end` | End session | Terminer la session |
+| `sessions.here.working` | Claude Code is working here | Claude Code travaille ici |
+| `sessions.here.waiting` | Claude Code is waiting for you here | Claude Code vous attend ici |
+| `sessions.here.idle` | Claude Code is open here | Claude Code est ouvert ici |
+| `sessions.here.many` | {n} Claude Code session here · {n} Claude Code sessions here | {n} session Claude Code ici · {n} sessions Claude Code ici |
+| `settings.resume` | Continue the last conversation of each page | Reprendre la dernière conversation de chaque page |
+| `settings.resume.hint` | When the terminal starts from a topic, an epic or a project, Claude Code resumes the conversation last held there, if it still has it. /clear in Claude Code starts a new one. | Quand le terminal démarre depuis un sujet, un epic ou un projet, Claude Code reprend la dernière conversation menée là, s'il l'a encore. /clear dans Claude Code en commence une nouvelle. |
+| `settings.flash_waiting` | Flash Acta in the taskbar when a session waits for you | Faire clignoter Acta dans la barre des tâches quand une session vous attend |
+| `settings.flash_waiting.hint` | For sessions started in Acta's terminal, while no Acta window is active. Acta never takes the focus. | Pour les sessions lancées dans le terminal d'Acta, quand aucune fenêtre d'Acta n'est active. Acta ne prend jamais le focus. |
+| `cmd.resume_on` | Continue the last conversation of each page | Reprendre la dernière conversation de chaque page |
+| `cmd.resume_off` | Start a new Claude Code conversation each time | Commencer une nouvelle conversation Claude Code à chaque fois |
+| `cmd.flash_on` | Flash Acta in the taskbar when a session waits for you | Faire clignoter Acta dans la barre des tâches quand une session vous attend |
+| `cmd.flash_off` | Do not flash Acta when a session waits | Ne pas faire clignoter Acta quand une session attend |
+| `usage.five_hour` | 5h {percent} | 5 h {percent} |
+| `usage.seven_day` | 7d {percent} | 7 j {percent} |
+| `usage.five_hour.tip` | 5-hour limit: {percent} used | Limite sur 5 heures : {percent} utilisés |
+| `usage.seven_day.tip` | 7-day limit: {percent} used | Limite sur 7 jours : {percent} utilisés |
+| `usage.resets_at` | resets at {time} | réinitialisée à {time} |
+| `usage.resets_on` | resets {day} {time} | réinitialisée {day} à {time} |
+| `usage.stale` | This window has reset since Claude Code last reported it. | Cette fenêtre a été réinitialisée depuis le dernier relevé de Claude Code. |
+| `usage.no_data` | Plan usage: no data yet | Utilisation du forfait : pas encore de données |
+| `usage.no_data.tip` | Claude Code reports your plan's limits after the first answer of a session (Pro, Max and Ultra plans), through Acta's status line. | Claude Code signale les limites de votre forfait après la première réponse d'une session (forfaits Pro, Max et Ultra), par la ligne d'état d'Acta. |
+| `settings.usage` | Show plan usage in the status bar | Afficher l'utilisation du forfait dans la barre d'état |
+| `settings.usage.hint` | The 5-hour and 7-day limits of your Claude plan, as Claude Code last reported them. | Les limites sur 5 heures et sur 7 jours de votre forfait Claude, telles que Claude Code les a signalées en dernier. |
+| `cmd.usage_on` | Show plan usage in the status bar | Afficher l'utilisation du forfait dans la barre d'état |
+| `cmd.usage_off` | Hide plan usage | Masquer l'utilisation du forfait |
+| `settings.setup.title` | Set up Claude Code? | Configurer Claude Code ? |
+| `settings.setup.body` | Acta installs its plugin in Claude Code and adds two permission lines and its status line to ~/.claude/settings.json; your own status line, if you have one, still shows first. | Acta installe son plugin dans Claude Code et ajoute deux lignes d'autorisation et sa ligne d'état à ~/.claude/settings.json ; votre propre ligne d'état, si vous en avez une, reste affichée en premier. |
+| `settings.setup.folders` | It also turns Claude Code's own memory off in {n} folder of {project}. · It also turns Claude Code's own memory off in {n} folders of {project}. | Il désactive aussi la mémoire propre à Claude Code dans {n} dossier de {project}. · Il désactive aussi la mémoire propre à Claude Code dans {n} dossiers de {project}. |
+| `settings.setup.confirm` | Set up | Configurer |
+| `settings.plugin.hint` | Sessions started in Acta's terminal load Acta's plugin from this build, set up or not. To turn that off, set "acta@inline": false under enabledPlugins in Claude Code's settings. | Les sessions lancées dans le terminal d'Acta chargent le plugin d'Acta de cette version, configuré ou non. Pour l'éviter, mettez "acta@inline": false sous enabledPlugins dans les réglages de Claude Code. |
 
 Strings that exist in the behaviour sections but are not in this table are a defect of the table: add the row in the same change that adds the string.
 

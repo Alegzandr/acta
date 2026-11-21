@@ -164,10 +164,102 @@ fn unlink(store: &mut Store, a: &LinkArgs, stored: &str) -> Result<String, Strin
         .map_err(|e| e.to_string())?
         .iter()
         .any(|f| f.stamp.deleted_at.is_none() && folder_path::same(Os::CURRENT, &f.path, stored));
-    if !still && auto_memory_restore(store, Path::new(stored)).map_err(|e| e.to_string())? {
+    if !still
+        && auto_memory_restore(store, Path::new(stored)).map_err(|e| e.to_string())?
+            == Restore::Restored
+    {
         msg.push_str("\nClaude Code's auto memory is back on in this folder.");
     }
     Ok(msg)
+}
+
+/// `acta link --attached [--project P-n]`: the folders already attached in
+/// Acta (of one project, or of all), read from the store so no path goes
+/// on a command line. Each gets what `acta link` gives a folder: Claude
+/// Code's auto memory off (unless `keep_auto_memory`) and the hooks'
+/// pre-check file brought up to date. Nothing is attached or reordered.
+pub fn run_attached(
+    store: &mut Store,
+    project: Option<&str>,
+    keep_auto_memory: bool,
+) -> Result<String, String> {
+    let project = match project {
+        Some(p) => {
+            let id = ProjectId::parse(p).ok_or("--project takes a project id such as P-1")?;
+            store.project(id).map_err(|e| e.to_string())?;
+            Some(id)
+        }
+        None => None,
+    };
+    let folders: Vec<String> = store
+        .all_folders()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .filter(|f| f.stamp.deleted_at.is_none())
+        .filter(|f| project.is_none_or(|p| f.project == p))
+        .map(|f| f.path)
+        .collect();
+    let mut seen: Vec<String> = Vec::new();
+    let (mut off, mut missing, mut failed) = (0, 0, 0);
+    for path in folders {
+        if seen
+            .iter()
+            .any(|s| folder_path::same(Os::CURRENT, s, &path))
+        {
+            continue;
+        }
+        seen.push(path.clone());
+        if !Path::new(&path).is_dir() {
+            missing += 1;
+            continue;
+        }
+        if keep_auto_memory {
+            continue;
+        }
+        match auto_memory_off(store, Path::new(&path)) {
+            Ok(true) => off += 1,
+            Ok(false) => {}
+            Err(_) => failed += 1,
+        }
+    }
+    let index = store.refresh_link_index().is_ok();
+    let mut msg = format!("ok {} attached folder(s)", seen.len());
+    if off > 0 {
+        msg.push_str(&format!(" \u{b7} auto memory turned off in {off}"));
+    }
+    if missing > 0 {
+        msg.push_str(&format!(" \u{b7} {missing} not on this computer"));
+    }
+    if failed > 0 {
+        msg.push_str(&format!(
+            " \u{b7} {failed} left as is (settings not readable)"
+        ));
+    }
+    if !index {
+        msg.push_str("\nwarning: the hooks' pre-check file could not be updated");
+    }
+    Ok(msg)
+}
+
+/// `acta setup --remove`: turns Claude Code's auto memory back on in every
+/// folder where Acta turned it off (only what Acta wrote). Returns the
+/// folders restored and those left as they were.
+pub fn restore_all_auto_memory(store: &mut Store) -> Result<(usize, usize), String> {
+    let folders: Vec<String> = store
+        .local_values(AUTO_MEMORY_PREFIX)
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .map(|(k, _)| k[AUTO_MEMORY_PREFIX.len()..].to_owned())
+        .collect();
+    let (mut restored, mut kept) = (0, 0);
+    for folder in folders {
+        match auto_memory_restore(store, Path::new(&folder)) {
+            Ok(Restore::Restored) => restored += 1,
+            Ok(Restore::NotNeeded) => {}
+            Ok(Restore::Kept) | Err(_) => kept += 1,
+        }
+    }
+    Ok((restored, kept))
 }
 
 /// Local-value prefix of the folders where Acta turned auto memory off.
@@ -258,28 +350,55 @@ fn exclude_from_git(folder: &Path) {
     }
 }
 
-fn auto_memory_restore(store: &mut Store, folder: &Path) -> acta_core::Result<bool> {
+/// What turning auto memory back on did in one folder.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Restore {
+    /// Acta's `autoMemoryEnabled: false` was taken out.
+    Restored,
+    /// Nothing of Acta's is left there (the file or the key is gone, or
+    /// the user set the key since): the record is cleared.
+    NotNeeded,
+    /// Not done: the folder is not on this computer, or its settings file
+    /// cannot be read or written. The record stays, to try again later.
+    Kept,
+}
+
+fn auto_memory_restore(store: &mut Store, folder: &Path) -> acta_core::Result<Restore> {
     let key = marker_key(folder);
     let Some(how) = store.local_value(&key)? else {
-        return Ok(false);
+        return Ok(Restore::NotNeeded);
     };
+    if !folder.is_dir() {
+        return Ok(Restore::Kept);
+    }
     let file = folder.join(LOCAL_SETTINGS);
-    let mut changed = false;
-    if let Ok(t) = fs::read_to_string(&file)
-        && let Ok(Value::Object(mut obj)) = serde_json::from_str::<Value>(&t)
-        && obj.get(AUTO_MEMORY_KEY) == Some(&json!(false))
-    {
-        obj.remove(AUTO_MEMORY_KEY);
-        changed = true;
-        if obj.is_empty() && how == "created" {
-            let _ = fs::remove_file(&file);
-        } else {
-            let _ = write_atomic(
-                &file,
-                &(serde_json::to_string_pretty(&Value::Object(obj)).expect("json") + "\n"),
-            );
+    let text = match fs::read_to_string(&file) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            store.set_local_value(&key, None)?;
+            return Ok(Restore::NotNeeded);
         }
+        Err(_) => return Ok(Restore::Kept),
+    };
+    let Ok(Value::Object(mut obj)) = serde_json::from_str::<Value>(&text) else {
+        return Ok(Restore::Kept);
+    };
+    if obj.get(AUTO_MEMORY_KEY) != Some(&json!(false)) {
+        store.set_local_value(&key, None)?;
+        return Ok(Restore::NotNeeded);
+    }
+    obj.remove(AUTO_MEMORY_KEY);
+    let written = if obj.is_empty() && how == "created" {
+        fs::remove_file(&file)
+    } else {
+        write_atomic(
+            &file,
+            &(serde_json::to_string_pretty(&Value::Object(obj)).expect("json") + "\n"),
+        )
+    };
+    if written.is_err() {
+        return Ok(Restore::Kept);
     }
     store.set_local_value(&key, None)?;
-    Ok(changed)
+    Ok(Restore::Restored)
 }

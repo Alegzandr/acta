@@ -44,6 +44,7 @@ User-facing words, in both languages, are exactly the catalogue's: "left sidebar
 | Terminal | `terminal` | `square-terminal` | Right sidebar, first tab | 400 x 160 | One session per project, unchanged (4.5). Moving never restarts it; the grid reflows to the new size. |
 | Chat | `chat` | `message-circle` | Right sidebar, second tab | 400 x 240 | Windows only (ADR 0009). A native web view (4.8.9). Moving never reloads it. |
 | Agent browser | `agent_browser` | `globe` | Right sidebar, third tab | 400 x 240 | Windows only (ADR 0010). A native web view (4.8.9), parked rather than hidden when off screen (components-app.md 5, Agent browser). Moving never reloads it. |
+| Claude Code sessions | `sessions` | `bot` | Bottom panel, hidden | 280 x 120 | The live Claude Code sessions (components-app.md 5, Claude Code sessions). Hidden on a new install; the status bar's Claude Code item shows it. |
 
 **What a view looks like where it lands.**
 - In a side area or the bottom panel, the area header (4.8.4) names the view, so a view drops its page title and its meta line; its content starts 12 below the header with side padding 12. Inbox and Knowledge take the narrow forms their components already define (note cards full width; knowledge rows in their two-line 52 form under 520; the filter row wraps). Projects is the tree, padding 8 as in 4.2.

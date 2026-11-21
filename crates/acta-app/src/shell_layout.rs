@@ -303,6 +303,7 @@ pub(crate) fn view_name(view: ViewId) -> Key {
         ViewId::Terminal => Key::TerminalTitle,
         ViewId::Chat => Key::ChatTitle,
         ViewId::AgentBrowser => Key::ViewAgentBrowser,
+        ViewId::Sessions => Key::ViewSessions,
     }
 }
 
@@ -314,19 +315,24 @@ pub(crate) fn view_icon(view: ViewId) -> Icon {
         ViewId::Terminal => Icon::SquareTerminal,
         ViewId::Chat => Icon::MessageCircle,
         ViewId::AgentBrowser => Icon::Globe,
+        ViewId::Sessions => Icon::Bot,
     }
 }
 
-/// The agent browser is working (a call, or a handoff waiting): its tab
-/// and toggle show [`busy_dot`] while it is not on screen (ADR 0010).
-#[cfg(windows)]
+/// The agent browser is working (a call, or a handoff waiting), or the
+/// terminal's Claude Code session waits for the user: its tab and toggle
+/// show [`busy_dot`] while it is not on screen (ADR 0010;
+/// components-app.md 5, Claude Code sessions).
 fn view_busy(bench: &super::Bench, view: ViewId, cx: &App) -> bool {
-    view == ViewId::AgentBrowser && bench.browser.read(cx).busy()
-}
-
-#[cfg(not(windows))]
-fn view_busy(_: &super::Bench, _: ViewId, _: &App) -> bool {
-    false
+    match view {
+        #[cfg(windows)]
+        ViewId::AgentBrowser => bench.browser.read(cx).busy(),
+        ViewId::Terminal => bench.active_project.is_some_and(|p| {
+            bench.dock.read(cx).session_state(p, cx)
+                == Some(acta_core::presence::SessionState::Waiting)
+        }),
+        _ => false,
+    }
 }
 
 /// A 6 dot in `accent` (components-app.md 5, Agent browser).
@@ -386,7 +392,7 @@ pub(crate) fn view_keys(
         ViewId::Terminal => vec![KeyName::Ctrl.label(locale, macos), "`"],
         ViewId::Chat => vec![m, shift, "H"],
         // No key of its own (interaction.md 6.1): the toggle, the palette.
-        ViewId::AgentBrowser => Vec::new(),
+        ViewId::AgentBrowser | ViewId::Sessions => Vec::new(),
     }
 }
 
@@ -631,6 +637,7 @@ impl Shell {
         Some(match view {
             ViewId::Projects => bench.tree_focus.clone(),
             ViewId::Terminal => bench.dock.read(cx).focus_handle(cx),
+            ViewId::Sessions => bench.sessions.read(cx).focus_handle(cx),
             #[cfg(windows)]
             ViewId::Chat => bench.chat.read(cx).focus_handle(cx),
             #[cfg(windows)]
@@ -2213,6 +2220,7 @@ impl Shell {
             ),
             #[cfg(windows)]
             ViewId::AgentBrowser => bench.browser.read(cx).header_context(cx),
+            ViewId::Sessions => bench.sessions.read(cx).header_context(cx),
             ViewId::Inbox | ViewId::Knowledge => {
                 let project = bench.active_project?;
                 let name = bench
@@ -2287,6 +2295,7 @@ impl Shell {
                 self.projects_view(window, cx)
             }
             ViewId::Terminal => bench.dock.clone().into_any_element(),
+            ViewId::Sessions => bench.sessions.clone().into_any_element(),
             #[cfg(windows)]
             ViewId::Chat => bench.chat.clone().into_any_element(),
             #[cfg(windows)]
@@ -3280,6 +3289,7 @@ impl Shell {
         match event {
             PageEvent::Open(route) => self.navigate(*route, true, window, cx),
             PageEvent::NewKb(draft) => self.new_kb_draft(*draft, window, cx),
+            PageEvent::ShowTerminal(project) => self.show_session_terminal(*project, window, cx),
             PageEvent::Pick(picker, on_pick) => {
                 self.open_picker(picker.clone(), on_pick.clone(), window, cx)
             }

@@ -56,6 +56,15 @@ pub struct Preferences {
     /// "Sign out and clear" has not finished deleting the web view's
     /// profile: it is deleted at the next launch, before any web view.
     pub chat_clear_pending: bool,
+    /// The terminal starts a new Claude Code conversation every time,
+    /// instead of the page's last one (Settings, Claude Code; off).
+    pub new_conversations: bool,
+    /// Flash the taskbar when a session started in Acta waits for the
+    /// user and no Acta window is active (Settings, Claude Code; off).
+    pub flash_waiting: bool,
+    /// The plan usage meters are not shown in the status bar (Settings,
+    /// Claude Code; shown by default).
+    pub hide_usage: bool,
     /// The version that last ran ("0.4.1"): a launch on another version
     /// shows "Updated to ..." in the status bar for that session.
     pub last_version: Option<String>,
@@ -99,6 +108,12 @@ struct Stored {
     chat_help_dismissed: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     chat_clear_pending: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    new_conversations: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    flash_waiting: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    hide_usage: bool,
     #[serde(default, skip_serializing)]
     sidebar_width: Option<u16>,
     #[serde(default, skip_serializing)]
@@ -291,6 +306,9 @@ pub fn parse(text: &str) -> Result<Preferences, LoadError> {
         chat_started: stored.chat_started,
         chat_help_dismissed: stored.chat_help_dismissed,
         chat_clear_pending: stored.chat_clear_pending,
+        new_conversations: stored.new_conversations,
+        flash_waiting: stored.flash_waiting,
+        hide_usage: stored.hide_usage,
         last_version: stored.last_version.filter(|v| is_version(v)),
         layout,
     })
@@ -313,6 +331,9 @@ pub fn serialize(prefs: &Preferences) -> String {
         chat_started: prefs.chat_started,
         chat_help_dismissed: prefs.chat_help_dismissed,
         chat_clear_pending: prefs.chat_clear_pending,
+        new_conversations: prefs.new_conversations,
+        flash_waiting: prefs.flash_waiting,
+        hide_usage: prefs.hide_usage,
         sidebar_width: None,
         terminal_width: None,
         chat_width: None,
@@ -525,6 +546,9 @@ mod tests {
             chat_started: true,
             chat_help_dismissed: true,
             chat_clear_pending: true,
+            new_conversations: true,
+            flash_waiting: true,
+            hide_usage: true,
             last_version: Some("0.3.0".into()),
             layout: Some(migrate(&Old {
                 tabs: vec!["T-42".into(), "settings".into()],
