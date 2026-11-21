@@ -575,6 +575,10 @@ impl BrowserPanel {
                 255,
             ))
             .with_devtools(false)
+            // Never take the keyboard on creation: created on an agent's
+            // call, it must not activate Acta's window (run: a new view
+            // made Acta the foreground window when it could).
+            .with_focused(false)
             .with_navigation_handler(move |url| {
                 let policy = shared.policy.lock().map(|p| p.clone()).unwrap_or_default();
                 match policy.check(&url) {
@@ -1318,7 +1322,9 @@ fn serve_pipe(name: &str, sid: &str, key: Zeroizing<[u8; 32]>, host: Arc<AppHost
             }
         };
         if first {
-            crate::log::line(&format!("browser: pipe served, DACL {}", accepted.dacl));
+            // The user's SID is not logged.
+            let dacl = accepted.dacl.replace(sid, "<user>");
+            crate::log::line(&format!("browser: pipe served, DACL {dacl}"));
         }
         first = false;
         let (server, key) = (server.clone(), key.clone());

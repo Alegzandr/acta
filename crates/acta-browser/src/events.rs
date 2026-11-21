@@ -14,6 +14,7 @@ use crate::policy::clip;
 pub const SUBSCRIBED: &[&str] = &[
     "Page.loadEventFired",
     "Page.frameStartedLoading",
+    "Page.frameStoppedLoading",
     "Page.fileChooserOpened",
     "Runtime.consoleAPICalled",
     "Runtime.exceptionThrown",
@@ -72,6 +73,7 @@ pub enum Notice {
 struct State {
     loads: u64,
     navigations: u64,
+    stops: u64,
     main_frame: Option<String>,
     console: VecDeque<ConsoleMessage>,
     console_dropped: u64,
@@ -122,6 +124,12 @@ impl Events {
                 let main = s.main_frame.as_deref();
                 if main.is_none() || p["frameId"].as_str() == main {
                     s.navigations += 1;
+                }
+            }
+            "Page.frameStoppedLoading" => {
+                let main = s.main_frame.as_deref();
+                if main.is_none() || p["frameId"].as_str() == main {
+                    s.stops += 1;
                 }
             }
             "Page.fileChooserOpened" => s.notices.push(Notice::FileChooser),
@@ -220,6 +228,42 @@ impl Events {
 
     pub fn navigations(&self) -> u64 {
         self.lock().navigations
+    }
+
+    pub fn stops(&self) -> u64 {
+        self.lock().stops
+    }
+
+    /// After an action that started a navigation: waits until the page
+    /// loaded (`Some(true)`), the main frame stopped loading without a load
+    /// (`Some(false)`: the navigation was refused or failed), or `timeout`.
+    pub fn wait_settled(
+        &self,
+        loads: u64,
+        stops: u64,
+        timeout: Duration,
+        stop: &dyn Fn() -> bool,
+    ) -> Option<bool> {
+        let end = Instant::now() + timeout;
+        let mut s = self.lock();
+        loop {
+            if s.loads > loads {
+                return Some(true);
+            }
+            if s.stops > stops {
+                return Some(false);
+            }
+            let now = Instant::now();
+            if now >= end || stop() {
+                return None;
+            }
+            let slice = (end - now).min(Duration::from_millis(100));
+            s = self
+                .changed
+                .wait_timeout(s, slice)
+                .unwrap_or_else(|p| p.into_inner())
+                .0;
+        }
     }
 
     /// Waits until more than `since` loads happened, `stop` says to give up,

@@ -89,6 +89,14 @@ pub fn setup(host: &dyn Host) -> Result<(), String> {
             .as_str()
             .map(str::to_string),
     );
+    // A new view drops input until it has produced a frame (run on
+    // WebView2 157: a click within a second of creation never reached the
+    // page). A one-pixel capture makes it draw one now.
+    host.cdp(
+        "Page.captureScreenshot",
+        json!({"format": "jpeg", "quality": 10,
+               "clip": {"x": 0, "y": 0, "width": 1, "height": 1, "scale": 1}}),
+    )?;
     Ok(())
 }
 
@@ -142,7 +150,7 @@ pub fn notices_line(notices: &[Notice]) -> Option<String> {
         .map(|n| match n {
             Notice::Navigation(o) => format!("navigation to {}", clip(o, 60)),
             Notice::Download(o) => format!("download from {}", clip(o, 60)),
-            Notice::PopupHere(o) => format!("pop-up opened here: {}", clip(o, 60)),
+            Notice::PopupHere(o) => format!("new window opened here instead: {}", clip(o, 60)),
             Notice::Popup(o) => format!("pop-up to {}", clip(o, 60)),
             Notice::Dialog(k) => format!("{} dialog dismissed", clip(k, 12)),
             Notice::Permission(k) => format!("{} permission denied", clip(k, 20)),
@@ -474,20 +482,22 @@ fn target(host: &dyn Host, rf: &str, b: i64) -> String {
     }
 }
 
-/// After an action: whether it started a navigation, and if so wait for it.
-fn after_action(host: &dyn Host, navs: u64, loads: u64) -> &'static str {
+/// After an action: whether it started a navigation, and if so how it
+/// ended. `navs`, `loads` and `stops` were read before the action.
+fn after_action(host: &dyn Host, navs: u64, loads: u64, stops: u64) -> &'static str {
     let events = host.events();
     let end = Instant::now() + Duration::from_millis(300);
-    while Instant::now() < end && events.navigations() == navs {
+    while Instant::now() < end && events.navigations() == navs && events.loads() == loads {
         std::thread::sleep(Duration::from_millis(25));
     }
-    if events.navigations() == navs {
+    if events.navigations() == navs && events.loads() == loads {
         return "";
     }
-    if events.wait_load(loads, LOAD_WAIT, &stop_fn(host)) {
-        " · a new page loaded"
-    } else {
-        " · a new page is still loading"
+    match events.wait_settled(loads, stops, LOAD_WAIT, &stop_fn(host)) {
+        Some(true) => " · a new page loaded",
+        // Refused or failed: the `blocked:` line says why when it was us.
+        Some(false) => "",
+        None => " · a new page is still loading",
     }
 }
 
@@ -531,7 +541,11 @@ fn click(host: &dyn Host, a: &ClickArgs) -> Reply {
     };
     host.highlight(b);
     host.activity(Activity::Clicked(target(host, rf, b)));
-    let (navs, loads) = (host.events().navigations(), host.events().loads());
+    let (navs, loads, stops) = (
+        host.events().navigations(),
+        host.events().loads(),
+        host.events().stops(),
+    );
     let mut steps = vec![("mouseMoved", 0), ("mousePressed", 1), ("mouseReleased", 1)];
     if a.double == Some(true) {
         steps.extend([("mousePressed", 2), ("mouseReleased", 2)]);
@@ -541,7 +555,7 @@ fn click(host: &dyn Host, a: &ClickArgs) -> Reply {
             return failed("click", Some(rf), &e);
         }
     }
-    let nav = after_action(host, navs, loads);
+    let nav = after_action(host, navs, loads, stops);
     let verb = if a.double == Some(true) {
         "double-clicked"
     } else {
@@ -620,7 +634,11 @@ fn type_text(host: &dyn Host, a: &TypeArgs) -> Reply {
     }
     host.highlight(b);
     host.activity(Activity::Typed(target(host, rf, b)));
-    let (navs, loads) = (host.events().navigations(), host.events().loads());
+    let (navs, loads, stops) = (
+        host.events().navigations(),
+        host.events().loads(),
+        host.events().stops(),
+    );
     if let Err(e) = host.cdp("DOM.focus", json!({ "backendNodeId": b })) {
         return failed("type", Some(rf), &e);
     }
@@ -665,7 +683,7 @@ fn type_text(host: &dyn Host, a: &TypeArgs) -> Reply {
     out.push_str(rf);
     if let Some(k) = a.key {
         out.push_str(&format!(" · pressed {}", key_info(k).0));
-        out.push_str(after_action(host, navs, loads));
+        out.push_str(after_action(host, navs, loads, stops));
     }
     Reply::ok(out)
 }

@@ -770,7 +770,7 @@ impl Shell {
         let _ = (window, cx);
     }
 
-    /// Debug builds: `ACTA_DEV_OVERLAY=palette|capture|terminal|chat|chat-palette|export|snapshots`
+    /// Debug builds: `ACTA_DEV_OVERLAY=palette|capture|terminal|chat|chat-palette|browser|browser-palette|export|snapshots`
     /// opens that surface at launch, so captures need no input.
     fn dev_overlay(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !cfg!(debug_assertions) {
@@ -789,6 +789,21 @@ impl Shell {
             #[cfg(windows)]
             Ok("chat-palette") => {
                 self.change_layout(None, window, cx, |l| l.show_view(ViewId::Chat).is_some());
+                self.open_palette(None, None, window, cx);
+            }
+            // The agent browser shown without the keyboard, for captures;
+            // `-palette` under the palette (parked, with its line).
+            #[cfg(windows)]
+            Ok("browser") => {
+                self.change_layout(None, window, cx, |l| {
+                    l.show_view(ViewId::AgentBrowser).is_some()
+                });
+            }
+            #[cfg(windows)]
+            Ok("browser-palette") => {
+                self.change_layout(None, window, cx, |l| {
+                    l.show_view(ViewId::AgentBrowser).is_some()
+                });
                 self.open_palette(None, None, window, cx);
             }
             Ok("layout-menu") => self.open_menu(LayoutMenu::Layout, 1000., 40., cx),
