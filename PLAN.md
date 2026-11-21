@@ -5,13 +5,8 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 | # | Milestone | Release | Status |
 |---|-----------|---------|--------|
 | M0 | Research, spikes, ADRs, DESIGN.md | - | done |
-<<<<<<< HEAD
-| M1 | Pipeline: window that installs silently and updates itself; design foundations; app icon | v0.1.x | doing |
-| M2 | Data model and core UI | v0.2.0 | doing |
-=======
 | M1 | Pipeline: window that installs silently and updates itself; design foundations; app icon | v0.1.x | done |
-| M2 | Data model and core UI | v0.2.0 | todo |
->>>>>>> main
+| M2 | Data model and core UI | v0.2.0 | doing |
 | M3 | MCP server, CLI, Claude Code setup; Acta tracks itself | v0.3.0 | todo |
 | M4 | Integrated terminal running Claude Code | v0.4.0 | todo |
 | M5 | Claude chat panel beside the work (Windows and macOS; link on Linux; ADR 0009) | v0.5.0 | todo |
