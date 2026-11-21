@@ -44,6 +44,12 @@ pub(super) struct TreeState {
     hovered: bool,
 }
 
+impl TreeState {
+    pub(super) fn clear_hover(&mut self) {
+        self.hovered = false;
+    }
+}
+
 struct Cache {
     revision: u64,
     folds: tree::Folds,
@@ -220,7 +226,9 @@ impl Shell {
         let bounds = handle.bounds();
         let viewport = f32::from(bounds.size.height);
         let width = f32::from(bounds.size.width);
-        if viewport <= 0. {
+        // Before the first layout the viewport is unknown; a pending
+        // reveal or jump asks for the frame that knows it.
+        if viewport <= 0. && (bench.tree.reveal.is_some() || bench.tree.to_top.is_some()) {
             window.request_animation_frame();
         }
         let scroll_top = self.settle_scroll(&rows, &layout, viewport);
@@ -240,6 +248,13 @@ impl Shell {
             return div().into_any_element();
         };
         let drawn = layout.drawn(scroll_top, viewport.max(560.));
+        // A rename whose row scrolls or folds out of the drawn rows is
+        // committed, not lost.
+        if let Some((key, _)) = &renaming
+            && !rows[drawn.clone()].iter().any(|r| r.key() == *key)
+        {
+            cx.defer_in(window, |shell, window, cx| shell.commit_rename(window, cx));
+        }
         let sticky = layout.sticky(&rows, scroll_top);
         let ws = bench.ws.read(cx);
         let path = Path {
@@ -298,7 +313,7 @@ impl Shell {
             items.push(
                 div()
                     .pt(px(gap))
-                    .child(tree_row(row, i, &look, menu, edit, locale, t, cx))
+                    .child(tree_row(row, &look, menu, edit, locale, t, cx))
                     .into_any_element(),
             );
         }
@@ -322,7 +337,6 @@ impl Shell {
                 .border_color(t.border_subtle)
                 .child(tree_row(
                     row,
-                    p,
                     &look(row, p, sticky_unread, true),
                     None,
                     None,
@@ -424,6 +438,16 @@ impl Shell {
     }
 }
 
+/// A row's key as an element id: the route key ("T-12"), the group key of a
+/// "N closed" row, or the epic of a "New topic" row.
+fn key_slug(key: RowKey) -> String {
+    match key {
+        RowKey::Route(route) => route.key(),
+        RowKey::Closed(group) => group.key(),
+        RowKey::NewTopic(epic) => format!("new:{epic}"),
+    }
+}
+
 /// The empty tree (4.2.1, Empty states): "No projects yet." and the
 /// "New project..." button.
 fn empty_tree(locale: Locale, t: &Tokens, cx: &mut Context<Shell>) -> AnyElement {
@@ -512,7 +536,6 @@ fn session_here(row: &Row, locale: Locale, t: &Tokens, cx: &App) -> Option<(Hsla
 #[allow(clippy::too_many_arguments)]
 fn tree_row(
     row: &Row,
-    index: usize,
     look: &Look,
     menu: Option<AnyElement>,
     edit: Option<Entity<InputState>>,
@@ -526,7 +549,11 @@ fn tree_row(
     } else {
         "tree-row"
     };
-    let id = SharedString::from(format!("{prefix}-{index}"));
+    // Element ids follow the row's record, not its place, so hover and
+    // tooltip state stay with the row when rows come and go above it.
+    let row_key = row.key();
+    let slug = key_slug(row_key);
+    let id = SharedString::from(format!("{prefix}-{slug}"));
     let (hover, primary) = (t.fill_hover, t.text_primary);
     // components.md 5: nothing tertiary on `fill.selected`.
     let lift = |color: Hsla| {
@@ -583,7 +610,7 @@ fn tree_row(
     let fold = |expanded: bool, key: String, cx: &mut Context<Shell>| {
         let sticky = look.sticky.then(|| row.key());
         div()
-            .id(SharedString::from(format!("{prefix}-fold-{index}")))
+            .id(SharedString::from(format!("{prefix}-fold-{slug}")))
             .flex_shrink_0()
             .on_click(cx.listener(move |shell, _, _, cx| {
                 cx.stop_propagation();
@@ -612,7 +639,7 @@ fn tree_row(
             let room = tree::title_width(look.width, row.depth(), trailing);
             let truncated = look.width > 0. && text_width(role, &label, cx) > room;
             role.el()
-                .id(SharedString::from(format!("{prefix}-title-{index}")))
+                .id(SharedString::from(format!("{prefix}-title-{slug}")))
                 .flex_1()
                 .min_w_0()
                 .truncate()
@@ -653,7 +680,7 @@ fn tree_row(
             ),
         };
         div()
-            .id(SharedString::from(format!("{prefix}-signal-{index}")))
+            .id(SharedString::from(format!("{prefix}-signal-{slug}")))
             .size(px(16.))
             .flex_shrink_0()
             .flex()
@@ -686,7 +713,7 @@ fn tree_row(
                     .group_hover(id.clone(), |s| s.visible())
                     .child(
                         ui::ghost_icon_button(
-                            format!("{prefix}-plus-{index}"),
+                            format!("{prefix}-plus-{slug}"),
                             Icon::Plus,
                             24.,
                             false,
@@ -844,20 +871,15 @@ fn tree_row(
         }
     };
     if let Some(route) = row.route() {
-        let sticky = look.sticky;
         // Mod+click or a middle click opens the row in a new tab (4.4).
         el = el
             .on_click(
                 cx.listener(move |shell, event: &gpui_kit::ClickEvent, window, cx| {
                     let rows = shell.rows(cx);
                     if let Some(bench) = shell.bench() {
-                        // The sticky row is not a keyboard stop; the cursor
-                        // goes to the real row.
-                        if let Some(at) = rows.iter().position(|r| r.route() == Some(route)) {
-                            bench.cursor.set(&rows, at);
-                        } else if !sticky {
-                            bench.cursor.set(&rows, index);
-                        }
+                        // The cursor goes to the real row (the sticky row
+                        // is not a keyboard stop).
+                        bench.cursor.put(&rows, route);
                         bench.tree_menu = None;
                     }
                     if event.modifiers().secondary(cx) {
@@ -878,7 +900,7 @@ fn tree_row(
                 cx.listener(move |shell, _, window, cx| {
                     let rows = shell.rows(cx);
                     let Some(bench) = shell.bench() else { return };
-                    bench.cursor.set(&rows, index);
+                    bench.cursor.put(&rows, route);
                     let handle = bench.tree_focus.clone();
                     window.focus(&handle, cx);
                     shell.open_tree_menu(super::MenuKind::Row, &rows, cx);

@@ -3094,7 +3094,6 @@ impl Shell {
     /// Save the inline edit; it stays with the typed text until the write
     /// succeeds (interaction.md 6.4).
     fn commit_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let rows = self.rows(cx);
         let Some(bench) = self.bench() else { return };
         let Some(Rename { key, state, saving }) = bench.rename.clone() else {
             return;
@@ -3103,9 +3102,25 @@ impl Shell {
             return;
         }
         let new = state.read(cx).value().trim().to_owned();
-        let row = rows.iter().find(|r| r.key() == key);
-        let unchanged = row.and_then(Row::title).is_none_or(|old| old == new);
-        let owner = row.and_then(owner_of);
+        // The row may be folded away or out of the drawn range: the record
+        // and its title come from the key.
+        let projects = &bench.ws.read(cx).projects;
+        let (owner, old) = match key {
+            RowKey::Route(Route::Project(id)) => (
+                Some(Owner::Project(id)),
+                tree::locate_project(projects, id).and_then(|l| l.project.map(|p| p.1)),
+            ),
+            RowKey::Route(Route::Epic(id)) => (
+                Some(Owner::Epic(id)),
+                tree::locate_epic(projects, id).and_then(|l| l.epic.map(|e| e.1)),
+            ),
+            RowKey::Route(Route::Topic(id)) => (
+                Some(Owner::Topic(id)),
+                tree::locate_topic(projects, id).and_then(|l| l.topic.map(|t| t.1)),
+            ),
+            _ => (None, None),
+        };
+        let unchanged = old.is_none_or(|old| old == new);
         let (Some(owner), false, false) = (owner, new.is_empty(), unchanged) else {
             self.cancel_rename(window, cx);
             return;
@@ -4271,6 +4286,12 @@ fn tree_menu(
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let tokens = cx.global::<Tokens>().clone();
+        // A hidden tree reports no pointer leaving it: it is not hovered.
+        if !self.view_drawn(ViewId::Projects, window)
+            && let Some(bench) = self.bench()
+        {
+            bench.tree.clear_hover();
+        }
         // Windows: 1px outline when not maximized (docs/design/layout.md 4.3).
         let outlined = cfg!(target_os = "windows") && !window.is_maximized();
         let crumbs = match &self.content {

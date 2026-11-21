@@ -451,6 +451,9 @@ impl Shell {
     /// the preferences saved.
     pub(super) fn after_layout(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(bench) = self.bench() else { return };
+        // The tree moved, hid or resized under the pointer: it is hovered
+        // again only when the pointer next moves over it.
+        bench.tree.clear_hover();
         // Pages the change closed leave their slots; their history is kept
         // so that undoing the change brings them back.
         let named = bench.layout.page_tabs();
