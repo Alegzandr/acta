@@ -1061,7 +1061,9 @@ impl SettingsPage {
                         t,
                     )
                     .when(!busy, |this| {
-                        this.on_click(|_, _, cx| crate::claude_setup::run_install(cx))
+                        this.on_click(|_, window, cx| {
+                            window.dispatch_action(Box::new(crate::shell::SetUpClaude), cx)
+                        })
                     }),
                 )
                 .child(
@@ -1156,6 +1158,14 @@ impl SettingsPage {
                 t,
             )
             .into_any_element(),
+        );
+        out.push(
+            type_scale::SMALL
+                .el()
+                .max_w(px(420.))
+                .text_color(t.text_tertiary)
+                .child(text(locale, Key::SettingsPluginHint))
+                .into_any_element(),
         );
         if cfg!(windows) {
             out.push(

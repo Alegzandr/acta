@@ -455,9 +455,9 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `settings.setup` | Set up Claude Code | Configurer Claude Code |
 | `settings.setup_again` | Run setup again | Relancer la configuration |
 | `settings.setup_remove` | Remove from Claude Code | Retirer de Claude Code |
-| `settings.setup.hint` | Setup installs Acta's plugin in Claude Code, adds two permission lines (Acta and its browser) and Acta's status line to ~/.claude/settings.json (after your own status line, if you have one), and turns Claude Code's own memory off in attached folders. Remove undoes all of it. | La configuration installe le plugin d'Acta dans Claude Code, ajoute deux lignes d'autorisation (Acta et son navigateur) et la ligne d'état d'Acta à ~/.claude/settings.json (après votre propre ligne d'état, si vous en avez une), et désactive la mémoire propre à Claude Code dans les dossiers rattachés. Retirer annule tout cela. |
+| `settings.setup.hint` | Setup installs Acta's plugin in Claude Code, adds two permission lines (Acta and its browser) and Acta's status line to ~/.claude/settings.json (after your own status line, if you have one), and turns Claude Code's own memory off in the open project's folders. Remove undoes all of it. | La configuration installe le plugin d'Acta dans Claude Code, ajoute deux lignes d'autorisation (Acta et son navigateur) et la ligne d'état d'Acta à ~/.claude/settings.json (après votre propre ligne d'état, si vous en avez une), et désactive la mémoire propre à Claude Code dans les dossiers du projet ouvert. Retirer annule tout cela. |
 | `settings.remove.title` | Remove Acta from Claude Code? | Retirer Acta de Claude Code ? |
-| `settings.remove.body` | This uninstalls Acta's plugin and takes out the permission line setup added to ~/.claude/settings.json. Your projects stay in Acta. | Cela désinstalle le plugin d'Acta et retire la ligne d'autorisation ajoutée par la configuration à ~/.claude/settings.json. Vos projets restent dans Acta. |
+| `settings.remove.body` | This uninstalls Acta's plugin, takes out the permission lines and the status line setup added to ~/.claude/settings.json (your own status line comes back), and turns Claude Code's own memory back on where Acta turned it off. Your projects stay in Acta. | Cela désinstalle le plugin d'Acta, retire les lignes d'autorisation et la ligne d'état ajoutées par la configuration à ~/.claude/settings.json (votre propre ligne d'état revient), et réactive la mémoire propre à Claude Code là où Acta l'avait désactivée. Vos projets restent dans Acta. |
 | `settings.remove.confirm` | Remove | Retirer |
 | `settings.data` | Data | Données |
 | `settings.export.last` | Last export: {days} (`time.days` or `time.today_word`) | Dernier export : {days} |
@@ -662,6 +662,11 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `settings.usage.hint` | The 5-hour and 7-day limits of your Claude plan, as Claude Code last reported them. | Les limites sur 5 heures et sur 7 jours de votre forfait Claude, telles que Claude Code les a signalées en dernier. |
 | `cmd.usage_on` | Show plan usage in the status bar | Afficher l'utilisation du forfait dans la barre d'état |
 | `cmd.usage_off` | Hide plan usage | Masquer l'utilisation du forfait |
+| `settings.setup.title` | Set up Claude Code? | Configurer Claude Code ? |
+| `settings.setup.body` | Acta installs its plugin in Claude Code and adds two permission lines and its status line to ~/.claude/settings.json; your own status line, if you have one, still shows first. | Acta installe son plugin dans Claude Code et ajoute deux lignes d'autorisation et sa ligne d'état à ~/.claude/settings.json ; votre propre ligne d'état, si vous en avez une, reste affichée en premier. |
+| `settings.setup.folders` | It also turns Claude Code's own memory off in {n} folder of {project}. · It also turns Claude Code's own memory off in {n} folders of {project}. | Il désactive aussi la mémoire propre à Claude Code dans {n} dossier de {project}. · Il désactive aussi la mémoire propre à Claude Code dans {n} dossiers de {project}. |
+| `settings.setup.confirm` | Set up | Configurer |
+| `settings.plugin.hint` | Sessions started in Acta's terminal load Acta's plugin from this build, set up or not. To turn that off, set "acta@inline": false under enabledPlugins in Claude Code's settings. | Les sessions lancées dans le terminal d'Acta chargent le plugin d'Acta de cette version, configuré ou non. Pour l'éviter, mettez "acta@inline": false sous enabledPlugins dans les réglages de Claude Code. |
 
 Strings that exist in the behaviour sections but are not in this table are a defect of the table: add the row in the same change that adds the string.
 

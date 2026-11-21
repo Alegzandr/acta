@@ -725,4 +725,84 @@ fn statusline_keeps_usage_and_wraps_the_users_line() {
     let (ok, out, _) = cli(&data, dir, &["statusline"], &payload);
     assert!(ok);
     assert_eq!(out.trim(), "mine  5h 42% \u{b7} 7d 18%");
+
+    // Called from inside the user's own command (a script that calls
+    // `acta statusline`): the original is not run again.
+    let nested = base_cmd(&data)
+        .arg("statusline")
+        .env("ACTA_STATUSLINE_NESTED", "1")
+        .current_dir(dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .and_then(|mut c| {
+            c.stdin.take().unwrap().write_all(payload.as_bytes())?;
+            c.wait_with_output()
+        })
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&nested.stdout).trim(),
+        "5h 42% \u{b7} 7d 18%"
+    );
+    // An Acta command recorded as the original (an older install) is never
+    // run: no recursion.
+    let acta = format!("{} statusline", EXE.replace('\\', "/"));
+    std::fs::write(
+        data.join("claude").join("setup-record.json"),
+        json!({"statusline_original": {"command": acta}}).to_string(),
+    )
+    .unwrap();
+    let (ok, out, _) = cli(&data, dir, &["statusline"], &payload);
+    assert!(ok);
+    assert_eq!(out.trim(), "5h 42% \u{b7} 7d 18%");
+}
+
+/// `acta link --attached`: the folders already attached, read from Acta (no
+/// path on the command line), get Claude Code's auto memory off; `acta
+/// setup --remove` turns it back on where Acta turned it off. `claude` runs
+/// against a temporary configuration directory only.
+#[test]
+fn link_attached_and_setup_remove_round_trip_auto_memory() {
+    let tmp = tempfile::tempdir().unwrap();
+    let data = tmp.path().join("data");
+    let repo = tmp.path().join("repo");
+    let other = tmp.path().join("other");
+    std::fs::create_dir_all(&repo).unwrap();
+    std::fs::create_dir_all(&other).unwrap();
+    let (ok, out, err) = cli(&data, &repo, &["link", "--keep-auto-memory"], "");
+    assert!(ok, "{out}{err}");
+    let local = repo.join(".claude").join("settings.local.json");
+    assert!(!local.exists());
+
+    let (ok, out, err) = cli(
+        &data,
+        &other,
+        &["link", "--attached", "--project", "P-1", "--add"],
+        "",
+    );
+    assert!(ok, "{out}{err}");
+    assert!(
+        out.contains("1 attached folder") && out.contains("turned off in 1"),
+        "{out}"
+    );
+    let text = std::fs::read_to_string(&local).unwrap();
+    assert!(text.contains("\"autoMemoryEnabled\": false"), "{text}");
+    // Idempotent; a path is refused with --attached.
+    let (ok, out, _) = cli(&data, &other, &["link", "--attached"], "");
+    assert!(ok && !out.contains("turned off"), "{out}");
+    let (ok, _, _) = cli(&data, &other, &["link", "--attached", "x"], "");
+    assert!(!ok);
+
+    let config = tmp.path().join("claude-config");
+    std::fs::create_dir_all(&config).unwrap();
+    let out = base_cmd(&data)
+        .args(["setup", "--remove", "--json"])
+        .env("CLAUDE_CONFIG_DIR", &config)
+        .current_dir(&other)
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("back on in 1 folder"), "{stdout}");
+    assert!(!local.exists(), "the settings file Acta created is gone");
 }

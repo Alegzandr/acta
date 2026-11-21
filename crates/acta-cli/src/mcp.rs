@@ -59,6 +59,17 @@ impl State {
         }
         self.tracker.as_mut()
     }
+
+    /// Presence is definitely not kept for this session: its folder is not
+    /// linked, or the database opened and the session is bound to no
+    /// project or has no id. A failure to open is not this: it is retried.
+    fn untracked(&self) -> bool {
+        self.tracked == Some(false)
+            || self
+                .open
+                .as_ref()
+                .is_some_and(|(_, s)| s.project.is_none() || s.session_id.is_none())
+    }
 }
 
 fn now() -> i64 {
@@ -189,8 +200,8 @@ impl ActaServer {
     }
 
     /// Registers the session (if its folder is linked) and beats every
-    /// [`HEARTBEAT_MS`] on the blocking pool; returns when presence is not
-    /// tracked. The database is opened here, off the transport, so a slow
+    /// [`HEARTBEAT_MS`] on the blocking pool; returns only once presence is
+    /// definitely not kept for this session (a failed open is retried). The database is opened here, off the transport, so a slow
     /// keychain never delays `initialize`.
     async fn heartbeat(&self) {
         let mut interval =
@@ -203,16 +214,16 @@ impl ActaServer {
                     Ok(g) => g,
                     Err(p) => p.into_inner(),
                 };
-                match guard.tracker() {
-                    Some(t) => {
-                        let _ = t.heartbeat(now());
-                        true
-                    }
-                    None => false,
+                if let Some(t) = guard.tracker() {
+                    let _ = t.heartbeat(now());
+                    return true;
                 }
+                // Not yet (keychain locked, database busy): try again at
+                // the next beat, unless the session will never be tracked.
+                !guard.untracked()
             })
             .await
-            .unwrap_or(false);
+            .unwrap_or(true);
             if !tracked {
                 return;
             }

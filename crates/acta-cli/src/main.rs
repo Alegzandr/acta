@@ -105,6 +105,10 @@ enum Command {
         /// Leave Claude Code's auto memory on in this folder
         #[arg(long)]
         keep_auto_memory: bool,
+        /// The folders already attached in Acta (of --project, or all),
+        /// read from Acta: no path is given
+        #[arg(long, conflicts_with_all = ["path", "epic", "topic", "remove"])]
+        attached: bool,
     },
     /// Where things stand: the focus topic, an epic or the project
     Brief {
@@ -532,24 +536,29 @@ fn link_index_step(opener: &Opener) -> setup::Step {
 /// `setup --remove`: the linked folders where `acta link` turned Claude
 /// Code's auto memory off stay that way until unlinked; say where.
 fn auto_memory_step(opener: &Opener) -> Option<setup::Step> {
-    let store = opener.open_existing()?.ok()?;
-    let folders: Vec<String> = store
-        .local_values(link::AUTO_MEMORY_PREFIX)
-        .ok()?
-        .into_iter()
-        .map(|(k, _)| k[link::AUTO_MEMORY_PREFIX.len()..].to_owned())
-        .collect();
-    if folders.is_empty() {
+    let mut store = opener.open_existing()?.ok()?;
+    let (restored, kept) = match link::restore_all_auto_memory(&mut store) {
+        Ok(counts) => counts,
+        Err(e) => {
+            return Some(setup::Step {
+                name: "auto memory",
+                ok: false,
+                detail: format!("cannot restore: {e}"),
+            });
+        }
+    };
+    if restored == 0 && kept == 0 {
         return None;
     }
     Some(setup::Step {
         name: "auto memory",
         ok: true,
-        detail: format!(
-            "still off in {} linked folder(s): {}. Run `acta link --remove` in each to turn it back on.",
-            folders.len(),
-            folders.join(", ")
-        ),
+        detail: match kept {
+            0 => format!("back on in {restored} folder(s)"),
+            _ => format!(
+                "back on in {restored} folder(s); {kept} left as they were (changed since, or not on this computer)"
+            ),
+        },
     })
 }
 
@@ -583,7 +592,11 @@ fn run_on(store: &mut acta_core::Store, command: Command) -> Result<String, Stri
             add,
             remove,
             keep_auto_memory,
+            attached,
         } => {
+            if attached {
+                return link::run_attached(store, project.as_deref(), keep_auto_memory);
+            }
             let cwd = launch.dir.clone().unwrap_or_default();
             let args = link::LinkArgs {
                 path,

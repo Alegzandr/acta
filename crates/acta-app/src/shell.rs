@@ -179,6 +179,8 @@ actions!(
         OpenShortcuts,
         /// Settings: "Remove from Claude Code" (confirmed, 6.4).
         RemoveClaudeSetup,
+        /// Settings: "Set up Claude Code" (confirmed, with what it touches).
+        SetUpClaude,
         /// `Mod+W`, palette "Close tab" (layout.md 4.4).
         CloseTab,
         /// `Ctrl+Tab` / `Ctrl+Shift+Tab`.
@@ -577,7 +579,6 @@ impl Shell {
         // for the sessions the terminal starts (ADR 0008 amendment).
         crate::sessions::start(db.clone(), cx);
         crate::sessions::watch_usage(cx);
-        claude_setup::set_db(db.clone(), cx);
         cx.background_executor()
             .spawn(async { claude_setup::write_plugin_files() })
             .detach();
@@ -1899,6 +1900,10 @@ impl Shell {
                     shell.close_overlay(window, cx);
                     claude_setup::run_remove(cx);
                 }
+                DialogEvent::Setup(project) => {
+                    shell.close_overlay(window, cx);
+                    claude_setup::run_install(*project, cx);
+                }
                 #[cfg(windows)]
                 DialogEvent::BrowserClear => {
                     shell.close_overlay(window, cx);
@@ -2109,6 +2114,39 @@ impl Shell {
 
     fn toggle_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.toggle_view(ViewId::Terminal, window, cx);
+    }
+
+    /// "Set up Claude Code": a confirmation that says how many folders of
+    /// the open project setup will touch.
+    fn confirm_setup(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(bench) = self.bench() else { return };
+        let project = bench.active_project;
+        let ws = bench.ws.clone();
+        let name =
+            project.and_then(|p| crate::sessions_view::title_of(ws.read(cx), Owner::Project(p)));
+        let count = ws.read(cx).db.run(cx, move |store| {
+            let Some(p) = project else { return Ok(0) };
+            let mut paths: Vec<String> = store
+                .all_folders()?
+                .into_iter()
+                .filter(|f| f.project == p)
+                .map(|f| f.path)
+                .collect();
+            paths.sort();
+            paths.dedup();
+            Ok(paths.len())
+        });
+        cx.spawn_in(window, async move |shell, cx| {
+            let folders = count.await.unwrap_or(0);
+            let _ = shell.update_in(cx, |shell, window, cx| {
+                let kind = DialogKind::Setup {
+                    project: project.zip(name),
+                    folders,
+                };
+                shell.open_dialog(kind, window, cx);
+            });
+        })
+        .detach();
     }
 
     /// The Sessions view's actions (components-app.md 5).
@@ -4403,6 +4441,7 @@ impl Render for Shell {
             .on_action(cx.listener(|s, _: &RemoveClaudeSetup, w, cx| {
                 s.open_dialog(DialogKind::RemoveSetup, w, cx)
             }))
+            .on_action(cx.listener(|s, _: &SetUpClaude, w, cx| s.confirm_setup(w, cx)))
             .on_action(cx.listener(|s, _: &NextTab, w, cx| {
                 let focus = !s.terminal_focused(w, cx);
                 s.cycle_tab(true, focus, w, cx)

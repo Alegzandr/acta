@@ -1790,16 +1790,16 @@ catalogue! {
         fr: t("Retirer de Claude Code"),
     }
     SettingsSetupHint "settings.setup.hint" {
-        en: t("Setup installs Acta\u{2019}s plugin in Claude Code, adds two permission lines (Acta and its browser) and Acta\u{2019}s status line to ~/.claude/settings.json (after your own status line, if you have one), and turns Claude Code\u{2019}s own memory off in attached folders. Remove undoes all of it."),
-        fr: t("La configuration installe le plugin d\u{2019}Acta dans Claude Code, ajoute deux lignes d\u{2019}autorisation (Acta et son navigateur) et la ligne d\u{2019}état d\u{2019}Acta à ~/.claude/settings.json (après votre propre ligne d\u{2019}état, si vous en avez une), et désactive la mémoire propre à Claude Code dans les dossiers rattachés. Retirer annule tout cela."),
+        en: t("Setup installs Acta\u{2019}s plugin in Claude Code, adds two permission lines (Acta and its browser) and Acta\u{2019}s status line to ~/.claude/settings.json (after your own status line, if you have one), and turns Claude Code\u{2019}s own memory off in the open project\u{2019}s folders. Remove undoes all of it."),
+        fr: t("La configuration installe le plugin d\u{2019}Acta dans Claude Code, ajoute deux lignes d\u{2019}autorisation (Acta et son navigateur) et la ligne d\u{2019}état d\u{2019}Acta à ~/.claude/settings.json (après votre propre ligne d\u{2019}état, si vous en avez une), et désactive la mémoire propre à Claude Code dans les dossiers du projet ouvert. Retirer annule tout cela."),
     }
     SettingsRemoveTitle "settings.remove.title" {
         en: t("Remove Acta from Claude Code?"),
         fr: t("Retirer Acta de Claude Code\u{202f}?"),
     }
     SettingsRemoveBody "settings.remove.body" {
-        en: t("This uninstalls Acta’s plugin and takes out the permission line setup added to ~/.claude/settings.json. Your projects stay in Acta."),
-        fr: t("Cela désinstalle le plugin d’Acta et retire la ligne d’autorisation ajoutée par la configuration à ~/.claude/settings.json. Vos projets restent dans Acta."),
+        en: t("This uninstalls Acta\u{2019}s plugin, takes out the permission lines and the status line setup added to ~/.claude/settings.json (your own status line comes back), and turns Claude Code\u{2019}s own memory back on where Acta turned it off. Your projects stay in Acta."),
+        fr: t("Cela désinstalle le plugin d\u{2019}Acta, retire les lignes d\u{2019}autorisation et la ligne d\u{2019}état ajoutées par la configuration à ~/.claude/settings.json (votre propre ligne d\u{2019}état revient), et réactive la mémoire propre à Claude Code là où Acta l\u{2019}avait désactivée. Vos projets restent dans Acta."),
     }
     SettingsRemoveConfirm "settings.remove.confirm" {
         en: t("Remove"),
@@ -2616,5 +2616,25 @@ catalogue! {
     CmdUsageOff "cmd.usage_off" {
         en: t("Hide plan usage"),
         fr: t("Masquer l\u{2019}utilisation du forfait"),
+    }
+    SettingsSetupTitle "settings.setup.title" {
+        en: t("Set up Claude Code?"),
+        fr: t("Configurer Claude Code\u{202f}?"),
+    }
+    SettingsSetupBody "settings.setup.body" {
+        en: t("Acta installs its plugin in Claude Code and adds two permission lines and its status line to ~/.claude/settings.json; your own status line, if you have one, still shows first."),
+        fr: t("Acta installe son plugin dans Claude Code et ajoute deux lignes d\u{2019}autorisation et sa ligne d\u{2019}état à ~/.claude/settings.json\u{202f}; votre propre ligne d\u{2019}état, si vous en avez une, reste affichée en premier."),
+    }
+    SettingsSetupFolders "settings.setup.folders" {
+        en: p("It also turns Claude Code\u{2019}s own memory off in {n} folder of {project}.", "It also turns Claude Code\u{2019}s own memory off in {n} folders of {project}."),
+        fr: p("Il désactive aussi la mémoire propre à Claude Code dans {n} dossier de {project}.", "Il désactive aussi la mémoire propre à Claude Code dans {n} dossiers de {project}."),
+    }
+    SettingsSetupConfirm "settings.setup.confirm" {
+        en: t("Set up"),
+        fr: t("Configurer"),
+    }
+    SettingsPluginHint "settings.plugin.hint" {
+        en: t("Sessions started in Acta\u{2019}s terminal load Acta\u{2019}s plugin from this build, set up or not. To turn that off, set \"acta@inline\": false under enabledPlugins in Claude Code\u{2019}s settings."),
+        fr: t("Les sessions lancées dans le terminal d\u{2019}Acta chargent le plugin d\u{2019}Acta de cette version, configuré ou non. Pour l\u{2019}éviter, mettez \"acta@inline\": false sous enabledPlugins dans les réglages de Claude Code."),
     }
 }
