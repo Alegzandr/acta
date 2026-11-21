@@ -239,6 +239,11 @@ enum Phase {
     Failed,
 }
 
+/// What waits for the web view to be created.
+type AfterBuild = Box<
+    dyn FnOnce(&mut BrowserPanel, Result<bool, String>, &mut Window, &mut Context<BrowserPanel>),
+>;
+
 /// The live web view and what keeps it alive. Fields drop in order.
 struct Web {
     _hooks: Option<browser_host::Hooks>,
@@ -286,6 +291,10 @@ pub struct BrowserPanel {
     _signals_task: Task<()>,
     _pipe_task: Task<()>,
     idle_task: Task<()>,
+    /// The web view being created (crate::webview_build), and what waits
+    /// for it.
+    web_task: Task<()>,
+    waiting: Vec<AfterBuild>,
     clear_task: Task<()>,
     _subs: Vec<Subscription>,
 }
@@ -352,6 +361,8 @@ impl BrowserPanel {
             _signals_task: Self::listen_signals(signals_rx, window, cx),
             _pipe_task: Task::ready(()),
             idle_task: Task::ready(()),
+            web_task: Task::ready(()),
+            waiting: Vec::new(),
             clear_task: Task::ready(()),
             _subs: vec![sub],
         };
@@ -426,12 +437,10 @@ impl BrowserPanel {
     fn on_job(&mut self, job: Job, window: &mut Window, cx: &mut Context<Self>) {
         self.last_used = Instant::now();
         match job {
-            Job::Ensure(reply) => {
-                let ready = self
-                    .ensure(window, cx)
-                    .map(|_| !self.shared.set_up.load(Ordering::SeqCst));
+            Job::Ensure(reply) => self.ensure_then(window, cx, move |panel, created, _, _| {
+                let ready = created.map(|_| !panel.shared.set_up.load(Ordering::SeqCst));
                 let _ = reply.send(ready);
-            }
+            }),
             Job::Cdp {
                 method,
                 params,
@@ -526,21 +535,48 @@ impl BrowserPanel {
         .detach();
     }
 
-    /// Creates the web view if needed. True when created now.
-    fn ensure(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Result<bool, String> {
+    /// Creates the web view if needed, then `then` with whether it was
+    /// created now. The web view is created after this update, outside it
+    /// (crate::webview_build); calls meanwhile wait for the same one.
+    fn ensure_then(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        then: impl FnOnce(&mut Self, Result<bool, String>, &mut Window, &mut Context<Self>) + 'static,
+    ) {
         if self.web.is_some() {
-            return Ok(false);
+            return then(self, Ok(false), window, cx);
         }
         if self.clearing {
-            return Err("the browser's data is being cleared; try again in a moment".into());
+            let busy = "the browser's data is being cleared; try again in a moment";
+            return then(self, Err(busy.into()), window, cx);
+        }
+        self.waiting.push(Box::new(then));
+        if self.phase == Phase::Starting {
+            return;
         }
         self.phase = Phase::Starting;
-        let created = self.build(window, cx);
+        if let Err(e) = self.build(window, cx) {
+            self.answer_waiting(Err(e), window, cx);
+        }
         self.sync(window, cx);
         cx.notify();
-        created.map(|_| true)
     }
 
+    /// Everything waiting for the web view gets `result`.
+    fn answer_waiting(
+        &mut self,
+        result: Result<bool, String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        for then in std::mem::take(&mut self.waiting) {
+            then(self, result.clone(), window, cx);
+        }
+    }
+
+    /// Checks what can refuse the browser, then starts creating the web
+    /// view; [`Self::built`] takes it from there.
     fn build(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Result<(), String> {
         let refused = |panel: &mut Self, phase: Phase, line: &str| {
             panel.phase = phase;
@@ -573,59 +609,86 @@ impl BrowserPanel {
                 "the WebView2 runtime is not installed; ask the user to install it",
             );
         }
-        let mut context = Box::new(wry::WebContext::new(Some(profile)));
         let shared = self.shared.clone();
         let downloads = self.shared.clone();
         let popups = self.shared.clone();
         let popup_jobs = self.jobs.clone();
         let loads = self.jobs.clone();
-        let builder = wry::WebViewBuilder::new_with_web_context(&mut context)
-            .with_url("about:blank")
-            // A browser's default page background, whatever Acta's theme:
-            // a page that sets none is black on white for the human and in
-            // the agent's screenshots, as in any browser.
-            .with_background_color(PAGE_BACKGROUND)
-            .with_devtools(false)
-            // Never take the keyboard on creation: created on an agent's
-            // call, it must not activate Acta's window (run: a new view
-            // made Acta the foreground window when it could).
-            .with_focused(false)
-            .with_navigation_handler(move |url| {
-                let policy = shared.policy.lock().map(|p| p.clone()).unwrap_or_default();
-                match policy.check(&url) {
-                    Ok(_) => true,
-                    Err(_) => {
-                        shared.events.notice(Notice::Navigation(origin_of(&url)));
-                        false
+        let builder = crate::webview_build::builder(move |context| {
+            wry::WebViewBuilder::new_with_web_context(context)
+                .with_url("about:blank")
+                // A browser's default page background, whatever Acta's theme:
+                // a page that sets none is black on white for the human and in
+                // the agent's screenshots, as in any browser.
+                .with_background_color(PAGE_BACKGROUND)
+                .with_devtools(false)
+                // Never take the keyboard on creation: created on an agent's
+                // call, it must not activate Acta's window (run: a new view
+                // made Acta the foreground window when it could).
+                .with_focused(false)
+                .with_navigation_handler(move |url| {
+                    let policy = shared.policy.lock().map(|p| p.clone()).unwrap_or_default();
+                    match policy.check(&url) {
+                        Ok(_) => true,
+                        Err(_) => {
+                            shared.events.notice(Notice::Navigation(origin_of(&url)));
+                            false
+                        }
                     }
-                }
-            })
-            .with_download_started_handler(move |url, _| {
-                downloads.events.notice(Notice::Download(origin_of(&url)));
-                false
-            })
-            .with_new_window_req_handler(move |url, _| {
-                let policy = popups.policy.lock().map(|p| p.clone()).unwrap_or_default();
-                if policy.check(&url).is_ok() {
-                    popups.events.notice(Notice::PopupHere(origin_of(&url)));
-                    let _ = popup_jobs.try_send(Job::OpenHere(url));
-                } else {
-                    popups.events.notice(Notice::Popup(origin_of(&url)));
-                }
-                wry::NewWindowResponse::Deny
-            })
-            .with_on_page_load_handler(move |event, url| {
-                if let wry::PageLoadEvent::Finished = event {
-                    let _ = loads.try_send(Job::Loaded(url));
-                }
-            });
-        let started = Instant::now();
-        match gpui_webview::WebView::build(builder, window, cx) {
-            Ok(view) => {
+                })
+                .with_download_started_handler(move |url, _| {
+                    downloads.events.notice(Notice::Download(origin_of(&url)));
+                    false
+                })
+                .with_new_window_req_handler(move |url, _| {
+                    let policy = popups.policy.lock().map(|p| p.clone()).unwrap_or_default();
+                    if policy.check(&url).is_ok() {
+                        popups.events.notice(Notice::PopupHere(origin_of(&url)));
+                        let _ = popup_jobs.try_send(Job::OpenHere(url));
+                    } else {
+                        popups.events.notice(Notice::Popup(origin_of(&url)));
+                    }
+                    wry::NewWindowResponse::Deny
+                })
+                .with_on_page_load_handler(move |event, url| {
+                    if let wry::PageLoadEvent::Finished = event {
+                        let _ = loads.try_send(Job::Loaded(url));
+                    }
+                })
+        });
+        self.web_task = crate::webview_build::build_later(
+            window,
+            cx,
+            move |parent| {
+                let mut context = Box::new(wry::WebContext::new(Some(profile)));
+                let started = Instant::now();
+                let view = crate::webview_build::build(builder(&mut context), parent)?;
                 crate::log::line(&format!(
                     "browser: web view created in {} ms",
                     started.elapsed().as_millis()
                 ));
+                Ok((view, context))
+            },
+            |panel, built, window, cx| {
+                let result = panel.built(built, window, cx).map(|_| true);
+                panel.answer_waiting(result, window, cx);
+                panel.sync(window, cx);
+                cx.notify();
+            },
+        );
+        Ok(())
+    }
+
+    /// The web view created, or not.
+    fn built(
+        &mut self,
+        built: wry::Result<(wry::WebView, Box<wry::WebContext>)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        match built {
+            Ok((view, context)) => {
+                let view = gpui_webview::WebView::new(view, window, cx);
                 let webview = view.raw().webview();
                 let policy = self.shared.clone();
                 let allowed = Arc::new(move |url: &str| {
@@ -810,13 +873,15 @@ impl BrowserPanel {
             // The field keeps what was typed; nothing is opened.
             return;
         }
-        if self.ensure(window, cx).is_err() {
-            return;
-        }
-        if let Some(web) = &self.web {
-            let _ = web.view.read(cx).raw().load_url(&url);
-        }
-        window.focus(&self.focus, cx);
+        self.ensure_then(window, cx, move |panel, created, window, cx| {
+            if created.is_err() {
+                return;
+            }
+            if let Some(web) = &panel.web {
+                let _ = web.view.read(cx).raw().load_url(&url);
+            }
+            window.focus(&panel.focus, cx);
+        });
     }
 
     fn stop(&mut self, cx: &mut Context<Self>) {
@@ -845,7 +910,7 @@ impl BrowserPanel {
 
     fn retry(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.phase = Phase::Idle;
-        let _ = self.ensure(window, cx);
+        self.ensure_then(window, cx, |_, _, _, _| {});
     }
 
     /// "Clear browser data", confirmed: the web view closes and its profile

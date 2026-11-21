@@ -61,6 +61,8 @@ mod update;
 mod update_source;
 mod updater_window;
 mod user_path;
+#[cfg(windows)]
+mod webview_build;
 mod when;
 mod workspace;
 
