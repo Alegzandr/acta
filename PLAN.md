@@ -5,7 +5,7 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 | # | Milestone | Release | Status |
 |---|-----------|---------|--------|
 | M0 | Research, spikes, ADRs, DESIGN.md | - | done |
-| M1 | Pipeline: empty window that installs silently and updates itself | v0.1.x | doing |
+| M1 | Pipeline: window that installs silently and updates itself; design foundations; app icon | v0.1.x | doing |
 | M2 | Data model and core UI | v0.2.0 | todo |
 | M3 | MCP server, CLI, Claude Code setup; Acta tracks itself | v0.3.0 | todo |
 | M4 | Integrated terminal running Claude Code | v0.4.0 | todo |
@@ -27,11 +27,13 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 - [x] Cargo workspace, empty GPUI window (built and run on Windows; macOS and Linux to be proven by CI)
 - [x] Design foundations: tokens for both themes, fonts (Inter replaces Source Sans 3), Light / Dark / System, en/fr string table, persisted preferences, shell skeleton, updater window, Settings (Appearance) (built and captured on Windows only)
   - Temporary deviations from DESIGN.md until the data exists: both status bar items open the top of Settings (not Settings at Claude Code or at About), and Settings shows only the Appearance section (Theme, Language).
-- [ ] CI: fmt, clippy, tests on every push, all three OSes
-- [ ] Release workflow on `v*` tags: build all platforms, publish installers and updater artifacts
-- [ ] Silent per-user install verified on Windows; macOS and Linux verified as far as CI allows
-- [ ] Self-update proven end to end: install v0.1.0, publish v0.1.1, app updates at launch
-- [ ] macOS keychain test with ad-hoc signed builds (ADR 0003), and SQLCipher builds on macOS and Linux runners
+- [x] CI: fmt, clippy, tests on every push, all three OSes (green since the Rust 1.100.0 bump)
+- [x] Release workflow on `v*` tags: builds all four channels, publishes installers, feeds, deltas, SHA256SUMS and attestations (v0.1.0 published; v0.1.1 and v0.1.2 are tags without a release, see ADR 0004 amendments)
+- [x] Repository settings: `v*` tag ruleset, immutable releases, `release` environment limited to `v*`
+- [ ] App icon: "Companion" (planet, ring, moon), rendered by `scripts/icon/`; ships in v0.1.3
+- [ ] Self-update proven end to end by `update-e2e.yml` on Windows, macOS and Linux runners: v0.1.0 -> v0.1.3; then delete the v0.1.2 draft
+- [ ] Silent per-user install verified (same workflow)
+- [ ] macOS keychain test with ad-hoc signed builds (ADR 0003, `platform-checks.yml`), and SQLCipher builds on macOS and Linux runners
 
 ## M2 - Data model and core UI
 - [ ] Encrypted database, key in OS keychain, migrations
@@ -58,7 +60,7 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 - [ ] Rendering, input, resize, scrollback, copy/paste, links
 
 ## M5 - Claude chat panel
-- [ ] ADR 0009 (proposed): claude.ai in the system web view, go with limits - Windows proven by the spike, macOS unproven, Linux gets a link
+- [x] ADR 0009 accepted with conditions: claude.ai in the system web view, Windows proven by the spike, macOS unproven, Linux gets a link; M5 opens with the keyboard handoff check, a real sign-in by the user and a macOS build
 - [ ] First: keyboard handoff while the page has focus, a real sign-in by the user, a macOS build (the three things the spike could not check)
 - [ ] DESIGN.md: specify the chat panel (placement, toggle, placeholder under overlays, failure and sign-in help states)
 - [ ] Side panel with a persistent session, toggled from the keyboard
@@ -71,22 +73,6 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 - [ ] Design review of every screen against DESIGN.md
 - [ ] Performance pass, empty and error states, onboarding
 - [ ] Documentation
-
-## Paused - where to resume
-`main` was pushed to GitHub once, at commit 1009910 (not by the lead; a local pre-push hook now refuses pushes without `ACTA_LEAD_PUSH=1`). Everything after it is local. All agents are stopped; their work is on disk under `../acta-wt/`.
-- `gpui-engineer/m1-app` (worktree `m1-app`): draft workspace, crates and assets, untracked, uncommitted, unverified. Resume a gpui-engineer on it: read critically, finish, verify, commit.
-- `release-engineer/m1-pipeline` (worktree `m1-pipeline`): complete, reviewed, verdict "request changes". `main` is merged in; none of the fixes below are committed yet.
-  1. High: `ci.yml` passes two files to `Invoke-ScriptAnalyzer -Path` (single string); lint would fail every run. Analyze one file at a time.
-  2. Security: split `release.yml` publish into `collect` (read-only) and `publish` (write permissions, job-level `if`, `environment: release`).
-  3. Security: pin every action to a full commit SHA in all workflows; amend ADR 0004.
-  4. Security: no rust-cache restore on tag builds; `check` must verify the tagged commit is an ancestor of `origin/main`; document a `v*` tag ruleset and immutable releases in `docs/releasing.md`.
-  5. `platform-checks.sh` echoes the test secret (`-w "$value"`) to the log; never print it.
-  6. `install.sh` macOS reinstall: restore the previous app if the move fails; handle a running app; warn instead of failing when `open` fails.
-  7. README states unverified behaviour as fact; say what is verified. Install scripts print "open a new terminal to use acta" unconditionally.
-  8. `ci.yml` concurrency group: use the PR number, not `head_ref`.
-  9. `platform-checks.sh`: dismiss SecurityAgent after a timeout and mark results that followed one.
-  10. Keep the "to confirm on the first run" list in `docs/releasing.md`.
-- Order: merge m1-app first, then the pipeline, then push; iterate CI and the release dry run to green; run `platform-checks.yml`; apply the tag ruleset and the `release` environment in repo settings; tag v0.1.0, install, tag v0.1.1, prove self-update.
 
 ## Settled with the user
 - 2026-11-20: design direction is inspired by Obsidian, Notion and JetBrains IDEs: a workbench (tree, document-like pages, tool windows for the terminal and the chat panel, search everywhere). A "Project Ledger" direction (parchment, serif, engravings) was briefed and withdrawn by the user the same day; do not revive it. Kept from that brief as functional requirements: Light / Dark / System setting, UI in English (default) and French from a central string table. DESIGN.md is being revised on `product-designer/workbench`.
