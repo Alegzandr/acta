@@ -6,6 +6,7 @@
 //! adjustable 11 to 18. The app registers the bundled fonts.
 
 use std::ops::Range;
+use std::time::{Duration, Instant};
 
 use alacritty_terminal::grid::Scroll;
 use alacritty_terminal::index::Side;
@@ -98,6 +99,9 @@ impl GridLayout {
     }
 }
 
+/// Between a typed command and its Enter (`send_line`).
+const ENTER_AFTER_PASTE: Duration = Duration::from_millis(50);
+
 pub struct TerminalView {
     spec: LaunchSpec,
     session: Option<Session>,
@@ -119,6 +123,8 @@ pub struct TerminalView {
     /// IME composition in progress, drawn at the cursor.
     marked: Option<String>,
     scroll_remainder: f32,
+    /// When the session last printed something (idle detection).
+    last_output: Instant,
     /// Started before the first layout: spawned once the grid size is known.
     start_pending: bool,
     _start: Task<()>,
@@ -156,6 +162,7 @@ impl TerminalView {
             selecting: false,
             marked: None,
             scroll_remainder: 0.0,
+            last_output: Instant::now(),
             start_pending: false,
             _start: Task::ready(()),
             _resize: Task::ready(()),
@@ -180,6 +187,62 @@ impl TerminalView {
     /// only then, interaction.md 6.4).
     pub fn is_running(&self) -> bool {
         self.session.is_some() && self.exited.is_none()
+    }
+
+    /// Whether Claude Code sits idle at an empty prompt (see
+    /// [`crate::idle::claude_idle`]): only then may a command be typed in.
+    pub fn idle_at_prompt(&self) -> bool {
+        let Some(session) = self.session.as_ref().filter(|_| self.exited.is_none()) else {
+            return false;
+        };
+        let frame = session.frame(&self.theme);
+        let skip = Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER;
+        let row_text = |row: usize, hide: Flags| -> String {
+            frame
+                .row(row)
+                .iter()
+                .filter(|c| !c.flags.intersects(skip | hide))
+                .map(|c| c.c)
+                .collect::<String>()
+                .trim_end()
+                .to_owned()
+        };
+        let screen = (0..frame.rows)
+            .map(|r| row_text(r, Flags::empty()))
+            .collect::<Vec<_>>()
+            .join("\n");
+        // Claude Code's placeholder is dimmed and its cursor inverse.
+        let plain: Vec<String> = (0..frame.rows)
+            .map(|r| row_text(r, Flags::DIM | Flags::INVERSE))
+            .collect();
+        crate::idle::claude_idle(&screen, &plain, self.last_output.elapsed())
+    }
+
+    /// The visible screen as text (checks and diagnostics).
+    pub fn screen_text(&self) -> String {
+        self.session.as_ref().map(Session::text).unwrap_or_default()
+    }
+
+    /// Type `line` into the session (as a bracketed paste when the session
+    /// asked for it), then Enter as its own write a moment later, so the
+    /// program sees a paste and then a key press. Callers check
+    /// [`TerminalView::idle_at_prompt`] first.
+    pub fn send_line(&mut self, line: &str, cx: &mut Context<Self>) {
+        let Some(session) = &self.session else { return };
+        session.input(keys::paste_bytes(line, session.mode()));
+        let generation = self.generation;
+        let timer = cx.background_executor().timer(ENTER_AFTER_PASTE);
+        cx.spawn(async move |this, cx| {
+            timer.await;
+            let _ = this.update(cx, |this, _| {
+                if this.generation == generation
+                    && let Some(session) = &this.session
+                {
+                    session.input(b"\r".to_vec());
+                }
+            });
+        })
+        .detach();
     }
 
     pub fn title(&self) -> Option<&str> {
@@ -271,6 +334,7 @@ impl TerminalView {
     fn on_session_event(&mut self, event: SessionEvent, cx: &mut Context<Self>) {
         match event {
             SessionEvent::Wakeup => {
+                self.last_output = Instant::now();
                 if let Some(session) = &self.session {
                     session.take_wakeup();
                 }

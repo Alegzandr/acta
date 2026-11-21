@@ -465,6 +465,10 @@ catalogue! {
         en: t("Not undone: it was changed since."),
         fr: t("Non annulé\u{202f}: cela a été modifié depuis."),
     }
+    RedoChanged "redo.changed" {
+        en: t("Not redone: it was changed since."),
+        fr: t("Non rétabli\u{202f}: cela a été modifié depuis."),
+    }
     TableCount "table.count" {
         en: p("{n} topic", "{n} topics"),
         fr: p("{n} sujet", "{n} sujets"),
@@ -540,6 +544,22 @@ catalogue! {
     InboxMakeTopic "inbox.make_topic" {
         en: t("Make topic"),
         fr: t("Créer un sujet"),
+    }
+    InboxFileTo "inbox.file_to" {
+        en: t("File\u{2026}"),
+        fr: t("Classer\u{2026}"),
+    }
+    InboxPickNewEpic "inbox.pick.new_epic" {
+        en: t("New epic"),
+        fr: t("Nouvel epic"),
+    }
+    InboxPickInEpic "inbox.pick.in_epic" {
+        en: t("New topic in {path}"),
+        fr: t("Nouveau sujet dans {path}"),
+    }
+    InboxPickAsEntry "inbox.pick.as_entry" {
+        en: t("Entry in {path}"),
+        fr: t("Entrée dans {path}"),
     }
     InboxEmpty "inbox.empty" {
         en: t("Inbox is empty. Notes you capture land here until they become topics."),
@@ -641,6 +661,10 @@ catalogue! {
         en: t("Save as file"),
         fr: t("Enregistrer comme fichier"),
     }
+    KbSavedFile "kb.saved_file" {
+        en: t("Saved {name}. The file is not encrypted."),
+        fr: t("{name} enregistré. Le fichier n\u{2019}est pas chiffré."),
+    }
     KbMovedProjectDocument "kb.moved.project.document" {
         en: t("Moved to project {name}."),
         fr: t("Déplacé vers le projet {name}."),
@@ -732,6 +756,10 @@ catalogue! {
     DocGoHeading "doc.go_heading" {
         en: t("Go to heading"),
         fr: t("Aller au titre"),
+    }
+    DocSectionLines "doc.section_lines" {
+        en: p("{n} line", "{n} lines"),
+        fr: p("{n} ligne", "{n} lignes"),
     }
     HistoryVersion "history.version" {
         en: t("Version from {datetime} by {author}"),
@@ -1293,6 +1321,10 @@ catalogue! {
         en: t("{keys} create"),
         fr: t("{keys} créer"),
     }
+    PaletteHintChoose "palette.hint.choose" {
+        en: t("{keys} choose"),
+        fr: t("{keys} choisir"),
+    }
     PaletteHintClose "palette.hint.close" {
         en: t("{keys} close"),
         fr: t("{keys} fermer"),
@@ -1300,6 +1332,10 @@ catalogue! {
     PaletteNone "palette.none" {
         en: t("Nothing matches \"{query}\". {keys} creates a topic with this title."),
         fr: t("Aucun résultat pour «\u{202f}{query}\u{202f}». {keys} crée un sujet avec ce titre."),
+    }
+    PaletteNoChoice "palette.no_choice" {
+        en: t("Nothing matches \"{query}\"."),
+        fr: t("Aucun résultat pour «\u{202f}{query}\u{202f}»."),
     }
     CmdGoTopic "cmd.go_topic" {
         en: t("Go to topic\u{2026}"),

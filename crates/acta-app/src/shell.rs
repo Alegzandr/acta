@@ -141,6 +141,10 @@ actions!(
         Forward,
         /// `Mod+Z`.
         Undo,
+        /// `Mod+Shift+Z`, also `Ctrl+Y` on Windows and Linux.
+        Redo,
+        /// `Mod+Shift+O`: the open document's headings.
+        GoToHeading,
         /// ``Ctrl+` `` or `Mod+Shift+J`.
         ToggleTerminal,
         /// `Mod+1`.
@@ -191,6 +195,9 @@ actions!(
         TreeOpenTab,
     ]
 );
+
+/// The command "File with Claude Code" runs (the plugin's triage skill).
+const TRIAGE_COMMAND: &str = "/acta:triage";
 
 /// The active project as the status bar reports it (layout.md 4.6).
 #[derive(Clone, Debug)]
@@ -268,6 +275,8 @@ fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new(m("cmd-shift-d", "ctrl-shift-d"), NewDocument, app),
         KeyBinding::new(m("cmd-shift-m", "ctrl-shift-m"), NewMemory, app),
         KeyBinding::new(m("cmd-z", "ctrl-z"), Undo, plain),
+        KeyBinding::new(m("cmd-shift-z", "ctrl-shift-z"), Redo, plain),
+        KeyBinding::new(m("cmd-shift-o", "ctrl-shift-o"), GoToHeading, app),
         KeyBinding::new("ctrl-`", ToggleTerminal, None),
         KeyBinding::new(m("cmd-shift-j", "ctrl-shift-j"), ToggleTerminal, None),
         KeyBinding::new(m("cmd-1", "ctrl-1"), FocusSidebar, None),
@@ -306,6 +315,7 @@ fn key_bindings() -> Vec<KeyBinding> {
     } else {
         out.push(KeyBinding::new("alt-left", Back, plain));
         out.push(KeyBinding::new("alt-right", Forward, plain));
+        out.push(KeyBinding::new("ctrl-y", Redo, plain));
     }
     out
 }
@@ -429,6 +439,11 @@ struct Bench {
     /// Where the next "New topic" goes when it was asked for from a tree
     /// row's `plus` (that project, and that epic if any).
     create_in: Option<(ProjectId, Option<EpicId>)>,
+    /// What the open picker does with the row chosen.
+    on_pick: Option<crate::palette::OnPick>,
+    /// "File with Claude Code" found Claude Code mid-task: the restart
+    /// confirmation, when accepted, starts a session on the triage.
+    pending_triage: Option<Origin>,
     recent: Vec<TopicId>,
     overlay: Option<Overlay>,
     /// Where focus returns when the overlay closes.
@@ -639,6 +654,8 @@ impl Shell {
             view_subs: HashMap::new(),
             active_project: None,
             create_in: None,
+            on_pick: None,
+            pending_triage: None,
             recent: Vec::new(),
             overlay: None,
             return_focus: None,
@@ -722,6 +739,7 @@ impl Shell {
             self.navigate(Route::Inbox(id), true, window, cx);
         }
         self.refresh_kb_titles(cx);
+        self.mark_shown_seen(cx);
     }
 
     /// The layout of `preferences.json` (4.8.12): every page tab whose key
@@ -815,6 +833,12 @@ impl Shell {
                 self.open_palette(None, None, window, cx);
             }
             Ok("layout-menu") => self.open_menu(LayoutMenu::Layout, 1000., 40., cx),
+            // "File with Claude Code" against a live Claude Code: the
+            // terminal starts, then after 30 s the triage runs (typed into
+            // an idle session), then after 60 s more `/exit`, if idle. The
+            // terminal's screen goes to stderr at each step.
+            #[cfg(debug_assertions)]
+            Ok("triage-check") => self.dev_triage_check(window, cx),
             Ok("split") => {
                 self.change_layout(None, window, cx, |l| {
                     l.show_view(ViewId::Terminal);
@@ -999,6 +1023,37 @@ impl Shell {
             bench.history.replace(route);
         }
         self.show(route, window, cx);
+        self.mark_shown_seen(cx);
+    }
+
+    /// The pages on screen (the active tab of every page group) lose their
+    /// unread dot and get their read marker (data.md request 1).
+    pub(super) fn mark_shown_seen(&mut self, cx: &mut Context<Self>) {
+        let Content::Workbench(bench) = &self.content else {
+            return;
+        };
+        let shown: Vec<Record> = bench
+            .layout
+            .page
+            .groups
+            .iter()
+            .filter_map(|g| match g.active_tab()? {
+                Tab::Page(id) if id == bench.current => bench.history.current(),
+                Tab::Page(id) => bench.slots.get(&id)?.history.current(),
+                Tab::View(_) => None,
+            })
+            .filter_map(|route| match route {
+                Route::Topic(id) => Some(Record::Topic(id)),
+                Route::Kb(id) => Some(Record::Kb(id)),
+                _ => None,
+            })
+            .collect();
+        let ws = bench.ws.clone();
+        ws.update(cx, |ws, cx| {
+            for record in shown {
+                ws.mark_seen(record, cx);
+            }
+        });
     }
 
     /// The view of a page, its events tied to the tab that shows it.
@@ -1173,6 +1228,10 @@ impl Shell {
                 cx.notify();
             }
             PageEvent::NewKb(draft) => self.new_kb_draft(*draft, window, cx),
+            PageEvent::Pick(picker, on_pick) => {
+                self.open_picker(picker.clone(), on_pick.clone(), window, cx)
+            }
+            PageEvent::Triage(project) => self.file_with_claude(*project, window, cx),
             PageEvent::Located(project) => {
                 let project = *project;
                 if current == Some(tab)
@@ -1530,12 +1589,39 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.open_palette_with(scope, create, None, window, cx);
+    }
+
+    /// The palette as a picker a page asked for (a destination, a heading).
+    pub(super) fn open_picker(
+        &mut self,
+        picker: crate::palette::Picker,
+        on_pick: crate::palette::OnPick,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_palette_with(None, None, Some(picker), window, cx);
+        if let Some(bench) = self.bench() {
+            bench.on_pick = Some(on_pick);
+        }
+    }
+
+    fn open_palette_with(
+        &mut self,
+        scope: Option<Group>,
+        create: Option<CreateKind>,
+        picker: Option<crate::palette::Picker>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let context = self.command_context(window, cx);
         let Some(bench) = self.bench() else { return };
+        bench.on_pick = None;
         let ws = bench.ws.read(cx);
         let setup = Setup {
             scope,
             create,
+            picker,
             projects: ws.projects.clone(),
             recent: bench.recent.clone(),
             context,
@@ -1577,6 +1663,7 @@ impl Shell {
             has_project: bench.active_project.is_some(),
             on_topic: matches!(bench.history.current(), Some(Route::Topic(_))),
             on_record: matches!(bench.page, PageView::Record(_)),
+            on_doc: matches!(bench.history.current(), Some(Route::Kb(_))),
             can_back: bench.history.can_go_back(),
             can_forward: bench.history.can_go_forward(),
             tabs: bench.layout.page_tabs().len() > 1,
@@ -1617,8 +1704,17 @@ impl Shell {
             PaletteEvent::Dismiss => {
                 if let Some(bench) = self.bench() {
                     bench.create_in = None;
+                    bench.on_pick = None;
                 }
                 self.close_overlay(window, cx)
+            }
+            PaletteEvent::Picked(index) => {
+                let index = *index;
+                let on_pick = self.bench().and_then(|b| b.on_pick.take());
+                self.close_overlay(window, cx);
+                if let Some(on_pick) = on_pick {
+                    (on_pick.0)(index, window, cx);
+                }
             }
             PaletteEvent::Run(target, new_tab) => {
                 let (target, new_tab) = (target.clone(), *new_tab);
@@ -1628,6 +1724,7 @@ impl Shell {
                     Target::Project(id) => Route::Project(id),
                     Target::Kb(id, _) => Route::Kb(id),
                     Target::Command(command) => return self.run_command(command, window, cx),
+                    Target::Choice(_) => return,
                 };
                 if new_tab {
                     self.open_in_tab(route, window, cx);
@@ -1725,6 +1822,17 @@ impl Shell {
             Command::Capture => self.open_capture(window, cx),
             Command::GoInbox => self.go_project_page(Route::Inbox, window, cx),
             Command::GoKnowledge => self.go_project_page(Route::Knowledge, window, cx),
+            Command::GoHeading | Command::SaveFile | Command::KbMoveTo => {
+                if let Some(bench) = self.bench()
+                    && let PageView::Doc(page) = &bench.page
+                {
+                    page.update(cx, |page, cx| match command {
+                        Command::GoHeading => page.go_to_heading(cx),
+                        Command::SaveFile => page.save_as_file(cx),
+                        _ => page.move_to(cx),
+                    });
+                }
+            }
             Command::ReviewMemories => {
                 let Some(bench) = self.bench() else { return };
                 let Some(project) = bench.active_project else {
@@ -1765,6 +1873,7 @@ impl Shell {
             Command::Back => self.back(window, cx),
             Command::Forward => self.forward(window, cx),
             Command::Undo => self.undo(window, cx),
+            Command::Redo => self.redo(window, cx),
             Command::ToggleSidebar => self.toggle_sidebar(window, cx),
             Command::ToggleRight => self.toggle_area(Side::Right, window, cx),
             Command::ToggleBottom => self.toggle_area(Side::Bottom, window, cx),
@@ -1875,10 +1984,18 @@ impl Shell {
             &dialog,
             window,
             |shell, _, event: &DialogEvent, window, cx| match event {
-                DialogEvent::Close => shell.close_overlay(window, cx),
+                DialogEvent::Close => {
+                    if let Some(bench) = shell.bench() {
+                        bench.pending_triage = None;
+                    }
+                    shell.close_overlay(window, cx)
+                }
                 DialogEvent::RestartTerminal => {
                     shell.close_overlay(window, cx);
-                    shell.do_restart_terminal(window, cx);
+                    match shell.bench().and_then(|b| b.pending_triage.take()) {
+                        Some(origin) => shell.start_triage(origin, window, cx),
+                        None => shell.do_restart_terminal(window, cx),
+                    }
                 }
                 DialogEvent::RemoveSetup => {
                     shell.close_overlay(window, cx);
@@ -2124,6 +2241,61 @@ impl Shell {
         cx.notify();
     }
 
+    /// "File with Claude Code" (screens.md 8.2): the terminal shows, and
+    /// the triage command runs in the project's session, typed there only
+    /// when Claude Code is idle at its prompt. Mid-task, nothing is typed:
+    /// the restart confirmation asks before a new session starts on it.
+    fn file_with_claude(
+        &mut self,
+        project: ProjectId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(bench) = self.bench() else { return };
+        let projects = bench.ws.read(cx).projects.clone();
+        let Some(name) = tree::locate_project(&projects, project).and_then(|l| l.project) else {
+            return;
+        };
+        let origin = Origin {
+            owner: Owner::Project(project),
+            project,
+            name: name.1,
+        };
+        self.show_terminal_for_command(window, cx);
+        let Some(bench) = self.bench() else { return };
+        let dock = bench.dock.clone();
+        let sent = dock.update(cx, |dock, cx| {
+            dock.send(origin.clone(), TRIAGE_COMMAND, window, cx)
+        });
+        crate::log::line(&format!("triage: {sent:?}"));
+        if sent == crate::terminal_dock::Send::Busy {
+            if let Some(bench) = self.bench() {
+                bench.pending_triage = Some(origin);
+            }
+            self.open_dialog(DialogKind::RestartTerminal, window, cx);
+        }
+    }
+
+    fn start_triage(&mut self, origin: Origin, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_terminal_for_command(window, cx);
+        let Some(bench) = self.bench() else { return };
+        bench.dock.update(cx, |dock, cx| {
+            dock.restart_on(origin, TRIAGE_COMMAND, window, cx)
+        });
+        cx.notify();
+    }
+
+    /// Show the Terminal view without starting a session from the page:
+    /// the command decides which session runs.
+    fn show_terminal_for_command(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(bench) = self.bench() {
+            bench.ui.terminal_shown = true;
+        }
+        self.change_layout(None, window, cx, |l| {
+            l.show_view(ViewId::Terminal).is_some()
+        });
+    }
+
     fn terminal_size(&mut self, by: f32, cx: &mut Context<Self>) {
         if let Some(bench) = self.bench() {
             bench
@@ -2343,6 +2515,64 @@ impl Shell {
         }
         bench.toast = None;
         bench.ws.update(cx, |ws, cx| ws.undo_active(project, cx));
+        cx.notify();
+    }
+
+    #[cfg(debug_assertions)]
+    fn dev_triage_check(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.view_action(ViewId::Terminal, ViewAction::Show, window, cx);
+        cx.spawn_in(window, async move |shell, cx| {
+            let dump = |shell: &mut Shell, step: &str, cx: &mut Context<Shell>| {
+                if let Some(bench) = shell.bench()
+                    && let Some(project) = bench.active_project
+                {
+                    let screen = bench.dock.read(cx).dev_screen(project, cx);
+                    eprintln!("[triage-check] {step}\n{}", screen.unwrap_or_default());
+                }
+            };
+            cx.background_executor()
+                .timer(Duration::from_secs(30))
+                .await;
+            let _ = shell.update_in(cx, |shell, window, cx| {
+                dump(shell, "before", cx);
+                if let Some(project) = shell.bench().and_then(|b| b.active_project) {
+                    shell.file_with_claude(project, window, cx);
+                }
+            });
+            cx.background_executor()
+                .timer(Duration::from_secs(60))
+                .await;
+            let _ = shell.update_in(cx, |shell, _, cx| {
+                dump(shell, "after triage", cx);
+                if let Some(bench) = shell.bench()
+                    && let Some(project) = bench.active_project
+                {
+                    let typed = bench
+                        .dock
+                        .update(cx, |dock, cx| dock.dev_type_if_idle(project, "/exit", cx));
+                    eprintln!("[triage-check] /exit typed: {typed}");
+                }
+            });
+            cx.background_executor()
+                .timer(Duration::from_secs(10))
+                .await;
+            let _ = shell.update_in(cx, |shell, _, cx| dump(shell, "after exit", cx));
+        })
+        .detach();
+    }
+
+    /// `Mod+Shift+Z` (`Ctrl+Y` on Windows and Linux): the newest undone
+    /// step of the window, layout or write, by the same rule as `Mod+Z`.
+    fn redo(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(bench) = self.bench() else { return };
+        let project = bench.active_project;
+        let write = bench.ws.read(cx).newest_redo(project);
+        let layout = bench.layout_undo.newest_redo();
+        if crate::layout::layout_step_first(layout, write) {
+            return self.redo_layout(window, cx);
+        }
+        bench.toast = None;
+        bench.ws.update(cx, |ws, cx| ws.redo_active(project, cx));
         cx.notify();
     }
 
@@ -2763,6 +2993,15 @@ impl Shell {
         let menu = bench.tree_menu;
         let renaming = bench.rename.as_ref().map(|r| (r.key, r.state.clone()));
         let menu_items = self.menu_items(&rows, cx);
+        let unread: Vec<bool> = match self.bench() {
+            Some(bench) => {
+                let ws = bench.ws.read(cx);
+                rows.iter()
+                    .map(|row| tree::row_unread(row, &ws.projects, &ws.unread))
+                    .collect()
+            }
+            None => vec![false; rows.len()],
+        };
         let items: Vec<AnyElement> = rows
             .iter()
             .enumerate()
@@ -2780,7 +3019,9 @@ impl Shell {
                     .filter(|(k, _)| *k == key)
                     .map(|(_, state)| state.clone());
                 let cursor = ring && i == cursor && edit.is_none();
-                tree_row(row, i, current, cursor, menu, edit, locale, t, cx)
+                tree_row(
+                    row, i, current, unread[i], cursor, menu, edit, locale, t, cx,
+                )
             })
             .collect();
         let on_trash = current == Some(Route::Trash);
@@ -3729,10 +3970,15 @@ fn key_loss(db: PathBuf, unreadable: bool) -> Content {
 /// Debug builds started with `ACTA_DEV_SEED=1` fill an empty database with
 /// sample data, the current directory as the project folder.
 fn seed_if_asked(store: &mut acta_core::Store) {
+    let seed = std::env::var("ACTA_DEV_SEED").unwrap_or_default();
     if cfg!(debug_assertions)
-        && std::env::var_os("ACTA_DEV_SEED").is_some_and(|v| v == "1")
+        && (seed == "1" || seed == "bare")
         && let Ok(dir) = std::env::current_dir()
-        && let Err(err) = crate::dev_seed::seed(store, &dir)
+        && let Err(err) = if seed == "bare" {
+            crate::dev_seed::bare(store, &dir)
+        } else {
+            crate::dev_seed::seed(store, &dir)
+        }
     {
         crate::log::line(&format!(
             "dev seed failed: {}",
@@ -3808,6 +4054,7 @@ fn tree_row(
     row: &Row,
     index: usize,
     current: Option<Route>,
+    unread: bool,
     cursor: bool,
     menu: Option<AnyElement>,
     edit: Option<Entity<InputState>>,
@@ -3994,6 +4241,10 @@ fn tree_row(
                 )))
         }
     };
+    // The trailing slot: the unread dot (components.md 5, list / tree row).
+    if unread {
+        el = el.child(busy_dot(t));
+    }
     if let Some(route) = row.route() {
         // Mod+click or a middle click opens the row in a new tab (4.4).
         el = el
@@ -4300,6 +4551,10 @@ impl Render for Shell {
             .on_action(cx.listener(|s, _: &Back, w, cx| s.back(w, cx)))
             .on_action(cx.listener(|s, _: &Forward, w, cx| s.forward(w, cx)))
             .on_action(cx.listener(|s, _: &Undo, w, cx| s.undo(w, cx)))
+            .on_action(cx.listener(|s, _: &Redo, w, cx| s.redo(w, cx)))
+            .on_action(
+                cx.listener(|s, _: &GoToHeading, w, cx| s.run_command(Command::GoHeading, w, cx)),
+            )
             .on_action(cx.listener(|s, _: &ExportData, w, cx| s.open_export(w, cx)))
             .on_action(cx.listener(|s, _: &ImportData, w, cx| s.import(w, cx)))
             .on_action(cx.listener(|s, _: &RestoreSnapshot, w, cx| s.open_snapshots(w, cx)))

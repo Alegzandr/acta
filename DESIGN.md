@@ -47,14 +47,16 @@ Load only the part a task needs. Section numbers are global: "4.7" or "DESIGN 4.
 | [layout.md](docs/design/layout.md) | 4 | Spacing, heights, radii, icons (4.1); app shell (4.2), the Projects tree: structure, signals, reveal, long trees, empty states (4.2.1), titlebar (4.3), tabs (4.4), tool windows (4.5), status bar (4.6), `preferences.json` (4.7). |
 | [workbench.md](docs/design/workbench.md) | 4.8 | Workbench layout: areas, views, area header and view tabs, showing and hiding, resizing, moving views by drag and drop and by command, page groups, web views during drags, narrow windows, recovering the layout, persistence, defaults and Reset layout. |
 | [components.md](docs/design/components.md) | 5 | States and focus ring; button, inputs, editors, list row, tree row (kinds, states, drag, sticky project row), status indicator, segmented control, slash menu, notice, checkbox, palette, menus, tooltip, toast, dialog, empty state, scrollbar, resize handle, kbd, update indicator. |
-| [components-records.md](docs/design/components-records.md) | 5 | Timeline entry, current-state panel, note card, properties block, topic table. |
+| [components-records.md](docs/design/components-records.md) | 5 | Timeline entry, current-state panel, note card, properties block, due row and due date picker, topic table, Overview section and filter chip. |
+| [components-questions.md](docs/design/components-questions.md) | 5 | Questions and people: naming, the person value and person field, the Questions section and question row, composer, answering and the decision offer, Report to (row, popover, notes, filing), the Questions page, the person page, signals elsewhere. |
+| [components-attachments.md](docs/design/components-attachments.md) | 5 | Files on notes, entries and descriptions (ADR 0012): the attachment strip, adding by paste, drop and button, refusals, the viewer, Save as and Open in another app, where files show elsewhere. |
 | [components-knowledge.md](docs/design/components-knowledge.md) | 5 | Knowledge section, knowledge base page, document reading view and editor, history. |
-| [components-folders.md](docs/design/components-folders.md) | 5 | Working folders: rows, inheritance, not found and repair, picker, paths, terminal launch. |
+| [components-folders.md](docs/design/components-folders.md) | 5 | Working folders: rows, the switcher, inheritance, the active folder, git state, commit modes, not found and repair, picker, paths, terminal launch. |
 | [components-app.md](docs/design/components-app.md) | 5 | Chat panel, settings page, shortcuts page, export, import, trash, snapshot restore, key-loss recovery, updater window. |
 | [interaction.md](docs/design/interaction.md) | 6 | Keyboard map (6.1), focus (6.2), motion and latency budgets (6.3), writes, undo and confirmation (6.4), changes from other processes (6.5). |
-| [screens.md](docs/design/screens.md) | 8 | Wireframes: topic page (8.1), inbox (8.2), palette (8.3), terminal (8.4), first run (8.5), knowledge (8.6, 8.7, 8.10), import preview (8.8), key loss (8.9), working folders (8.11), settings (8.12), chat (8.13), epic (8.14), tab bar (8.15), updater (8.16), workbench with the right sidebar (8.17), dragging a view (8.18), split page area and views moved (8.19). |
-| [copy.md](docs/design/copy.md) | 7, 10.1 to 10.3 | Voice; languages, French conventions, dates, times and numbers, layout under longer text. |
-| [catalogue.md](docs/design/catalogue.md) | 10.4, 10.4.1 | Every UI string by key, English and French. Code and tests read 10.4; 10.4.1 notes how the keys of 4.8 moved into it. |
+| [screens.md](docs/design/screens.md) | 8 | Wireframes: topic page (8.1), inbox (8.2), palette (8.3), terminal (8.4), first run (8.5), knowledge (8.6, 8.7, 8.10), import preview (8.8), key loss (8.9), working folders (8.11), settings (8.12), chat (8.13), epic (8.14), tab bar (8.15), updater (8.16), workbench with the right sidebar (8.17), dragging a view (8.18), split page area and views moved (8.19), project page with its Overview (8.20), questions and Report to on a topic (8.21), questions page (8.22), person page (8.23), quick capture with Report to (8.24), a note with files and the viewer (8.25). |
+| [copy.md](docs/design/copy.md) | 7, 10.1 to 10.3 | Voice; languages, French conventions, dates, times and numbers, due dates and typed dates (10.2.1), layout under longer text. |
+| [catalogue.md](docs/design/catalogue.md) | 10.4 to 10.4.7 | Every UI string by key, English and French. Code and tests read 10.4; 10.4.1 notes how the keys of 4.8 moved into it; 10.4.2 to 10.4.7 hold keys pending implementation. |
 | [data.md](docs/design/data.md) | 11 | What model data every element shows; data model requests. |
 
 Sections 1 (principles), 9 (review checklist) and the Direction are in this file. The token table (2.1), the contrast table (2.2) and the catalogue (10.4) are parsed by tests in `crates/acta-app` (`theme.rs`, `i18n/mod.rs`): keep their headings and table shapes.
@@ -111,13 +113,48 @@ Run against every screen, in dark and in light, in English and in French. One fa
 - [ ] Drag: every move by drag has its key (`Alt+Up` / `Alt+Down`, `M`); the insertion line or target shows exactly where the row lands; `Esc` cancels; a drop is one `Mod+Z` step, with no toast.
 - [ ] Empty: no project shows "No projects yet." and "New project..."; an expanded empty epic shows the "New topic" ghost row; nothing else is added for emptiness.
 
+**Due dates** (run with no date anywhere, then with topics overdue, due today, due in 2 and in 30 days, and a closed topic with a past date, at 23:59 and after midnight)
+- [ ] Nothing about dates shows until a record has one, except the always-present Due row ("None"); the Due column and the Overdue and Next 7 days segments appear only while a listed topic has a date.
+- [ ] Overdue reads in greyscale everywhere: words on the page ("Overdue by 3 days"), `clock-alert` plus `warning` in the table, the `clock-alert` shape in the tree. A closed topic, or a complete epic or project, is never overdue anywhere, agent output included.
+- [ ] Tree: only overdue and due today are drawn, neutral (`text.secondary`, `text.tertiary`), in the trailing slot, after the hover `plus` and the unread dot; never rolled up into a folded row; no date text and no colour.
+- [ ] Picker: reachable by `D`, `Enter` on the row and "Set due date..."; every action works from the keyboard; the preview line shows the exact day before `Enter`; `Esc` and a click outside change nothing; English and French words parse in both languages; day-month order only.
+- [ ] Setting, changing and clearing is one `Mod+Z` step, writes a system event, and shows no toast. Past midnight, relative forms and marks update without moving a row; day counts are calendar days across a daylight-saving change.
+- [ ] Agent side: `brief`, `find` and the session briefing stay within their budgets with every record dated; `update` takes only `YYYY-MM-DD` or `""`.
+
+**Overview** (components-records.md 5, screens.md 8.20; run with a calm project, then one with blocked, overdue, idle topics and a 12-day-old inbox, in both themes and languages)
+- [ ] At rest the project page shows at most five attention lines, each only above zero; nothing applies: the header row and "Nothing needs attention." only; no zero, no chart, no tile, no card.
+- [ ] Colour is `warning` on the Blocked and Overdue glyphs only; no accent at rest; every line reads in greyscale by glyph and words.
+- [ ] "More" is collapsed by default and holds only Last 7 days, Epics and the memory line, each absent when it has nothing to say; the epic page's section is absent with nothing to report and collapsed by default otherwise.
+- [ ] Every number opens the list it counts, and the list's count equals it; the chip clears with its `x`, `Backspace` or `Esc`; every line has its palette command.
+- [ ] A remote write that adds or removes a line moves neither focus nor viewport; values change at local midnight without moving anything else.
+- [ ] Agent side: the `Attention:` line appears only when something needs attention, is one line within 160 chars (120 on an epic), and `brief` stays within its budget with every topic blocked, overdue or idle.
+
+**Questions and people** (run with no question anywhere, then with a topic holding open, overdue, answered and dropped questions, an epic and a project with roll-ups, people spelled two ways, and a done topic not reported)
+- [ ] Empty: the section is its header and one line; nothing about questions or people shows in the tree, the status bar or the tabs; the Questions and Report to columns and the inbox's Report to filter exist only while something uses them.
+- [ ] A question's state reads in greyscale (glyph shape), its lateness in words ("Overdue by 3 days"); a closed question shows no date and is never overdue, agent output included.
+- [ ] Question text wraps and is never truncated; open questions keep their stored order on the page and never move under the reader; the person page and Overdue order by lateness.
+- [ ] Every action works from the keyboard: `Q` adds, `A` answers, `E` edits, `D` dates, `M` moves, `R` sets Report to, `Space` marks reported on the person page; all are in the palette; each change is one `Mod+Z` step (an answer and its decision entry together), with a toast only for delete.
+- [ ] The decision checkbox appears only for a question on a topic; the entry it writes holds only the question and the answer, no words of Acta's.
+- [ ] People: one key per person (case, accents, spacing ignored) in suggestions, filters, the person page and `find(person)`; the person is shown as written, never translated, in French always after a colon; no person page is restored after a restart.
+- [ ] Report to: on topics and epics only, its row always shown ("None"); "Not reported yet" only on closed work; a note's person carries to the topic or epic made from it; reported is never inferred.
+- [ ] Agent side: `brief`, `find` and the session briefing stay within budgets with 50 overdue questions per topic and 80-char names; question, answer and person text is inside the data fence; projects refuse `report_to`.
+
+**Attachments** (run with a note holding 20 files: images, a PDF, a text file, a 24 MB archive; a filed note; at 880 x 560)
+- [ ] Paste, drop and the `paperclip` button each add files in quick capture, the inbox capture, a note, the timeline composer and a description; text on the clipboard always pastes as text; `Mod+Shift+A` exists only in those editors.
+- [ ] Every file action works from the keyboard (strip stop, `Left` / `Right`, `Enter`, `Mod+S`, `Delete`, `Shift+F10`); adding and removing are one `Mod+Z` step each, with a toast only for remove.
+- [ ] Nothing decrypted touches the disk except Save as, chosen by the person, and, only once ADR 0012, 8, is accepted, the Open copy under `<data dir>/open`, deleted at quit and at the next start.
+- [ ] Refusals name the file, its size and the limit; nothing over 400 ms spins; the UI never waits on a file being stored.
+- [ ] Viewer: images fit and never upscale; GIFs do not animate; text shows at most 1 MB with the notice; `Esc` returns focus to the file; web views are hidden under it.
+- [ ] Agent side: names and sizes only in `find`, `brief` and `entries`; `attachment` returns fenced text within 6,000 chars, one image within the pixel cap, or one line for a binary.
+
 **Behaviour**
 - [ ] Feedback on the next frame; nothing in the "never animates" list animates; budgets in 6.3 hold with 10,000 topics.
 - [ ] Writes are optimistic; failure restores state and keeps the user's text.
 - [ ] Every destructive action is undoable, or is one of the confirmed cases in 6.4. No path deletes for good, overwrites a document without a revision, or writes plaintext to disk without the warning.
 - [ ] Data-safety screens (export, import, trash, snapshots, key loss) state facts and the next step: no red fills, no alarm words, no blame, exact counts and dates.
 - [ ] Knowledge: kind icon, summary and author mark visible wherever an entry is listed; inherited and rolled-up entries labelled with their level; every memory written by Claude Code can be read, edited, moved and deleted by the human from the list; document body uses `type.document`, short surfaces use `type.reading`.
-- [ ] Working folders: the row shows the primary effective folder and, when it is inherited, where it comes from; paths are `type.code`, middle-truncated, with native separators; a folder that was not found is marked by icon and words (not colour alone), offers Locate, and blocks nothing; removing a folder never touches the disk and is undoable; the terminal never starts anywhere but the primary folder.
+- [ ] Working folders: the row shows the active folder by name and icon, its git branch and changes when known, and, when it is inherited, where it comes from; the switcher changes the active folder from the row and from the terminal header in one step, and a running session is never restarted by it (the header offers "Restart in ..."); the list shows own and inherited folders in separate groups, inherited ones edited only at their level; the active folder is marked by shape and the word "Active", not colour alone; another checkout of the same repository is labelled as not passed; paths are `type.code`, middle-truncated, with native separators; a folder that was not found is marked by icon and words (not colour alone), offers Locate, and blocks nothing; removing a folder never touches the disk beyond the settings Acta wrote, and is undoable; the terminal never starts anywhere but the active folder.
+- [ ] Commit modes: offered only for a folder in a git repository; Manual is the default; each mode is described in words under the control; "Commit in my name" and "Also on main" appear only with an automatic mode; the form names the git identity commits will use and says where Acta writes its rules, or why it does not; nothing in the UI sets git identity or pushes by itself.
 - [ ] A write from another process during reading, scrolling and editing moves neither focus nor viewport, and never overwrites a field in edit.
 
 **Copy**

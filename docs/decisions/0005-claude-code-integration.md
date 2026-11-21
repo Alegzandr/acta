@@ -198,3 +198,6 @@ Read in the docs, not run: auto memory settings (`autoMemoryEnabled` per project
 Assumptions: setting `_meta` through the `rmcp` macros (otherwise patch `list_tools`); interactive sessions behave like `-p` for hooks and permissions; token figures use 4 chars per token; nothing was run on macOS or Linux.
 
 Sources: code.claude.com/docs/en/{hooks, mcp, skills, sub-agents, permissions, env-vars, memory}, code.claude.com/docs/en/plugins/{manifest-reference, components, loading, create-marketplace, host-marketplace, cli-reference}, crates.io/crates/rmcp, github.com/modelcontextprotocol/rust-sdk (README, crates/rmcp, crates/rmcp-macros), docs.rs/rmcp-macros/3.11.0, modelcontextprotocol.io/specification/2026-07-28.
+
+## Changelog
+- 2026-11-21: ADR 0011 adds a `PreToolUse` guard (`acta hook pre-git`, scoped with `if` to `git commit` and `git push`), a folders and commit line in the session-start briefing (at most 300 chars, before memory titles), a "Commits" section in `using-acta`, and moves the `autoMemoryEnabled` writer into one ledger-backed settings writer in `acta-core`.

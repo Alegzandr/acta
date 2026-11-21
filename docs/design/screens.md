@@ -16,18 +16,19 @@ Widths are for the default 1440 x 900 window. Every screen exists in both themes
 |     [i] Inbox      4 |        Embed the terminal bound to the project   <- type.title 24/30    |
 |     [k] Knowledge    |    12                                                                   |
 |     (o) Naming       |        Status    [(.) Active v]            <- properties block: rows 28,|
-|   v Core UI          |        Epic      Terminal                    label column as wide as its|
-|       (v) App shell  |        Folders   > [f] ~\dev\acta-wt\embed-terminal  +1   longest label |
-|       (.) Sidebar t..|        Id        T-42                      <- type.code, copies on Enter|
-|       ( ) Palette   *|        Updated   2 h ago by Claude Code                                 |
-|   v Terminal         |    24                                                                   |
-|      [(.) Embed th..]|        +--------------------------------------------------------+       |
-|       (=) Scrollback |        | Current state                                          |       |
-|       (-) Links      |        | Rendering and input work on Windows. Resize still      |       |
-|       > 3 closed     |        | drops the last row; fix is in progress.                |       |
-|   > Notes            |        +--------------------------------------------------------+       |
-| > Atlas              |    24   bg.raised, border.subtle, radius.lg, padding 16, type.reading   |
-| > Field notes        |        Description                                  <- type.label       |
+|   v Core UI          |        Due       15 Dec 2026  In 24 days      optional; "None" if unset  |
+|       (v) App shell  |        Epic      Terminal                    label column as wide as its|
+|       (.) Sidebar t..|        Folders   > [f] ~\dev\acta-wt\embed-terminal  +1   longest label |
+|       ( ) Palette   *|        Id        T-42                      <- type.code, copies on Enter|
+|   v Terminal         |        Updated   2 h ago by Claude Code                                 |
+|      [(.) Embed th..]|    24                                                                   |
+|       (=) Scrollback |        +--------------------------------------------------------+       |
+|       (-) Links      |        | Current state                                          |       |
+|       > 3 closed     |        | Rendering and input work on Windows. Resize still      |       |
+|   > Notes            |        | drops the last row; fix is in progress.                |       |
+| > Atlas              |        +--------------------------------------------------------+       |
+| > Field notes        |    24   bg.raised, border.subtle, radius.lg, padding 16, type.reading   |
+|                      |        Description                                  <- type.label       |
 |                      |        Run Claude Code inside Acta, in the project directory, so        |
 |                      |        the tracker and the agent share one window.                      |
 |                      |    32                                                                   |
@@ -85,7 +86,7 @@ Annotations: one tab is open, so there is no tab bar. The tree follows 4.2.1: it
 +----------------------+-------------------------------------------------------------------------+
 ```
 
-Annotations: the capture editor is focused when the inbox opens. Newest note first. Card actions appear on hover or focus only (shown on the first card): Make topic `T`, Edit `Enter`, Delete `Delete`. "File with Claude Code" is the single secondary button: it shows the terminal and runs the filing command there; resulting topics arrive as Draft with unread dots, and their notes move to Filed with links. With the Open filter empty the button is disabled. `J` / `K` move between cards.
+Annotations: the capture editor is focused when the inbox opens. Newest note first. Card actions appear on hover or focus only (shown on the first card): Make topic `T`, Edit `Enter`, Delete `Delete`. "File with Claude Code" is the single secondary button: it shows the terminal and runs the filing command (`/acta:triage`) in the project's session. The command is typed into that session only when Claude Code sits idle at an empty prompt (nothing printed for 1.5 s, no "esc to interrupt" on screen, the cursor on an empty `>` line); with no live session, one starts on the project's folders with the command as its first prompt; with Claude Code mid-task (or anything that does not read as idle), nothing is typed and the restart confirmation of 6.4 asks before a new session starts on the command; resulting topics arrive as Draft with unread dots, and their notes move to Filed with links. With the Open filter empty the button is disabled. `J` / `K` move between cards.
 
 ### 8.3 Command palette
 
@@ -115,12 +116,13 @@ Annotations: empty query shows "Recent" (the last 5 topics) then the 5 most rele
 +------------------------------------------------------------------------------------------------+
 | [=] [<] [>]  Acta / Terminal / Embed the terminal          [Search  Ctrl K] [o] [>_ on] - [] X | 36
 +----------------------+-------------------------------------+-----------------------------------+
-| v Acta               |  32                                 | Terminal  on topic Embed..[r] [-] |
+| v Acta               |  32                                 | Terminal on Em.. [g]em..v [r] [-] |
 |   v Terminal         |  Embed the terminal bound to        |-----------------------------------|
 |      [(.) Embed th..]|  the project                        |  > claude                         |
 |                      |  Status   [(.) Active v]            |                                   |
 |                      |  Epic     Terminal                  |  * Fixing the resize path in      |
-|                      |  Folders > [f] ~\…\embed-terminal +1|    crates/terminal/src/grid.rs    |
+|                      |  Folders > [g] embed-terminal v  +2 |    crates/terminal/src/grid.rs    |
+|                      |            [b] embed · 3 changed    |                                   |
 |                      |  Id       T-42                      |                                   |
 |                      |  Updated  just now by Claude Code   |  * acta log "Resize fixed"        |
 |                      |  +-------------------------------+  |                                   |
@@ -135,7 +137,7 @@ Annotations: empty query shows "Recent" (the last 5 topics) then the 5 most rele
                          it with 32 side padding              header 28, then the grid, padding 12
 ```
 
-Annotations: the terminal is a tool window in the right dock (4.5). Its header names what the session is on ("on topic Embed the terminal", truncated here) and holds Restart here `[r]` and hide `[-]`; the titlebar toggle shows `fill.selected` while it is visible. The divider is a resize handle. With the dock open the column is 468 wide, under the 520 threshold: the folder row's path is middle-truncated, and a row that carries a label or a not-found state takes its two-line form (8.11). The session starts in the primary working folder of the page it was opened from, with the additional folders passed along (8.11 shows what the tool window says when there is no folder or the folder is gone); when the session ends, the grid shows one line, "Session ended. Enter to restart.", in `text.tertiary`, and restarting uses the folders of the page open at that moment. The current-state update written by Claude Code appears in the page with the highlight while focus stays in the terminal.
+Annotations: the terminal is a tool window in the right dock (4.5). Its header names what the session is on ("on topic Embed the terminal", truncated here), then the folder switcher with the folder the session runs in (`[g]` is `git-branch`, the automatic icon of a worktree), and holds Restart here `[r]` and hide `[-]`; the titlebar toggle shows `fill.selected` while it is visible. The divider is a resize handle. With the dock open the column is 468 wide, under the 520 threshold: the folder row takes its two-line form, the git state (`[b]` `git-branch` 12, branch, changed count) moving under the switcher (8.11). The session starts in the active folder of the page it was opened from, with the other folders it sees passed along (8.11 shows what the tool window says when there is no folder or the folder is gone); when the session ends, the grid shows one line, "Session ended. Enter to restart.", in `text.tertiary`, and restarting uses the folders of the page open at that moment. The current-state update written by Claude Code appears in the page with the highlight while focus stays in the terminal.
 
 ### 8.5 First run
 
@@ -158,7 +160,7 @@ Annotations: the terminal is a tool window in the right dock (4.5). Its header n
   content column 560 centred; everything left-aligned inside it; no logo, no illustration
 ```
 
-Annotations: the three steps are plain text rows in `text.secondary` (not a checklist to tick, not a wizard); they become available as soon as the project exists and disappear for good once the project has one topic. Choosing a folder creates the project named after the folder, attaches the folder as the project's primary working folder, and opens its inbox with the capture editor focused. Other empty states follow the same pattern at the top of their column: empty project ("No topics yet. Capture notes and let Claude Code file them, or start one yourself." [New topic]), empty epic, empty timeline, no search results.
+Annotations: the three steps are plain text rows in `text.secondary` (not a checklist to tick, not a wizard); they become available as soon as the project exists and disappear for good once the project has one topic. Choosing a folder creates the project named after the folder, attaches the folder to the project as its working folder (active by default), and opens its inbox with the capture editor focused. Other empty states follow the same pattern at the top of their column: empty project ("No topics yet. Capture notes and let Claude Code file them, or start one yourself." [New topic]), empty epic, empty timeline, no search results.
 
 ### 8.6 Topic page, knowledge section expanded
 
@@ -300,66 +302,114 @@ Annotations: the view with two filters set (kind and author). Set filters show t
 The folder row at rest. It is the value of the Folders property, so the label "Folders" stands to its left (not drawn here). The cases:
 
 ```
-        > [f] ~\dev\acta-wt\embed-terminal  +1                               28  own folders: no label
+        > [g] embed-terminal v  [b] topic/embed · 3 changed  +2              28  own active folder: no label
 
-        > [f] ~\dev\acta  +1  from epic Terminal                             28  inherited: label, name is a link
+        > [r] Acta v  [b] main  +1  from project Acta                        28  inherited active folder: label, a link
 
-        > [x] D:\work\acta  Not found on this computer  [Locate...]          28  primary missing: folder-x, warning
+        > [x] Acta v  from project Acta  Not found on this computer  [Locate...]   active folder missing
 
-        > [x] D:\work\acta  from epic Terminal  Not found on this computer  [Locate...]   inherited and missing
-
-        > [f] ~\dev\acta-wt\embed-terminal  +2  [x] 1 not found              28  additional missing: launch not blocked
+        > [g] embed-terminal v  [b] topic/embed  +2  [x] 1 not found         28  additional missing: launch not blocked
 
           [f] No working folder. The terminal will ask where to start.   [Set working folder...]
-        |chev|icon|<- path, type.code, middle-truncated, min 160 ->|12|count|12|<- label ->|12|<- state ->|
+        |chev|<- switcher: icon, name, v ->|12|<- git ->|12|count|12|<- origin ->|12|<- state ->|
 ```
 
-The same rows when the column is under 520 (the normal case with the terminal docked: 468). What follows the path and its count moves to a second line aligned with the path, and the row is 52:
+The same rows when the column is under 520 (the normal case with the terminal docked: 468). The switcher and the count stay on the first line; the rest moves to a second line aligned with the switcher's icon, and the row is 52:
 
 ```
-        > [f] ~\dev\acta  +1                                         52
-              from epic Terminal
+        > [g] embed-terminal v  +2                                   52
+              [b] topic/embed · 3 changed
 
-        > [x] D:\work\acta                                           52
-              from epic Terminal  Not found on this computer  [Locate...]
-
-        > [f] ~\…\embed-terminal  +2                                 52
-              [x] 1 not found
+        > [x] Acta v                                                 52
+              from project Acta  Not found on this computer  [Locate...]
         |<------------------------ 468 ------------------------>|
 ```
 
-Unfolded on a topic that has its own folders and includes its epic's:
+The switcher open (on the folder row or in the terminal header; the same menu):
 
 ```
-        v Working folders  4                                                 28  type.label + count
-            [f] ~\dev\acta-wt\embed-terminal                        Primary  28  type.code, text.primary
-            [f] ~\dev\acta-docs                                              28  additional: text.secondary
-                (i) Also attached to topic Scrollback. A session started in this folder
-                    outside Acta opens on epic Terminal and is told about both topics.
-            [x] D:\work\design-assets    Not found on this computer  [Locate...]
-            [v] Also include inherited folders                               28  checkbox, checked
-         8  From epic Terminal                                 <- type.small, tertiary
-            [f] ~\dev\acta                                                   28  read-only here
+        > [g] embed-terminal v
+          +--------------------------------------------+
+          | This topic                                 |  group labels: type.small, tertiary
+          | [g]  embed-terminal                 Active |  32 per item
+          | [k]  Design notes                          |
+          | From epic Terminal                         |
+          | [p]  alacritty fork                        |
+          | From project Acta                          |
+          | [r]  Acta                                  |
+          | [d]  acta-docs                   Not found |  text.disabled, cannot be chosen
+          |--------------------------------------------|
+          | Edit folders...                            |
+          | Add folder...                              |
+          +--------------------------------------------+
+            dropdown menu (5): min 200, max 320; type-ahead by name
+```
+
+Unfolded on a topic worked in its own git worktree, with a folder of its own for notes, inheriting its epic's crate folder and its project's checkout and docs:
+
+```
+        v [g] embed-terminal v   Working folders  5                          28  header
+         8  This topic                                         <- type.small, tertiary
+            (o) [g] embed-terminal  [b] topic/embed · 3 changed  [c] Active  52  circle-dot, accent; name text.primary
+                    ~\dev\acta-wt\embed-terminal                                 path: type.code, tertiary
+            ( ) [k] Design notes                                             52  circle on hover/focus only
+                    ~\notes\acta\terminal
+         8  From epic Terminal
+                [p] alacritty fork  [b] acta-patches                         52  another repository: passed
+                    ~\dev\alacritty-fork
+         8  From project Acta
+                [r] Acta  [b] main                                           52
+                    ~\dev\acta
+                    (i) Another checkout of the same repository as embed-terminal.
+                        Not passed to Claude Code here.
+                [x] acta-docs   Not found on this computer  [Locate...]      52
+                    D:\work\acta-docs
             [+ Add folder...]                                                28  ghost
-         8  Claude Code starts in the primary folder and may also read and edit the others.
+         8  Claude Code starts in the active folder and may also read and edit the others.
     24
         +--------------------------------------------------------+
         | Current state                                          |
 ```
 
+Folder settings, unfolded in place under an own folder (here a git worktree in Commit and push mode):
+
+```
+            (o) [g] embed-terminal  [b] topic/embed · 3 changed  [c] Active
+                    ~\dev\acta-wt\embed-terminal
+        12
+                    Name   [embed-terminal                ]                  text input 240, placeholder = last segment
+         8
+                    Icon   [A][f][r][g][<>][b][k][s][w][m][d][t][a]          13 toggles 28, "A" = Automatic, selected
+         8
+                    Commits by Claude Code                                   type.label, secondary
+                    [ Manual | Commit | Commit and push ]                    segmented control, "Commit and push" selected
+                    After each commit, Claude Code also pushes to the branch's upstream.
+                    Never forced; it stops and tells you if a push is rejected or needs a sign-in.
+         8
+                    [v] Commit in my name, without Co-Authored-By Claude     checkbox
+                    [ ] Also on main                                         checkbox, off
+                    Commits use your git identity: Alexandre.                type.small, tertiary
+         8
+                    Acta writes these rules to .claude/settings.local.json in this folder,
+                    kept out of git.                                         type.small, tertiary
+```
+
 Unfolded on a topic with nothing of its own:
 
 ```
-        v Working folders  2
-         8  From epic Terminal
-            [f] ~\dev\acta                                          Primary
-            [f] ~\…\clients\alexandre\acta-design-assets
-            [Set folder for this topic...]
-         8  This topic uses the folders of epic Terminal. A folder set here replaces them
-            for this topic only.
+        v [r] Acta v   Working folders  2
+         8  This topic
+                No folders of its own.                                       type.small, tertiary
+         8  From project Acta
+            (o) [r] Acta  [b] main                                [c] Active
+                    ~\dev\acta
+            ( ) [d] acta-docs
+                    ~\dev\acta-docs
+            [+ Add folder...]
+         8  Claude Code starts in the active folder and may also read and edit the others.
 ```
 
-The terminal pane when there is nothing to start in, and when the primary folder is gone:
+The terminal pane when there is nothing to start in, and when the active folder is gone:
 
 ```
 +-----------------------------------+      +-----------------------------------+
@@ -367,20 +417,22 @@ The terminal pane when there is nothing to start in, and when the primary folder
 |  Where should Claude Code start?  |      |  The working folder was not found |  type.heading
 |  8                                |      |  8                                |
 |  Embed the terminal has no        |      |  Claude Code was not started.     |  type.reading,
-|  working folder, and neither has  |      |  This is the primary folder of    |  text.secondary
-|  its epic or its project.         |      |  epic Terminal, and it is not on  |
-| 16                                |      |  this computer:                   |
+|  working folder, and neither has  |      |  This is the active folder of     |  text.secondary
+|  its epic or its project.         |      |  topic Embed the terminal, and it |
+| 16                                |      |  is not on this computer:         |
 |  [v] Save as the working folder   |      |  8                                |
 |      of project Acta              |      |  C:\Users\Alexandre\dev\acta      |  type.code,
 |  4   If not saved, it is used     |      |                                   |  selectable
 |      until Acta quits.            |      | 24                                |
 | 24                                |      |  [Locate folder...]  [Try again]  |  primary, secondary
-|  [Choose a folder...]             |      |                                   |
+|  [Choose a folder...]             |      | 16                                |
+|                                   |      |  Or start in another folder:      |  type.small, secondary
+|                                   |      |  [d] acta-docs v                  |  the switcher
 +-----------------------------------+      +-----------------------------------+
   terminal surface (bg.sunken dark, bg.raised light), padding 12, text max 480, focus on the primary button
 ```
 
-Annotations: `[f]` is `folder-open`, `[x]` is `folder-x` in `warning`, `(i)` is `info` 14, `[v]` a checked checkbox. In the first two blocks the rows are alternatives, not a list. The folded row always shows the primary effective folder, so "where will Claude Code start" is answered without unfolding. Inherited rows are never editable from below; their menu leads to the level that owns them. The terminal messages are the empty-state pattern on the terminal's surface, not dialogs: nothing was lost and nothing needs confirming, and the page stays usable beside them.
+Annotations: icons are the folders' own: `[g]` `git-branch` (automatic, a worktree), `[r]` `folder-git-2` (automatic, a repository), `[f]` `folder-open`, `[k]` `book-open`, `[p]` `package`, `[d]` `folder-open` (a plain folder); `[x]` is `folder-x` in `warning`, `[b]` `git-branch` 12 of the git state, `[c]` `git-commit-horizontal` 12 (automatic commits), `(i)` `info` 14, `(o)` `circle-dot` (active), `( )` `circle` (hover or focus only), `[v]` a checked checkbox, `v` after a name the switcher's `chevron-down`. In the first two blocks the rows are alternatives, not a list. The folded row always shows the active folder by name, so "where will Claude Code start" is answered without unfolding, and the switcher changes it without unfolding. Inherited rows are never edited from below (no settings form, no drag); their menu leads to the level that owns them, and "Set as active here" is the one thing a page decides about them. The terminal messages are the empty-state pattern on the terminal's surface, not dialogs.
 
 ### 8.12 Settings
 
@@ -448,6 +500,7 @@ Annotations: left, the panel before the web view exists; right, Windows without 
 ```
         Terminal                                                  <- type.title
     12  Progress   3 of 7 topics done  [=====-------]             <- properties block
+        Due        18 Dec 2026  In 27 days                        <- the epic's own date
         Folders    > [f] ~\dev\acta  +1  from project Acta
         Id         E-3
         Updated    2 h ago by Claude Code
@@ -455,17 +508,17 @@ Annotations: left, the panel before the web view exists; right, Windows without 
         Everything that runs Claude Code inside Acta.
     32  Knowledge  2                                          [+]
         ...
-    32  [Open|All|Closed]  4 topics                           [+]   28  toolbar
-     8       Title                               Entries   Updated   28  header, type.small
+    32  [Open|Overdue|Next 7 days|All|Closed]  4 topics            [+]   28  toolbar
+     8       Title                        Due Entries   Updated   28  header, type.small
         ------------------------------------------------------------    border.subtle
-        (.)  Embed the terminal bound to the pr..     14   2 h ago   32
-        (=)  Terminal scrollback                 *     6   Mon       32  * unread dot
-        ( )  Links in terminal output                  0   12 Nov    32
-        (o)  Session restore                           1   9 Nov     32
-        |24 |<- title, fills, truncates ->|          |<- 56 ->|<- 72 ->|
+        (.)  Embed the terminal b..  ! 18 Nov      14   2 h ago   32  ! clock-alert, warning
+        (=)  Terminal scrollback  *     Today       6   Mon       32  * unread dot
+        ( )  Links in terminal ou..       Tue       0   12 Nov    32  due soon: text.secondary
+        (o)  Session restore                        1   9 Nov     32  no date: empty cell
+        |24 |<- title, fills ->|  |<- 88 ->|<- 56 ->|<- 72 ->|
 ```
 
-Annotations: the epic's progress is computed (topics Done over topics not Dropped). The table shows open topics by default, in the tree's order; a project page shows the same table grouped by epic. Under 520 of column width the Entries column goes.
+Annotations: the epic's progress is computed (topics Done over topics not Dropped). The drawing is made on Saturday 21 Nov 2026. The Due column and the Overdue and Next 7 days segments are there because topics of this epic have dates; with none, the toolbar reads Open / All / Closed and the column is absent (components-records.md 5). The first topic is open and was due 18 Nov, so it is overdue: icon and text in `warning`, tooltip "Overdue by 3 days, due 18 Nov 2026". The table shows open topics by default, in the tree's order; a project page shows the same table grouped by epic. Under 520 of column width the Entries column goes.
 
 ### 8.15 Tab bar
 
@@ -570,3 +623,239 @@ Annotations: the pointer is on the 24 strip along the bottom of the page area, w
 ```
 
 Annotations: the Inbox was dragged from its page tab into the left sidebar's header, so it became the Inbox view and follows the active project ("Acta" is its context). It drops its page title; its capture editor and cards take the full 276 of width. The second page group was made by dragging "Resize protocol" to the right edge of the page area. Each group is at least 400 wide; a narrower window folds the split (4.8.10) and lists "Group 2" in the tab bar's menu. The right sidebar is hidden; its toggle in the titlebar still shows, as do the Terminal and Chat toggles.
+
+### 8.20 Project page with its Overview
+
+At rest, something needs attention (Saturday 21 Nov 2026):
+
+```
+        Acta                                                       <- type.title
+    12  Progress   14 of 31 topics done  [====--------]            <- properties block
+        Due        None
+        Folders    > [f] ~\dev\acta
+        Updated    2 h ago by Claude Code
+    24  Overview                                       [More v]    28  header, type.label
+     4  (=)  2 blocked topics                                      32  circle-pause, warning
+        (!)  1 overdue topic                                       32  clock-alert, warning
+        (.)  3 active topics with no activity for 7 days           32  circle-dot, text.secondary
+        [i]  6 notes in the inbox, the oldest for 12 days          32  inbox, text.secondary
+    32  Description
+        ...
+```
+
+At rest, nothing needs attention:
+
+```
+    24  Overview  Nothing needs attention.                [More v]    28  the whole section
+    32  Description
+```
+
+"More" expanded:
+
+```
+    24  Overview  Nothing needs attention.                [Less ^]
+    16  Last 7 days                                                16  type.small, text.tertiary
+     4  [4 topics done] · [2 decisions] · [3 new topics]           28  inline ghost links
+    16  Epics
+     4  No epic           [==========--]   5 of 6                  28
+        Terminal          [====--------]   3 of 7   ! 18 Nov       28  overdue epic date, warning
+        Core UI           [=-----------]   1 of 9      Tue         28
+        2 complete epics                                           28  text.tertiary, not a control
+    16  Knowledge
+     4  5 memories not updated for 90 days                         28
+        |<- name, fills ->|<- 120 ->|12|<- 56 ->|<- 88 ->|
+```
+
+Epic page, the mini version collapsed (the default) and expanded:
+
+```
+        Terminal                                                   <- type.title
+    12  Progress   3 of 7 topics done  [====--------]
+        ...
+    24  > Needs attention  2                                       28  collapsed
+    32  Description
+
+    24  v Needs attention  2                                       28  expanded
+     4  (=)  1 blocked topic                                       32
+        (!)  1 overdue topic                                       32
+```
+
+Annotations: no figure is drawn at zero and no line exists for a normal state; a fresh inbox (newest note 2 days old) shows nothing here, because the tree's Inbox count already says it. The Overview spends no accent: colour is `warning` on the two glyphs that mean a real problem, nothing else. Every line, link and epic row opens the list behind its number (components-records.md 5); the topic table then shows a filter chip in place of its segmented control, for example `[Blocked x]  2 topics`. An epic with nothing to report has no section at all.
+
+### 8.21 Topic page with questions and Report to
+
+Content column only (560); the drawing is made on Saturday 21 Nov 2026.
+
+```
+        Embed the terminal bound to the project                     <- type.title
+    12  Status     [(.) Active v]
+        Due        15 Dec 2026  In 24 days
+        Report to  Marie                                            <- link: person page
+        Epic       Terminal
+        Folders    > [f] ~\dev\acta-wt\embed-terminal  +1
+        Id         T-42
+        Updated    2 h ago by Claude Code
+    24  +--------------------------------------------------------+
+        | Current state ...                                      |
+        +--------------------------------------------------------+
+    24  Description
+        Run Claude Code inside Acta, in the project directory, ...
+    32  Questions  2                                          [+]   28 header, count = open
+     4  (?) Can we keep the v1 export format until March,     (A)   text wraps, never cut
+            or must both formats ship together?
+            Asked Marie · Answer by 18 Nov 2026  Overdue by 3 days  <- last run in warning
+     4  (?) Which Windows versions must the installer       * [>]   Claude Code asked it;
+            support?                                                unread dot
+            Asked Legal team
+        > 3 closed                                                  ghost row, folded
+    32  Knowledge  3                                          [+]
+        ...
+    32  Timeline ...
+```
+
+Answering the first question (`A`):
+
+```
+        (?) Can we keep the v1 export format until March,     (A)
+            or must both formats ship together?
+            Asked Marie · Answer by 18 Nov 2026  Overdue by 3 days
+         8  +----------------------------------------------------+
+            | Yes, until 31 March. After that only v2.           |   answer editor, focused
+            +----------------------------------------------------+
+         8  [x] Also log it as a decision       [Cancel] [Save answer]
+```
+
+The "3 closed" row unfolded, and the composer open (`Q`), with the person field's suggestions:
+
+```
+        v 3 closed
+        (v) Can the export file leave the EU?                 (A)
+            Inside the EEA only; ask again for anything else.        <- answer, type.reading
+            Asked Legal team · Answer recorded 19 Nov 2026 by Alexandre · Logged as a decision
+        (-) Do we need a second signing key?                  [>]
+            Dropped 17 Nov 2026 by Claude Code
+        ...
+        (?) [What do you need to know?                          ]   composer, last open row
+         8  Asked [Ma|                     ]   Answer by [None]
+                  +-------------------------+
+                  | Marie            2 open |   suggestions, 4 below, floating
+                  | Marius           1 open |   "Ma" matched in weight 600
+                  +-------------------------+
+```
+
+Annotations: `(?)` is `circle-question-mark` (open, `text.secondary`), `(v)` `circle-check` and `(-)` `circle-slash` (closed, `text.tertiary`); `(A)` and `[>]` are the author marks of the timeline, at the right, for who created the question. The overdue phrase is the Due row's ("Overdue by 3 days", `warning`), so lateness reads in words. Report to is set and the topic is open, so no run follows the name; once the topic is Done it reads "Marie  Not reported yet". The decision checkbox is there because the question belongs to a topic; on an epic or a project page it is absent. On epic and project pages the section ends with the roll-up row ("4 more open in the topics of this epic, 1 overdue"). 8.1 predates this section; the order drawn here is the one of layout.md 4.2.
+
+### 8.22 Questions page (project)
+
+```
+        Questions                                                   <- type.title
+     8  Acta · 7 open, 12 closed                                    <- type.small tertiary
+    24  [Open|Overdue|Closed|All]                                   28, Overdue only while one is late
+    16  Project Acta                                          1     28 group header, link
+        (?) Do we keep a free tier on the website?            (A)
+            Asked Alexandre's accountant · Answer by 4 Dec 2026  In 13 days
+        Epic Terminal                                         2
+        (?) Is ConPTY acceptable as the minimum on Windows?   [>]
+        (?) Who reviews the terminal colours for contrast?    (A)
+            Asked Design review group
+        Topic Embed the terminal                              2
+        (?) Can we keep the v1 export format until March,     (A)
+            or must both formats ship together?
+            Asked Marie · Answer by 18 Nov 2026  Overdue by 3 days
+        (?) Which Windows versions must the installer       * [>]
+            support?
+            Asked Legal team
+        ...
+```
+
+Annotations: groups are owners, widest first, as on the knowledge base page; rows are the question rows of 8.21, and `Enter` opens the owner's page with the question focused. With Overdue selected the list is ungrouped, earliest answer date first, each meta line starting "in Topic Embed the terminal". Scoped to an epic (from its roll-up row) the scope line reads "Epic Terminal · 3 open, 5 closed" followed by the ghost link "Whole project".
+
+### 8.23 Person page
+
+```
+        Marie                                                       <- type.title, as written
+     8  In Acta · 2 questions to ask, 3 things to report
+    32  Questions asked                                             28 header
+        (?) Can we keep the v1 export format until March,     (A)
+            or must both formats ship together?
+            in Topic Embed the terminal · Answer by 18 Nov 2026  Overdue by 3 days
+        (?) Is the 4 Dec review still on?                      (A)
+            in Project Acta · Answer by 4 Dec 2026  In 13 days
+        > 1 closed
+    32  To report
+        (v) Encrypted backups                      Not reported yet   32, text.secondary
+        [l] Terminal                                   3 of 7 done   epic: its progress
+        (.) Embed the terminal bound to the project         Active   open topic: status word
+        [n] Ask about the review room for Thursday             Tue   open note: capture time
+        > 2 reported
+```
+
+Annotations: `[l]` is `layers` (an epic), `[n]` `sticky-note` (a note). Questions are ordered by lateness here, not by their owner's order: the reader is about to talk to Marie. `Space` on "Encrypted backups" marks it reported; it moves into "2 reported" on the next frame and the change is one `Mod+Z` step, with no toast. Reached from any "Marie" link and from "Go to person...". The tab is not restored after a restart (4.7).
+
+### 8.24 Quick capture with Report to, and the note card
+
+```
+    +--------------------------------------------------------------+
+    | Note for Acta                                        [Acta]  |   640, bg.overlay, radius.xl
+    | Ask about the review room for Thursday                       |
+    |                                                              |
+    | Report to  [Marie                ]        Ctrl Enter to save |   28, Tab from the editor
+    +--------------------------------------------------------------+
+
+        +--------------------------------------------------------+
+        | Ask about the review room for Thursday                 |   note card in the inbox
+        | 10 min ago · Report to Marie                [->][e][x] |   meta: name is a link
+        +--------------------------------------------------------+
+```
+
+Annotations: the field starts empty on every capture and is optional; `Mod+Enter` saves from the editor or the field. Made into a topic, the note gives "Marie" to the topic's Report to. In the inbox toolbar, "Report to: anyone" appears next to Open / Filed while a listed note names a person.
+
+### 8.25 Note with files, and the viewer
+
+A note card in the inbox, with two images and two other files; one chip is focused:
+
+```
+        +--------------------------------------------------------+
+        | Whiteboard from the review, and the vendor's quote.    |   body, type.reading
+     8  | +------+ +------+                                      |   tiles 64 x 64, 8 apart
+        | |######| |######|                                      |   thumbnails, cover crop
+        | +------+ +------+                                      |
+     8  | [f] Quote-Q4-va…dor.pdf 2.1 MB  [f] notes.md 4 KB      |   chips 28, border.default
+        |  ^ focus ring on the first chip                        |
+     8  | 10 min ago · Report to Marie              [->][e][x]   |   meta row
+        +--------------------------------------------------------+
+```
+
+Quick capture after pasting a screenshot (`Mod+V`) and dropping a PDF, while a third file is still being stored:
+
+```
+    +--------------------------------------------------------------+
+    | Note for Acta                                        [Acta]  |
+    | Error on the export screen, and the log Marie sent.          |
+    | +------+                                                     |
+    | |######|  [f] export-log.txt 812 KB  [f] trace.zip Adding… 40%|
+    | +------+                                                     |
+    | (i) Files over 10 MB are kept in the database and in each of |   type.small tertiary, once
+    |     its snapshots.                                           |
+    | Report to  [Marie            ]   [@]     Ctrl Enter to save  |   [@] paperclip, Ctrl Shift A
+    +--------------------------------------------------------------+
+```
+
+The viewer, on the second of two images of the note:
+
+```
+  +------------------------------------------------------------------------------------------+
+  |  IMG_2041.jpg   3.4 MB · 3024 x 4032                 2 of 2  [<] [>]   [Save as...]  [x] |  44, border.default under
+  |------------------------------------------------------------------------------------------|
+  |                                                                                          |
+  |                               +----------------------+                                   |
+  |                               |                      |                                   |   image fitted, bg.sunken
+  |                               |                      |                                   |   around it; 0 toggles
+  |                               |                      |                                   |   fit / actual size
+  |                               +----------------------+                                   |
+  |                                                                                          |
+  +------------------------------------------------------------------------------------------+
+    inset 32 from the window, bg.overlay, radius.xl, shadow.overlay, over the scrim
+```
+
+Annotations: `[f]` is `file-text`, `[@]` `paperclip`, `(i)` `info`. Images come before other files; names are cut in the middle so the extension stays. The quick capture's third file shows "Adding… 40%" because it has taken over 400 ms; the note can be saved meanwhile. A file over 25 MB would instead leave the line "trace.zip is 48 MB; the limit is 25 MB per file." in `danger` with `triangle-alert`. PDFs offer Save as (and, once ADR 0012 accepts it, Open in another app); the viewer is for images and text-like files only. Made into a topic, the note's files go to the topic's description; the filed card then lists them in `text.secondary` under "Moved to T-51".

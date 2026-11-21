@@ -124,6 +124,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `error.save_entry` | Could not save the entry. The database is locked by another process. | Impossible d'enregistrer l'entrée. La base de données est verrouillée par un autre processus. |
 | `error.save` | Could not save the change. Try again. | Impossible d'enregistrer la modification. Réessayez. |
 | `undo.changed` | Not undone: it was changed since. | Non annulé : cela a été modifié depuis. |
+| `redo.changed` | Not redone: it was changed since. | Non rétabli : cela a été modifié depuis. |
 | `table.count` | {n} topic · {n} topics | {n} sujet · {n} sujets |
 | `table.filter.open` | Open | Ouverts |
 | `table.filter.all` | All | Tous |
@@ -143,6 +144,10 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `inbox.dismissed` | Dismissed | Écartée |
 | `inbox.by_claude` | by Claude Code | par Claude Code |
 | `inbox.make_topic` | Make topic | Créer un sujet |
+| `inbox.file_to` | File... | Classer... |
+| `inbox.pick.new_epic` | New epic | Nouvel epic |
+| `inbox.pick.in_epic` | New topic in {path} | Nouveau sujet dans {path} |
+| `inbox.pick.as_entry` | Entry in {path} | Entrée dans {path} |
 | `inbox.empty` | Inbox is empty. Notes you capture land here until they become topics. | La boîte de réception est vide. Les notes que vous saisissez arrivent ici jusqu'à devenir des sujets. |
 | `inbox.filed_empty` | No filed notes yet. Notes that become topics or entries are listed here. | Aucune note classée pour l'instant. Les notes devenues des sujets ou des entrées sont listées ici. |
 | `kb.new_document` | New document | Nouveau document |
@@ -168,6 +173,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `kb.move_to` | Move to... | Déplacer vers... |
 | `kb.change_kind` | Change kind | Changer de nature |
 | `kb.save_file` | Save as file | Enregistrer comme fichier |
+| `kb.saved_file` | Saved {name}. The file is not encrypted. | {name} enregistré. Le fichier n'est pas chiffré. |
 | `kb.moved.project.document` | Moved to project {name}. | Déplacé vers le projet {name}. |
 | `kb.moved.project.memory` | Moved to project {name}. | Déplacée vers le projet {name}. |
 | `kb.moved.epic.document` | Moved to epic {name}. | Déplacé vers l'epic {name}. |
@@ -191,6 +197,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `doc.editing` | Editing | Modification en cours |
 | `doc.needs` | A document needs a title and a summary. | Un document doit avoir un titre et un résumé. |
 | `doc.go_heading` | Go to heading | Aller au titre |
+| `doc.section_lines` | {n} line · {n} lines | {n} ligne · {n} lignes |
 | `history.version` | Version from {datetime} by {author} | Version du {datetime} par {author} |
 | `history.text` | Text | Texte |
 | `history.changes` | Changes | Modifications |
@@ -331,8 +338,10 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `palette.hint.open` | {keys} open | {keys} ouvrir |
 | `palette.hint.tab` | {keys} open in new tab | {keys} ouvrir dans un nouvel onglet |
 | `palette.hint.create` | {keys} create | {keys} créer |
+| `palette.hint.choose` | {keys} choose | {keys} choisir |
 | `palette.hint.close` | {keys} close | {keys} fermer |
 | `palette.none` | Nothing matches "{query}". {keys} creates a topic with this title. | Aucun résultat pour « {query} ». {keys} crée un sujet avec ce titre. |
+| `palette.no_choice` | Nothing matches "{query}". | Aucun résultat pour « {query} ». |
 | `cmd.go_topic` | Go to topic... | Aller au sujet... |
 | `cmd.capture` | Capture a note | Saisir une note |
 | `cmd.new_topic` | New topic | Nouveau sujet |
@@ -638,3 +647,295 @@ New with the tree's redesign (2026-11-21). They stay here, outside the table the
 | `tree.empty` | No projects yet. | Aucun projet pour l'instant. |
 | `tree.collapse_all` | Collapse all | Tout replier |
 | `cmd.tree_collapse_all` | Projects: Collapse all | Projets : tout replier |
+
+### 10.4.3 Keys of folder sets and commit modes (ADR 0011), pending
+
+New with ADR 0011 (2026-11-21). They stay here, outside the table the tests read, until the folders UI of ADR 0011 is implemented; the implementing change applies the three lists below to 10.4 and to `catalogue.rs` in the same commit.
+
+**Removed** from 10.4 (the concepts are gone): `folders.primary`, `folders.include`, `folders.not_used`, `folders.set_here`, `folders.uses`, `folders.make_primary`, `cmd.folder_primary`, `cmd.folders_include`, `cmd.folders_exclude`, `terminal.missing.body` (replaced by the three level keys below).
+
+**Changed** text in 10.4:
+
+| Key | English | French |
+|---|---|---|
+| `folders.hint` | Claude Code starts in the active folder and may also read and edit the others. | Claude Code démarre dans le dossier actif et peut aussi lire et modifier les autres. |
+
+**New**, placed after `folders.picker` (folders), after `terminal.restart.title` (terminal), after `cmd.folders_bulk` (commands) after `settings.not_found` (settings) and after the last `import.` key (import):
+
+| Key | English | French |
+|---|---|---|
+| `folders.active` | Active | Actif |
+| `folders.set_active` | Set as active here | Définir comme actif ici |
+| `folders.edit` | Edit folders... | Modifier les dossiers... |
+| `folders.settings` | Folder settings... | Réglages du dossier... |
+| `folders.group.topic` | This topic | Ce sujet |
+| `folders.group.epic` | This epic | Cet epic |
+| `folders.group.project` | This project | Ce projet |
+| `folders.group.from_epic` | From epic {name} | De l'epic {name} |
+| `folders.group.from_project` | From project {name} | Du projet {name} |
+| `folders.no_own` | No folders of its own. | Aucun dossier propre. |
+| `folders.not_found_short` | Not found | Introuvable |
+| `folders.other_checkout` | Another checkout of the same repository as {name}. Not passed to Claude Code here. | Autre copie de travail du même dépôt que {name}. Non transmise à Claude Code ici. |
+| `folders.git.detached` | detached at {commit} | détaché sur {commit} |
+| `folders.git.changed` | {n} changed | {n} modifié · {n} modifiés |
+| `folders.git.auto_commit` | Claude Code commits automatically here | Claude Code commite automatiquement ici |
+| `folders.git.auto_push` | Claude Code commits and pushes automatically here | Claude Code commite et pousse automatiquement ici |
+| `folders.name` | Name | Nom |
+| `folders.icon` | Icon | Icône |
+| `folders.icon.auto` | Automatic | Automatique |
+| `folders.icon.auto_hint` | Automatic: a branch for a git worktree, a git folder for a repository, a folder otherwise | Automatique : une branche pour un worktree git, un dossier git pour un dépôt, un dossier sinon |
+| `folders.icon.folder` | Folder | Dossier |
+| `folders.icon.repo` | Git repository | Dépôt git |
+| `folders.icon.worktree` | Git worktree | Worktree git |
+| `folders.icon.code` | Code | Code |
+| `folders.icon.docs` | Documentation | Documentation |
+| `folders.icon.package` | Package | Paquet |
+| `folders.icon.server` | Server | Serveur |
+| `folders.icon.web` | Web | Web |
+| `folders.icon.mobile` | Mobile | Mobile |
+| `folders.icon.data` | Data | Données |
+| `folders.icon.lab` | Experiments | Expériences |
+| `folders.icon.design` | Design | Design |
+| `folders.commits` | Commits by Claude Code | Commits par Claude Code |
+| `folders.commit.manual` | Manual | Manuel |
+| `folders.commit.commit` | Commit | Commit |
+| `folders.commit.push` | Commit and push | Commit et push |
+| `folders.commit.manual_hint` | Claude Code commits only when you ask. | Claude Code ne commite que si vous le demandez. |
+| `folders.commit.commit_hint` | After each finished, tested change, Claude Code commits it. | Après chaque modification terminée et testée, Claude Code la commite. |
+| `folders.commit.push_hint` | After each commit, Claude Code also pushes to the branch's upstream. Never forced; it stops and tells you if a push is rejected or needs a sign-in. | Après chaque commit, Claude Code pousse aussi vers la branche amont. Jamais en force ; il s'arrête et vous prévient si un push est refusé ou demande une connexion. |
+| `folders.commit.as_user` | Commit in my name, without Co-Authored-By Claude | Commiter en mon nom, sans Co-Authored-By Claude |
+| `folders.commit.on_default` | Also on {branch} | Aussi sur {branch} |
+| `folders.commit.identity` | Commits use your git identity: {name}. | Les commits utilisent votre identité git : {name}. |
+| `folders.commit.no_identity` | Git has no user name for this folder, so commits will fail. Acta does not set it. | Git n'a pas de nom d'utilisateur pour ce dossier : les commits échoueront. Acta ne le définit pas. |
+| `folders.commit.file` | Acta writes these rules to .claude/settings.local.json in this folder, kept out of git. | Acta écrit ces règles dans le .claude/settings.local.json de ce dossier, exclu de git. |
+| `folders.commit.tracked` | This folder's .claude/settings.local.json is tracked by git, so Acta does not write it: Claude Code will ask before each commit. | Le .claude/settings.local.json de ce dossier est suivi par git, Acta ne l'écrit donc pas : Claude Code demandera avant chaque commit. |
+| `folders.commit.user_key` | Your own {key} setting in .claude/settings.local.json is kept. | Votre propre réglage {key} dans .claude/settings.local.json est conservé. |
+| `folders.commit.root_wins` | The repository's own local settings set attribution, and that setting wins. | Les réglages locaux du dépôt définissent attribution, et ce réglage l'emporte. |
+| `terminal.missing.body.topic` | Claude Code was not started. This is the active folder of topic {name}, and it is not on this computer: | Claude Code n'a pas été lancé. C'est le dossier actif du sujet {name}, et il n'est pas sur cet ordinateur : |
+| `terminal.missing.body.epic` | Claude Code was not started. This is the active folder of epic {name}, and it is not on this computer: | Claude Code n'a pas été lancé. C'est le dossier actif de l'epic {name}, et il n'est pas sur cet ordinateur : |
+| `terminal.missing.body.project` | Claude Code was not started. This is the active folder of project {name}, and it is not on this computer: | Claude Code n'a pas été lancé. C'est le dossier actif du projet {name}, et il n'est pas sur cet ordinateur : |
+| `terminal.missing.other` | Or start in another folder: | Ou démarrer dans un autre dossier : |
+| `terminal.running_in` | (running in {name}) | (lancé dans {name}) |
+| `terminal.restart_in` | Restart in {name} | Redémarrer dans {name} |
+| `cmd.folder_switch` | Switch active folder... | Changer de dossier actif... |
+| `cmd.folder_active` | Make folder active | Rendre le dossier actif |
+| `cmd.folder_settings` | Folder settings... | Réglages du dossier... |
+| `cmd.commit_mode` | Set commit mode... | Définir le mode de commit... |
+| `cmd.commit_mode.manual` | Manual | Manuel |
+| `cmd.commit_mode.commit` | Commit automatically | Commiter automatiquement |
+| `cmd.commit_mode.push` | Commit and push automatically | Commiter et pousser automatiquement |
+| `settings.auto_commit` | Automatic commits | Commits automatiques |
+| `settings.auto_commit.hint` | The default for folders set to commit automatically. Each folder can choose otherwise in its folder settings. Commits always use your own git identity. | La valeur par défaut des dossiers qui commitent automatiquement. Chaque dossier peut en décider autrement dans ses réglages. Les commits utilisent toujours votre propre identité git. |
+| `import.auto_commit` | {n} working folder lets Claude Code commit automatically. Acta writes its rules only once the folder is found on this computer. · {n} working folders let Claude Code commit automatically. Acta writes their rules only once each folder is found on this computer. | {n} dossier de travail laisse Claude Code commiter automatiquement. Acta n'écrit ses règles qu'une fois le dossier trouvé sur cet ordinateur. · {n} dossiers de travail laissent Claude Code commiter automatiquement. Acta n'écrit leurs règles qu'une fois chaque dossier trouvé sur cet ordinateur. |
+
+The checkbox of `settings.auto_commit` reuses `folders.commit.as_user`. `{branch}` is the default branch's name as git has it, never translated; `{key}` is a settings key (`attribution`, `env`), never translated.
+
+### 10.4.4 Keys of due dates, pending
+
+New with due dates (2026-11-21; components-records.md 5, layout.md 4.2.1, copy.md 10.2.1, data.md 11 request 16). They stay here, outside the table the tests read, until due dates are implemented; the implementing change moves them into 10.4 and adds them to `catalogue.rs` in the same commit: `prop.due` after `prop.level`, the `due.*` keys right after it, `event.due_*` after `event.status`, `table.due` and `table.filter.*` after `table.reset`, `cmd.due_*` after `cmd.set_status`. Month and weekday names and the compact form are formats of 10.2.1, not keys. In French, *échéance* is feminine ("Aucune"), and `{date}` takes "le" or "au" from the string (10.2).
+
+| Key | English | French |
+|---|---|---|
+| `prop.due` | Due | Échéance |
+| `due.none` | None | Aucune |
+| `due.today` | Today | Aujourd'hui |
+| `due.tomorrow` | Tomorrow | Demain |
+| `due.in_days` | In {n} day · In {n} days | Dans {n} jour · Dans {n} jours |
+| `due.overdue` | Overdue by {n} day · Overdue by {n} days | En retard de {n} jour · En retard de {n} jours |
+| `due.tip.today` | Due today | Échéance aujourd'hui |
+| `due.tip.tomorrow` | Due tomorrow | Échéance demain |
+| `due.tip.in_days` | Due {date}, in {n} day · Due {date}, in {n} days | Échéance le {date}, dans {n} jour · Échéance le {date}, dans {n} jours |
+| `due.tip.overdue` | Overdue by {n} day, due {date} · Overdue by {n} days, due {date} | En retard de {n} jour, échéance le {date} · En retard de {n} jours, échéance le {date} |
+| `due.tip.date` | Due {date} | Échéance le {date} |
+| `due.picker.placeholder` | fri, in 3d, 15/12, 2026-12-15 | ven., dans 3 j, 15/12, 2026-12-15 |
+| `due.picker.invalid` | Not a date. Try fri, in 3d, 15/12 or 2026-12-15. | Date non reconnue. Essayez ven., dans 3 j, 15/12 ou 2026-12-15. |
+| `due.picker.range` | Choose a date between 2000 and 2099. | Choisissez une date entre 2000 et 2099. |
+| `due.picker.none` | No due date | Aucune échéance |
+| `due.picker.prev` | Previous month | Mois précédent |
+| `due.picker.next` | Next month | Mois suivant |
+| `event.due_set` | {author} set the due date to {date} | {author} a fixé l'échéance au {date} |
+| `event.due_cleared` | {author} cleared the due date | {author} a supprimé l'échéance |
+| `table.due` | Due | Échéance |
+| `table.filter.overdue` | Overdue | En retard |
+| `table.filter.week` | Next 7 days | 7 prochains jours |
+| `cmd.due_set` | Set due date... | Définir l'échéance... |
+| `cmd.due_clear` | Clear due date | Effacer l'échéance |
+
+`due.in_days` and `due.tip.in_days` are used from 2 days ahead (today and tomorrow have their own keys), so their singular forms only serve the plural rule. `due.tip.date` is the tooltip of a date on a closed record, which is never "overdue". The picker's Clear button reuses `common.clear`. Agent-facing text (`due 11-27 (6d)`, `overdue 3d`) is protocol, English only, and not in this catalogue (10).
+
+### 10.4.5 Keys of the Overview, pending
+
+New with the Overview (2026-11-21; components-records.md 5, screens.md 8.20, data.md 11 request 17). They stay here, outside the table the tests read, until the Overview is implemented; the implementing change moves them into 10.4 and adds them to `catalogue.rs` in the same commit: `overview.*` after `section.knowledge`, `filter.*` after `table.filter.*` (10.4.4), `cmd.show_*` and `cmd.overview_*` after `cmd.go_inbox`. Reused, not duplicated: "No epic" is `tree.no_epic`, the Knowledge block label is `section.knowledge`. Every `{n}` and `{days}` takes `tnum`; `{days}` is always 7 or more, so its sentences are written in the plural; `{when}` is the long form of 10.2 and the French brings its own preposition ("Dernière activité mardi à 14:05", "Dernière activité le 12 nov. 2026"). Memories are feminine in French (*mémoire*), topics masculine (*sujet*), epics masculine (*epic*).
+
+| Key | English | French |
+|---|---|---|
+| `overview.title` | Overview | Vue d'ensemble |
+| `overview.clear` | Nothing needs attention. | Rien ne demande votre attention. |
+| `overview.more` | More | Plus |
+| `overview.less` | Less | Moins |
+| `overview.attention` | Needs attention | À traiter |
+| `overview.blocked` | {n} blocked topic · {n} blocked topics | {n} sujet bloqué · {n} sujets bloqués |
+| `overview.overdue` | {n} overdue topic · {n} overdue topics | {n} sujet en retard · {n} sujets en retard |
+| `overview.idle` | {n} active topic with no activity for 7 days · {n} active topics with no activity for 7 days | {n} sujet actif sans activité depuis 7 jours · {n} sujets actifs sans activité depuis 7 jours |
+| `overview.inbox` | {n} note in the inbox for {days} days · {n} notes in the inbox, the oldest for {days} days | {n} note dans la boîte de réception depuis {days} jours · {n} notes dans la boîte de réception, la plus ancienne depuis {days} jours |
+| `overview.week` | Last 7 days | 7 derniers jours |
+| `overview.week.done` | {n} topic done · {n} topics done | {n} sujet terminé · {n} sujets terminés |
+| `overview.week.decisions` | {n} decision · {n} decisions | {n} décision · {n} décisions |
+| `overview.week.new` | {n} new topic · {n} new topics | {n} nouveau sujet · {n} nouveaux sujets |
+| `overview.week.none` | Nothing done, decided or opened in the last 7 days. Last activity {when}. | Rien de terminé, décidé ni ouvert ces 7 derniers jours. Dernière activité {when}. |
+| `overview.epics` | Epics | Epics |
+| `overview.epics.more` | {n} more epic · {n} more epics | {n} autre epic · {n} autres epics |
+| `overview.epics.complete` | {n} complete epic · {n} complete epics | {n} epic terminé · {n} epics terminés |
+| `overview.memories` | {n} memory not updated for 90 days · {n} memories not updated for 90 days | {n} mémoire non mise à jour depuis 90 jours · {n} mémoires non mises à jour depuis 90 jours |
+| `filter.blocked` | Blocked | Bloqués |
+| `filter.idle` | No activity for 7 days | Sans activité depuis 7 jours |
+| `filter.done_week` | Done in the last 7 days | Terminés ces 7 derniers jours |
+| `filter.decided_week` | Decided in the last 7 days | Décidés ces 7 derniers jours |
+| `filter.created_week` | Created in the last 7 days | Créés ces 7 derniers jours |
+| `filter.stale_memories` | Not updated for 90 days | Non mises à jour depuis 90 jours |
+| `filter.clear` | Clear filter | Effacer le filtre |
+| `cmd.show_blocked` | Show blocked topics | Afficher les sujets bloqués |
+| `cmd.show_idle` | Show topics with no activity | Afficher les sujets sans activité |
+| `cmd.show_done_week` | Show topics done in the last 7 days | Afficher les sujets terminés ces 7 derniers jours |
+| `cmd.show_decided_week` | Show topics with a decision in the last 7 days | Afficher les sujets avec une décision ces 7 derniers jours |
+| `cmd.show_created_week` | Show topics created in the last 7 days | Afficher les sujets créés ces 7 derniers jours |
+| `cmd.show_stale_memories` | Show memories not updated for 90 days | Afficher les mémoires non mises à jour depuis 90 jours |
+| `cmd.overview_more` | Overview: Show more | Vue d'ensemble : afficher plus |
+| `cmd.overview_less` | Overview: Show less | Vue d'ensemble : afficher moins |
+
+`overview.inbox` is chosen by `{n}`; with one note, "the oldest" would be wrong, so the singular form names that note's age directly. `filter.decided_week` lists topics, so "Décidés" agrees with *sujets*. Agent-facing text (`Attention: blocked T-12 ...`, `· no activity 12d`) is protocol, English only, and not in this catalogue (10).
+
+### 10.4.6 Keys of questions and people, pending
+
+New with questions and Report to (2026-11-21; components-questions.md 5, data.md 11 requests 18 and 19). They stay here, outside the table the tests read, until the feature is implemented; the implementing change moves them into 10.4 and adds them to `catalogue.rs` in the same commit: `section.questions` after `section.description`, `prop.report_to` after `prop.due`, `event.report_*` after `event.due_*`, `table.questions*` and `table.report_to` after `table.due`, the `cmd.*` keys after `cmd.due_*`, the other families together after `kb.*`. In French, *question* is feminine ("répondue", "abandonnée", "close"); the person is user text and always follows a colon in French ("Posée à : Marie", "À rapporter à : le service RH"), so no article or preposition ever meets it (10.3). `{name}` is a person or a record name, never translated; `{date}` is the absolute date of 10.2.
+
+| Key | English | French |
+|---|---|---|
+| `section.questions` | Questions | Questions |
+| `questions.new` | New question | Nouvelle question |
+| `questions.closed` | {n} closed | {n} close · {n} closes |
+| `questions.more_epic` | {n} more open in the topics of this epic | {n} autre en suspens dans les sujets de cet epic · {n} autres en suspens dans les sujets de cet epic |
+| `questions.more_epic_overdue` | {n} more open in the topics of this epic, {late} overdue | {n} autre en suspens dans les sujets de cet epic, en retard · {n} autres en suspens dans les sujets de cet epic, dont {late} en retard |
+| `questions.more_project` | {n} more open in this project's epics and topics | {n} autre en suspens dans les epics et sujets de ce projet · {n} autres en suspens dans les epics et sujets de ce projet |
+| `questions.more_project_overdue` | {n} more open in this project's epics and topics, {late} overdue | {n} autre en suspens dans les epics et sujets de ce projet, en retard · {n} autres en suspens dans les epics et sujets de ce projet, dont {late} en retard |
+| `questions.empty` | Nothing to ask yet. Note here what you are waiting to hear from someone. | Aucune question pour l'instant. Notez ici ce que vous attendez d'apprendre de quelqu'un. |
+| `questions.scope` | {scope} · {counts} | {scope} · {counts} |
+| `count.questions_open` | {n} open | {n} en suspens |
+| `count.questions_closed` | {n} closed | {n} close · {n} closes |
+| `questions.whole_project` | Whole project | Tout le projet |
+| `questions.none_open` | No open questions in {name}. | Aucune question en suspens dans {name}. |
+| `questions.none_overdue` | No overdue questions. | Aucune question en retard. |
+| `questions.none_closed` | No closed questions yet. | Aucune question close pour l'instant. |
+| `question.state.open` | Open question | Question en suspens |
+| `question.state.answered` | Answered | Répondue |
+| `question.state.dropped` | Dropped | Abandonnée |
+| `question.asked` | Asked {name} | Posée à : {name} |
+| `question.by` | Answer by {date} | Réponse attendue le {date} |
+| `question.answered_by` | Answer recorded {date} by {author} | Réponse notée le {date} par {author} |
+| `question.dropped_by` | Dropped {date} by {author} | Abandonnée le {date} par {author} |
+| `question.logged` | Logged as a decision | Consignée comme décision |
+| `question.in` | in {level} | dans : {level} (`{level}` is a `level.*` string) |
+| `question.placeholder` | What do you need to know? | Que faut-il savoir ? |
+| `question.field.asked` | Asked | Posée à |
+| `question.field.by` | Answer by | Réponse attendue |
+| `question.mark_answered` | Mark answered | Marquer comme répondue |
+| `question.answer_placeholder` | What was the answer? | Quelle a été la réponse ? |
+| `question.log_decision` | Also log it as a decision | La consigner aussi comme décision |
+| `question.save_answer` | Save answer | Enregistrer la réponse |
+| `question.edit_answer` | Edit answer | Modifier la réponse |
+| `question.set_date` | Set answer date... | Définir la date de réponse... |
+| `question.clear_date` | Clear answer date | Effacer la date de réponse |
+| `question.drop` | Drop question | Abandonner la question |
+| `question.reopen` | Reopen | Rouvrir |
+| `question.move` | Move to... | Déplacer vers... |
+| `question.deleted` | Question deleted. | Question supprimée. |
+| `question.restored` | Question restored. | Question restaurée. |
+| `question.counter` | {n} / 300 | {n} / 300 |
+| `table.questions` | Questions | Questions |
+| `table.questions_tip` | {n} open question · {n} open questions | {n} question en suspens · {n} questions en suspens |
+| `table.questions_tip_overdue` | 1 open question, overdue · {n} open questions, {late} overdue | 1 question en suspens, en retard · {n} questions en suspens, dont {late} en retard |
+| `table.report_to` | Report to | À rapporter à |
+| `prop.report_to` | Report to | À rapporter à |
+| `person.none` | None | Personne |
+| `person.placeholder` | Person, team or place | Personne, équipe ou lieu |
+| `person.open_count` | {n} open | {n} en cours |
+| `person.counter` | {n} / 80 | {n} / 80 |
+| `person.scope` | In {project} · {counts} | Dans {project} · {counts} |
+| `count.person_asked` | {n} question to ask · {n} questions to ask | {n} question à poser · {n} questions à poser |
+| `count.person_report` | {n} thing to report · {n} things to report | {n} élément à rapporter · {n} éléments à rapporter |
+| `person.section.asked` | Questions asked | Questions posées |
+| `person.section.report` | To report | À rapporter |
+| `person.empty` | Nothing open with {name}. | Rien en cours avec : {name}. |
+| `person.go` | Go to {name} | Ouvrir : {name} |
+| `report.to` | Report to {name} | À rapporter à : {name} |
+| `report.pending` | Not reported yet | Pas encore rapporté |
+| `report.done` | Reported {date} | Rapporté le {date} |
+| `report.mark` | Mark reported | Marquer comme rapporté |
+| `report.unmark` | Mark not reported | Marquer comme non rapporté |
+| `report.change` | Change person... | Changer de personne... |
+| `report.reported_count` | {n} reported | {n} rapporté · {n} rapportés |
+| `report.filter` | Report to: {name} | À rapporter à : {name} |
+| `report.filter.all` | Report to: anyone | À rapporter à : tout le monde |
+| `report.filter.anyone` | Anyone | Tout le monde |
+| `event.report_set` | {author} noted to report to {name} | {author} a noté de rapporter à : {name} |
+| `event.reported` | {author} marked it reported to {name} | {author} l'a marqué comme rapporté à : {name} |
+| `event.report_unmarked` | {author} marked it not reported | {author} l'a marqué comme non rapporté |
+| `event.report_cleared` | {author} removed Report to | {author} a retiré « À rapporter à » |
+| `cmd.question_new` | New question | Nouvelle question |
+| `cmd.questions_open` | Go to questions | Aller aux questions |
+| `cmd.person_go` | Go to person... | Aller à une personne... |
+| `cmd.report_set` | Set Report to... | Définir « À rapporter à »... |
+| `cmd.report_clear` | Clear Report to | Effacer « À rapporter à » |
+| `cmd.reported` | Mark reported | Marquer comme rapporté |
+| `cmd.unreported` | Mark not reported | Marquer comme non rapporté |
+| `cmd.question_answer` | Mark question answered | Marquer la question comme répondue |
+| `cmd.question_edit` | Edit question | Modifier la question |
+| `cmd.question_date` | Set answer date... | Définir la date de réponse... |
+| `cmd.question_date_clear` | Clear answer date | Effacer la date de réponse |
+| `cmd.question_drop` | Drop question | Abandonner la question |
+| `cmd.question_reopen` | Reopen question | Rouvrir la question |
+| `cmd.question_move` | Move question to... | Déplacer la question vers... |
+| `cmd.question_delete` | Delete question | Supprimer la question |
+| `overview.questions_late` | {n} question past its answer date · {n} questions past their answer date | {n} question dont la date de réponse est passée · {n} questions dont la date de réponse est passée |
+| `cmd.show_questions_late` | Show questions past their answer date | Afficher les questions dont la date de réponse est passée |
+
+`questions.more_*_overdue` replace `questions.more_*` when `{late}` is above 0, and `table.questions_tip_overdue` replaces `table.questions_tip` the same way (its first form is for one question, which is then the overdue one). The overdue clause ("1 overdue", "dont 1 en retard") is drawn in `warning` as one run (components-questions.md 5): the implementation marks the span of that clause in the formatted string, it never builds the sentence from fragments. `report.pending`, `report.done` and the events agree with *sujet* and *epic*, both masculine. The relative phrases of an answer date reuse `due.*` (10.4.4); the empty Answer by value reuses `due.none` (« Aucune », agreeing with *date*), Clear in the popover `common.clear`, and the remaining menu items `common.edit` and `common.delete`. Agent-facing text (`Q-12 Marie · overdue 3d`, `report to Marie`) is protocol, English only, and not in this catalogue (10).
+
+### 10.4.7 Keys of attachments, pending
+
+New with attachments (2026-11-21; components-attachments.md 5, ADR 0012, data.md 11 request 20). They stay here until attachments are implemented; the implementing change moves them into 10.4 and `catalogue.rs` in one commit, as a family after the `inbox.*` keys, with `settings.attachments`, `export.include_files` and `import.files_missing` beside their families. In French the word is *fichier* (masculine): "Fichier retiré". `{size}` is the size format of components-attachments.md 5 ("2.1 MB" / "2,1 Mo"); `{name}` a file name, never translated.
+
+| Key | English | French |
+|---|---|---|
+| `attach.button` | Attach files... | Joindre des fichiers... |
+| `attach.drop` | Drop to attach | Déposer pour joindre |
+| `attach.adding` | Adding... {percent} | Ajout... {percent} |
+| `attach.pasted_name` | Pasted image {date} {time}.png | Image collée {date} {time}.png |
+| `attach.too_large` | {name} is {size}; the limit is 25 MB per file. | {name} pèse {size} ; la limite est de 25 Mo par fichier. |
+| `attach.too_many` | 20 files is the most a note, an entry or a description can hold. | Une note, une entrée ou une description contient 20 fichiers au plus. |
+| `attach.read_failed` | Could not read {name}. It may have moved, or another app may be holding it. | Impossible de lire {name}. Il a peut-être été déplacé, ou une autre application le bloque. |
+| `attach.large_notice` | Files over 10 MB are kept in the database and in each of its snapshots. | Les fichiers de plus de 10 Mo sont conservés dans la base et dans chacun de ses instantanés. |
+| `attach.count` | {n} file · {n} files | {n} fichier · {n} fichiers |
+| `attach.view` | View | Afficher |
+| `attach.save_as` | Save as... | Enregistrer sous... |
+| `attach.save_failed` | Could not save {name}. {reason} | Impossible d'enregistrer {name}. {reason} |
+| `attach.open_external` | Open in another app | Ouvrir dans une autre application |
+| `attach.open_title` | Open in another app? | Ouvrir dans une autre application ? |
+| `attach.open_notice` | Acta writes a decrypted copy for the other app and deletes it when Acta quits. | Acta écrit une copie déchiffrée pour l'autre application et la supprime à la fermeture d'Acta. |
+| `attach.remove` | Remove | Retirer |
+| `attach.removed` | File removed. | Fichier retiré. |
+| `attach.restored` | File restored. | Fichier restauré. |
+| `attach.moved_to` | Moved to {id} | Déplacés vers {id} |
+| `attach.position` | {i} of {n} | {i} sur {n} |
+| `attach.prev` | Previous file | Fichier précédent |
+| `attach.next` | Next file | Fichier suivant |
+| `attach.fit` | Fit | Ajuster |
+| `attach.actual` | Actual size | Taille réelle |
+| `attach.truncated` | Showing the first 1 MB. Save the file to see all of it. | Seul le premier Mo est affiché. Enregistrez le fichier pour le voir en entier. |
+| `settings.attachments` | Attached files: {size} in {count} | Fichiers joints : {size} dans {count} (`{count}` is `attach.count`) |
+| `export.include_files` | Include attached files ({size}) | Inclure les fichiers joints ({size}) |
+| `import.files_missing` | {n} file was not in the export. · {n} files were not in the export. | {n} fichier n'était pas dans l'export. · {n} fichiers n'étaient pas dans l'export. |
+| `cmd.attach` | Attach files... | Joindre des fichiers... |
+| `cmd.attachment_save` | Save file as... | Enregistrer le fichier sous... |
+
+`{date}` and `{time}` in `attach.pasted_name` are `2026-11-21` and `14.05` in both languages: a file name is not localised (10.2). The units B / KB / MB and o / Ko / Mo are formats, not keys. `attach.moved_to` is plural in French because it heads a list of files. The Open dialog's buttons reuse `common.cancel` and `common.open`. Agent-facing text (`· files: A-4 plan.pdf 2.1M`) is protocol, English only, and not in this catalogue (10).

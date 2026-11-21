@@ -18,7 +18,7 @@ use acta_core::model::{
     Author, EpicId, FolderId, KbId, Note, NoteId, Owner, ProjectId, ProjectTree, Record, Status,
     TopicId,
 };
-use acta_core::store::{EpicPatch, ProjectPatch, TopicPatch};
+use acta_core::store::{EpicPatch, ProjectPatch, TopicPatch, Unread};
 use acta_core::{ChangeWatcher, Store};
 use gpui_kit::{App, Context, EventEmitter, Task};
 
@@ -83,6 +83,12 @@ pub enum Undo {
         id: KbId,
         back: i64,
         expect: i64,
+    },
+    /// A knowledge entry moved to another owner.
+    KbOwner {
+        id: KbId,
+        back: Owner,
+        expect: Owner,
     },
     /// A record moved among its siblings.
     Reorder {
@@ -149,6 +155,7 @@ impl Undo {
                 current == !*back
             }
             Undo::KbRevision { id, expect, .. } => store.kb_entry(*id)?.rev == *expect,
+            Undo::KbOwner { id, expect, .. } => store.kb_entry(*id)?.owner == *expect,
             Undo::Reorder { record, expect, .. } => store.order_index(*record)? == *expect,
             Undo::Entry { id, expect, .. } => {
                 let e = store.entry(*id)?;
@@ -168,78 +175,192 @@ impl Undo {
         })
     }
 
-    fn revert(&self, store: &mut Store) -> acta_core::Result<()> {
+    /// Take the step back and return its inverse: the step that puts
+    /// back what this one undid (the redo of an undo, the undo of a redo),
+    /// built from the values the store holds once it is written.
+    fn revert(&self, store: &mut Store) -> acta_core::Result<Undo> {
         let me = Author::Human;
-        match self {
-            Undo::Restore(record) => store.restore(*record, me),
-            Undo::Delete(record) => store.delete(*record, me),
-            Undo::Status { id, back, .. } => store.update_topic(
-                *id,
-                TopicPatch {
-                    status: Some(*back),
-                    ..TopicPatch::default()
-                },
-                me,
-            ),
-            Undo::TopicTitle { id, back, .. } => store.update_topic(
-                *id,
-                TopicPatch {
-                    title: Some(back.clone()),
-                    ..TopicPatch::default()
-                },
-                me,
-            ),
-            Undo::EpicTitle { id, back, .. } => store.update_epic(
-                *id,
-                EpicPatch {
-                    title: Some(back.clone()),
-                    ..EpicPatch::default()
-                },
-                me,
-            ),
-            Undo::TopicEpic { id, back, .. } => store.update_topic(
-                *id,
-                TopicPatch {
-                    epic: Some(*back),
-                    ..TopicPatch::default()
-                },
-                me,
-            ),
-            Undo::ProjectTitle { id, back, .. } => store.update_project(
-                *id,
-                ProjectPatch {
-                    title: Some(back.clone()),
-                    ..ProjectPatch::default()
-                },
-                me,
-            ),
-            Undo::FolderPath { id, back, .. } => store.restore_folder_path(*id, back, me),
+        Ok(match self {
+            Undo::Restore(record) => {
+                store.restore(*record, me)?;
+                Undo::Delete(*record)
+            }
+            Undo::Delete(record) => {
+                store.delete(*record, me)?;
+                Undo::Restore(*record)
+            }
+            Undo::Status { id, back, expect } => {
+                store.update_topic(
+                    *id,
+                    TopicPatch {
+                        status: Some(*back),
+                        ..TopicPatch::default()
+                    },
+                    me,
+                )?;
+                Undo::Status {
+                    id: *id,
+                    back: *expect,
+                    expect: store.topic(*id)?.status,
+                }
+            }
+            Undo::TopicTitle { id, back, expect } => {
+                store.update_topic(
+                    *id,
+                    TopicPatch {
+                        title: Some(back.clone()),
+                        ..TopicPatch::default()
+                    },
+                    me,
+                )?;
+                Undo::TopicTitle {
+                    id: *id,
+                    back: expect.clone(),
+                    expect: store.topic(*id)?.title,
+                }
+            }
+            Undo::EpicTitle { id, back, expect } => {
+                store.update_epic(
+                    *id,
+                    EpicPatch {
+                        title: Some(back.clone()),
+                        ..EpicPatch::default()
+                    },
+                    me,
+                )?;
+                Undo::EpicTitle {
+                    id: *id,
+                    back: expect.clone(),
+                    expect: store.epic(*id)?.title,
+                }
+            }
+            Undo::TopicEpic { id, back, expect } => {
+                store.update_topic(
+                    *id,
+                    TopicPatch {
+                        epic: Some(*back),
+                        ..TopicPatch::default()
+                    },
+                    me,
+                )?;
+                Undo::TopicEpic {
+                    id: *id,
+                    back: *expect,
+                    expect: store.topic(*id)?.epic,
+                }
+            }
+            Undo::ProjectTitle { id, back, expect } => {
+                store.update_project(
+                    *id,
+                    ProjectPatch {
+                        title: Some(back.clone()),
+                        ..ProjectPatch::default()
+                    },
+                    me,
+                )?;
+                Undo::ProjectTitle {
+                    id: *id,
+                    back: expect.clone(),
+                    expect: store.project(*id)?.title,
+                }
+            }
+            Undo::FolderPath { id, back, expect } => {
+                store.restore_folder_path(*id, back, me)?;
+                Undo::FolderPath {
+                    id: *id,
+                    back: expect.clone(),
+                    expect: store.folder(*id)?.path,
+                }
+            }
             Undo::IncludeInherited { owner, back } => {
-                store.set_include_inherited(*owner, *back, me)
+                store.set_include_inherited(*owner, *back, me)?;
+                Undo::IncludeInherited {
+                    owner: *owner,
+                    back: !*back,
+                }
             }
-            Undo::KbRevision { id, back, .. } => {
-                store.kb_restore_revision(*id, *back, me).map(|_| ())
+            Undo::KbRevision { id, back, expect } => {
+                store.kb_restore_revision(*id, *back, me)?;
+                Undo::KbRevision {
+                    id: *id,
+                    back: *expect,
+                    expect: store.kb_entry(*id)?.rev,
+                }
             }
-            Undo::Reorder { record, back, .. } => store.reorder(*record, *back, me),
-            Undo::Entry { id, back, .. } => store.update_entry(*id, &back.0, back.1, me),
-            Undo::Note { id, back, .. } => store.update_note(*id, back, me),
-            Undo::Unfile(id) => store.unfile_note(*id, me),
-            Undo::Refile(before) => store.restore_note_fate(before.id, before, me),
-            Undo::Many(all) => all.iter().try_for_each(|undo| undo.revert(store)),
-        }
-    }
-
-    /// Check and take back in one transaction. `Ok(false)`: something else
-    /// changed it since, nothing was written.
-    pub fn apply(&self, store: &mut Store) -> acta_core::Result<bool> {
-        store.atomically(|store| {
-            if !self.matches(store)? {
-                return Ok(false);
+            Undo::KbOwner { id, back, expect } => {
+                store.kb_move(*id, *back, me)?;
+                Undo::KbOwner {
+                    id: *id,
+                    back: *expect,
+                    expect: store.kb_entry(*id)?.owner,
+                }
             }
-            self.revert(store)?;
-            Ok(true)
+            Undo::Reorder {
+                record,
+                back,
+                expect,
+            } => {
+                store.reorder(*record, *back, me)?;
+                Undo::Reorder {
+                    record: *record,
+                    back: *expect,
+                    expect: store.order_index(*record)?,
+                }
+            }
+            Undo::Entry { id, back, expect } => {
+                store.update_entry(*id, &back.0, back.1, me)?;
+                let e = store.entry(*id)?;
+                Undo::Entry {
+                    id: *id,
+                    back: expect.clone(),
+                    expect: (e.text, e.kind),
+                }
+            }
+            Undo::Note { id, back, expect } => {
+                store.update_note(*id, back, me)?;
+                Undo::Note {
+                    id: *id,
+                    back: expect.clone(),
+                    expect: store.note(*id)?.text,
+                }
+            }
+            Undo::Unfile(id) => {
+                let filed = store.note(*id)?;
+                store.unfile_note(*id, me)?;
+                Undo::Refile(Box::new(filed))
+            }
+            Undo::Refile(before) => {
+                store.restore_note_fate(before.id, before, me)?;
+                Undo::Unfile(before.id)
+            }
+            Undo::Many(all) => {
+                let mut inverse = Vec::with_capacity(all.len());
+                for undo in all {
+                    inverse.push(undo.revert(store)?);
+                }
+                inverse.reverse();
+                Undo::Many(inverse)
+            }
         })
     }
+
+    /// Check and take back in one transaction. `Ok(None)`: something else
+    /// changed it since, nothing was written; otherwise the inverse step.
+    pub fn apply(&self, store: &mut Store) -> acta_core::Result<Option<Undo>> {
+        store.atomically(|store| {
+            if !self.matches(store)? {
+                return Ok(None);
+            }
+            self.revert(store).map(Some)
+        })
+    }
+}
+
+/// Whether a finished undo (or redo) keeps its inverse: a redo always goes
+/// back on the undo stack; an undo's redo is dropped when a new action of
+/// the project (which cleared the redo stack) came in while it was written.
+fn keeps_inverse(redo: bool, actions_then: u64, actions_now: u64) -> bool {
+    redo || actions_then == actions_now
 }
 
 /// The order of every undo step of the process: `Mod+Z` takes the newest
@@ -352,10 +473,20 @@ pub struct Workspace {
     pub db: Db,
     pub bulk: Option<BulkOffer>,
     pub projects: Vec<ProjectTree>,
+    /// What Claude Code changed since this installation last showed it
+    /// (the unread dots; data.md request 1), reloaded with the tree.
+    pub unread: Unread,
     /// Bumped on every reload, by any process's commit.
     pub revision: u64,
     undo: HashMap<Option<ProjectId>, UndoStack>,
-    /// An undo is being written; a second `Mod+Z` waits for it.
+    /// The steps undone, per project, for `Mod+Shift+Z`: each the inverse
+    /// of an undo, checked the same way. A new action of the project
+    /// clears its redo.
+    redo: HashMap<Option<ProjectId>, UndoStack>,
+    /// Bumped per project by every new action (which clears its redo): an
+    /// undo that finishes after one does not leave a redo behind it.
+    actions: HashMap<Option<ProjectId>, u64>,
+    /// An undo or redo is being written; a second key waits for it.
     undoing: bool,
     _reload: Task<()>,
     _watch: Task<()>,
@@ -423,8 +554,11 @@ impl Workspace {
             db,
             bulk: None,
             projects: Vec::new(),
+            unread: Unread::default(),
             revision: 0,
             undo: HashMap::new(),
+            redo: HashMap::new(),
+            actions: HashMap::new(),
             undoing: false,
             _reload: Task::ready(()),
             _watch: watch,
@@ -436,12 +570,15 @@ impl Workspace {
 
     /// Reload the tree; pages observing the workspace reload their data.
     pub fn reload(&mut self, cx: &mut Context<Self>) {
-        let task = self.db.run(cx, |store| load_trees(store));
+        let task = self
+            .db
+            .run(cx, |store| Ok((load_trees(store)?, store.unread()?)));
         self._reload = cx.spawn(async move |this, cx| {
             let loaded = task.await;
             let _ = this.update(cx, |ws, cx| match loaded {
-                Ok(projects) => {
+                Ok((projects, unread)) => {
                     ws.projects = projects;
+                    ws.unread = unread;
                     ws.revision += 1;
                     cx.emit(WorkspaceEvent::Reloaded);
                     cx.notify();
@@ -449,6 +586,39 @@ impl Workspace {
                 Err(err) => crate::log::line(&format!("store: reload failed: {}", err_kind(&err))),
             });
         });
+    }
+
+    /// Whether `record` carries an unread dot (topics and knowledge only).
+    pub fn is_unread(&self, record: Record) -> bool {
+        match record {
+            Record::Topic(id) => self.unread.topics.contains(&id),
+            Record::Kb(id) => self.unread.has_kb(id),
+            _ => false,
+        }
+    }
+
+    /// `record` is on screen: its dot goes now, and its read marker is
+    /// written in the background (local, never undone, never toasted).
+    /// Nothing is written for a record without a dot.
+    pub fn mark_seen(&mut self, record: Record, cx: &mut Context<Self>) {
+        if !self.is_unread(record) {
+            return;
+        }
+        match record {
+            Record::Topic(id) => {
+                self.unread.topics.remove(&id);
+            }
+            Record::Kb(id) => self.unread.kb.retain(|(k, _)| *k != id),
+            _ => {}
+        }
+        cx.notify();
+        let task = self.db.run(cx, move |store| store.mark_seen(record));
+        cx.spawn(async move |_, _| {
+            if let Err(err) = task.await {
+                crate::log::line(&format!("store: read marker failed: {}", err_kind(&err)));
+            }
+        })
+        .detach();
     }
 
     /// The project a record belongs to, from the loaded tree (`None` for
@@ -521,6 +691,8 @@ impl Workspace {
             let (undo, value) = task.await?;
             let _ = this.update(cx, |ws, cx| {
                 ws.undo.entry(project).or_default().push(undo);
+                ws.redo.remove(&project);
+                *ws.actions.entry(project).or_default() += 1;
                 if let Some(message) = message {
                     cx.emit(WorkspaceEvent::Toast(Toast {
                         message,
@@ -832,14 +1004,27 @@ impl Workspace {
     /// `Mod+Z`: take back the newest action of `project`. The step leaves
     /// the stack once written, or when something else changed it since
     /// (then a toast says it was not undone); a failed write keeps it.
+    /// A step taken back goes on the redo stack as its inverse.
     pub fn undo(&mut self, project: Option<ProjectId>, cx: &mut Context<Self>) {
+        self.take_back(project, false, cx);
+    }
+
+    /// `Mod+Shift+Z`: put back the newest undone step of `project`, with
+    /// the same check, so a redo never lands over a newer write.
+    pub fn redo(&mut self, project: Option<ProjectId>, cx: &mut Context<Self>) {
+        self.take_back(project, true, cx);
+    }
+
+    fn take_back(&mut self, project: Option<ProjectId>, redo: bool, cx: &mut Context<Self>) {
         if self.undoing {
             return;
         }
-        let Some(step) = self.undo.get(&project).and_then(|s| s.last()).cloned() else {
+        let from = if redo { &self.redo } else { &self.undo };
+        let Some(step) = from.get(&project).and_then(|s| s.last()).cloned() else {
             return;
         };
         self.undoing = true;
+        let started = self.actions.get(&project).copied().unwrap_or(0);
         let applied = step.clone();
         let task = self.write(cx, Key::ErrorSave, move |store| applied.apply(store));
         cx.spawn(async move |ws, cx| {
@@ -847,36 +1032,64 @@ impl Workspace {
             let _ = ws.update(cx, |ws, cx| {
                 ws.undoing = false;
                 // A failed write keeps the step for another try.
-                if let Ok(done) = result {
-                    if let Some(stack) = ws.undo.get_mut(&project) {
-                        stack.remove(&step);
+                let Ok(inverse) = result else { return };
+                let (from, to) = if redo {
+                    (&mut ws.redo, &mut ws.undo)
+                } else {
+                    (&mut ws.undo, &mut ws.redo)
+                };
+                if let Some(stack) = from.get_mut(&project) {
+                    stack.remove(&step);
+                }
+                let now = ws.actions.get(&project).copied().unwrap_or(0);
+                match inverse {
+                    Some(inverse) if keeps_inverse(redo, started, now) => {
+                        to.entry(project).or_default().push(inverse)
                     }
-                    if !done {
-                        ws.toast_error(Key::UndoChanged, cx);
-                    }
+                    Some(_) => {}
+                    None if redo => ws.toast_error(Key::RedoChanged, cx),
+                    None => ws.toast_error(Key::UndoChanged, cx),
                 }
             });
         })
         .detach();
     }
 
-    /// The stack `Mod+Z` takes on a page of `active`: its project's, or,
-    /// when that is empty, the steps that belong to no project (a new
-    /// project).
-    fn undo_key(&self, active: Option<ProjectId>) -> Option<ProjectId> {
-        let has = |key| self.undo.get(&key).is_some_and(|s| s.last().is_some());
+    /// The stack `Mod+Z` (or `Mod+Shift+Z`) takes on a page of `active`:
+    /// its project's, or, when that is empty, the steps that belong to no
+    /// project (a new project).
+    fn stack_key(
+        stacks: &HashMap<Option<ProjectId>, UndoStack>,
+        active: Option<ProjectId>,
+    ) -> Option<ProjectId> {
+        let has = |key| stacks.get(&key).is_some_and(|s| s.last().is_some());
         if has(active) { active } else { None }
     }
 
     /// `Mod+Z` on a page of `active`.
     pub fn undo_active(&mut self, active: Option<ProjectId>, cx: &mut Context<Self>) {
-        let key = self.undo_key(active);
+        let key = Self::stack_key(&self.undo, active);
         self.undo(key, cx);
+    }
+
+    /// `Mod+Shift+Z` on a page of `active`.
+    pub fn redo_active(&mut self, active: Option<ProjectId>, cx: &mut Context<Self>) {
+        let key = Self::stack_key(&self.redo, active);
+        self.redo(key, cx);
     }
 
     /// The order of the step `Mod+Z` would take on a page of `active`.
     pub fn newest_undo(&self, active: Option<ProjectId>) -> Option<u64> {
-        self.undo.get(&self.undo_key(active))?.newest()
+        self.undo
+            .get(&Self::stack_key(&self.undo, active))?
+            .newest()
+    }
+
+    /// The order of the step `Mod+Shift+Z` would take on a page of `active`.
+    pub fn newest_redo(&self, active: Option<ProjectId>) -> Option<u64> {
+        self.redo
+            .get(&Self::stack_key(&self.redo, active))?
+            .newest()
     }
 
     pub fn toast(&mut self, message: String, kind: ToastKind, cx: &mut Context<Self>) {
@@ -1001,14 +1214,14 @@ mod tests {
             back: ("Alexandre wrote this".into(), EntryKind::Progress),
             expect: ("Alexandre decided this".into(), EntryKind::Decision),
         };
-        assert!(undo.apply(store).unwrap());
+        assert!(undo.apply(store).unwrap().is_some());
         let back = store.entry(e.id).unwrap();
         assert_eq!(
             (back.text.as_str(), back.kind),
             ("Alexandre wrote this", EntryKind::Progress)
         );
         // Applied twice: the store no longer holds what the edit left.
-        assert!(!undo.apply(store).unwrap());
+        assert!(undo.apply(store).unwrap().is_none());
 
         let note = store
             .add_note(project, "Alexandre's note", Author::Human)
@@ -1021,9 +1234,9 @@ mod tests {
             back: "Alexandre's note".into(),
             expect: "Alexandre's better note".into(),
         };
-        assert!(undo.apply(store).unwrap());
+        assert!(undo.apply(store).unwrap().is_some());
         assert_eq!(store.note(note).unwrap().text, "Alexandre's note");
-        assert!(!undo.apply(store).unwrap());
+        assert!(undo.apply(store).unwrap().is_none());
     }
 
     #[test]
@@ -1037,11 +1250,16 @@ mod tests {
             back: Status::Planned,
             expect: Status::Active,
         };
-        assert!(step.apply(store).unwrap());
+        assert!(step.apply(store).unwrap().is_some());
         assert_eq!(store.topic(id).unwrap().status, Status::Planned);
 
         store.delete(Record::Topic(id), Author::Human).unwrap();
-        assert!(Undo::Restore(Record::Topic(id)).apply(store).unwrap());
+        assert!(
+            Undo::Restore(Record::Topic(id))
+                .apply(store)
+                .unwrap()
+                .is_some()
+        );
         assert!(store.topic(id).is_ok());
     }
 
@@ -1057,7 +1275,7 @@ mod tests {
         let before = store.note(note).unwrap();
         store.unfile_note(note, Author::Human).unwrap();
         let step = Undo::Refile(Box::new(before.clone()));
-        assert!(step.apply(store).unwrap());
+        assert!(step.apply(store).unwrap().is_some());
         let after = store.note(note).unwrap();
         assert_eq!(
             (after.fate(), after.filed_at, after.filed_by),
@@ -1066,7 +1284,7 @@ mod tests {
         // Filed again by someone else in between: the undo is skipped.
         store.unfile_note(note, Author::Human).unwrap();
         store.dismiss_notes(&[note], Author::Claude).unwrap();
-        assert!(!step.apply(store).unwrap());
+        assert!(step.apply(store).unwrap().is_none());
         assert_eq!(
             store.note(note).unwrap().fate(),
             acta_core::model::NoteFate::Dismissed
@@ -1086,10 +1304,112 @@ mod tests {
             back: Status::Planned,
             expect: Status::Active,
         };
-        assert!(!step.apply(store).unwrap(), "skipped");
+        assert!(step.apply(store).unwrap().is_none(), "skipped");
         assert_eq!(store.topic(id).unwrap().status, Status::Blocked);
         // A restore whose record is live again is skipped too.
-        assert!(!Undo::Restore(Record::Topic(id)).apply(store).unwrap());
+        assert!(
+            Undo::Restore(Record::Topic(id))
+                .apply(store)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn redo_puts_back_what_undo_took_and_never_over_a_newer_write() {
+        let mut temp = temp_store();
+        let store = &mut temp.store;
+        let (_, id) = topic(store);
+        set_status(store, id, Status::Active, Author::Human);
+        let undo = Undo::Status {
+            id,
+            back: Status::Planned,
+            expect: Status::Active,
+        };
+        let redo = undo.apply(store).unwrap().expect("undone");
+        assert_eq!(store.topic(id).unwrap().status, Status::Planned);
+        let again = redo.apply(store).unwrap().expect("redone");
+        assert_eq!(store.topic(id).unwrap().status, Status::Active);
+        assert_eq!(again, undo, "the redo's inverse is the undo again");
+        // Undone, then Claude Code writes: the redo is skipped.
+        let redo = again.apply(store).unwrap().expect("undone");
+        set_status(store, id, Status::Blocked, Author::Claude);
+        assert!(redo.apply(store).unwrap().is_none());
+        assert_eq!(store.topic(id).unwrap().status, Status::Blocked);
+    }
+
+    #[test]
+    fn a_note_made_into_a_topic_is_redone_as_one_step() {
+        let mut temp = temp_store();
+        let store = &mut temp.store;
+        let (project, _) = topic(store);
+        let note = store
+            .add_note(project, "Alexandre: scrollback", Author::Human)
+            .unwrap();
+        let made = store
+            .note_to_topic(
+                note,
+                NewTopic {
+                    project,
+                    epic: None,
+                    title: "Scrollback".into(),
+                    description: String::new(),
+                    status: Status::Draft,
+                },
+                Author::Human,
+            )
+            .unwrap();
+        let undo = Undo::Many(vec![Undo::Unfile(note), Undo::Delete(Record::Topic(made))]);
+        let redo = undo.apply(store).unwrap().expect("undone");
+        assert!(store.note(note).unwrap().is_open());
+        assert!(store.topic(made).is_err());
+        redo.apply(store).unwrap().expect("redone");
+        assert!(store.topic(made).is_ok());
+        let filed = store.note(note).unwrap();
+        assert!(!filed.is_open());
+        assert_eq!(filed.filed_by, Some(Author::Human));
+    }
+
+    #[test]
+    fn a_knowledge_move_undoes_and_redoes() {
+        let mut temp = temp_store();
+        let store = &mut temp.store;
+        let (project, id) = topic(store);
+        let kb = store
+            .kb_create(
+                acta_core::store::NewKb {
+                    owner: Owner::Topic(id),
+                    kind: acta_core::model::KbKind::Memory,
+                    title: "Alexandre prefers tabs".into(),
+                    summary: "Tabs, not spaces".into(),
+                    body: "Tabs.".into(),
+                    from_file: false,
+                },
+                Author::Human,
+            )
+            .unwrap();
+        store
+            .kb_move(kb, Owner::Project(project), Author::Human)
+            .unwrap();
+        let undo = Undo::KbOwner {
+            id: kb,
+            back: Owner::Topic(id),
+            expect: Owner::Project(project),
+        };
+        let redo = undo.apply(store).unwrap().expect("undone");
+        assert_eq!(store.kb_entry(kb).unwrap().owner, Owner::Topic(id));
+        redo.apply(store).unwrap().expect("redone");
+        assert_eq!(store.kb_entry(kb).unwrap().owner, Owner::Project(project));
+    }
+
+    #[test]
+    fn an_undo_overtaken_by_a_new_action_leaves_no_redo() {
+        assert!(keeps_inverse(false, 3, 3));
+        assert!(
+            !keeps_inverse(false, 3, 4),
+            "a newer write cleared the redo"
+        );
+        assert!(keeps_inverse(true, 3, 4), "a redo is undoable again");
     }
 
     #[test]
@@ -1113,7 +1433,7 @@ mod tests {
                 expect: Status::Active,
             },
         ]);
-        assert!(!both.apply(store).unwrap());
+        assert!(both.apply(store).unwrap().is_none());
         assert_eq!(
             store.topic(a).unwrap().status,
             Status::Active,
@@ -1143,7 +1463,7 @@ mod tests {
             back: stored.clone(),
             expect: now,
         };
-        assert!(step.apply(store).unwrap());
+        assert!(step.apply(store).unwrap().is_some());
         assert_eq!(store.folder(id).unwrap().path, stored);
     }
 
@@ -1170,7 +1490,7 @@ mod tests {
             back: 1,
             expect: 0,
         };
-        assert!(step.apply(store).unwrap());
+        assert!(step.apply(store).unwrap().is_some());
         assert_eq!(store.order_index(Record::Topic(a)).unwrap(), 0);
     }
 
@@ -1194,14 +1514,14 @@ mod tests {
             back: None,
             expect: Some(epic),
         };
-        assert!(step.apply(store).unwrap());
+        assert!(step.apply(store).unwrap().is_some());
         assert_eq!(store.topic(id).unwrap().epic, None);
         // Moved again by someone else: skipped.
         store
             .update_topic(id, patch(Some(epic)), Author::Claude)
             .unwrap();
         store.update_topic(id, patch(None), Author::Claude).unwrap();
-        assert!(!step.apply(store).unwrap());
+        assert!(step.apply(store).unwrap().is_none());
     }
 
     #[test]
@@ -1261,7 +1581,7 @@ mod tests {
         // The write is taken back: the layout step is now the newest.
         writes.pop();
         assert!(layout_step_first(layout.newest(), writes.newest()));
-        layout.undo();
+        layout.undo(Layout::defaults(Vec::new(), true), next_undo_seq());
         assert!(!layout_step_first(layout.newest(), writes.newest()));
         assert!(!layout_step_first(None, None));
         assert!(layout_step_first(Some(3), None));

@@ -495,6 +495,19 @@ impl Store {
     }
 }
 
+/// An imported topic or knowledge entry counts as seen (data.md request 1):
+/// an import is the human's own act, and its rows must not light up as
+/// if Claude Code had just written them. Inside the import transaction.
+fn seen_on_import(tx: &rusqlite::Connection, kind: &str, id: i64, at: i64) -> Result<()> {
+    tx.execute(
+        "INSERT INTO read_markers (kind, record_id, last_seen_at) VALUES (?1, ?2, ?3)
+         ON CONFLICT (kind, record_id)
+         DO UPDATE SET last_seen_at = MAX(last_seen_at, excluded.last_seen_at)",
+        params![kind, id, at],
+    )?;
+    Ok(())
+}
+
 /// Points an entry's `rev` at the newest revision holding its current
 /// title, summary and body. If none does (the file's version of the entry
 /// was newer than any revision it carried), that version is saved as a new
@@ -670,6 +683,7 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile) -> Result<ImportReport> {
                             x.state_updated_by, x.position, x.include_inherited_folders,
                             s.created_at, s.updated_at, s.updated_by, s.deleted_at, s.deleted_by],
                 )?;
+                seen_on_import(tx, "topic", tx.last_insert_rowid(), s.updated_at)?;
             }
             Action::Update(l) => {
                 let (d, db) = merged_deleted(&l, s);
@@ -683,6 +697,7 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile) -> Result<ImportReport> {
                             x.state_updated_by, x.position, x.include_inherited_folders,
                             s.updated_at, s.updated_by, d, db],
                 )?;
+                seen_on_import(tx, "topic", l.id, s.updated_at)?;
             }
             Action::Skip => {}
         }
@@ -798,7 +813,9 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile) -> Result<ImportReport> {
                     params![s.uuid, project, epic, topic, x.kind, x.title, x.summary, x.body, x.rev, x.created_by,
                             s.created_at, s.updated_at, s.updated_by, s.deleted_at, s.deleted_by],
                 )?;
-                tx.last_insert_rowid()
+                let id = tx.last_insert_rowid();
+                seen_on_import(tx, "kb", id, s.updated_at)?;
+                id
             }
             Action::Update(l) => {
                 let (d, db) = merged_deleted(&l, s);
@@ -810,6 +827,7 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile) -> Result<ImportReport> {
                     params![l.id, project, epic, topic, x.kind, x.title, x.summary, x.body, x.rev,
                             s.updated_at, s.updated_by, d, db],
                 )?;
+                seen_on_import(tx, "kb", l.id, s.updated_at)?;
                 l.id
             }
             Action::Skip => local_id(tx, "kb_entries", &s.uuid)?,

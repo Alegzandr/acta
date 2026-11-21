@@ -13,7 +13,7 @@
 //! `project_id` is always set so roll-up queries need no join.
 
 /// Step `i` takes `user_version` from `i` to `i + 1`.
-pub const MIGRATIONS: &[&str] = &[V1, V2];
+pub const MIGRATIONS: &[&str] = &[V1, V2, V3];
 
 /// The version this build writes.
 pub const SCHEMA_VERSION: i64 = MIGRATIONS.len() as i64;
@@ -249,4 +249,22 @@ const V2: &str = r#"
 ALTER TABLE notes ADD COLUMN filed_epic_id INTEGER REFERENCES epics(id);
 ALTER TABLE notes ADD COLUMN filed_by TEXT;
 CREATE INDEX notes_filed_topic ON notes(filed_topic_id) WHERE filed_topic_id IS NOT NULL;
+"#;
+
+/// M7: read markers (docs/design/data.md, request 1). When this
+/// installation last showed a topic (`kind = 'topic'`) or a knowledge entry
+/// (`kind = 'kb'`). Local: never exported or imported, never part of a
+/// record's stamp. Records that exist when the step runs count as seen, so
+/// an update does not light every row.
+const V3: &str = r#"
+CREATE TABLE read_markers (
+    kind TEXT NOT NULL CHECK (kind IN ('topic', 'kb')),
+    record_id INTEGER NOT NULL,
+    last_seen_at INTEGER NOT NULL,
+    PRIMARY KEY (kind, record_id)
+) WITHOUT ROWID;
+INSERT INTO read_markers (kind, record_id, last_seen_at)
+    SELECT 'topic', id, updated_at FROM topics;
+INSERT INTO read_markers (kind, record_id, last_seen_at)
+    SELECT 'kb', id, updated_at FROM kb_entries;
 "#;
