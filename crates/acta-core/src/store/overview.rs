@@ -18,7 +18,7 @@ use super::Store;
 use crate::date::{Date, DueState, Zone, due_state};
 use crate::error::Result;
 use crate::model::{EpicId, KbId, NoteId, Progress, ProjectId, Record, Status, TopicId};
-use rusqlite::params;
+use rusqlite::{OptionalExtension, params};
 use std::collections::{HashMap, HashSet};
 
 /// Days without activity before an Active topic is called idle.
@@ -247,6 +247,29 @@ impl Store {
     ) -> Result<Vec<OverviewItem>> {
         let facts = self.facts(scope)?;
         self.list(&facts, filter, today, zone)
+    }
+
+    /// Days since an Active topic's last activity when it is idle by the
+    /// definition of [`OverviewFilter::Idle`]; `None` when it is not Active
+    /// or not idle. For the agent's topic header (`· no activity 12d`).
+    pub fn topic_idle_days(&self, topic: TopicId, today: Date, zone: Zone) -> Result<Option<i64>> {
+        let t = self.topic(topic)?;
+        if t.status != Status::Active {
+            return Ok(None);
+        }
+        let last: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT e.created_at FROM entries e
+                  WHERE e.topic_id = ?1 AND e.deleted_at IS NULL
+                  ORDER BY e.created_at DESC LIMIT 1",
+                [topic.0],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let last = last.unwrap_or(t.stamp.created_at);
+        let cutoff = zone.midnight(today.add_days(1 - IDLE_DAYS));
+        Ok((last < cutoff).then(|| zone.date_of(last).days_until(today)))
     }
 
     fn facts(&self, scope: Scope) -> Result<Facts> {

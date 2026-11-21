@@ -6,17 +6,20 @@
 //! is an `Err` with a one-line reason the agent can act on.
 
 use super::args::*;
+use super::due;
 use super::render::{self, Fence, Text, budget, limit};
 use super::session::{Session, parse_owner};
+use crate::date::{Date, DueState, due_state};
 use crate::error::Error;
 use crate::markdown;
 use crate::model::{
-    Author, Entry, EntryKind, EpicId, KbId, KbKind, KbSummary, Level, Note, NoteFate, NoteId,
-    Owner, PageReq, ProjectId, Record, Status, TopicId,
+    Author, Entry, EntryKind, EpicId, EpicSummary, KbId, KbKind, KbSummary, Level, Note, NoteFate,
+    NoteId, Owner, PageReq, ProjectId, Record, Status, TopicId, TopicSummary,
 };
 use crate::store::{
-    EntryFilter, EpicPatch, KbEdit, KbFilter, KbUpdate, NewEntry, NewKb, NewTopic, SNIPPET_CLOSE,
-    SNIPPET_OPEN, SearchKind, SearchQuery, Store, TopicFilter, TopicPatch,
+    EntryFilter, EpicPatch, INBOX_DAYS, KbEdit, KbFilter, KbUpdate, NewEntry, NewKb, NewTopic,
+    OverviewFilter, OverviewItem, SNIPPET_CLOSE, SNIPPET_OPEN, Scope, SearchKind, SearchQuery,
+    Store, TopicFilter, TopicPatch,
 };
 
 /// The server `instructions` (ADR 0005, section 2). Under 800 characters.
@@ -232,6 +235,57 @@ impl Agent<'_> {
         }
     }
 
+    /// The `Attention:` line of a project or an epic (data.md request 17),
+    /// built from the Overview's own lists so it always agrees with the UI:
+    /// blocked, overdue (topics, and on a project also epics, as
+    /// `find(due=overdue)`), idle, and on a project an inbox older than 7
+    /// days. `None` when nothing needs attention.
+    fn attention(&self, scope: Scope, max: usize) -> Result<Option<String>, String> {
+        let today = self.session.today();
+        let zone = self.session.zone;
+        let list = |f| self.store.overview_list(scope, f, today, zone).map_err(err);
+        let with_days = |items: Vec<OverviewItem>| -> Vec<(String, i64)> {
+            items
+                .into_iter()
+                .map(|i| (i.record.to_string(), i.days.unwrap_or(0)))
+                .collect()
+        };
+        let blocked: Vec<String> = list(OverviewFilter::Blocked)?
+            .into_iter()
+            .map(|i| i.record.to_string())
+            .collect();
+        let mut overdue = with_days(list(OverviewFilter::Overdue)?);
+        let mut inbox = None;
+        if let Scope::Project(p) = scope {
+            for e in self.store.epics(p).map_err(err)? {
+                if let DueState::Overdue(d) = due_state(e.due_on, today, e.progress.is_open()) {
+                    overdue.push((e.id.to_string(), d));
+                }
+            }
+            // Oldest date first; stable, so topics keep their order.
+            overdue.sort_by_key(|(_, d)| std::cmp::Reverse(*d));
+            let notes = list(OverviewFilter::Inbox)?;
+            if let Some(d) = notes.first().and_then(|n| n.days)
+                && d >= INBOX_DAYS
+            {
+                inbox = Some(format!("inbox {}, oldest {d}d", notes.len()));
+            }
+        }
+        let idle = with_days(list(OverviewFilter::Idle)?);
+        let days = |v: Vec<(String, i64)>| -> Vec<String> {
+            v.into_iter().map(|(id, d)| format!("{id} {d}d")).collect()
+        };
+        Ok(due::attention_line(
+            &[
+                ("blocked", blocked),
+                ("overdue", days(overdue)),
+                ("idle", days(idle)),
+            ],
+            inbox,
+            max,
+        ))
+    }
+
     fn counts_line(&self, scope: Owner, project: ProjectId, entries: Option<i64>) -> String {
         let kb = self.store.kb_counts(scope).unwrap_or_default();
         let inbox = self
@@ -278,8 +332,16 @@ impl Agent<'_> {
                         .unwrap_or_default(),
                     None => String::new(),
                 };
+                let today = self.session.today();
+                let due = due::segment(t.due_on, today, t.status.is_open());
+                // An idle Active topic: its state may be out of date.
+                let idle = self
+                    .store
+                    .topic_idle_days(id, today, self.session.zone)
+                    .map_err(err)?
+                    .map_or(String::new(), |d| format!(" · no activity {d}d"));
                 out.line_clipped(format!(
-                    "{id} {} · {}{epic}{}",
+                    "{id} {} · {}{due}{idle}{epic}{}",
                     render::clip(&render::one_line(&t.title), 80),
                     t.status.as_str(),
                     self.focus_mark(o)
@@ -325,14 +387,20 @@ impl Agent<'_> {
                     .map_err(err)?
                     .into_iter()
                     .find(|s| s.id == id);
-                let progress = s.map_or(String::new(), |s| {
+                let progress = s.as_ref().map_or(String::new(), |s| {
                     format!(" · {}/{} done", s.progress.done, s.progress.total)
                 });
+                let today = self.session.today();
+                let open = s.as_ref().is_none_or(|s| s.progress.is_open());
                 out.line_clipped(format!(
-                    "{id} {}{progress}{}",
+                    "{id} {}{progress}{}{}",
                     render::clip(&render::one_line(&e.title), 80),
+                    due::segment(e.due_on, today, open),
                     self.focus_mark(o)
                 ));
+                if let Some(line) = self.attention(Scope::Epic(id), due::ATTENTION_EPIC)? {
+                    out.line(line);
+                }
                 if !e.state.trim().is_empty() {
                     out.line(format!(
                         "State: {}",
@@ -355,10 +423,11 @@ impl Agent<'_> {
                     .iter()
                     .map(|t| {
                         format!(
-                            "{} {}  {}",
+                            "{} {}  {}{}",
                             t.id,
                             t.status.as_str(),
-                            render::clip(&render::one_line(&t.title), 80)
+                            render::clip(&render::one_line(&t.title), 80),
+                            due::short_segment(t.due_on, today, t.status.is_open())
                         )
                     })
                     .collect();
@@ -381,14 +450,22 @@ impl Agent<'_> {
                     .into_iter()
                     .find(|p| p.id == id)
                     .ok_or_else(|| err(Error::NotFound(id.to_string())))?;
+                let today = self.session.today();
+                let own_due = self.store.project(id).map_err(err)?.due_on;
                 out.line_clipped(format!(
-                    "{id} {} · {}/{} topics done · inbox {} · knowledge {}",
+                    "{id} {} · {}/{} topics done{} · inbox {} · knowledge {}",
                     render::clip(&render::one_line(&p.title), 60),
                     p.progress.done,
                     p.progress.total,
+                    due::segment(own_due, today, p.progress.is_open()),
                     p.inbox,
                     p.knowledge
                 ));
+                // Right after the header: the epic and topic lines below are
+                // what gets cut when space is short.
+                if let Some(line) = self.attention(Scope::Project(id), due::ATTENTION_PROJECT)? {
+                    out.line(line);
+                }
                 let footer = "No focus topic: brief(id=\"T-n\", focus=true) sets one.";
                 let epics = self.store.epics(id).map_err(err)?;
                 let open = self
@@ -398,6 +475,7 @@ impl Agent<'_> {
                             project: Some(id),
                             epic: Some(None),
                             statuses: Status::ALL.into_iter().filter(|s| s.is_open()).collect(),
+                            due_before: None,
                         },
                         PageReq::first(20),
                     )
@@ -406,20 +484,22 @@ impl Agent<'_> {
                     .iter()
                     .map(|e| {
                         format!(
-                            "{} {} ({}/{} done)",
+                            "{} {} ({}/{} done){}",
                             e.id,
                             render::clip(&render::one_line(&e.title), 60),
                             e.progress.done,
-                            e.progress.total
+                            e.progress.total,
+                            due::short_segment(e.due_on, today, e.progress.is_open())
                         )
                     })
                     .collect();
                 lines.extend(open.items.iter().map(|t| {
                     format!(
-                        "{} {}  {}",
+                        "{} {}  {}{}",
                         t.id,
                         t.status.as_str(),
-                        render::clip(&render::one_line(&t.title), 60)
+                        render::clip(&render::one_line(&t.title), 60),
+                        due::short_segment(t.due_on, today, t.status.is_open())
                     )
                 }));
                 let total = epics.len() as i64 + open.total;
@@ -561,6 +641,31 @@ impl Agent<'_> {
 
     pub fn update(&mut self, a: UpdateArgs) -> Reply {
         self.project()?;
+        // Validated first: a bad date refuses the whole call.
+        let due = a.due.as_deref().map(due::parse_arg).transpose()?;
+        let id = a.id.trim();
+        if let Some(p) = ProjectId::parse(id).filter(|_| id.to_ascii_uppercase().starts_with("P-"))
+        {
+            self.owner_project(Owner::Project(p))?;
+            let others = a.title.is_some()
+                || a.description.is_some()
+                || a.state.is_some()
+                || a.status.is_some()
+                || a.epic.is_some();
+            if others {
+                return Err("a project takes only due here; edit the rest in Acta".into());
+            }
+            let Some(due) = due else {
+                return Err("nothing to change: pass due (YYYY-MM-DD, or \"\" to clear)".into());
+            };
+            self.store
+                .set_due(Owner::Project(p), due, self.author())
+                .map_err(err)?;
+            return Ok(render::finish(
+                format!("ok {p} · {}", due::ack(due, self.session.today())),
+                budget::ACK,
+            ));
+        }
         let mut fields = Vec::new();
         if let Some(t) = &a.title {
             check_len("title", t, limit::TITLE)?;
@@ -574,7 +679,7 @@ impl Agent<'_> {
             check_len("state", s, limit::STATE)?;
             fields.push("state");
         }
-        let id = a.id.trim();
+        let author = self.author();
         let label = if let Some(t) =
             TopicId::parse(id).filter(|_| id.to_ascii_uppercase().starts_with("T-"))
         {
@@ -598,8 +703,17 @@ impl Agent<'_> {
                 status,
                 epic,
             };
+            let changed = !fields.is_empty();
             self.store
-                .update_topic(t, patch, self.author())
+                .atomically(|store| {
+                    if changed {
+                        store.update_topic(t, patch, author)?;
+                    }
+                    if let Some(d) = due {
+                        store.set_due(Owner::Topic(t), d, author)?;
+                    }
+                    Ok(())
+                })
                 .map_err(err)?;
             t.to_string()
         } else if let Some(e) =
@@ -614,8 +728,17 @@ impl Agent<'_> {
                 description: a.description,
                 state: a.state,
             };
+            let changed = !fields.is_empty();
             self.store
-                .update_epic(e, patch, self.author())
+                .atomically(|store| {
+                    if changed {
+                        store.update_epic(e, patch, author)?;
+                    }
+                    if let Some(d) = due {
+                        store.set_due(Owner::Epic(e), d, author)?;
+                    }
+                    Ok(())
+                })
                 .map_err(err)?;
             e.to_string()
         } else if let Some(n) =
@@ -625,6 +748,9 @@ impl Agent<'_> {
             self.check_project(note.project, id)?;
             if a.state.is_some() || a.epic.is_some() {
                 return Err("a note has no state or epic; file it with create(from_notes)".into());
+            }
+            if due.is_some() {
+                return Err("a note has no due date; set it on a topic, epic or project".into());
             }
             let text = a.description.or(a.title);
             let fate = match a.status.as_deref().map(|s| s.trim().to_ascii_lowercase()) {
@@ -659,7 +785,6 @@ impl Agent<'_> {
                 }
             }
             let already_open = fate == Some(true) && note.is_open();
-            let author = self.author();
             self.store
                 .atomically(|store| {
                     if let Some(t) = &text {
@@ -689,23 +814,113 @@ impl Agent<'_> {
             }
             n.to_string()
         } else {
-            return Err("id must be T-n, E-n or N-n".into());
+            return Err("id must be T-n, E-n, N-n or P-n".into());
         };
-        if fields.is_empty() {
-            return Err("nothing to change: pass title, description, state, status or epic".into());
-        }
-        Ok(render::finish(
-            format!("ok {label} updated: {}", fields.join(", ")),
-            budget::ACK,
-        ))
+        let due_ack = due.map(|d| due::ack(d, self.session.today()));
+        let text = match (fields.is_empty(), due_ack) {
+            (true, None) => {
+                return Err(
+                    "nothing to change: pass title, description, state, status, epic or due".into(),
+                );
+            }
+            (true, Some(d)) => format!("ok {label} · {d}"),
+            (false, Some(d)) => format!("ok {label} updated: {} · {d}", fields.join(", ")),
+            (false, None) => format!("ok {label} updated: {}", fields.join(", ")),
+        };
+        Ok(render::finish(text, budget::ACK))
+    }
+
+    /// `acta update --json`: what a script needs after an update, the id,
+    /// the due date (`YYYY-MM-DD` or null) and whether it is overdue.
+    /// Notes have no date: only the id.
+    pub fn record_json(&self, id: &str) -> Reply {
+        let today = self.session.today();
+        let id = id.trim();
+        let (due, open) = match parse_owner(id) {
+            Some(Owner::Topic(t)) => {
+                let t = self.store.topic(t).map_err(err)?;
+                (t.due_on, t.status.is_open())
+            }
+            Some(Owner::Epic(e)) => {
+                let epic = self.store.epic(e).map_err(err)?;
+                let open = self
+                    .store
+                    .epics(epic.project)
+                    .map_err(err)?
+                    .iter()
+                    .find(|s| s.id == e)
+                    .is_none_or(|s| s.progress.is_open());
+                (epic.due_on, open)
+            }
+            Some(Owner::Project(p)) => {
+                let due = self.store.project(p).map_err(err)?.due_on;
+                let open = self
+                    .store
+                    .projects()
+                    .map_err(err)?
+                    .iter()
+                    .find(|s| s.id == p)
+                    .is_none_or(|s| s.progress.is_open());
+                (due, open)
+            }
+            None => return Ok(serde_json::json!({ "id": id.to_ascii_uppercase() }).to_string()),
+        };
+        Ok(serde_json::json!({
+            "id": id.to_ascii_uppercase(),
+            "due": due.map(|d| d.to_string()),
+            "overdue": due::is_overdue(due, today, open),
+        })
+        .to_string())
     }
 
     // ---- find ----
 
     pub fn find(&mut self, a: FindArgs) -> Reply {
+        let page = self.find_page(a)?;
+        if page.hits.is_empty() {
+            return Ok("0 hits".into());
+        }
+        let lines: Vec<String> = page.hits.iter().map(|h| h.line.clone()).collect();
+        // Titles, notes and excerpts are stored text: all inside the fence.
+        let n = render::fitting(&lines, budget::FIND - 60 - render::FENCE_COST);
+        let shown_end = page.offset + n as i64;
+        let foot = if shown_end < page.total {
+            format!(
+                "{}-{shown_end} of {} · more: cursor={shown_end}",
+                page.offset + 1,
+                page.total
+            )
+        } else {
+            plural(page.total, "hit", "hits")
+        };
+        Ok(fenced_reply(
+            None,
+            &lines[..n].join("\n"),
+            Some(&foot),
+            budget::FIND,
+        ))
+    }
+
+    /// `acta find --json`: the same page as `find`, for scripts. Topics and
+    /// epics carry `due` (`YYYY-MM-DD` or null) and `overdue`.
+    pub fn find_json(&mut self, a: FindArgs) -> Reply {
+        let page = self.find_page(a)?;
+        let end = page.offset + page.hits.len() as i64;
+        let hits: Vec<serde_json::Value> = page.hits.iter().map(FindHit::json).collect();
+        Ok(serde_json::json!({
+            "hits": hits,
+            "total": page.total,
+            "next_cursor": (end < page.total).then_some(end),
+        })
+        .to_string())
+    }
+
+    /// One page of `find`: the hits and their lines, before any budget.
+    fn find_page(&mut self, a: FindArgs) -> Result<FindPage, String> {
         let project = self.project()?;
         let limit = a.limit.unwrap_or(8).clamp(1, 20);
         let offset = a.cursor.unwrap_or(0).max(0);
+        let today = self.session.today();
         let kind = a.kind.as_deref().map(|k| k.trim().to_ascii_lowercase());
         if kind
             .as_deref()
@@ -713,20 +928,40 @@ impl Agent<'_> {
         {
             return Err("kind must be topic, epic, note or entry".into());
         }
-        let statuses: Vec<Status> = match a.status.as_deref().map(|s| s.trim().to_ascii_lowercase())
-        {
-            None => Status::ALL.into_iter().filter(|s| s.is_open()).collect(),
-            Some(s) if s == "open" => Status::ALL.into_iter().filter(|s| s.is_open()).collect(),
-            Some(s) if s == "closed" => vec![Status::Done, Status::Dropped],
-            Some(s) if s == "all" => Vec::new(),
-            Some(s) => vec![status_of(&s)?],
+        let status_word = a.status.as_deref().map(|s| s.trim().to_ascii_lowercase());
+        let statuses: Vec<Status> = match status_word.as_deref() {
+            None | Some("open") => Status::ALL.into_iter().filter(|s| s.is_open()).collect(),
+            Some("closed") => vec![Status::Done, Status::Dropped],
+            Some("all") => Vec::new(),
+            Some(s) => vec![status_of(s)?],
         };
         let epic = a.epic.as_deref().map(|e| self.epic_arg(e)).transpose()?;
         let query = a.query.as_deref().map(str::trim).filter(|q| !q.is_empty());
         if let Some(q) = query {
             check_len("query", q, limit::QUERY)?;
         }
-        let mut lines: Vec<String> = Vec::new();
+        if let Some(d) = a.due.as_deref() {
+            let cutoff = due::find_cutoff(d, today)?;
+            if query.is_some() {
+                return Err("due lists by date and does not take a query".into());
+            }
+            if matches!(kind.as_deref(), Some("note" | "entry")) {
+                return Err("due applies to topics and epics".into());
+            }
+            // Only open records can be overdue or due soon; a specific
+            // status narrows the topics and leaves epics out.
+            let specific = !matches!(status_word.as_deref(), None | Some("open" | "all"));
+            return self.find_due(
+                project,
+                cutoff,
+                kind.as_deref(),
+                statuses,
+                specific,
+                epic,
+                PageReq { offset, limit },
+            );
+        }
+        let mut hits: Vec<FindHit> = Vec::new();
         let page_total: i64;
         match (query, kind.as_deref()) {
             (None, Some("note")) => {
@@ -734,31 +969,27 @@ impl Agent<'_> {
                     .store
                     .inbox(project, PageReq { offset, limit })
                     .map_err(err)?;
-                lines.extend(page.items.iter().map(|n| {
-                    format!(
+                hits.extend(page.items.iter().map(|n| FindHit {
+                    id: n.id.to_string(),
+                    kind: "note",
+                    text: Some(n.text.clone()),
+                    line: format!(
                         "{} note  {}",
                         n.id,
                         render::clip(&render::one_line(&n.text), 200)
-                    )
+                    ),
+                    ..FindHit::default()
                 }));
                 page_total = page.total;
             }
             (None, Some("epic")) => {
                 let all = self.store.epics(project).map_err(err)?;
                 page_total = all.len() as i64;
-                lines.extend(
+                hits.extend(
                     all.iter()
                         .skip(offset as usize)
                         .take(limit as usize)
-                        .map(|e| {
-                            format!(
-                                "{} epic  {} ({}/{} done)",
-                                e.id,
-                                render::clip(&render::one_line(&e.title), 80),
-                                e.progress.done,
-                                e.progress.total
-                            )
-                        }),
+                        .map(|e| epic_hit(e, today, false)),
                 );
             }
             (None, Some("entry")) => {
@@ -774,19 +1005,12 @@ impl Agent<'_> {
                             project: Some(project),
                             epic: epic.map(Some),
                             statuses,
+                            due_before: None,
                         },
                         PageReq { offset, limit },
                     )
                     .map_err(err)?;
-                lines.extend(page.items.iter().map(|t| {
-                    let epic = t.epic.map_or(String::new(), |e| format!(" · {e}"));
-                    format!(
-                        "{} {}  {}{epic}",
-                        t.id,
-                        t.status.as_str(),
-                        render::clip(&render::one_line(&t.title), 80)
-                    )
-                }));
+                hits.extend(page.items.iter().map(|t| topic_hit(t, today, false)));
                 page_total = page.total;
             }
             (None, Some(_)) => {
@@ -806,13 +1030,7 @@ impl Agent<'_> {
                                 .iter()
                                 .all(|w| ew.iter().any(|x| x.starts_with(w.as_str())))
                         {
-                            epic_hits.push(format!(
-                                "{} epic  {} ({}/{} done)",
-                                e.id,
-                                render::clip(&render::one_line(&e.title), 80),
-                                e.progress.done,
-                                e.progress.total
-                            ));
+                            epic_hits.push(epic_hit(&e, today, false));
                         }
                     }
                 }
@@ -825,14 +1043,14 @@ impl Agent<'_> {
                 };
                 let epic_count = epic_hits.len() as i64;
                 let mut total = epic_count;
-                lines.extend(
+                hits.extend(
                     epic_hits
                         .into_iter()
                         .skip(offset as usize)
                         .take(limit as usize),
                 );
                 let search_offset = (offset - epic_count).max(0);
-                let search_limit = limit - lines.len() as i64;
+                let search_limit = limit - hits.len() as i64;
                 if !kinds.is_empty() {
                     // With a query, the status filter applies only when given.
                     let statuses = if a.status.is_some() {
@@ -864,57 +1082,144 @@ impl Agent<'_> {
                     };
                     for h in items {
                         let snip = render::clip(&render::one_line(&strip_marks(&h.snippet)), 150);
-                        let line = match h.record {
+                        let hit = match h.record {
                             Record::Topic(t) => {
                                 let Ok(topic) = self.store.topic(t) else {
                                     continue;
                                 };
-                                format!(
-                                    "{t} {}  {} - {snip}",
-                                    topic.status.as_str(),
-                                    render::clip(&render::one_line(&topic.title), 60)
-                                )
+                                let open = topic.status.is_open();
+                                FindHit {
+                                    id: t.to_string(),
+                                    kind: "topic",
+                                    status: Some(topic.status.as_str()),
+                                    title: Some(topic.title.clone()),
+                                    text: Some(snip.clone()),
+                                    due: Some(topic.due_on),
+                                    overdue: Some(due::is_overdue(topic.due_on, today, open)),
+                                    line: format!(
+                                        "{t} {}  {} - {snip}",
+                                        topic.status.as_str(),
+                                        render::clip(&render::one_line(&topic.title), 60)
+                                    ),
+                                }
                             }
                             Record::Entry(id) => {
                                 let Ok(e) = self.store.entry(id) else {
                                     continue;
                                 };
-                                format!(
-                                    "{}#{} {}  {snip}",
-                                    e.topic,
-                                    e.seq.unwrap_or(0),
-                                    e.kind.as_str()
-                                )
+                                let eid = format!("{}#{}", e.topic, e.seq.unwrap_or(0));
+                                FindHit {
+                                    line: format!("{eid} {}  {snip}", e.kind.as_str()),
+                                    id: eid,
+                                    kind: "entry",
+                                    text: Some(snip),
+                                    ..FindHit::default()
+                                }
                             }
-                            Record::Note(n) => format!("{n} note  {snip}"),
+                            Record::Note(n) => FindHit {
+                                id: n.to_string(),
+                                kind: "note",
+                                line: format!("{n} note  {snip}"),
+                                text: Some(snip),
+                                ..FindHit::default()
+                            },
                             _ => continue,
                         };
-                        lines.push(line);
+                        hits.push(hit);
                     }
                 }
                 page_total = total;
             }
         }
-        if lines.is_empty() {
-            return Ok("0 hits".into());
-        }
-        // Titles, notes and excerpts are stored text: all inside the fence.
-        let n = render::fitting(&lines, budget::FIND - 60 - render::FENCE_COST);
-        let shown_end = offset + n as i64;
-        let foot = if shown_end < page_total {
-            format!(
-                "{}-{shown_end} of {page_total} · more: cursor={shown_end}",
-                offset + 1
-            )
+        Ok(FindPage {
+            hits,
+            offset,
+            total: page_total,
+        })
+    }
+
+    /// `find(due=...)`: open topics and epics due before `cutoff`, by date
+    /// then stored order, an epic before the topics due the same day.
+    #[allow(clippy::too_many_arguments)]
+    fn find_due(
+        &self,
+        project: ProjectId,
+        cutoff: Date,
+        kind: Option<&str>,
+        statuses: Vec<Status>,
+        specific_status: bool,
+        epic: Option<EpicId>,
+        page: PageReq,
+    ) -> Result<FindPage, String> {
+        let today = self.session.today();
+        let mut epics: Vec<EpicSummary> =
+            if matches!(kind, None | Some("epic")) && epic.is_none() && !specific_status {
+                self.store
+                    .epics(project)
+                    .map_err(err)?
+                    .into_iter()
+                    .filter(|e| e.progress.is_open() && e.due_on.is_some_and(|d| d < cutoff))
+                    .collect()
+            } else {
+                Vec::new()
+            };
+        // Stable: the same date keeps the stored order.
+        epics.sort_by_key(|e| e.due_on);
+        let open: Vec<Status> = if statuses.is_empty() {
+            Status::ALL.into_iter().filter(|s| s.is_open()).collect()
         } else {
-            plural(page_total, "hit", "hits")
+            statuses.into_iter().filter(|s| s.is_open()).collect()
         };
-        Ok(fenced_reply(
-            None,
-            &lines[..n].join("\n"),
-            Some(&foot),
-            budget::FIND,
-        ))
+        // A topic at index i of the date order sits at merged position i
+        // plus the epics before it, at most i + epics: every topic before
+        // `skip` is before the page, so the query can start there.
+        let skip = (page.offset - epics.len() as i64).max(0);
+        let (topics, topic_total) = if matches!(kind, None | Some("topic")) && !open.is_empty() {
+            let p = self
+                .store
+                .topics(
+                    &TopicFilter {
+                        project: Some(project),
+                        epic: epic.map(Some),
+                        statuses: open,
+                        due_before: Some(cutoff),
+                    },
+                    PageReq {
+                        offset: skip,
+                        limit: page.limit + epics.len() as i64,
+                    },
+                )
+                .map_err(err)?;
+            (p.items, p.total)
+        } else {
+            (Vec::new(), 0)
+        };
+        let mut merged: Vec<FindHit> = Vec::new();
+        let (mut ti, mut ei) = (0, 0);
+        while ti < topics.len() || ei < epics.len() {
+            let epic_first = match (topics.get(ti), epics.get(ei)) {
+                (Some(t), Some(e)) => e.due_on <= t.due_on,
+                (None, Some(_)) => true,
+                _ => false,
+            };
+            if epic_first {
+                merged.push(epic_hit(&epics[ei], today, true));
+                ei += 1;
+            } else {
+                merged.push(topic_hit(&topics[ti], today, true));
+                ti += 1;
+            }
+        }
+        let hits = merged
+            .into_iter()
+            .skip((page.offset - skip) as usize)
+            .take(page.limit as usize)
+            .collect();
+        Ok(FindPage {
+            hits,
+            offset: page.offset,
+            total: topic_total + epics.len() as i64,
+        })
     }
 
     // ---- create ----
@@ -987,8 +1292,8 @@ impl Agent<'_> {
         for (i, it) in a.items.iter().enumerate() {
             let what = format!("item {}", i + 1);
             let allowed: &[&str] = match kinds[i].as_str() {
-                "topic" => &["title", "description", "epic", "from_notes"],
-                "epic" => &["title", "description", "from_notes"],
+                "topic" => &["title", "description", "epic", "from_notes", "due"],
+                "epic" => &["title", "description", "from_notes", "due"],
                 "note" => &["title", "description"],
                 "entry" => &["topic", "from_notes"],
                 _ => return Err(format!("{what}: kind must be topic, epic, note or entry")),
@@ -1002,6 +1307,7 @@ impl Agent<'_> {
                     "from_notes",
                     it.from_notes.as_ref().is_some_and(|n| !n.is_empty()),
                 ),
+                ("due", it.due.is_some()),
             ];
             if let Some((field, _)) = given.iter().find(|(f, g)| *g && !allowed.contains(f)) {
                 let article = if matches!(kinds[i].as_str(), "epic" | "entry") {
@@ -1022,6 +1328,10 @@ impl Agent<'_> {
             let ids: Vec<NoteId> = notes.iter().map(|n| n.id).collect();
             let title = it.title.trim().to_owned();
             let kind = kinds[i].as_str();
+            let due = match it.due.as_deref() {
+                None => None,
+                Some(d) => due::parse_arg(d).map_err(|e| format!("{what}: {e}"))?,
+            };
             if matches!(kind, "topic" | "epic") {
                 if title.is_empty() {
                     return Err(format!("{what}: a {kind} needs a title"));
@@ -1070,12 +1380,14 @@ impl Agent<'_> {
                         description,
                         status,
                         notes: ids,
+                        due,
                     });
                 }
                 "epic" => plans.push(Plan::Epic {
                     title,
                     description,
                     notes: ids,
+                    due,
                 }),
                 "note" => {
                     if !ids.is_empty() {
@@ -1788,11 +2100,13 @@ pub(super) enum Plan {
         description: String,
         status: Status,
         notes: Vec<NoteId>,
+        due: Option<Date>,
     },
     Epic {
         title: String,
         description: String,
         notes: Vec<NoteId>,
+        due: Option<Date>,
     },
     Note(String),
     /// Notes filed into an existing topic, each as a discussion entry.
@@ -1824,8 +2138,11 @@ pub(super) fn apply_plans(
     let mut acks = Vec::new();
     for (i, plan) in plans.into_iter().enumerate() {
         let (ack, notes) = match plan {
-            Plan::Epic { notes, .. } => {
+            Plan::Epic { notes, due, .. } => {
                 let id = epics[i].expect("created above");
+                if due.is_some() {
+                    store.set_due(Owner::Epic(id), due, author)?;
+                }
                 store.file_notes_in_epic(&notes, id, author)?;
                 (id.to_string(), notes)
             }
@@ -1835,6 +2152,7 @@ pub(super) fn apply_plans(
                 description,
                 status,
                 notes,
+                due,
             } => {
                 let epic = match epic {
                     None => None,
@@ -1851,6 +2169,9 @@ pub(super) fn apply_plans(
                     },
                     author,
                 )?;
+                if due.is_some() {
+                    store.set_due(Owner::Topic(id), due, author)?;
+                }
                 store.file_notes(&notes, id, author)?;
                 let mut ack = id.to_string();
                 if status == Status::Draft {
@@ -1891,6 +2212,101 @@ pub(super) fn apply_plans(
     }
     store.dismiss_notes(dismissed, author)?;
     Ok(acks)
+}
+
+/// One `find` hit: its line for the agent and its fields for `--json`.
+#[derive(Default)]
+struct FindHit {
+    id: String,
+    kind: &'static str,
+    status: Option<&'static str>,
+    title: Option<String>,
+    /// A note's text or a search excerpt.
+    text: Option<String>,
+    /// Topics and epics only: `Some(None)` is "no date".
+    due: Option<Option<Date>>,
+    overdue: Option<bool>,
+    line: String,
+}
+
+impl FindHit {
+    fn json(&self) -> serde_json::Value {
+        let mut o = serde_json::Map::new();
+        o.insert("id".into(), self.id.clone().into());
+        o.insert("kind".into(), self.kind.into());
+        if let Some(s) = self.status {
+            o.insert("status".into(), s.into());
+        }
+        if let Some(t) = &self.title {
+            o.insert("title".into(), t.clone().into());
+        }
+        if let Some(t) = &self.text {
+            o.insert("text".into(), t.clone().into());
+        }
+        if let Some(d) = self.due {
+            o.insert("due".into(), d.map(|d| d.to_string()).into());
+            o.insert("overdue".into(), self.overdue.unwrap_or(false).into());
+        }
+        o.into()
+    }
+}
+
+struct FindPage {
+    hits: Vec<FindHit>,
+    offset: i64,
+    total: i64,
+}
+
+/// A topic line of `find`: the shortened due segment in lists, the full one
+/// when the list is by date.
+fn topic_hit(t: &TopicSummary, today: Date, full_due: bool) -> FindHit {
+    let open = t.status.is_open();
+    let epic = t.epic.map_or(String::new(), |e| format!(" · {e}"));
+    let seg = if full_due {
+        due::segment(t.due_on, today, open)
+    } else {
+        due::short_segment(t.due_on, today, open)
+    };
+    FindHit {
+        id: t.id.to_string(),
+        kind: "topic",
+        status: Some(t.status.as_str()),
+        title: Some(t.title.clone()),
+        text: None,
+        due: Some(t.due_on),
+        overdue: Some(due::is_overdue(t.due_on, today, open)),
+        line: format!(
+            "{} {}  {}{epic}{seg}",
+            t.id,
+            t.status.as_str(),
+            render::clip(&render::one_line(&t.title), 80)
+        ),
+    }
+}
+
+fn epic_hit(e: &EpicSummary, today: Date, full_due: bool) -> FindHit {
+    let open = e.progress.is_open();
+    let seg = if full_due {
+        due::segment(e.due_on, today, open)
+    } else {
+        due::short_segment(e.due_on, today, open)
+    };
+    FindHit {
+        id: e.id.to_string(),
+        kind: "epic",
+        status: None,
+        title: Some(e.title.clone()),
+        text: None,
+        due: Some(e.due_on),
+        overdue: Some(due::is_overdue(e.due_on, today, open)),
+        line: format!(
+            "{} epic  {} ({}/{} done){seg}",
+            e.id,
+            render::clip(&render::one_line(&e.title), 80),
+            e.progress.done,
+            e.progress.total
+        ),
+    }
 }
 
 /// `N-3 N-5`.
