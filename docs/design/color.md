@@ -68,6 +68,8 @@ Why verdigris: the semantic colours (red, amber, green) are all warm, so a warm 
 | `accent` glyph on `fill.hover` over `sunken` (Active topic hovered in the tree) | 6.30 | 4.80 | 3.0 (glyph) |
 | `warning` glyph on `fill.hover` / `fill.selected` over `sunken` (Blocked topic hovered, selected in the tree) | 6.46 / 5.96 | 4.96 / 4.70 | 3.0 (glyph) |
 | `text.primary` on `accent.subtle` over `sunken` / `base` / `overlay` | 10.09 / 9.37 / 7.73 | 9.72 / 10.28 / 10.69 | 4.5 |
+| `text.primary` on `accent.subtle` over `raised` (file drop target on a note card, components-attachments.md) | 8.46 | 10.69 | 4.5 |
+| `text.secondary` on `fill.hover` over `raised` (file chip hovered on a note card) | 5.78 | 6.79 | 4.5 |
 | `text.primary` on `selection` over `base` | 6.99 | 8.34 | 4.5 |
 | `border.strong` vs `sunken` / `base` / `raised` / `overlay` | 4.60 / 4.30 / 3.88 / 3.53 | 3.20 / 3.40 / 3.55 / 3.55 | 3.0 (control boundary) |
 | `focus.ring` vs `sunken` / `base` / `overlay` | 7.26 / 6.79 / 5.57 | 5.33 / 5.67 / 5.92 | 3.0 |
@@ -77,6 +79,7 @@ Rules that follow from the numbers:
 - `text.tertiary` is not allowed on `fill.selected` (3.73 over `bg.overlay` in dark; 4.52 over `bg.sunken` in light, too close to the bar to rely on; the blended fill rounded to 8 bits as the renderer does). On any selected row, in the tree, a table, the palette or a menu, metadata switches to `text.secondary`.
 - Text on `accent.subtle` is always `text.primary`. Coloured or tertiary text on a tinted fill is not allowed (it measures 4.1 to 5.1).
 - `border.subtle` and `border.default` are separators (1.1 to 1.7 against their surface), never the only boundary of an interactive control. `border.subtle` nearly vanishes on `bg.overlay` (1.08 in dark), so hairlines inside overlays use `border.default`.
+- `text.tertiary` is not allowed on `fill.hover` over `bg.raised` (4.46 in dark): a hovered row or chip inside a card switches its metadata to `text.secondary`.
 - `text.disabled` (2.1 to 2.8) is used only with a disabled control, never for information.
 
 ### 2.3 Topic statuses
