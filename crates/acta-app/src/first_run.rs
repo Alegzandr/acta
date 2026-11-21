@@ -31,6 +31,12 @@ impl Render for FirstRun {
         let macos = cfg!(target_os = "macos");
         let m = KeyName::Mod.label(locale, macos);
         let ctrl = KeyName::Ctrl.label(locale, macos);
+        // The step labels' column is as wide as the longest label in this
+        // language, so the hints line up without a fixed width.
+        let labels = [Key::FirstrunStep1, Key::FirstrunStep2, Key::FirstrunStep3]
+            .map(|key| text(locale, key));
+        let label_width =
+            ui::label_width(&labels.iter().map(String::as_str).collect::<Vec<_>>(), cx);
         let step = |n: &'static str, key: Key, hint: gpui_kit::AnyElement| {
             div()
                 .flex()
@@ -48,7 +54,7 @@ impl Render for FirstRun {
                 .child(
                     type_scale::UI
                         .el()
-                        .w(px(200.))
+                        .w(px(label_width))
                         .text_color(t.text_secondary)
                         .child(text(locale, key)),
                 )
@@ -94,6 +100,7 @@ impl Render for FirstRun {
                                 false,
                                 &t,
                             )
+                            .child(ui::kbd_on_accent(&[m, "O"], &t))
                             .on_click(
                                 cx.listener(|_, _, _, cx| cx.emit(FirstRunEvent::ChooseFolder)),
                             ),

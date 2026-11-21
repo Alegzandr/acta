@@ -486,9 +486,12 @@ impl TerminalDock {
             Mode::Light => t.bg_raised,
         };
         let body: AnyElement = match pane {
+            // screens.md 8.4: the grid is inset 12 on every side.
             Some(Pane::Running { view, .. }) => div()
                 .flex_1()
                 .min_h_0()
+                .p(px(12.))
+                .bg(surface)
                 .child(view.clone())
                 .into_any_element(),
             Some(Pane::Ask { origin, save }) => {
