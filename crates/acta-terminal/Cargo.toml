@@ -11,3 +11,4 @@ description = "Acta's embedded terminal: a PTY session on alacritty_terminal and
 # Exact pins: ADR 0002 (no semver promise from alacritty_terminal) and ADR 0001 (UI stack).
 alacritty_terminal = "=0.26.0"
 async-channel = "2"
+gpui-kit = "=0.10.0"

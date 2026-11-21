@@ -116,6 +116,7 @@ version = "0.1.3"
 dependencies = [
  "alacritty_terminal",
  "async-channel",
+ "gpui-kit",
 ]
 
 [[package]]
