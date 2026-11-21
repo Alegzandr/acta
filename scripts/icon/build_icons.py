@@ -2,7 +2,7 @@
 
     python scripts/icon/build_icons.py            (from the repository root)
 
-Needs Python 3.10+ with numpy, Pillow and resvg-py (scripts/icon/requirements.txt). Output is deterministic.
+Needs Python 3.12+ (numpy 2.5.5 requires it) with numpy, Pillow and resvg-py (scripts/icon/requirements.txt). Output is deterministic.
 
 The icon: an ivory planet with a tilted brass ring passing in front of it, and a verdigris moon beyond the ring at
 the upper right, on a dark ink plate. tracer.py renders it analytically (no generated pixels):

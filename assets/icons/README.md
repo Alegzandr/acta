@@ -22,7 +22,7 @@ This is original work for Acta. It is rendered by a script, `scripts/icon/tracer
 
 ## Regenerating
 
-From the repository root, with Python 3.10 or later:
+From the repository root, with Python 3.12 or later (numpy 2.5.5 requires it):
 
 ```
 python -m venv .venv-icon
@@ -30,4 +30,4 @@ python -m venv .venv-icon
 .venv-icon/Scripts/python scripts/icon/build_icons.py
 ```
 
-The output is deterministic. The scene (positions, sizes, colours, light) is the `SPEC` table in `tracer.py`, and the per-size adjustments are in `build_icons.py`. Edit those, never the generated files.
+The output is deterministic on a given platform (verified on Windows x64). The scene (positions, sizes, colours, light) is the `SPEC` table in `tracer.py`, and the per-size adjustments are in `build_icons.py`. Edit those, never the generated files.
