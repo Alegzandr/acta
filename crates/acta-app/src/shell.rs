@@ -299,6 +299,9 @@ struct Bench {
     tree_focus: FocusHandle,
     page_focus: FocusHandle,
     active_project: Option<ProjectId>,
+    /// Where the next "New topic" goes when it was asked for from a tree
+    /// row's `plus` (that project, and that epic if any).
+    create_in: Option<(ProjectId, Option<EpicId>)>,
     recent: Vec<TopicId>,
     overlay: Option<Overlay>,
     /// Where focus returns when the overlay closes.
@@ -481,6 +484,7 @@ impl Shell {
             tree_focus: cx.focus_handle(),
             page_focus: cx.focus_handle(),
             active_project: None,
+            create_in: None,
             recent: Vec::new(),
             overlay: None,
             return_focus: None,
@@ -1040,7 +1044,12 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         match event {
-            PaletteEvent::Dismiss => self.close_overlay(window, cx),
+            PaletteEvent::Dismiss => {
+                if let Some(bench) = self.bench() {
+                    bench.create_in = None;
+                }
+                self.close_overlay(window, cx)
+            }
             PaletteEvent::Run(target) => {
                 let target = target.clone();
                 self.close_overlay(window, cx);
@@ -1068,9 +1077,14 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let epic = self.current_epic(cx);
+        let mut epic = self.current_epic(cx);
         let Some(bench) = self.bench() else { return };
-        let Some(project) = bench.active_project else {
+        let mut project = bench.active_project;
+        if let Some((p, e)) = bench.create_in.take() {
+            project = Some(p);
+            epic = e;
+        }
+        let Some(project) = project else {
             return;
         };
         let ws = bench.ws.clone();
@@ -2904,6 +2918,32 @@ fn tree_row(
             })
             .child(short_count(n.max(0) as u64))
     };
+    // components.md 5, list / tree row: hover on a project or epic row
+    // reveals a compact ghost `plus`, "New topic" there.
+    let plus = |project: ProjectId, epic: Option<EpicId>, cx: &mut Context<Shell>| {
+        div()
+            .invisible()
+            .group_hover(id.clone(), |s| s.visible())
+            .child(
+                ui::ghost_icon_button(
+                    format!("tree-plus-{index}"),
+                    Icon::Plus,
+                    24.,
+                    false,
+                    false,
+                    true,
+                    t,
+                )
+                .tooltip(ui::tip(text(locale, Key::TopicNew)))
+                .on_click(cx.listener(move |shell, _, window, cx| {
+                    cx.stop_propagation();
+                    if let Some(bench) = shell.bench() {
+                        bench.create_in = Some((project, epic));
+                    }
+                    shell.open_palette(None, Some(CreateKind::Topic), window, cx);
+                })),
+            )
+    };
     el = match row {
         Row::Project {
             title: name,
@@ -2911,7 +2951,8 @@ fn tree_row(
             id: pid,
         } => el
             .child(chevron(*expanded, pid.to_string(), cx))
-            .child(title(type_scale::UI_STRONG, name.clone(), t.text_primary)),
+            .child(title(type_scale::UI_STRONG, name.clone(), t.text_primary))
+            .child(plus(*pid, None, cx)),
         Row::Inbox { count: n, .. } => el
             .child(icon(Icon::Inbox, 16., rest))
             .child(title(
@@ -2940,10 +2981,11 @@ fn tree_row(
             title: name,
             expanded,
             id: eid,
-            ..
+            project,
         } => el
             .child(chevron(*expanded, eid.to_string(), cx))
-            .child(title(type_scale::LABEL, name.clone(), rest)),
+            .child(title(type_scale::LABEL, name.clone(), rest))
+            .child(plus(*project, Some(*eid), cx)),
         Row::Topic {
             title: name,
             status,
