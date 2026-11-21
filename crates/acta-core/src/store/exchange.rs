@@ -18,7 +18,7 @@ use super::Store;
 use crate::error::{Error, Result};
 use crate::model::{Author, ChangeKind, EntryKind, EventKind, KbId, KbKind, ProjectId, Status};
 use crate::snapshots::SnapshotKind;
-use rusqlite::{OptionalExtension, Transaction, params};
+use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
 /// The format name written in every file.
@@ -471,18 +471,17 @@ impl Store {
         }
         // A dry run writes nothing that survives, so it works on a
         // read-only database too.
-        let tx = if dry_run {
-            self.conn
-                .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?
-        } else {
-            self.write()?
-        };
-        let report = merge(&tx, file)?;
         if dry_run {
+            let tx = self
+                .conn
+                .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+            let report = merge(&tx, file)?;
             tx.rollback()?;
-        } else {
-            tx.commit()?;
+            return Ok(report);
         }
+        let tx = self.write()?;
+        let report = merge(&tx, file)?;
+        tx.commit()?;
         Ok(report)
     }
 }
@@ -491,7 +490,7 @@ impl Store {
 /// title, summary and body. If none does (the file's version of the entry
 /// was newer than any revision it carried), that version is saved as a new
 /// revision, so history always contains what the entry shows.
-fn reconcile_rev(tx: &Transaction<'_>, id: i64) -> Result<()> {
+fn reconcile_rev(tx: &rusqlite::Connection, id: i64) -> Result<()> {
     let matching: Option<i64> = tx.query_row(
         "SELECT max(r.rev) FROM kb_revisions r JOIN kb_entries k ON k.id = r.entry_id
          WHERE k.id = ?1 AND r.title = k.title AND r.summary = k.summary AND r.body = k.body",
@@ -531,7 +530,7 @@ enum Action {
     Skip,
 }
 
-fn decide(tx: &Transaction<'_>, table: &str, stamp: &XStamp) -> Result<Action> {
+fn decide(tx: &rusqlite::Connection, table: &str, stamp: &XStamp) -> Result<Action> {
     let local = tx
         .query_row(
             &format!("SELECT id, updated_at, deleted_at FROM {table} WHERE uuid = ?1"),
@@ -561,7 +560,7 @@ fn merged_deleted(local: &Local, stamp: &XStamp) -> (Option<i64>, Option<Author>
     }
 }
 
-fn local_id(tx: &Transaction<'_>, table: &str, uuid: &str) -> Result<i64> {
+fn local_id(tx: &rusqlite::Connection, table: &str, uuid: &str) -> Result<i64> {
     tx.query_row(
         &format!("SELECT id FROM {table} WHERE uuid = ?1"),
         [uuid],
@@ -575,7 +574,7 @@ fn local_id(tx: &Transaction<'_>, table: &str, uuid: &str) -> Result<i64> {
     })
 }
 
-fn opt_id(tx: &Transaction<'_>, table: &str, uuid: &Option<String>) -> Result<Option<i64>> {
+fn opt_id(tx: &rusqlite::Connection, table: &str, uuid: &Option<String>) -> Result<Option<i64>> {
     uuid.as_deref().map(|u| local_id(tx, table, u)).transpose()
 }
 
@@ -587,7 +586,7 @@ fn count(c: &mut ImportCounts, action: &Action) {
     }
 }
 
-fn merge(tx: &Transaction<'_>, f: &ExportFile) -> Result<ImportReport> {
+fn merge(tx: &rusqlite::Connection, f: &ExportFile) -> Result<ImportReport> {
     let mut rep = ImportReport::default();
 
     for x in &f.projects {

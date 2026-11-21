@@ -8,7 +8,7 @@ use crate::model::{
     SystemEvent, TopicId,
 };
 use crate::time::now_ms;
-use rusqlite::{OptionalExtension, Transaction, params};
+use rusqlite::{OptionalExtension, params};
 
 /// A timeline entry written by a person or an agent (ADR 0005 `log`), with
 /// an optional state and status refresh in the same transaction.
@@ -68,7 +68,7 @@ fn note_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Note> {
 
 /// Writes a system entry: Acta's own record of a change (request 10).
 pub(crate) fn system_event(
-    tx: &Transaction<'_>,
+    tx: &rusqlite::Connection,
     topic: TopicId,
     kind: EventKind,
     old: Option<String>,
@@ -247,6 +247,40 @@ impl Store {
     }
 
     /// Marks notes as turned into, or filed under, a topic of their project.
+    /// Files a note as a new topic in one transaction: the topic is created
+    /// (title and description from the caller) and the note filed under it.
+    pub fn note_to_topic(
+        &mut self,
+        note: NoteId,
+        new: super::NewTopic,
+        author: Author,
+    ) -> Result<TopicId> {
+        self.atomically(|store| {
+            let project = read_note(&store.conn, note)?.project;
+            if project != new.project {
+                return Err(Error::Invalid(format!(
+                    "{note} belongs to another project than {}",
+                    new.project
+                )));
+            }
+            let topic = store.create_topic(new, author)?;
+            store.file_notes(&[note], topic, author)?;
+            Ok(topic)
+        })
+    }
+
+    /// Puts a filed note back in the inbox (the undo of filing it).
+    pub fn unfile_note(&mut self, id: NoteId, author: Author) -> Result<()> {
+        let tx = self.write()?;
+        read_note(&tx, id)?;
+        tx.execute(
+            "UPDATE notes SET filed_topic_id = NULL, filed_at = NULL, updated_at = ?2, updated_by = ?3 WHERE id = ?1",
+            params![id.0, now_ms(), author],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn file_notes(&mut self, notes: &[NoteId], topic: TopicId, author: Author) -> Result<()> {
         let tx = self.write()?;
         let project = super::records::read_topic(&tx, topic)?.project;

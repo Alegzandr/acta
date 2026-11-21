@@ -33,7 +33,7 @@ use crate::model::{Author, EpicId, Owner, ProjectId, Stamp, TopicId};
 use crate::paths::{self, BaseDirs, Os};
 use crate::schema;
 use crate::snapshots::{self, Snapshot, SnapshotKind};
-use rusqlite::{Connection, Row, Transaction, TransactionBehavior};
+use rusqlite::{Connection, Row, Savepoint, Transaction, TransactionBehavior};
 use std::path::{Path, PathBuf};
 
 pub use crate::db::DB_FILE;
@@ -221,12 +221,67 @@ impl Store {
         }
     }
 
-    /// A write transaction (`BEGIN IMMEDIATE`).
-    pub(crate) fn write(&mut self) -> Result<Transaction<'_>> {
+    /// A write transaction (`BEGIN IMMEDIATE`), or a savepoint inside the
+    /// transaction of [`Store::atomically`].
+    pub(crate) fn write(&mut self) -> Result<Write<'_>> {
         self.check_writable()?;
-        Ok(self
-            .conn
-            .transaction_with_behavior(TransactionBehavior::Immediate)?)
+        if self.conn.is_autocommit() {
+            Ok(Write::Tx(self.conn.transaction_with_behavior(
+                TransactionBehavior::Immediate,
+            )?))
+        } else {
+            Ok(Write::Nested(self.conn.savepoint()?))
+        }
+    }
+
+    /// Runs `f` in one `BEGIN IMMEDIATE` transaction: every command it calls
+    /// commits with it or not at all, and what `f` reads cannot change under
+    /// it (other processes wait). `f` returning an error rolls everything
+    /// back. This is how the app checks a value and writes in one step (the
+    /// undo of the app compares the current value first).
+    pub fn atomically<R>(&mut self, f: impl FnOnce(&mut Store) -> Result<R>) -> Result<R> {
+        self.check_writable()?;
+        if !self.conn.is_autocommit() {
+            return f(self);
+        }
+        self.conn.execute_batch("BEGIN IMMEDIATE")?;
+        match f(self) {
+            Ok(value) => {
+                self.conn.execute_batch("COMMIT")?;
+                Ok(value)
+            }
+            Err(err) => {
+                let _ = self.conn.execute_batch("ROLLBACK");
+                Err(err)
+            }
+        }
+    }
+}
+
+/// The transaction of one command: its own, or a savepoint when the command
+/// runs inside [`Store::atomically`].
+pub(crate) enum Write<'a> {
+    Tx(Transaction<'a>),
+    Nested(Savepoint<'a>),
+}
+
+impl Write<'_> {
+    pub(crate) fn commit(self) -> rusqlite::Result<()> {
+        match self {
+            Write::Tx(tx) => tx.commit(),
+            Write::Nested(sp) => sp.commit(),
+        }
+    }
+}
+
+impl std::ops::Deref for Write<'_> {
+    type Target = Connection;
+
+    fn deref(&self) -> &Connection {
+        match self {
+            Write::Tx(tx) => tx,
+            Write::Nested(sp) => sp,
+        }
     }
 }
 

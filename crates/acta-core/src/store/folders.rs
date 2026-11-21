@@ -130,6 +130,27 @@ impl Store {
         Ok(())
     }
 
+    /// Sets several folders to paths already in stored form, in one
+    /// transaction (bulk repair: the caller resolved and checked the paths
+    /// off the store, so nothing here touches the disk).
+    pub fn set_folder_paths(
+        &mut self,
+        changes: &[(FolderId, String)],
+        author: Author,
+    ) -> Result<()> {
+        let tx = self.write()?;
+        let now = now_ms();
+        for (id, path) in changes {
+            read_folder(&tx, *id)?;
+            tx.execute(
+                "UPDATE folders SET path = ?2, updated_at = ?3, updated_by = ?4 WHERE id = ?1",
+                params![id.0, path, now, author],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Puts back a path exactly as it was stored, without checking that it
     /// exists: the undo of a Locate, whose old path is by definition gone.
     pub fn restore_folder_path(

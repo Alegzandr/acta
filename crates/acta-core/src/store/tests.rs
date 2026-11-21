@@ -1250,3 +1250,83 @@ fn an_import_that_changes_the_trash_state_clears_the_batch() {
         .unwrap();
     assert_eq!(batch, None);
 }
+
+#[test]
+fn atomically_commits_everything_or_nothing() {
+    let mut t = open();
+    let s = &mut t.store;
+    let p = s.create_project("Acta", "", H).unwrap();
+    let a = topic(s, p, None, "A");
+    let result: Result<()> = s.atomically(|s| {
+        s.update_topic(
+            a,
+            TopicPatch {
+                title: Some("Renamed".into()),
+                ..TopicPatch::default()
+            },
+            H,
+        )?;
+        Err(Error::Invalid("stop".into()))
+    });
+    assert!(result.is_err());
+    assert_eq!(s.topic(a).unwrap().title, "A", "rolled back");
+    let b = s
+        .atomically(|s| {
+            s.update_topic(
+                a,
+                TopicPatch {
+                    status: Some(Status::Active),
+                    ..TopicPatch::default()
+                },
+                H,
+            )?;
+            Ok(topic(s, p, None, "B"))
+        })
+        .unwrap();
+    assert_eq!(s.topic(a).unwrap().status, Status::Active);
+    assert_eq!(s.topic(b).unwrap().title, "B");
+}
+
+#[test]
+fn a_note_becomes_a_topic_in_one_step_and_can_go_back_to_the_inbox() {
+    let mut t = open();
+    let s = &mut t.store;
+    let p = s.create_project("Acta", "", H).unwrap();
+    let other = s.create_project("Atlas", "", H).unwrap();
+    let note = s.add_note(p, "Weekly digest of decisions", H).unwrap();
+    let new = |project| NewTopic {
+        project,
+        epic: None,
+        title: "Weekly digest".into(),
+        description: String::new(),
+        status: Status::Draft,
+    };
+    assert!(s.note_to_topic(note, new(other), H).is_err());
+    assert!(
+        s.topics(&TopicFilter::default(), all())
+            .unwrap()
+            .items
+            .is_empty()
+    );
+    let topic = s.note_to_topic(note, new(p), H).unwrap();
+    assert_eq!(s.note(note).unwrap().filed_topic, Some(topic));
+    s.unfile_note(note, H).unwrap();
+    assert_eq!(s.note(note).unwrap().filed_topic, None);
+}
+
+#[test]
+fn order_index_follows_the_stored_order_and_folder_paths_set_together() {
+    let mut t = open();
+    let s = &mut t.store;
+    let p = s.create_project("Acta", "", H).unwrap();
+    let a = topic(s, p, None, "A");
+    let b = topic(s, p, None, "B");
+    assert_eq!(s.order_index(Record::Topic(b)).unwrap(), 1);
+    s.reorder(Record::Topic(b), 0, H).unwrap();
+    assert_eq!(s.order_index(Record::Topic(a)).unwrap(), 1);
+
+    let dir = tempfile::tempdir().unwrap();
+    let f1 = s.add_folder(Owner::Project(p), dir.path(), H).unwrap();
+    s.set_folder_paths(&[(f1, "/gone/acta".into())], H).unwrap();
+    assert_eq!(s.folder(f1).unwrap().path, "/gone/acta");
+}

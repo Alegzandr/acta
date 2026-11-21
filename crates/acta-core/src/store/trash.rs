@@ -14,7 +14,7 @@ use crate::model::{
     TopicId,
 };
 use crate::time::{MS_PER_DAY, now_ms};
-use rusqlite::{OptionalExtension, Transaction, params};
+use rusqlite::{OptionalExtension, params};
 
 /// What identifies one delete: its batch id, or for records trashed
 /// before batches existed (or imported trashed) their deletion time.
@@ -99,7 +99,10 @@ fn table_of(record: Record) -> (&'static str, i64) {
 
 /// The parent that must be live for `record` to be restored, as
 /// `(table, id)`, read from the record's row.
-fn parent_of(tx: &Transaction<'_>, record: Record) -> Result<Option<(&'static str, i64, String)>> {
+fn parent_of(
+    tx: &rusqlite::Connection,
+    record: Record,
+) -> Result<Option<(&'static str, i64, String)>> {
     let one = |sql: &str, id: i64| -> rusqlite::Result<(Option<i64>, Option<i64>, Option<i64>)> {
         tx.query_row(sql, [id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
     };
