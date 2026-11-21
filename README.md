@@ -7,6 +7,7 @@
 <p align="center">
   A local-first desktop workbench for long projects: a tracker for you, and a structured,
   scoped memory for Claude Code.
+  Written in Rust with GPUI, for Windows, macOS and Linux.
 </p>
 
 <p align="center">
@@ -16,9 +17,10 @@
   <a href="LICENSE">MIT licence</a>
 </p>
 
-> **Pre-alpha.** Today Acta is an empty window that installs, updates itself and carries
-> the design foundations. What is listed under "What it will do" is not built yet; see
-> [Status](#status).
+> **Pre-alpha.** Today Acta is an empty window that installs per user, is designed to
+> update itself, and carries the design foundations. Self-update has so far been proven
+> only on Windows, against a local feed. What is listed under "What it will do" is not
+> built yet; see [Status](#status).
 
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/images/screenshot-light.png">
@@ -52,7 +54,8 @@
 | M5-M7 | Chat panel, notes inbox, polish | v0.5-v1.0 | planned |
 
 The 0.1.x releases exist to prove the pipeline: that Acta installs per user without a
-wizard and updates itself on Windows, macOS and Linux. They store no data yet. Details
+wizard and updates itself on Windows, macOS and Linux. So far that has been seen
+working only on Windows; see [what has been verified](docs/install.md#what-has-been-verified). They store no data yet. Details
 and progress are in [PLAN.md](PLAN.md).
 
 ## Install
@@ -76,19 +79,24 @@ curl -fsSL https://github.com/Alegzandr/acta/releases/latest/download/install.sh
 | Linux (glibc 2.35+) | x86_64 | `~/.local/share/acta/Acta.AppImage` |
 
 Per user, no administrator rights; Acta starts when the install finishes. Builds are not
-signed: the project has no budget for certificates. The install scripts avoid most
-warnings. A file downloaded with a browser triggers SmartScreen on Windows (**More
-info**, then **Run anyway**) and Gatekeeper on macOS (**System Settings > Privacy &
-Security > Open Anyway**). Checksums, provenance, uninstalling and what has been
-verified so far are in the [install guide](docs/install.md).
+signed: the project has no budget for certificates. The install scripts are meant to
+avoid most warnings. A file downloaded with a browser is expected to trigger SmartScreen
+on Windows (**More info**, then **Run anyway**) and Gatekeeper on macOS (**System
+Settings > Privacy & Security > Open Anyway**); these warnings are described from the
+vendors' documentation, not yet from our own tests
+([what has been verified](docs/install.md#what-has-been-verified)). Checksums,
+provenance and uninstalling are in the [install guide](docs/install.md).
 
 ## Updates
 
-Acta checks GitHub Releases each time it starts. When a newer version exists it
-downloads it, only the difference when it can, applies it and restarts before the window
-opens, without asking and without administrator rights. The check is limited to a few
-seconds; if it is slow or fails, Acta opens normally and updates at a later start.
+By design, Acta checks GitHub Releases each time it starts. When a newer version exists
+it downloads it, only the difference when it can, applies it and restarts before the
+window opens, without asking and without administrator rights. The check is limited to a
+few seconds; if it is slow or fails, Acta opens normally and updates at a later start.
 Updating uses [Velopack](https://velopack.io).
+
+Self-update has so far been proven only on Windows, against a local feed; the end-to-end
+test on Windows, macOS and Linux runners against GitHub Releases has not run yet.
 
 ## Build from source
 
@@ -127,4 +135,5 @@ Report security problems privately, as [SECURITY.md](SECURITY.md) explains.
 ## Licence
 
 Acta is released under the [MIT licence](LICENSE). The third-party components it ships
-keep their own licences; their texts are included in every package.
+keep their own licences; their texts are included in every package, next to Acta's own
+(`licenses/Acta-LICENSE.txt`).

@@ -153,8 +153,10 @@ still in progress for M1:
 This list shrinks as the releases confirm each point; the working checklist is in
 [releasing.md](releasing.md).
 
-## Third-party licences
+## Licences
 
-Acta is built from open-source components: the Rust crates it links, its fonts, the
-Lucide icons and the Velopack updater. Their licence texts ship inside every package,
-in a `licenses` directory (`Acta.app/Contents/Resources/licenses` on macOS).
+Acta is released under the MIT licence. It is built from open-source components: the
+Rust crates it links, its fonts, the Lucide icons and the Velopack updater. Their licence
+texts ship inside every package, in a `licenses` directory
+(`Acta.app/Contents/Resources/licenses` on macOS), together with Acta's own as
+`Acta-LICENSE.txt`.
