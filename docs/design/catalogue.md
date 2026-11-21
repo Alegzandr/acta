@@ -792,3 +792,138 @@ New with the Overview (2026-11-21; components-records.md 5, screens.md 8.20, dat
 | `cmd.overview_less` | Overview: Show less | Vue d'ensemble : afficher moins |
 
 `overview.inbox` is chosen by `{n}`; with one note, "the oldest" would be wrong, so the singular form names that note's age directly. `filter.decided_week` lists topics, so "Décidés" agrees with *sujets*. Agent-facing text (`Attention: blocked T-12 ...`, `· no activity 12d`) is protocol, English only, and not in this catalogue (10).
+
+### 10.4.6 Keys of questions and people, pending
+
+New with questions and Report to (2026-11-21; components-questions.md 5, data.md 11 requests 18 and 19). They stay here, outside the table the tests read, until the feature is implemented; the implementing change moves them into 10.4 and adds them to `catalogue.rs` in the same commit: `section.questions` after `section.description`, `prop.report_to` after `prop.due`, `event.report_*` after `event.due_*`, `table.questions*` and `table.report_to` after `table.due`, the `cmd.*` keys after `cmd.due_*`, the other families together after `kb.*`. In French, *question* is feminine ("répondue", "abandonnée", "close"); the person is user text and always follows a colon in French ("Posée à : Marie", "À rapporter à : le service RH"), so no article or preposition ever meets it (10.3). `{name}` is a person or a record name, never translated; `{date}` is the absolute date of 10.2.
+
+| Key | English | French |
+|---|---|---|
+| `section.questions` | Questions | Questions |
+| `questions.new` | New question | Nouvelle question |
+| `questions.closed` | {n} closed | {n} close · {n} closes |
+| `questions.more_epic` | {n} more open in the topics of this epic | {n} autre en suspens dans les sujets de cet epic · {n} autres en suspens dans les sujets de cet epic |
+| `questions.more_epic_overdue` | {n} more open in the topics of this epic, {late} overdue | {n} autre en suspens dans les sujets de cet epic, en retard · {n} autres en suspens dans les sujets de cet epic, dont {late} en retard |
+| `questions.more_project` | {n} more open in this project's epics and topics | {n} autre en suspens dans les epics et sujets de ce projet · {n} autres en suspens dans les epics et sujets de ce projet |
+| `questions.more_project_overdue` | {n} more open in this project's epics and topics, {late} overdue | {n} autre en suspens dans les epics et sujets de ce projet, en retard · {n} autres en suspens dans les epics et sujets de ce projet, dont {late} en retard |
+| `questions.empty` | Nothing to ask yet. Note here what you are waiting to hear from someone. | Aucune question pour l'instant. Notez ici ce que vous attendez d'apprendre de quelqu'un. |
+| `questions.scope` | {scope} · {counts} | {scope} · {counts} |
+| `count.questions_open` | {n} open | {n} en suspens |
+| `count.questions_closed` | {n} closed | {n} close · {n} closes |
+| `questions.whole_project` | Whole project | Tout le projet |
+| `questions.none_open` | No open questions in {name}. | Aucune question en suspens dans {name}. |
+| `questions.none_overdue` | No overdue questions. | Aucune question en retard. |
+| `questions.none_closed` | No closed questions yet. | Aucune question close pour l'instant. |
+| `question.state.open` | Open question | Question en suspens |
+| `question.state.answered` | Answered | Répondue |
+| `question.state.dropped` | Dropped | Abandonnée |
+| `question.asked` | Asked {name} | Posée à : {name} |
+| `question.by` | Answer by {date} | Réponse attendue le {date} |
+| `question.answered_by` | Answer recorded {date} by {author} | Réponse notée le {date} par {author} |
+| `question.dropped_by` | Dropped {date} by {author} | Abandonnée le {date} par {author} |
+| `question.logged` | Logged as a decision | Consignée comme décision |
+| `question.in` | in {level} | dans : {level} (`{level}` is a `level.*` string) |
+| `question.placeholder` | What do you need to know? | Que faut-il savoir ? |
+| `question.field.asked` | Asked | Posée à |
+| `question.field.by` | Answer by | Réponse attendue |
+| `question.mark_answered` | Mark answered | Marquer comme répondue |
+| `question.answer_placeholder` | What was the answer? | Quelle a été la réponse ? |
+| `question.log_decision` | Also log it as a decision | La consigner aussi comme décision |
+| `question.save_answer` | Save answer | Enregistrer la réponse |
+| `question.edit_answer` | Edit answer | Modifier la réponse |
+| `question.set_date` | Set answer date... | Définir la date de réponse... |
+| `question.clear_date` | Clear answer date | Effacer la date de réponse |
+| `question.drop` | Drop question | Abandonner la question |
+| `question.reopen` | Reopen | Rouvrir |
+| `question.move` | Move to... | Déplacer vers... |
+| `question.deleted` | Question deleted. | Question supprimée. |
+| `question.restored` | Question restored. | Question restaurée. |
+| `question.counter` | {n} / 300 | {n} / 300 |
+| `table.questions` | Questions | Questions |
+| `table.questions_tip` | {n} open question · {n} open questions | {n} question en suspens · {n} questions en suspens |
+| `table.questions_tip_overdue` | 1 open question, overdue · {n} open questions, {late} overdue | 1 question en suspens, en retard · {n} questions en suspens, dont {late} en retard |
+| `table.report_to` | Report to | À rapporter à |
+| `prop.report_to` | Report to | À rapporter à |
+| `person.none` | None | Personne |
+| `person.placeholder` | Person, team or place | Personne, équipe ou lieu |
+| `person.open_count` | {n} open | {n} en cours |
+| `person.counter` | {n} / 80 | {n} / 80 |
+| `person.scope` | In {project} · {counts} | Dans {project} · {counts} |
+| `count.person_asked` | {n} question to ask · {n} questions to ask | {n} question à poser · {n} questions à poser |
+| `count.person_report` | {n} thing to report · {n} things to report | {n} élément à rapporter · {n} éléments à rapporter |
+| `person.section.asked` | Questions asked | Questions posées |
+| `person.section.report` | To report | À rapporter |
+| `person.empty` | Nothing open with {name}. | Rien en cours avec : {name}. |
+| `person.go` | Go to {name} | Ouvrir : {name} |
+| `report.to` | Report to {name} | À rapporter à : {name} |
+| `report.pending` | Not reported yet | Pas encore rapporté |
+| `report.done` | Reported {date} | Rapporté le {date} |
+| `report.mark` | Mark reported | Marquer comme rapporté |
+| `report.unmark` | Mark not reported | Marquer comme non rapporté |
+| `report.change` | Change person... | Changer de personne... |
+| `report.reported_count` | {n} reported | {n} rapporté · {n} rapportés |
+| `report.filter` | Report to: {name} | À rapporter à : {name} |
+| `report.filter.all` | Report to: anyone | À rapporter à : tout le monde |
+| `report.filter.anyone` | Anyone | Tout le monde |
+| `event.report_set` | {author} noted to report to {name} | {author} a noté de rapporter à : {name} |
+| `event.reported` | {author} marked it reported to {name} | {author} l'a marqué comme rapporté à : {name} |
+| `event.report_unmarked` | {author} marked it not reported | {author} l'a marqué comme non rapporté |
+| `event.report_cleared` | {author} removed Report to | {author} a retiré « À rapporter à » |
+| `cmd.question_new` | New question | Nouvelle question |
+| `cmd.questions_open` | Go to questions | Aller aux questions |
+| `cmd.person_go` | Go to person... | Aller à une personne... |
+| `cmd.report_set` | Set Report to... | Définir « À rapporter à »... |
+| `cmd.report_clear` | Clear Report to | Effacer « À rapporter à » |
+| `cmd.reported` | Mark reported | Marquer comme rapporté |
+| `cmd.unreported` | Mark not reported | Marquer comme non rapporté |
+| `cmd.question_answer` | Mark question answered | Marquer la question comme répondue |
+| `cmd.question_edit` | Edit question | Modifier la question |
+| `cmd.question_date` | Set answer date... | Définir la date de réponse... |
+| `cmd.question_date_clear` | Clear answer date | Effacer la date de réponse |
+| `cmd.question_drop` | Drop question | Abandonner la question |
+| `cmd.question_reopen` | Reopen question | Rouvrir la question |
+| `cmd.question_move` | Move question to... | Déplacer la question vers... |
+| `cmd.question_delete` | Delete question | Supprimer la question |
+| `overview.questions_late` | {n} question past its answer date · {n} questions past their answer date | {n} question dont la date de réponse est passée · {n} questions dont la date de réponse est passée |
+| `cmd.show_questions_late` | Show questions past their answer date | Afficher les questions dont la date de réponse est passée |
+
+`questions.more_*_overdue` replace `questions.more_*` when `{late}` is above 0, and `table.questions_tip_overdue` replaces `table.questions_tip` the same way (its first form is for one question, which is then the overdue one). The overdue clause ("1 overdue", "dont 1 en retard") is drawn in `warning` as one run (components-questions.md 5): the implementation marks the span of that clause in the formatted string, it never builds the sentence from fragments. `report.pending`, `report.done` and the events agree with *sujet* and *epic*, both masculine. The relative phrases of an answer date reuse `due.*` (10.4.4); the empty Answer by value reuses `due.none` (« Aucune », agreeing with *date*), Clear in the popover `common.clear`, and the remaining menu items `common.edit` and `common.delete`. Agent-facing text (`Q-12 Marie · overdue 3d`, `report to Marie`) is protocol, English only, and not in this catalogue (10).
+
+### 10.4.7 Keys of attachments, pending
+
+New with attachments (2026-11-21; components-attachments.md 5, ADR 0012, data.md 11 request 20). They stay here until attachments are implemented; the implementing change moves them into 10.4 and `catalogue.rs` in one commit, as a family after the `inbox.*` keys, with `settings.attachments`, `export.include_files` and `import.files_missing` beside their families. In French the word is *fichier* (masculine): "Fichier retiré". `{size}` is the size format of components-attachments.md 5 ("2.1 MB" / "2,1 Mo"); `{name}` a file name, never translated.
+
+| Key | English | French |
+|---|---|---|
+| `attach.button` | Attach files... | Joindre des fichiers... |
+| `attach.drop` | Drop to attach | Déposer pour joindre |
+| `attach.adding` | Adding... {percent} | Ajout... {percent} |
+| `attach.pasted_name` | Pasted image {date} {time}.png | Image collée {date} {time}.png |
+| `attach.too_large` | {name} is {size}; the limit is 25 MB per file. | {name} pèse {size} ; la limite est de 25 Mo par fichier. |
+| `attach.too_many` | 20 files is the most a note, an entry or a description can hold. | Une note, une entrée ou une description contient 20 fichiers au plus. |
+| `attach.read_failed` | Could not read {name}. It may have moved, or another app may be holding it. | Impossible de lire {name}. Il a peut-être été déplacé, ou une autre application le bloque. |
+| `attach.large_notice` | Files over 10 MB are kept in the database and in each of its snapshots. | Les fichiers de plus de 10 Mo sont conservés dans la base et dans chacun de ses instantanés. |
+| `attach.count` | {n} file · {n} files | {n} fichier · {n} fichiers |
+| `attach.view` | View | Afficher |
+| `attach.save_as` | Save as... | Enregistrer sous... |
+| `attach.save_failed` | Could not save {name}. {reason} | Impossible d'enregistrer {name}. {reason} |
+| `attach.open_external` | Open in another app | Ouvrir dans une autre application |
+| `attach.open_title` | Open in another app? | Ouvrir dans une autre application ? |
+| `attach.open_notice` | Acta writes a decrypted copy for the other app and deletes it when Acta quits. | Acta écrit une copie déchiffrée pour l'autre application et la supprime à la fermeture d'Acta. |
+| `attach.remove` | Remove | Retirer |
+| `attach.removed` | File removed. | Fichier retiré. |
+| `attach.restored` | File restored. | Fichier restauré. |
+| `attach.moved_to` | Moved to {id} | Déplacés vers {id} |
+| `attach.position` | {i} of {n} | {i} sur {n} |
+| `attach.prev` | Previous file | Fichier précédent |
+| `attach.next` | Next file | Fichier suivant |
+| `attach.fit` | Fit | Ajuster |
+| `attach.actual` | Actual size | Taille réelle |
+| `attach.truncated` | Showing the first 1 MB. Save the file to see all of it. | Seul le premier Mo est affiché. Enregistrez le fichier pour le voir en entier. |
+| `settings.attachments` | Attached files: {size} in {count} | Fichiers joints : {size} dans {count} (`{count}` is `attach.count`) |
+| `export.include_files` | Include attached files ({size}) | Inclure les fichiers joints ({size}) |
+| `import.files_missing` | {n} file was not in the export. · {n} files were not in the export. | {n} fichier n'était pas dans l'export. · {n} fichiers n'étaient pas dans l'export. |
+| `cmd.attach` | Attach files... | Joindre des fichiers... |
+| `cmd.attachment_save` | Save file as... | Enregistrer le fichier sous... |
+
+`{date}` and `{time}` in `attach.pasted_name` are `2026-11-21` and `14.05` in both languages: a file name is not localised (10.2). The units B / KB / MB and o / Ko / Mo are formats, not keys. `attach.moved_to` is plural in French because it heads a list of files. The Open dialog's buttons reuse `common.cancel` and `common.open`. Agent-facing text (`· files: A-4 plan.pdf 2.1M`) is protocol, English only, and not in this catalogue (10).

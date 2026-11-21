@@ -681,3 +681,181 @@ Epic page, the mini version collapsed (the default) and expanded:
 ```
 
 Annotations: no figure is drawn at zero and no line exists for a normal state; a fresh inbox (newest note 2 days old) shows nothing here, because the tree's Inbox count already says it. The Overview spends no accent: colour is `warning` on the two glyphs that mean a real problem, nothing else. Every line, link and epic row opens the list behind its number (components-records.md 5); the topic table then shows a filter chip in place of its segmented control, for example `[Blocked x]  2 topics`. An epic with nothing to report has no section at all.
+
+### 8.21 Topic page with questions and Report to
+
+Content column only (560); the drawing is made on Saturday 21 Nov 2026.
+
+```
+        Embed the terminal bound to the project                     <- type.title
+    12  Status     [(.) Active v]
+        Due        15 Dec 2026  In 24 days
+        Report to  Marie                                            <- link: person page
+        Epic       Terminal
+        Folders    > [f] ~\dev\acta-wt\embed-terminal  +1
+        Id         T-42
+        Updated    2 h ago by Claude Code
+    24  +--------------------------------------------------------+
+        | Current state ...                                      |
+        +--------------------------------------------------------+
+    24  Description
+        Run Claude Code inside Acta, in the project directory, ...
+    32  Questions  2                                          [+]   28 header, count = open
+     4  (?) Can we keep the v1 export format until March,     (A)   text wraps, never cut
+            or must both formats ship together?
+            Asked Marie · Answer by 18 Nov 2026  Overdue by 3 days  <- last run in warning
+     4  (?) Which Windows versions must the installer       * [>]   Claude Code asked it;
+            support?                                                unread dot
+            Asked Legal team
+        > 3 closed                                                  ghost row, folded
+    32  Knowledge  3                                          [+]
+        ...
+    32  Timeline ...
+```
+
+Answering the first question (`A`):
+
+```
+        (?) Can we keep the v1 export format until March,     (A)
+            or must both formats ship together?
+            Asked Marie · Answer by 18 Nov 2026  Overdue by 3 days
+         8  +----------------------------------------------------+
+            | Yes, until 31 March. After that only v2.           |   answer editor, focused
+            +----------------------------------------------------+
+         8  [x] Also log it as a decision       [Cancel] [Save answer]
+```
+
+The "3 closed" row unfolded, and the composer open (`Q`), with the person field's suggestions:
+
+```
+        v 3 closed
+        (v) Can the export file leave the EU?                 (A)
+            Inside the EEA only; ask again for anything else.        <- answer, type.reading
+            Asked Legal team · Answer recorded 19 Nov 2026 by Alexandre · Logged as a decision
+        (-) Do we need a second signing key?                  [>]
+            Dropped 17 Nov 2026 by Claude Code
+        ...
+        (?) [What do you need to know?                          ]   composer, last open row
+         8  Asked [Ma|                     ]   Answer by [None]
+                  +-------------------------+
+                  | Marie            2 open |   suggestions, 4 below, floating
+                  | Marius           1 open |   "Ma" matched in weight 600
+                  +-------------------------+
+```
+
+Annotations: `(?)` is `circle-question-mark` (open, `text.secondary`), `(v)` `circle-check` and `(-)` `circle-slash` (closed, `text.tertiary`); `(A)` and `[>]` are the author marks of the timeline, at the right, for who created the question. The overdue phrase is the Due row's ("Overdue by 3 days", `warning`), so lateness reads in words. Report to is set and the topic is open, so no run follows the name; once the topic is Done it reads "Marie  Not reported yet". The decision checkbox is there because the question belongs to a topic; on an epic or a project page it is absent. On epic and project pages the section ends with the roll-up row ("4 more open in the topics of this epic, 1 overdue"). 8.1 predates this section; the order drawn here is the one of layout.md 4.2.
+
+### 8.22 Questions page (project)
+
+```
+        Questions                                                   <- type.title
+     8  Acta · 7 open, 12 closed                                    <- type.small tertiary
+    24  [Open|Overdue|Closed|All]                                   28, Overdue only while one is late
+    16  Project Acta                                          1     28 group header, link
+        (?) Do we keep a free tier on the website?            (A)
+            Asked Alexandre's accountant · Answer by 4 Dec 2026  In 13 days
+        Epic Terminal                                         2
+        (?) Is ConPTY acceptable as the minimum on Windows?   [>]
+        (?) Who reviews the terminal colours for contrast?    (A)
+            Asked Design review group
+        Topic Embed the terminal                              2
+        (?) Can we keep the v1 export format until March,     (A)
+            or must both formats ship together?
+            Asked Marie · Answer by 18 Nov 2026  Overdue by 3 days
+        (?) Which Windows versions must the installer       * [>]
+            support?
+            Asked Legal team
+        ...
+```
+
+Annotations: groups are owners, widest first, as on the knowledge base page; rows are the question rows of 8.21, and `Enter` opens the owner's page with the question focused. With Overdue selected the list is ungrouped, earliest answer date first, each meta line starting "in Topic Embed the terminal". Scoped to an epic (from its roll-up row) the scope line reads "Epic Terminal · 3 open, 5 closed" followed by the ghost link "Whole project".
+
+### 8.23 Person page
+
+```
+        Marie                                                       <- type.title, as written
+     8  In Acta · 2 questions to ask, 3 things to report
+    32  Questions asked                                             28 header
+        (?) Can we keep the v1 export format until March,     (A)
+            or must both formats ship together?
+            in Topic Embed the terminal · Answer by 18 Nov 2026  Overdue by 3 days
+        (?) Is the 4 Dec review still on?                      (A)
+            in Project Acta · Answer by 4 Dec 2026  In 13 days
+        > 1 closed
+    32  To report
+        (v) Encrypted backups                      Not reported yet   32, text.secondary
+        [l] Terminal                                   3 of 7 done   epic: its progress
+        (.) Embed the terminal bound to the project         Active   open topic: status word
+        [n] Ask about the review room for Thursday             Tue   open note: capture time
+        > 2 reported
+```
+
+Annotations: `[l]` is `layers` (an epic), `[n]` `sticky-note` (a note). Questions are ordered by lateness here, not by their owner's order: the reader is about to talk to Marie. `Space` on "Encrypted backups" marks it reported; it moves into "2 reported" on the next frame and the change is one `Mod+Z` step, with no toast. Reached from any "Marie" link and from "Go to person...". The tab is not restored after a restart (4.7).
+
+### 8.24 Quick capture with Report to, and the note card
+
+```
+    +--------------------------------------------------------------+
+    | Note for Acta                                        [Acta]  |   640, bg.overlay, radius.xl
+    | Ask about the review room for Thursday                       |
+    |                                                              |
+    | Report to  [Marie                ]        Ctrl Enter to save |   28, Tab from the editor
+    +--------------------------------------------------------------+
+
+        +--------------------------------------------------------+
+        | Ask about the review room for Thursday                 |   note card in the inbox
+        | 10 min ago · Report to Marie                [->][e][x] |   meta: name is a link
+        +--------------------------------------------------------+
+```
+
+Annotations: the field starts empty on every capture and is optional; `Mod+Enter` saves from the editor or the field. Made into a topic, the note gives "Marie" to the topic's Report to. In the inbox toolbar, "Report to: anyone" appears next to Open / Filed while a listed note names a person.
+
+### 8.25 Note with files, and the viewer
+
+A note card in the inbox, with two images and two other files; one chip is focused:
+
+```
+        +--------------------------------------------------------+
+        | Whiteboard from the review, and the vendor's quote.    |   body, type.reading
+     8  | +------+ +------+                                      |   tiles 64 x 64, 8 apart
+        | |######| |######|                                      |   thumbnails, cover crop
+        | +------+ +------+                                      |
+     8  | [f] Quote-Q4-va…dor.pdf 2.1 MB  [f] notes.md 4 KB      |   chips 28, border.default
+        |  ^ focus ring on the first chip                        |
+     8  | 10 min ago · Report to Marie              [->][e][x]   |   meta row
+        +--------------------------------------------------------+
+```
+
+Quick capture after pasting a screenshot (`Mod+V`) and dropping a PDF, while a third file is still being stored:
+
+```
+    +--------------------------------------------------------------+
+    | Note for Acta                                        [Acta]  |
+    | Error on the export screen, and the log Marie sent.          |
+    | +------+                                                     |
+    | |######|  [f] export-log.txt 812 KB  [f] trace.zip Adding… 40%|
+    | +------+                                                     |
+    | (i) Files over 10 MB are kept in the database and in each of |   type.small tertiary, once
+    |     its snapshots.                                           |
+    | Report to  [Marie            ]   [@]     Ctrl Enter to save  |   [@] paperclip, Ctrl Shift A
+    +--------------------------------------------------------------+
+```
+
+The viewer, on the second of two images of the note:
+
+```
+  +------------------------------------------------------------------------------------------+
+  |  IMG_2041.jpg   3.4 MB · 3024 x 4032                 2 of 2  [<] [>]   [Save as...]  [x] |  44, border.default under
+  |------------------------------------------------------------------------------------------|
+  |                                                                                          |
+  |                               +----------------------+                                   |
+  |                               |                      |                                   |   image fitted, bg.sunken
+  |                               |                      |                                   |   around it; 0 toggles
+  |                               |                      |                                   |   fit / actual size
+  |                               +----------------------+                                   |
+  |                                                                                          |
+  +------------------------------------------------------------------------------------------+
+    inset 32 from the window, bg.overlay, radius.xl, shadow.overlay, over the scrim
+```
+
+Annotations: `[f]` is `file-text`, `[@]` `paperclip`, `(i)` `info`. Images come before other files; names are cut in the middle so the extension stays. The quick capture's third file shows "Adding… 40%" because it has taken over 400 ms; the note can be saved meanwhile. A file over 25 MB would instead leave the line "trace.zip is 48 MB; the limit is 25 MB per file." in `danger` with `triangle-alert`. PDFs offer Save as (and, once ADR 0012 accepts it, Open in another app); the viewer is for images and text-like files only. Made into a topic, the note's files go to the topic's description; the filed card then lists them in `text.secondary` under "Moved to T-51".
