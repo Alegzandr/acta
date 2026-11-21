@@ -85,8 +85,18 @@ pub fn check(command: &str, cx: &Context) -> Option<String> {
     {
         return None;
     }
-    let alias_dir = cx.cwd.to_path_buf();
-    resolve_aliases(&mut a, &|name| (cx.alias)(&alias_dir, name));
+    // An alias is looked up in the repository the call acts in: the last
+    // directory that can be worked out, else the hook's.
+    resolve_aliases(&mut a, &|c: &Call, name: &str| {
+        let dir = c
+            .candidates
+            .iter()
+            .rev()
+            .flatten()
+            .next()
+            .map_or_else(|| cx.cwd.to_path_buf(), |steps| walk(cx.cwd, steps));
+        (cx.alias)(&dir, name)
+    });
     let mut any_auto = session_auto;
     for c in a
         .calls
@@ -897,10 +907,10 @@ fn git_call(words: &[String], pre: &[Option<String>], cds: &[Option<String>]) ->
         (None, None) => {}
     }
     let sub = words.get(i)?;
-    // The hook's directory and where the `cd`s before this call lead (a
-    // subshell's `cd` may or may not apply: both are judged).
+    // The hook's directory and every point the `cd`s before this call lead
+    // to (a subshell's `cd` may or may not apply: each prefix is judged).
     let mut candidates: Vec<Option<Vec<String>>> = Vec::new();
-    for k in [0, cds.len()] {
+    for k in 0..=cds.len() {
         let path: Option<Vec<String>> = cds[..k].iter().chain(steps.iter()).cloned().collect();
         if !candidates.contains(&path) {
             candidates.push(path);
@@ -922,14 +932,14 @@ fn is_own(sub: &str) -> bool {
 
 /// Replaces calls to an alias by what it runs, a few levels deep. A lookup
 /// git could not answer makes the call unreadable.
-fn resolve_aliases(a: &mut Analysis, alias: &dyn Fn(&str) -> Alias) {
+fn resolve_aliases(a: &mut Analysis, alias: &dyn Fn(&Call, &str) -> Alias) {
     for _ in 0..5 {
         let mut changed = false;
         for c in std::mem::take(&mut a.calls) {
             let found = if is_own(&c.sub) || c.sub.contains('$') {
                 Alias::None
             } else {
-                alias(&c.sub)
+                alias(&c, &c.sub)
             };
             let value = match found {
                 Alias::None => {
@@ -1763,7 +1773,12 @@ mod tests {
             ("cd sub && git commit -m x", None),
             ("cd /ws/auto/sub; git commit -m x", None),
             ("cd ../manual && git commit -m x", Some(&m)),
-            ("cd .. && cd manual && git commit -m x", Some(&m)),
+            ("cd .. && cd manual && git commit -m x", Some(&out)),
+            ("cd ../manual; ( cd ../auto ); git commit -m x", Some(&m)),
+            (
+                "cd ../auto/sub; (cd ../../manual); git commit -m x",
+                Some(&m),
+            ),
             ("pushd /ws/manual; git commit -m x", Some(&m)),
             ("(cd ../manual); git commit -m x", Some(&m)),
             ("git -C ../manual commit -m x", Some(&m)),
