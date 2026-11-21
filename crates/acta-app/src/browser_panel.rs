@@ -295,6 +295,9 @@ pub struct BrowserPanel {
     /// for it.
     web_task: Task<()>,
     waiting: Vec<AfterBuild>,
+    /// Bumped by every build and every close: a build that lands for an
+    /// older one is discarded.
+    build_generation: u64,
     clear_task: Task<()>,
     _subs: Vec<Subscription>,
 }
@@ -363,6 +366,7 @@ impl BrowserPanel {
             idle_task: Task::ready(()),
             web_task: Task::ready(()),
             waiting: Vec::new(),
+            build_generation: 0,
             clear_task: Task::ready(()),
             _subs: vec![sub],
         };
@@ -656,6 +660,8 @@ impl BrowserPanel {
                     }
                 })
         });
+        self.build_generation += 1;
+        let generation = self.build_generation;
         self.web_task = crate::webview_build::build_later(
             window,
             cx,
@@ -669,7 +675,12 @@ impl BrowserPanel {
                 ));
                 Ok((view, context))
             },
-            |panel, built, window, cx| {
+            move |panel, built, window, cx| {
+                if !panel.awaits(generation) {
+                    // Closed (or closed and started again) meanwhile.
+                    discard(built);
+                    return;
+                }
                 let result = panel.built(built, window, cx).map(|_| true);
                 panel.answer_waiting(result, window, cx);
                 panel.sync(window, cx);
@@ -677,6 +688,11 @@ impl BrowserPanel {
             },
         );
         Ok(())
+    }
+
+    /// Whether the build of `generation` is the one awaited.
+    fn awaits(&self, generation: u64) -> bool {
+        awaited(self.phase, self.build_generation, generation)
     }
 
     /// The web view created, or not.
@@ -720,7 +736,7 @@ impl BrowserPanel {
                     _context: context,
                 });
                 self.phase = Phase::Live;
-                self.schedule_idle(cx);
+                self.schedule_idle(window, cx);
                 Ok(())
             }
             Err(err) => {
@@ -735,20 +751,20 @@ impl BrowserPanel {
 
     /// Checks every minute whether the web view has been unused and off
     /// screen for 10 minutes, and closes it then.
-    fn schedule_idle(&mut self, cx: &mut Context<Self>) {
-        self.idle_task = cx.spawn(async move |panel, cx| {
+    fn schedule_idle(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.idle_task = cx.spawn_in(window, async move |panel, cx| {
             loop {
                 cx.background_executor()
                     .timer(Duration::from_secs(60))
                     .await;
-                let closed = panel.update(cx, |panel, cx| {
+                let closed = panel.update_in(cx, |panel, window, cx| {
                     let idle = panel.last_used.elapsed() >= IDLE_CLOSE
                         && !panel.shown
                         && panel.handoff.is_none()
                         && !panel.busy;
                     if idle && panel.web.is_some() {
                         crate::log::line("browser: closed after 10 minutes unused");
-                        panel.close_web(cx);
+                        panel.close_web(window, cx);
                     }
                     panel.web.is_none()
                 });
@@ -759,7 +775,14 @@ impl BrowserPanel {
         });
     }
 
-    fn close_web(&mut self, cx: &mut Context<Self>) {
+    /// Closes the web view, or gives up the one being created: what
+    /// waited for it is told so.
+    fn close_web(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.web_task = Task::ready(());
+        self.build_generation += 1;
+        if self.phase == Phase::Starting {
+            self.answer_waiting(Err(CLOSED.into()), window, cx);
+        }
         if let Some(web) = self.web.take() {
             let _ = web.view.read(cx).set_visible(false);
             drop(web);
@@ -916,7 +939,7 @@ impl BrowserPanel {
     /// "Clear browser data", confirmed: the web view closes and its profile
     /// is deleted, retrying while its processes let go of the files.
     pub fn clear_data(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.close_web(cx);
+        self.close_web(window, cx);
         let Some(dir) = browser_host::profile_dir() else {
             return;
         };
@@ -1444,5 +1467,33 @@ impl Render for BrowserPanel {
             .size_full()
             .bg(t.bg_sunken)
             .child(body)
+    }
+}
+
+/// A web view that landed for a build given up: hidden, then dropped.
+fn discard(built: wry::Result<(wry::WebView, Box<wry::WebContext>)>) {
+    if let Ok((view, _context)) = built {
+        let _ = view.set_visible(false);
+    }
+}
+
+/// A build lands only while the panel still starts that very build: a
+/// close (idle, cleared data) or a newer build gives it up.
+fn awaited(phase: Phase, current: u64, generation: u64) -> bool {
+    phase == Phase::Starting && current == generation
+}
+
+#[cfg(test)]
+mod build_tests {
+    use super::*;
+
+    #[test]
+    fn a_build_given_up_is_not_kept() {
+        assert!(awaited(Phase::Starting, 3, 3));
+        // Closed while it was being created: the close bumped the count.
+        assert!(!awaited(Phase::Idle, 4, 3));
+        // Closed and started again: the newer build is the one awaited.
+        assert!(!awaited(Phase::Starting, 5, 3));
+        assert!(!awaited(Phase::Live, 3, 3));
     }
 }

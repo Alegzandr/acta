@@ -112,6 +112,9 @@ pub struct ChatPanel {
     build_task: Task<()>,
     /// The web view being created (crate::webview_build).
     web_task: Task<()>,
+    /// Bumped by every build and every drop: a build that lands for an
+    /// older one is discarded.
+    build_generation: u64,
     clear_task: Task<()>,
     tip_task: Task<()>,
     _activation: gpui_kit::Subscription,
@@ -167,6 +170,7 @@ impl ChatPanel {
             starting_task: Task::ready(()),
             build_task: Task::ready(()),
             web_task: Task::ready(()),
+            build_generation: 0,
             clear_task: Task::ready(()),
             tip_task: Task::ready(()),
             _activation: activation,
@@ -322,6 +326,8 @@ impl ChatPanel {
                 }
             }
             Effect::DropAndClear => {
+                self.web_task = Task::ready(());
+                self.build_generation += 1;
                 if let Some(web) = self.web.take() {
                     let _ = web.view.read(cx).set_visible(false);
                     drop(web);
@@ -375,6 +381,8 @@ impl ChatPanel {
             255,
         );
         // Created after this update, outside it (crate::webview_build).
+        self.build_generation += 1;
+        let generation = self.build_generation;
         self.web_task = crate::webview_build::build_later(
             window,
             cx,
@@ -391,7 +399,16 @@ impl ChatPanel {
                 ));
                 Ok((view, context))
             },
-            |panel, built, window, cx| {
+            move |panel, built, window, cx| {
+                if panel.state.phase != chat::Phase::Starting
+                    || panel.build_generation != generation
+                {
+                    // Signed out, cleared or failed meanwhile: not kept.
+                    if let Ok((view, _context)) = built {
+                        let _ = view.set_visible(false);
+                    }
+                    return;
+                }
                 panel.built(built, window, cx);
                 panel.sync(cx);
                 cx.notify();
