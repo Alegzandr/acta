@@ -691,16 +691,18 @@ impl Layout {
     /// The Inbox or Knowledge page `tab` dragged out of the page area: the
     /// page closes and the view lands at `target` (moved there if it was
     /// already shown elsewhere: a view is never duplicated). The last page
-    /// of the window never leaves (4.8.8).
+    /// of the window never leaves (4.8.8): it stays open and the view
+    /// lands beside it, as the palette's move does.
     pub fn page_to_view(
         &mut self,
         tab: TabId,
         view: ViewId,
         target: Target,
     ) -> Result<Spot, Refused> {
-        if !view.is_page_kind() || self.page_tabs().len() <= 1 {
+        if !view.is_page_kind() {
             return Err(Refused::Invalid);
         }
+        let last_page = self.page_tabs().len() <= 1;
         let place = match target {
             Target::Into { place, .. } | Target::Split { place, .. } => place,
             Target::Area(side) => Place::Side(side),
@@ -714,7 +716,9 @@ impl Layout {
         let from = self.locate(Tab::View(view));
         self.check(target, from)?;
         let mut next = self.clone();
-        next.take(page_spot);
+        if !last_page {
+            next.take(page_spot);
+        }
         if let Some(from) = next.locate(Tab::View(view)) {
             next.take(from);
         }
@@ -1650,10 +1654,14 @@ mod tests {
     #[test]
     fn the_last_page_never_leaves_or_closes() {
         let mut l = Layout::defaults(vec![P1], true);
-        assert_eq!(
-            l.page_to_view(P1, ViewId::Inbox, Target::Area(Side::Bottom)),
-            Err(Refused::Invalid)
-        );
+        // Moved out from its tab menu or by a drag, the last page stays
+        // open and its view lands where asked.
+        let spot = l
+            .page_to_view(P1, ViewId::Inbox, Target::Area(Side::Bottom))
+            .unwrap();
+        assert_eq!(spot.place, Place::Side(Side::Bottom));
+        assert_eq!(l.page_tabs(), [P1]);
+        assert!(l.is_visible(ViewId::Inbox));
         assert_eq!(l.close_page(P1), Err(Refused::Invalid));
         // A page never goes to a side area as a page.
         assert_eq!(
