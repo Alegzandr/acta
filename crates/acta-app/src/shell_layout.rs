@@ -1160,7 +1160,21 @@ impl Shell {
             .get(&place_key(Place::Page))
             .copied()
             .unwrap_or_default();
-        let strips = layout_frame::strips(&bench.layout, geometry.body, page);
+        let mut strips = layout_frame::strips(&bench.layout, geometry.body, page);
+        // An area shown while empty is a drop target like any area (4.8.2).
+        for side in Side::ALL {
+            let area = bench.layout.side(side);
+            if area.shown
+                && area.groups.is_empty()
+                && let Some(rect) = geometry.areas.get(&place_key(Place::Side(side)))
+            {
+                strips.push(layout_frame::Strip {
+                    side,
+                    hit: *rect,
+                    preview: *rect,
+                });
+            }
+        }
         drop(geometry);
         let zone = layout_frame::zone_at(&bench.layout, &regions, &strips, drag.dragged, x, y);
         bench.ui.drag = Some(Drag { x, y, zone, ..drag });

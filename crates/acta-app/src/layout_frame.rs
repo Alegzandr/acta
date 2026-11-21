@@ -700,6 +700,34 @@ mod tests {
     }
 
     #[test]
+    fn an_empty_area_shown_on_purpose_takes_a_view() {
+        let mut l = shown();
+        l.set_area_shown(Side::Bottom, true);
+        let area = Rect::new(260., 680., 532., 160.);
+        let strip = Strip {
+            side: Side::Bottom,
+            hit: area,
+            preview: area,
+        };
+        let chat = Dragged {
+            tab: crate::layout::Tab::View(ViewId::Chat),
+            as_view: None,
+        };
+        let zone = zone_at(&l, &[], &[strip], chat, 400., 700.).unwrap();
+        assert_eq!(zone.target, Target::Area(Side::Bottom));
+        let mut after = l.clone();
+        drop_into(&mut after, chat, zone.target, TabId(99)).unwrap();
+        assert!(after.is_visible(ViewId::Chat));
+        assert_eq!(
+            after
+                .locate(crate::layout::Tab::View(ViewId::Chat))
+                .unwrap()
+                .place,
+            Place::Side(Side::Bottom)
+        );
+    }
+
+    #[test]
     fn a_page_shows_drop_zones_only_in_the_page_area() {
         let l = shown();
         let regions = regions(&l);
