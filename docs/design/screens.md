@@ -496,3 +496,77 @@ Annotations: the epic's progress is computed (topics Done over topics not Droppe
 ```
 
 Annotations: shown only when the main window is not ready 300 ms after launch; closed in the frame the main window opens. "Checking for updates..." has no bar; "Restarting..." has a full one. There is no button.
+
+### 8.17 Workbench with the right sidebar shown (4.8)
+
+```
++------------------------------------------------------------------------------------------------------+
+| [<] [>]  Acta / Terminal / Embed the terminal  [Search Ctrl K]  [t][i][l][>_][c]  [L][B][R] [#] - [] X | 36
++----------------------+-------------------------------------+-----------------------------------------+
+| Projects     [.] [-] | Embed the terminal bound to the     | [Terminal] Chat   on topic E.. [r][.][-]| 28 headers
+|----------------------|  project                            |-----------------------------------------|
+| v Acta               |  Status   [(.) Active v]            |  > claude                               |
+|    Inbox          4  |  Epic     Terminal                  |                                         |
+|    Knowledge     55  |  ...                                |                                         |
+|  v Terminal          |                                     |                                         |
+|    [(.) Embed th..]  |                                     |                                         |
+|----------------------|                                     |                                         |
+|  [t] Trash           |                                     |                                         |
+|  [s] Settings        |                                     |                                         |
++----------------------+-------------------------------------+-----------------------------------------+
+| [p] Acta   (v) Claude Code: ready                                                           Acta 0.4.1 | 24
++------------------------------------------------------------------------------------------------------+
+  260                    page area, min 420                    648 right sidebar
+  view toggles: [t] Projects  [i] Inbox  [l] Knowledge  [>_] Terminal  [c] Chat (Windows)
+  area toggles: [L] left  [B] bottom  [R] right, then [#] the Layout menu; [L] and [R] fill.selected
+```
+
+Annotations: the default layout once the terminal has been shown. Both sidebars carry an area header: "Projects" alone on the left, two view tabs on the right (Terminal active in `fill.selected`, Chat in `text.tertiary`), then the active view's context and buttons, `[.]` the view menu, `[-]` hide the area. In the titlebar the Projects and Terminal toggles are selected; Inbox, Knowledge and Chat are not, and stay visible: they are the way back. Hidden areas and views cost nothing but their 28 toggle.
+
+### 8.18 Dragging the Chat to the bottom of the page area
+
+```
++----------------------+-------------------------------------+-----------------------------------------+
+| Projects     [.] [-] | Embed the terminal bound to the     | [Terminal] (Chat) on topic E..[r][.][-] |
+|----------------------|  project                            |-----------------------------------------|
+| v Acta               |  ...                                |  > claude                               |
+|  ...                 |                                     |                                         |
+|                      |                                     |                                         |
+|                      |  +- - - - - - - - - - - - - - - -+  |                                         |
+|                      |  |                               |  |                                         |
+|                      |  |  bottom panel, 320, as it     |  |                                         |
+|                      |  |  will be after the drop       |  |                                         |
+|                      |  |              +--------------+ |  |                                         |
+|                      |  |              | [c] Chat     | |  |                                         |
+|                      |  +- - - - - - - +--------------+-+  |                                         |
+|                      |~~~~~~~~ 24 strip of the hidden bottom panel ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~|
++----------------------+-------------------------------------+-----------------------------------------+
+  (Chat) source tab at 60%; [c] Chat the drag chip, bg.overlay, 12 right and below the pointer;
+  dashed box = the drop preview: 2px accent outline, fill.hover, radius.md, inset 4
+```
+
+Annotations: the pointer is on the 24 strip along the bottom of the page area, which stands for the hidden bottom panel; the preview shows the panel at its remembered 320, exactly where the chat will land. Had the chat been the visible tab of the right sidebar, its web view would be hidden for the whole drag, its place showing "Hidden while you rearrange the layout." Releasing shows the bottom panel with the chat, focuses it, and toasts "View moved to the bottom panel: Chat", Undo, Reset layout. `Esc`, or a release over the titlebar, puts the tab back at full opacity and changes nothing.
+
+### 8.19 Page area split in two, terminal in the bottom panel, Inbox as a view
+
+```
++-----------------------+------------------------------+-------------------------------+
+|Projects [Inbox] [.][-]| [(.) Embed the t.. x] (=) S..| [d] Resize protocol         x |  28 / 32
+|-----------------------|------------------------------+-------------------------------|
+| Acta                  |    32                        |    32                         |
+| [Note for Acta      ] |    Embed the terminal        |    Resize protocol            |
+|                 [Add] |    bound to the project      |    How the grid tells the     |
+| +-------------------+ |    ...                       |    shell its size...          |
+| | Terminal should   | |                              |                               |
+| | remember its..    | |                              |                               |
+| +-------------------+ +------------------------------+-------------------------------+
+|                       | Terminal  on topic Embed the terminal              [r][.][-] | 28
+|                       |--------------------------------------------------------------|
+|                       |  > claude                                                    |
++-----------------------+--------------------------------------------------------------+
+  300 left sidebar:       two page groups, row direction, 50 / 50; each with its tab bar;
+  Projects and Inbox      the focused group (left) drives the breadcrumb; bottom panel
+  as view tabs            under the page area only, 240
+```
+
+Annotations: the Inbox was dragged from its page tab into the left sidebar's header, so it became the Inbox view and follows the active project ("Acta" is its context). It drops its page title; its capture editor and cards take the full 276 of width. The second page group was made by dragging "Resize protocol" to the right edge of the page area. Each group is at least 400 wide; a narrower window folds the split (4.8.10) and lists "Group 2" in the tab bar's menu. The right sidebar is hidden; its toggle in the titlebar still shows, as do the Terminal and Chat toggles.
