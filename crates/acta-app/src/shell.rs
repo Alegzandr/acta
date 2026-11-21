@@ -82,6 +82,9 @@ pub const MIN_SIZE: (f32, f32) = (880., 560.);
 const STATUS_BAR_HEIGHT: f32 = 24.;
 /// docs/design/components.md 5, Toast: 6 s.
 const TOAST_TIME: Duration = Duration::from_secs(6);
+/// Deferred layers paint by priority: the sidebar over the page 1, the
+/// layout toast 2, menus 3, a drag 4, the palette and dialogs above all.
+const OVERLAY_PRIORITY: usize = 10;
 /// Type-ahead in the tree: keys typed within this of each other extend
 /// the same search.
 const TYPE_AHEAD_PAUSE: Duration = Duration::from_secs(1);
@@ -183,6 +186,8 @@ actions!(
         OpenShortcuts,
         /// Settings: "Remove from Claude Code" (confirmed, 6.4).
         RemoveClaudeSetup,
+        /// Settings: "Set up Claude Code" (confirmed, with what it touches).
+        SetUpClaude,
         /// `Mod+W`, palette "Close tab" (layout.md 4.4).
         CloseTab,
         /// `Ctrl+Tab` / `Ctrl+Shift+Tab`.
@@ -295,6 +300,11 @@ fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("home", TreeHome, Some("Tree")),
         KeyBinding::new("end", TreeEnd, Some("Tree")),
         KeyBinding::new("escape", DismissSidebar, Some("Tree")),
+        // 4.8.10: `Esc` dismisses the sidebar shown over the page wherever
+        // the keyboard is, except where `Esc` means something (a terminal,
+        // a field, a dialog, a menu: deeper contexts, or key handlers that
+        // run when the sidebar is not shown).
+        KeyBinding::new("escape", DismissSidebar, Some("Workbench && !Terminal")),
     ];
     // interaction.md 6.1: only Windows has a chat panel to focus.
     if cfg!(windows) {
@@ -444,6 +454,7 @@ struct Bench {
     toast: Option<Toast>,
     toast_timer: Task<()>,
     dock: Entity<TerminalDock>,
+    sessions: Entity<crate::sessions_view::SessionsView>,
     #[cfg(windows)]
     chat: Entity<ChatPanel>,
     #[cfg(windows)]
@@ -591,8 +602,17 @@ impl Shell {
             let db = db.clone();
             cx.new(|cx| BrowserPanel::new(db, window, cx))
         };
+        // Session presence (components-app.md 5, Claude Code sessions), the
+        // store for setup's folder links, and this build's plugin files
+        // for the sessions the terminal starts (ADR 0008 amendment).
+        crate::sessions::start(db.clone(), cx);
+        crate::sessions::watch_usage(cx);
+        cx.background_executor()
+            .spawn(async { claude_setup::write_plugin_files() })
+            .detach();
         let ws = cx.new(|cx| Workspace::new(db, cx));
         let dock = cx.new(|cx| TerminalDock::new(ws.clone(), cx));
+        let sessions = cx.new(|cx| crate::sessions_view::SessionsView::new(ws.clone(), cx));
         #[cfg(windows)]
         let chat = cx.new(|cx| ChatPanel::new(window, cx));
         let prefs = settings::current(cx).clone();
@@ -613,6 +633,7 @@ impl Shell {
                     DockEvent::RestartHere => shell.restart_terminal_here(window, cx),
                 },
             ),
+            cx.subscribe_in(&sessions, window, Self::on_sessions),
         ];
         #[cfg(windows)]
         subs.push(cx.subscribe_in(&chat, window, Self::on_chat));
@@ -660,6 +681,7 @@ impl Shell {
             toast: None,
             toast_timer: Task::ready(()),
             dock,
+            sessions,
             #[cfg(windows)]
             chat,
             #[cfg(windows)]
@@ -1239,6 +1261,7 @@ impl Shell {
                 // The breadcrumb and the tree now know the entry's owner.
                 cx.notify();
             }
+            PageEvent::ShowTerminal(project) => self.show_session_terminal(*project, window, cx),
         }
     }
 
@@ -1920,6 +1943,15 @@ impl Shell {
             Command::TextSize(size) => settings::set_text_size(size, cx),
             Command::ReadingWidth(width) => settings::set_reading_width(width, cx),
             Command::Language(locale) => settings::set_language(locale, cx),
+            Command::Claude(setting, on) => {
+                use crate::commands::ClaudeSetting;
+                settings::change(cx, |p| match setting {
+                    ClaudeSetting::Resume => p.new_conversations = !on,
+                    ClaudeSetting::Flash => p.flash_waiting = on,
+                    ClaudeSetting::Usage => p.hide_usage = !on,
+                });
+                cx.refresh_windows();
+            }
         }
     }
 
@@ -1997,6 +2029,10 @@ impl Shell {
                 DialogEvent::RemoveSetup => {
                     shell.close_overlay(window, cx);
                     claude_setup::run_remove(cx);
+                }
+                DialogEvent::Setup(project) => {
+                    shell.close_overlay(window, cx);
+                    claude_setup::run_install(*project, cx);
                 }
                 #[cfg(windows)]
                 DialogEvent::BrowserClear => {
@@ -2208,6 +2244,87 @@ impl Shell {
 
     fn toggle_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.toggle_view(ViewId::Terminal, window, cx);
+    }
+
+    /// "Set up Claude Code": a confirmation that says how many folders of
+    /// the open project setup will touch.
+    fn confirm_setup(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(bench) = self.bench() else { return };
+        let project = bench.active_project;
+        let ws = bench.ws.clone();
+        let name =
+            project.and_then(|p| crate::sessions_view::title_of(ws.read(cx), Owner::Project(p)));
+        let count = ws.read(cx).db.run(cx, move |store| {
+            let Some(p) = project else { return Ok(0) };
+            let mut paths: Vec<String> = store
+                .all_folders()?
+                .into_iter()
+                .filter(|f| f.project == p)
+                .map(|f| f.path)
+                .collect();
+            paths.sort();
+            paths.dedup();
+            Ok(paths.len())
+        });
+        cx.spawn_in(window, async move |shell, cx| {
+            let folders = count.await.unwrap_or(0);
+            let _ = shell.update_in(cx, |shell, window, cx| {
+                let kind = DialogKind::Setup {
+                    project: project.zip(name),
+                    folders,
+                };
+                shell.open_dialog(kind, window, cx);
+            });
+        })
+        .detach();
+    }
+
+    /// The Sessions view's actions (components-app.md 5).
+    fn on_sessions(
+        &mut self,
+        _: &Entity<crate::sessions_view::SessionsView>,
+        event: &crate::sessions_view::SessionsEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::sessions_view::SessionsEvent;
+        match event {
+            SessionsEvent::Open(owner) => {
+                let route = match *owner {
+                    Owner::Topic(id) => Route::Topic(id),
+                    Owner::Epic(id) => Route::Epic(id),
+                    Owner::Project(id) => Route::Project(id),
+                };
+                self.navigate(route, true, window, cx);
+            }
+            SessionsEvent::ShowTerminal(project) => {
+                self.show_session_terminal(*project, window, cx)
+            }
+            SessionsEvent::End(project) => {
+                if let Some(bench) = self.bench() {
+                    bench.dock.update(cx, |dock, cx| dock.end(*project, cx));
+                }
+            }
+        }
+    }
+
+    /// Shows the terminal view on the project's running session.
+    pub(crate) fn show_session_terminal(
+        &mut self,
+        project: ProjectId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.change_layout(None, window, cx, |l| {
+            l.show_view(ViewId::Terminal).is_some()
+        });
+        let Some(bench) = self.bench() else { return };
+        bench.ui.terminal_shown = true;
+        let dock = bench.dock.clone();
+        dock.update(cx, |dock, cx| dock.select(project, cx));
+        let focus = dock.read(cx).focus_handle(cx);
+        window.focus(&focus, cx);
+        cx.notify();
     }
 
     /// "Restart terminal here": confirmed while a process runs (6.4).
@@ -2428,10 +2545,16 @@ impl Shell {
                 .knowledge_view
                 .as_ref()
                 .is_some_and(|v| v.read(cx).menu_open());
-        // The move toast sits at the bottom left of the page area.
+        let place = bench.layout.locate(Tab::View(view)).map(|s| s.place);
+        // The move toast sits at the bottom left of the page area, over the
+        // sidebar shown over the page.
         let toast_over = bench.toast.is_some()
-            && bench.layout.locate(Tab::View(view)).map(|s| s.place) == Some(Place::Page);
-        bench.ui.left_overlay
+            && (place == Some(Place::Page)
+                || (bench.ui.left_overlay && place == Some(Place::Side(Side::Left))));
+        // The sidebar shown over the page covers what is under it, and
+        // hosts what is in it (workbench.md 4.8.10).
+        let left_over = bench.ui.left_overlay && place != Some(Place::Side(Side::Left));
+        left_over
             || bench.ui.menu.is_some()
             || bench.tree_menu.is_some()
             || toast_over
@@ -2453,8 +2576,19 @@ impl Shell {
 
     fn show_toast(&mut self, toast: Toast, cx: &mut Context<Self>) {
         let Some(bench) = self.bench() else { return };
-        let stays = toast.kind == ToastKind::Error;
         bench.toast = Some(toast);
+        self.arm_toast_timer(cx);
+        cx.notify();
+    }
+
+    /// The toast goes 6 s after it shows, or after the pointer leaves it
+    /// (components.md 5, Toast); an error stays until dismissed.
+    fn arm_toast_timer(&mut self, cx: &mut Context<Self>) {
+        let Some(bench) = self.bench() else { return };
+        let stays = bench
+            .toast
+            .as_ref()
+            .is_none_or(|t| t.kind == ToastKind::Error);
         bench.toast_timer = if stays {
             Task::ready(())
         } else {
@@ -2468,7 +2602,18 @@ impl Shell {
                 });
             })
         };
-        cx.notify();
+    }
+
+    /// The toast is paused while the pointer is on it: a slow reader or a
+    /// pointer on its way to Undo never sees it go.
+    fn hover_toast(&mut self, hovered: bool, cx: &mut Context<Self>) {
+        if hovered {
+            if let Some(bench) = self.bench() {
+                bench.toast_timer = Task::ready(());
+            }
+        } else {
+            self.arm_toast_timer(cx);
+        }
     }
 
     /// `Mod+Z`: the newest undo step of the window, a layout change
@@ -2911,12 +3056,14 @@ impl Shell {
         .detach();
     }
 
-    /// Close the inline edit. The keyboard goes back to the tree only if
-    /// the edit had it: a click elsewhere that ended it keeps its focus.
+    /// Close the inline edit. The keyboard goes back to the tree if the
+    /// edit had it or nothing has it (the field gave it up on `Enter`): a
+    /// click elsewhere that ended it keeps its focus.
     fn cancel_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let nowhere = window.focused(cx).is_none();
         let Some(bench) = self.bench() else { return };
         if let Some(rename) = bench.rename.take()
-            && rename.state.focus_handle(cx).is_focused(window)
+            && (nowhere || rename.state.focus_handle(cx).is_focused(window))
         {
             let handle = bench.tree_focus.clone();
             window.focus(&handle, cx);
@@ -3204,17 +3351,53 @@ impl Shell {
                     &[("when", Arg::Text(&when)), ("topic", Arg::Text(&topic))],
                 )
             });
-        let claude_item = ui::bar_item("status-claude", &tokens)
-            .child(icon(glyph, 14., glyph_color))
-            .child(type_scale::SMALL.el().child(text(locale, key)))
-            .when_some(last_wrote, |this, tip| this.tooltip(ui::tip(tip)))
-            .on_click(cx.listener(move |shell, _, window, cx| {
-                if status == claude_setup::Status::NoFolder {
-                    shell.set_project_folder(window, cx);
-                } else {
-                    shell.open_settings(window, cx);
-                }
-            }));
+        // components-app.md 5, Claude Code sessions: while sessions run, the
+        // item counts them by state and shows the Sessions view.
+        let live = crate::sessions::live(cx).to_vec();
+        let sessions_text = crate::sessions::status_text(locale, crate::sessions::counts(&live));
+        let claude_item = match (sessions_text, crate::sessions::strongest(&live)) {
+            (Some(label), Some(state)) => {
+                let tip = live.first().map(|s| {
+                    let owner = crate::sessions::place(s);
+                    let name = self
+                        .bench()
+                        .and_then(|b| crate::sessions_view::title_of(b.ws.read(cx), owner))
+                        .unwrap_or_default();
+                    format!(
+                        "{}\n{}",
+                        crate::terminal_dock::focus_label(locale, owner, &name),
+                        crate::sessions::detail(locale, s, true)
+                    )
+                });
+                ui::bar_item("status-claude", &tokens)
+                    .child(icon(
+                        Icon::Bot,
+                        14.,
+                        crate::sessions::state_color(state, &tokens),
+                    ))
+                    .child(type_scale::SMALL.el().child(label))
+                    .when_some(tip, |this, tip| this.tooltip(ui::tip(tip)))
+                    .on_click(cx.listener(|shell, _, window, cx| {
+                        shell.view_action(ViewId::Sessions, ViewAction::Show, window, cx)
+                    }))
+            }
+            _ => ui::bar_item("status-claude", &tokens)
+                .child(icon(glyph, 14., glyph_color))
+                .child(type_scale::SMALL.el().child(text(locale, key)))
+                .when_some(last_wrote, |this, tip| this.tooltip(ui::tip(tip)))
+                .on_click(cx.listener(move |shell, _, window, cx| {
+                    if status == claude_setup::Status::NoFolder {
+                        shell.set_project_folder(window, cx);
+                    } else {
+                        shell.open_settings(window, cx);
+                    }
+                })),
+        };
+        let usage_items = if settings::current(cx).hide_usage {
+            Vec::new()
+        } else {
+            usage_items(&tokens, locale, cx)
+        };
         div()
             .flex()
             .flex_row()
@@ -3240,7 +3423,8 @@ impl Shell {
                                 shell.open_palette(Some(Group::Projects), None, window, cx)
                             }))
                     }))
-                    .child(claude_item),
+                    .child(claude_item)
+                    .children(usage_items),
             )
             .child(
                 div()
@@ -3663,7 +3847,8 @@ impl Shell {
     }
 
     /// The palette and quick capture: 96 below the window top, centred,
-    /// no scrim; dialogs draw their own scrim.
+    /// no scrim; dialogs draw their own scrim. Above every other layer (the
+    /// sidebar over the page, the toast, menus, a drag).
     fn overlay_element(&mut self) -> Option<AnyElement> {
         let bench = self.bench()?;
         let top = |child: AnyElement| {
@@ -3677,12 +3862,15 @@ impl Shell {
                     .justify_center()
                     .child(child),
             )
+            .with_priority(OVERLAY_PRIORITY)
             .into_any_element()
         };
         Some(match bench.overlay.as_ref()? {
             Overlay::Palette(palette) => top(palette.clone().into_any_element()),
             Overlay::Capture(capture) => top(capture.clone().into_any_element()),
-            Overlay::Dialog(dialog) => deferred(dialog.clone()).into_any_element(),
+            Overlay::Dialog(dialog) => deferred(dialog.clone())
+                .with_priority(OVERLAY_PRIORITY)
+                .into_any_element(),
         })
     }
 
@@ -3691,16 +3879,23 @@ impl Shell {
         let locale = settings::locale(cx);
         let bench = self.bench()?;
         let toast = bench.toast.clone()?;
-        if toast.kind == ToastKind::Layout {
+        if matches!(
+            toast.kind,
+            ToastKind::Layout | ToastKind::LayoutReset | ToastKind::LayoutNoRoom
+        ) {
             return Some(self.layout_toast_element(toast, &t, locale, cx));
         }
         let glyph = match toast.kind {
             ToastKind::Error => Some(icon(Icon::TriangleAlert, 16., t.danger)),
             ToastKind::Done => Some(icon(Icon::Check, 16., t.success)),
-            ToastKind::Undo | ToastKind::Layout => None,
+            _ => None,
         };
         Some(
             div()
+                .id("toast")
+                .on_hover(
+                    cx.listener(|shell, hovered: &bool, _, cx| shell.hover_toast(*hovered, cx)),
+                )
                 .absolute()
                 .left(px(16.))
                 .bottom(px(16.))
@@ -3751,6 +3946,9 @@ impl Shell {
 
     /// The move toast (4.8.11): the message on its own line, wrapping to
     /// two at most, then Undo, Reset layout and the `x` on a line under it.
+    /// "Layout reset." has Undo only; the no-room toast its one action. It
+    /// is drawn above the sidebar shown over the page, which would
+    /// otherwise cover it.
     fn layout_toast_element(
         &mut self,
         toast: Toast,
@@ -3759,9 +3957,14 @@ impl Shell {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let macos = cfg!(target_os = "macos");
-        div()
+        let kind = toast.kind;
+        let undo = kind != ToastKind::LayoutNoRoom;
+        let reset = kind == ToastKind::Layout;
+        let room = kind == ToastKind::LayoutNoRoom;
+        let element = div()
             .id("layout-toast")
             .occlude()
+            .on_hover(cx.listener(|shell, hovered: &bool, _, cx| shell.hover_toast(*hovered, cx)))
             .absolute()
             .left(px(16.))
             .bottom(px(16.))
@@ -3789,34 +3992,52 @@ impl Shell {
                     .flex_row()
                     .items_center()
                     .gap(px(4.))
-                    .child(
-                        ui::button(
-                            "toast-layout-undo",
-                            text(locale, Key::CommonUndo),
-                            Variant::Ghost,
-                            false,
-                            t,
+                    .when(undo, |this| {
+                        this.child(
+                            ui::button(
+                                "toast-layout-undo",
+                                text(locale, Key::CommonUndo),
+                                Variant::Ghost,
+                                false,
+                                t,
+                            )
+                            .child(ui::kbd(
+                                &[crate::i18n::KeyName::Mod.label(locale, macos), "Z"],
+                                t,
+                            ))
+                            .on_click(
+                                cx.listener(|shell, _, window, cx| shell.undo_layout(window, cx)),
+                            ),
                         )
-                        .child(ui::kbd(
-                            &[crate::i18n::KeyName::Mod.label(locale, macos), "Z"],
-                            t,
-                        ))
-                        .on_click(
-                            cx.listener(|shell, _, window, cx| shell.undo_layout(window, cx)),
-                        ),
-                    )
-                    .child(
-                        ui::button(
-                            "toast-layout-reset",
-                            text(locale, Key::CmdLayoutReset),
-                            Variant::Ghost,
-                            false,
-                            t,
+                    })
+                    .when(reset, |this| {
+                        this.child(
+                            ui::button(
+                                "toast-layout-reset",
+                                text(locale, Key::CmdLayoutReset),
+                                Variant::Ghost,
+                                false,
+                                t,
+                            )
+                            .on_click(
+                                cx.listener(|shell, _, window, cx| shell.reset_layout(window, cx)),
+                            ),
                         )
-                        .on_click(
-                            cx.listener(|shell, _, window, cx| shell.reset_layout(window, cx)),
-                        ),
-                    )
+                    })
+                    .when(room, |this| {
+                        this.child(
+                            ui::button(
+                                "toast-layout-room",
+                                text(locale, Key::LayoutNoRoomHideRight),
+                                Variant::Ghost,
+                                false,
+                                t,
+                            )
+                            .on_click(cx.listener(
+                                |shell, _, window, cx| shell.hide_right_and_move(window, cx),
+                            )),
+                        )
+                    })
                     .child(div().flex_1())
                     .child(
                         ui::ghost_icon_button("toast-close", Icon::X, 24., false, false, true, t)
@@ -3827,8 +4048,8 @@ impl Shell {
                                 cx.notify();
                             })),
                     ),
-            )
-            .into_any_element()
+            );
+        deferred(element).with_priority(2).into_any_element()
     }
 
     fn bulk_notice(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -4088,6 +4309,9 @@ fn tree_row(
                 })),
             )
     };
+    // components-app.md 5, Claude Code sessions: one `bot` on the row a
+    // live session focuses, in its state's colour.
+    let glyph = session_glyph(row, index, locale, t, cx);
     el = match row {
         Row::Project {
             title: name,
@@ -4096,6 +4320,7 @@ fn tree_row(
         } => el
             .child(chevron(*expanded, pid.to_string(), cx))
             .child(title(type_scale::UI_STRONG, name.clone(), t.text_primary))
+            .children(glyph)
             .child(plus(*pid, None, cx)),
         Row::Inbox { count: n, .. } => el
             .child(icon(Icon::Inbox, 16., rest))
@@ -4129,6 +4354,7 @@ fn tree_row(
         } => el
             .child(chevron(*expanded, eid.to_string(), cx))
             .child(title(type_scale::UI_STRONG, name.clone(), rest))
+            .children(glyph)
             .child(plus(*project, Some(*eid), cx)),
         Row::Topic {
             title: name,
@@ -4152,6 +4378,7 @@ fn tree_row(
                     name.clone(),
                     color,
                 ))
+                .children(glyph)
         }
         Row::Closed {
             count: n,
@@ -4211,6 +4438,122 @@ fn tree_row(
     }
     el.children(menu.map(|menu| div().absolute().top_0().left(px(8. + indent)).child(menu)))
         .into_any_element()
+}
+
+/// The plan usage meters of the status bar (components-app.md 5, Plan
+/// usage): "5h 42%" and "7d 18%", each with a 24 x 4 bar, `warning` above
+/// 80 %, dimmed once its window has reset; "Plan usage: no data yet" until
+/// Claude Code first reports it.
+fn usage_items(t: &Tokens, locale: Locale, cx: &mut Context<Shell>) -> Vec<AnyElement> {
+    let now = acta_core::time::now_ms();
+    let Some(usage) = crate::sessions::plan_usage(cx) else {
+        return vec![
+            ui::bar_item("status-usage", t)
+                .child(type_scale::SMALL.el().child(text(locale, Key::UsageNoData)))
+                .tooltip(ui::tip(text(locale, Key::UsageNoDataTip)))
+                .into_any_element(),
+        ];
+    };
+    let windows = [
+        (
+            "status-usage-5h",
+            usage.five_hour,
+            Key::UsageFiveHour,
+            Key::UsageFiveHourTip,
+        ),
+        (
+            "status-usage-7d",
+            usage.seven_day,
+            Key::UsageSevenDay,
+            Key::UsageSevenDayTip,
+        ),
+    ];
+    windows
+        .into_iter()
+        .filter_map(|(id, w, key, tip_key)| {
+            let m = crate::sessions::meter(w, now)?;
+            let pct = crate::i18n::percent(locale, m.percent as u64);
+            let mut tip = format!(
+                "{}, {}",
+                tr(locale, tip_key, &[("percent", Arg::Text(&pct))]),
+                crate::sessions::resets_text(locale, m.resets_at, now)
+            );
+            if m.stale {
+                tip.push('\n');
+                tip.push_str(&text(locale, Key::UsageStale));
+            }
+            let color = if m.stale {
+                t.text_disabled
+            } else if m.high {
+                t.warning
+            } else {
+                t.text_secondary
+            };
+            let filled = 24. * f32::from(m.percent.min(100)) / 100.;
+            Some(
+                ui::bar_item(id, t)
+                    .gap(px(6.))
+                    .child(
+                        type_scale::SMALL
+                            .el()
+                            .font_features(type_scale::tabular())
+                            .when(m.high && !m.stale, |this| this.text_color(t.warning))
+                            .when(m.stale, |this| this.text_color(t.text_disabled))
+                            .child(tr(locale, key, &[("percent", Arg::Text(&pct))])),
+                    )
+                    .child(
+                        div()
+                            .w(px(24.))
+                            .h(px(4.))
+                            .rounded(px(2.))
+                            .bg(t.fill_selected)
+                            .child(div().w(px(filled)).h_full().rounded(px(2.)).bg(color)),
+                    )
+                    .tooltip(ui::tip(tip))
+                    .into_any_element(),
+            )
+        })
+        .collect()
+}
+
+/// The `bot` glyph of a tree row whose record a live Claude Code session
+/// focuses, with "Claude Code is working here · since 14:05" as tooltip.
+fn session_glyph(
+    row: &Row,
+    index: usize,
+    locale: Locale,
+    t: &Tokens,
+    cx: &App,
+) -> Option<AnyElement> {
+    let owner = match row {
+        Row::Project { id, .. } => Owner::Project(*id),
+        Row::Epic { id, .. } => Owner::Epic(*id),
+        Row::Topic { id, .. } => Owner::Topic(*id),
+        _ => return None,
+    };
+    let live = crate::sessions::live(cx);
+    let here = crate::sessions::here(live, owner)?;
+    let mut tip = crate::sessions::here_text(locale, here);
+    if let Some(first) = live
+        .iter()
+        .filter(|s| crate::sessions::place(s) == owner)
+        .min_by_key(|s| s.started_at)
+    {
+        tip.push_str(" \u{b7} ");
+        tip.push_str(&crate::sessions::since(locale, first.started_at));
+    }
+    Some(
+        div()
+            .id(SharedString::from(format!("tree-claude-{index}")))
+            .flex_shrink_0()
+            .child(icon(
+                Icon::Bot,
+                14.,
+                crate::sessions::state_color(here.state, t),
+            ))
+            .tooltip(ui::tip(tip))
+            .into_any_element(),
+    )
 }
 
 /// The open menu of a tree row (components.md 5, Context menu): the row
@@ -4409,6 +4752,16 @@ impl Render for Shell {
             .on_action(cx.listener(|s, _: &CancelDrag, w, cx| {
                 s.cancel_drag(w, cx);
             }))
+            .on_action(cx.listener(|s, _: &DismissSidebar, w, cx| {
+                let over = s.bench().is_some_and(|b| {
+                    b.ui.left_overlay && b.overlay.is_none() && b.ui.menu.is_none()
+                });
+                if over {
+                    s.dismiss_sidebar(w, cx);
+                } else {
+                    cx.propagate();
+                }
+            }))
             .on_action(cx.listener(|s, _: &ToggleSidebar, w, cx| s.toggle_sidebar(w, cx)))
             .on_action(cx.listener(|s, _: &ResetLayout, w, cx| s.reset_layout(w, cx)))
             .on_action(cx.listener(|s, _: &ToggleRight, w, cx| s.toggle_area(Side::Right, w, cx)))
@@ -4429,6 +4782,7 @@ impl Render for Shell {
             .on_action(cx.listener(|s, _: &RemoveClaudeSetup, w, cx| {
                 s.open_dialog(DialogKind::RemoveSetup, w, cx)
             }))
+            .on_action(cx.listener(|s, _: &SetUpClaude, w, cx| s.confirm_setup(w, cx)))
             .on_action(cx.listener(|s, _: &NextTab, w, cx| {
                 let focus = !s.terminal_focused(w, cx);
                 s.cycle_tab(true, focus, w, cx)
@@ -4587,5 +4941,47 @@ mod tests {
     fn the_key_bindings_parse() {
         // `KeyBinding::new` panics on a keystroke the pinned GPUI rejects.
         assert!(key_bindings().len() > 30);
+    }
+
+    /// The action GPUI dispatches for `key` with focus in the innermost of
+    /// `contexts` (outermost first), as the window resolves it.
+    fn action_for(key: &'static str, contexts: &[&str]) -> Option<Box<dyn gpui_kit::Action>> {
+        let keymap = gpui_kit::Keymap::new(key_bindings());
+        let stack: Vec<gpui_kit::KeyContext> = contexts
+            .iter()
+            .map(|c| gpui_kit::KeyContext::parse(c).expect("a context"))
+            .collect();
+        let keystroke = gpui_kit::Keystroke::parse(key).expect("a keystroke");
+        let (bindings, pending) = keymap.bindings_for_input(&[keystroke], &stack);
+        assert!(!pending, "{key} waits for more keys");
+        bindings.first().map(|b| b.action().boxed_clone())
+    }
+
+    fn is<A: gpui_kit::Action + Default>(action: Option<Box<dyn gpui_kit::Action>>) -> bool {
+        action.is_some_and(|a| a.partial_eq(&A::default()))
+    }
+
+    #[test]
+    fn alt_up_and_alt_down_reorder_in_the_tree() {
+        let tree = ["Workbench", "Tree"];
+        assert!(is::<TreeMoveUp>(action_for("alt-up", &tree)));
+        assert!(is::<TreeMoveDown>(action_for("alt-down", &tree)));
+        assert!(is::<TreeUp>(action_for("up", &tree)));
+        // Outside the tree they mean nothing.
+        assert!(action_for("alt-up", &["Workbench"]).is_none());
+    }
+
+    #[test]
+    fn escape_dismisses_the_sidebar_over_the_page_except_in_a_terminal() {
+        assert!(is::<DismissSidebar>(action_for("escape", &["Workbench"])));
+        assert!(is::<DismissSidebar>(action_for(
+            "escape",
+            &["Workbench", "RecordPage"]
+        )));
+        assert!(action_for("escape", &["Workbench", "Terminal"]).is_none());
+        assert!(is::<crate::dialogs::CancelDialog>(action_for(
+            "escape",
+            &["Workbench", "Dialog"]
+        )));
     }
 }

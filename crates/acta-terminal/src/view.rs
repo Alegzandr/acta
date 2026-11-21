@@ -178,6 +178,19 @@ impl TerminalView {
         cx.notify();
     }
 
+    /// End the child (Sessions view, "End session"); the view then shows
+    /// the ended line, and Enter restarts.
+    pub fn end(&mut self, cx: &mut Context<Self>) {
+        // Dropping the session closes the PTY, which ends the child (as a
+        // restart does); the event loop reports no exit for that, so the
+        // view marks it ended itself.
+        if self.session.take().is_some() && self.exited.is_none() {
+            self.exited = Some(None);
+            cx.emit(TerminalEvent::Exited(None));
+        }
+        cx.notify();
+    }
+
     /// The spec of the current session.
     pub fn spec(&self) -> &LaunchSpec {
         &self.spec

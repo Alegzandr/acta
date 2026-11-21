@@ -51,7 +51,7 @@ fn cli(data: &Path, dir: &Path, args: &[&str], stdin: &str) -> (bool, String, St
 
 struct Mcp {
     child: Child,
-    stdin: ChildStdin,
+    stdin: Option<ChildStdin>,
     stdout: BufReader<ChildStdout>,
     next: i64,
     init: Value,
@@ -59,7 +59,15 @@ struct Mcp {
 
 impl Mcp {
     fn start(data: &Path, project_dir: &Path, memory_key: bool) -> Mcp {
+        Self::start_with(data, project_dir, memory_key, &[])
+    }
+
+    fn start_with(data: &Path, project_dir: &Path, memory_key: bool, env: &[(&str, &str)]) -> Mcp {
         let mut cmd = base_cmd(data);
+        cmd.env_remove("ACTA_LAUNCH");
+        for (k, v) in env {
+            cmd.env(k, v);
+        }
         cmd.arg("mcp")
             .env("CLAUDE_PROJECT_DIR", project_dir)
             .env("CLAUDE_CODE_SESSION_ID", "e2e-session")
@@ -74,7 +82,7 @@ impl Mcp {
         let stdout = BufReader::new(child.stdout.take().unwrap());
         let mut m = Mcp {
             child,
-            stdin,
+            stdin: Some(stdin),
             stdout,
             next: 1,
             init: Value::Null,
@@ -94,8 +102,9 @@ impl Mcp {
     }
 
     fn send(&mut self, v: Value) {
-        writeln!(self.stdin, "{v}").unwrap();
-        self.stdin.flush().unwrap();
+        let stdin = self.stdin.as_mut().expect("open");
+        writeln!(stdin, "{v}").unwrap();
+        stdin.flush().unwrap();
     }
 
     fn request(&mut self, method: &str, params: Value) -> Value {
@@ -127,6 +136,15 @@ impl Mcp {
         assert_eq!(content.len(), 1, "{r}");
         let text = content[0]["text"].as_str().unwrap().to_owned();
         (result["isError"] == json!(true), text)
+    }
+}
+
+impl Mcp {
+    /// Closes the connection as Claude Code does when a session ends, and
+    /// waits for the server to exit.
+    fn close(&mut self) {
+        self.stdin.take();
+        let _ = self.child.wait();
     }
 }
 
@@ -570,4 +588,243 @@ fn setup_with_a_dev_data_dir_needs_a_claude_config_dir() {
     let (ok, _, err) = cli(&data, tmp.path(), &["setup"], "");
     assert!(!ok && err.contains("CLAUDE_CONFIG_DIR"), "{err}");
     assert!(!data.join("claude").exists(), "nothing written");
+}
+
+/// Session presence over stdio: the server registers its session in a
+/// linked folder, Acta's presence hooks move it, answering nothing the
+/// model would read, `log` sets the activity line, and closing the
+/// connection ends it. A session in an unrelated folder leaves no trace.
+#[test]
+fn presence_follows_the_session_over_stdio() {
+    let tmp = tempfile::tempdir().unwrap();
+    let data = tmp.path().join("data");
+    let repo = tmp.path().join("repo");
+    let other = tmp.path().join("other");
+    std::fs::create_dir_all(&repo).unwrap();
+    std::fs::create_dir_all(&other).unwrap();
+
+    // Unrelated folder, nothing linked: hooks answer empty, no file.
+    let mut stray = Mcp::start(&data, &other, false);
+    let (err, text) = stray.call("hook", json!({"event": "prompt", "session": "stray"}));
+    assert!(!err && text.is_empty(), "{text}");
+    drop(stray);
+    assert!(!data.join("presence.db").exists());
+
+    let (ok, out, err) = cli(&data, &repo, &["link", "--keep-auto-memory"], "");
+    assert!(ok, "{out}{err}");
+    let (ok, _, _) = cli(&data, &repo, &["create", "topic"], "Embed the terminal");
+    assert!(ok);
+
+    let sessions = || cli(&data, &repo, &["sessions"], "").1;
+    let mut m = Mcp::start_with(
+        &data,
+        &repo,
+        false,
+        &[("ACTA_TOPIC", "T-1"), ("ACTA_LAUNCH", "tok-1")],
+    );
+    // The heartbeat registers the session right after start.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !sessions().contains("T-1 idle") {
+        assert!(Instant::now() < deadline, "not registered: {}", sessions());
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert!(sessions().contains("in Acta"), "{}", sessions());
+
+    for (event, detail) in [
+        ("prompt", None),
+        ("tool", Some("mcp__plugin_acta_acta__brief")),
+    ] {
+        let mut args = json!({"event": event, "session": "e2e-session"});
+        if let Some(d) = detail {
+            args["detail"] = json!(d);
+        }
+        let (err, text) = m.call("hook", args);
+        assert!(!err && text.is_empty(), "{event}: {text}");
+    }
+    assert!(sessions().contains("T-1 working"), "{}", sessions());
+    let (err, _) = m.call(
+        "log",
+        json!({"type": "progress", "text": "Terminal tab shows the focus
+second line"}),
+    );
+    assert!(!err);
+    let (err, text) = m.call(
+        "hook",
+        json!({"event": "waiting", "session": "e2e-session"}),
+    );
+    assert!(!err && text.is_empty());
+    let out = sessions();
+    assert!(out.contains("T-1 waiting"), "{out}");
+    assert!(out.contains("last: Terminal tab shows the focus"), "{out}");
+    assert!(!out.contains("second line"), "{out}");
+
+    // SessionEnd for /clear keeps it; the briefing hook adopts the new id.
+    let (_, text) = m.call(
+        "hook",
+        json!({"event": "end", "detail": "clear", "session": "e2e-session"}),
+    );
+    assert!(text.is_empty());
+    let (err, _) = m.call("hook", json!({"event": "clear", "session": "e2e-cleared"}));
+    assert!(!err);
+    assert!(sessions().contains("T-1 idle"), "{}", sessions());
+
+    // The client closes the connection: the session ends.
+    m.close();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !sessions().contains("no Claude Code session") {
+        assert!(Instant::now() < deadline, "not ended: {}", sessions());
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// `acta statusline` as Claude Code runs it: the plan's numbers kept in
+/// `usage.json` (and nothing else), a short line printed, the user's own
+/// status line run first with the same stdin when setup recorded one. No
+/// database is created.
+#[test]
+fn statusline_keeps_usage_and_wraps_the_users_line() {
+    let tmp = tempfile::tempdir().unwrap();
+    let data = tmp.path().join("data");
+    let dir = tmp.path();
+    let payload = json!({
+        "session_id": "s-alexandre",
+        "model": {"display_name": "Opus"},
+        "workspace": {"current_dir": "C:/Users/alexandre/acta"},
+        "rate_limits": {
+            "five_hour": {"used_percentage": 42.4, "resets_at": 4_102_444_800i64},
+            "seven_day": {"used_percentage": 18, "resets_at": 4_102_444_800i64}
+        }
+    })
+    .to_string();
+    let (ok, out, err) = cli(&data, dir, &["statusline"], &payload);
+    assert!(ok, "{err}");
+    assert_eq!(out.trim(), "5h 42% \u{b7} 7d 18%");
+    let usage = std::fs::read_to_string(data.join("usage.json")).unwrap();
+    assert!(
+        usage.contains("42.4") && !usage.contains("alexandre"),
+        "{usage}"
+    );
+    assert!(
+        !data.join("acta.db").exists(),
+        "no database for the status line"
+    );
+
+    // No rate limits in this payload (an API-key session): the last
+    // numbers stay and still show.
+    let (ok, out, _) = cli(&data, dir, &["statusline"], r#"{"session_id":"x"}"#);
+    assert!(ok);
+    assert_eq!(out.trim(), "5h 42% \u{b7} 7d 18%");
+
+    // The user's own status line, kept by setup, comes first.
+    std::fs::create_dir_all(data.join("claude")).unwrap();
+    std::fs::write(
+        data.join("claude").join("setup-record.json"),
+        json!({"statusline_original": {"type": "command", "command": "echo mine"}}).to_string(),
+    )
+    .unwrap();
+    let (ok, out, _) = cli(&data, dir, &["statusline"], &payload);
+    assert!(ok);
+    assert_eq!(out.trim(), "mine  5h 42% \u{b7} 7d 18%");
+
+    // Called from inside the user's own command (a script that calls
+    // `acta statusline`): the original is not run again.
+    let nested = base_cmd(&data)
+        .arg("statusline")
+        .env("ACTA_STATUSLINE_NESTED", "1")
+        .current_dir(dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .and_then(|mut c| {
+            c.stdin.take().unwrap().write_all(payload.as_bytes())?;
+            c.wait_with_output()
+        })
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&nested.stdout).trim(),
+        "5h 42% \u{b7} 7d 18%"
+    );
+    // An Acta command recorded as the original (an older install) is never
+    // run: no recursion.
+    let acta = format!("{} statusline", EXE.replace('\\', "/"));
+    std::fs::write(
+        data.join("claude").join("setup-record.json"),
+        json!({"statusline_original": {"command": acta}}).to_string(),
+    )
+    .unwrap();
+    let (ok, out, _) = cli(&data, dir, &["statusline"], &payload);
+    assert!(ok);
+    assert_eq!(out.trim(), "5h 42% \u{b7} 7d 18%");
+}
+
+/// `acta link --attached`: the folders already attached, read from Acta (no
+/// path on the command line), get Claude Code's auto memory off; `acta
+/// setup --remove` turns it back on where Acta turned it off. `claude` runs
+/// against a temporary configuration directory only.
+#[test]
+fn link_attached_and_setup_remove_round_trip_auto_memory() {
+    let tmp = tempfile::tempdir().unwrap();
+    let data = tmp.path().join("data");
+    let repo = tmp.path().join("repo");
+    let broken = tmp.path().join("broken");
+    let other = tmp.path().join("other");
+    for d in [&repo, &broken, &other] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    let (ok, out, err) = cli(&data, &repo, &["link", "--keep-auto-memory"], "");
+    assert!(ok, "{out}{err}");
+    let (ok, out, err) = cli(&data, &broken, &["link", "--keep-auto-memory", "--add"], "");
+    assert!(ok, "{out}{err}");
+    let local = repo.join(".claude").join("settings.local.json");
+    let broken_local = broken.join(".claude").join("settings.local.json");
+    assert!(!local.exists());
+
+    let (ok, out, err) = cli(
+        &data,
+        &other,
+        &["link", "--attached", "--project", "P-1", "--add"],
+        "",
+    );
+    assert!(ok, "{out}{err}");
+    assert!(
+        out.contains("2 attached folder") && out.contains("turned off in 2"),
+        "{out}"
+    );
+    let text = std::fs::read_to_string(&local).unwrap();
+    assert!(text.contains("\"autoMemoryEnabled\": false"), "{text}");
+    // Idempotent; a path is refused with --attached.
+    let (ok, out, _) = cli(&data, &other, &["link", "--attached"], "");
+    assert!(ok && !out.contains("turned off"), "{out}");
+    let (ok, _, _) = cli(&data, &other, &["link", "--attached", "x"], "");
+    assert!(!ok);
+
+    // One settings file can no longer be read: that folder keeps its record.
+    std::fs::write(&broken_local, "{ not json").unwrap();
+    let config = tmp.path().join("claude-config");
+    std::fs::create_dir_all(&config).unwrap();
+    let remove = || {
+        let out = base_cmd(&data)
+            .args(["setup", "--remove", "--json"])
+            .env("CLAUDE_CONFIG_DIR", &config)
+            .current_dir(&other)
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    let stdout = remove();
+    assert!(
+        stdout.contains("back on in 1 folder") && stdout.contains("1 left as they were"),
+        "{stdout}"
+    );
+    assert!(!local.exists(), "the settings file Acta created is gone");
+    assert_eq!(
+        std::fs::read_to_string(&broken_local).unwrap(),
+        "{ not json"
+    );
+    // Repaired, the next removal restores it: the record was kept.
+    std::fs::write(&broken_local, "{\"autoMemoryEnabled\": false}").unwrap();
+    let stdout = remove();
+    assert!(stdout.contains("back on in 1 folder"), "{stdout}");
+    assert!(!broken_local.exists());
 }

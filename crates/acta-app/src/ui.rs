@@ -216,7 +216,14 @@ pub fn ghost_icon_button(
         tokens.text_secondary
     };
     let id: SharedString = id.into();
-    let (hover, pressed, primary) = (tokens.fill_hover, tokens.fill_pressed, tokens.text_primary);
+    // A selected control keeps its selected fill under the pointer: hover
+    // (6%) never reads as less than selected (9%).
+    let hover = if selected {
+        tokens.fill_selected
+    } else {
+        tokens.fill_hover
+    };
+    let (pressed, primary) = (tokens.fill_pressed, tokens.text_primary);
     let glyph = icon(glyph, 16., color).when(!disabled, |this| {
         this.group_hover(id.clone(), move |style| style.text_color(primary))
     });

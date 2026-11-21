@@ -61,6 +61,7 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 
 ## M4 - Terminal
 - [ ] Embedded terminal launching Claude Code in the effective working folder of the topic, epic or project it was opened from (ADR 0008)
+- [ ] Claude integration pass on `integration-engineer/claude-integration` (ADR 0005 and 0008 amendments of 2026-11-21): terminal passes `--plugin-dir` and resumes each page's conversation (`--session-id`/`--resume`), session presence (`presence.db`, hooks, `acta sessions`; status bar, tree glyph, page line, Sessions view, terminal context, optional taskbar flash), plan usage through `acta statusline` (wraps an existing status line) shown in the status bar, Set up also links every attached folder. Left: an interactive Claude Code session driving the hooks for real; the UI checked by eye
 - [ ] Rendering, input, resize, scrollback, copy/paste, links
 - [ ] Follow-up: per-row shaping cache keyed by row content, skipping rows `Term::damage()` leaves untouched (ADR 0002 rendering plan); the view relies on GPUI's per-frame line layout cache until then
 

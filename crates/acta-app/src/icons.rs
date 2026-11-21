@@ -87,6 +87,7 @@ icons! {
     Globe => "globe",
     Square => "square",
     Play => "play",
+    Bot => "bot",
 }
 
 /// The app mark, shown in the updater window only (docs/design/components-app.md 5).

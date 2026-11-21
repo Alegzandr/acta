@@ -4,6 +4,7 @@
 
 pub mod args;
 pub mod git;
+pub mod presence;
 pub mod render;
 pub mod session;
 pub mod tools;

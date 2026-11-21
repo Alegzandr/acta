@@ -9,7 +9,10 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use acta_core::model::{Author, Owner, ProjectId, Record};
-use acta_terminal::{Focus, LaunchError, TerminalEvent, TerminalTheme, TerminalView};
+use acta_core::presence::SessionState;
+use acta_terminal::{
+    ClaudeOptions, Conversation, Focus, LaunchError, TerminalEvent, TerminalTheme, TerminalView,
+};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable,
@@ -40,6 +43,10 @@ enum Pane {
     Running {
         view: Entity<TerminalView>,
         origin: Origin,
+        /// `ACTA_LAUNCH`: finds this session's presence row.
+        token: String,
+        /// The conversation the page resumes next time; follows `/clear`.
+        conversation: Option<String>,
         _sub: Subscription,
     },
     /// No folder anywhere up the chain. `prompt`: a command the launch was
@@ -280,6 +287,7 @@ impl TerminalDock {
             *n += 1;
             *n
         };
+        let new_conversations = settings::current(cx).new_conversations;
         let ws = self.ws.read(cx);
         let folders = ws.db.run(cx, move |store| {
             let effective = store.effective_folders(owner)?;
@@ -297,15 +305,28 @@ impl TerminalDock {
             {
                 folders.push((path, Owner::Project(project)));
             }
-            Ok((folders, epic))
+            let config = acta_terminal::claude_config_dir();
+            let conversation = match folders.first() {
+                Some((cwd, _)) => {
+                    conversation_for(store, owner, new_conversations, config.as_deref(), cwd)?
+                }
+                None => None,
+            };
+            Ok((folders, epic, conversation))
         });
         // The previous session (if any) ends when its view is dropped.
         let old = self.panes.insert(project, Pane::Starting);
         drop(old);
         cx.notify();
         cx.spawn_in(window, async move |dock, cx| {
-            let Ok((folders, epic)) = folders.await else {
+            let Ok((folders, epic, conversation)) = folders.await else {
                 return;
+            };
+            let token = acta_core::random_uuid().unwrap_or_default();
+            let launch_token = token.clone();
+            let conversation_id = match &conversation {
+                Some(Conversation::New(id)) | Some(Conversation::Resume(id)) => Some(id.clone()),
+                None => None,
             };
             // Existence checks and the search for `claude` read the disk:
             // off the store.
@@ -314,10 +335,16 @@ impl TerminalDock {
                 .background_executor()
                 .spawn(async move {
                     let paths: Vec<PathBuf> = folders.iter().map(|(p, _)| p.clone()).collect();
-                    acta_terminal::launch_spec_for_claude_with(
+                    let options = ClaudeOptions {
+                        plugin_dir: plugin_dir(),
+                        conversation,
+                        token: (!launch_token.is_empty()).then_some(launch_token),
+                        prompt,
+                    };
+                    acta_terminal::launch_spec_for_claude(
                         &paths,
                         &focus_of(owner, project, epic),
-                        prompt.as_deref(),
+                        &options,
                     )
                 })
                 .await;
@@ -341,7 +368,7 @@ impl TerminalDock {
                                     .update(cx, |ws, cx| ws.toast(message, ToastKind::Error, cx));
                             }
                         }
-                        dock.running(origin, launch.spec, window, cx)
+                        dock.running(origin, launch.spec, token, conversation_id, window, cx)
                     }
                     Err(LaunchError::NoFolder) => Pane::Ask {
                         origin,
@@ -356,6 +383,7 @@ impl TerminalDock {
                     Err(LaunchError::ClaudeNotFound) => Pane::NotFound { origin },
                 };
                 dock.panes.insert(project, pane);
+                dock.publish_tokens(cx);
                 cx.notify();
             });
         })
@@ -366,6 +394,8 @@ impl TerminalDock {
         &mut self,
         origin: Origin,
         spec: acta_terminal::LaunchSpec,
+        token: String,
+        conversation: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Pane {
@@ -412,8 +442,84 @@ impl TerminalDock {
         Pane::Running {
             view,
             origin,
+            token,
+            conversation,
             _sub: sub,
         }
+    }
+
+    /// The Sessions view finds Acta's terminals by their launch tokens.
+    fn publish_tokens(&self, cx: &mut App) {
+        let tokens = self
+            .panes
+            .iter()
+            .filter_map(|(project, pane)| match pane {
+                Pane::Running { token, .. } => Some((token.clone(), *project)),
+                _ => None,
+            })
+            .collect();
+        cx.set_global(crate::sessions_view::TerminalTokens(tokens));
+    }
+
+    /// The launch token of the project's running terminal.
+    pub fn token(&self, project: ProjectId) -> Option<&str> {
+        match self.panes.get(&project) {
+            Some(Pane::Running { token, .. }) => Some(token),
+            _ => None,
+        }
+    }
+
+    /// "End session" (Sessions view): ends the terminal's process; the
+    /// pane keeps its last screen and restarts on Enter.
+    pub fn end(&mut self, project: ProjectId, cx: &mut Context<Self>) {
+        if let Some(Pane::Running { view, .. }) = self.panes.get(&project) {
+            view.update(cx, |view, cx| view.end(cx));
+        }
+    }
+
+    /// Show the project's terminal session without starting one.
+    pub fn select(&mut self, project: ProjectId, cx: &mut Context<Self>) {
+        if self.panes.contains_key(&project) {
+            self.project = Some(project);
+            cx.notify();
+        }
+    }
+
+    /// `/clear` gives the session a new id: the page's next start resumes
+    /// that one (presence carries the id under the terminal's token).
+    fn follow_conversations(&mut self, cx: &mut Context<Self>) {
+        let live = crate::sessions::live(cx);
+        let mut moved = Vec::new();
+        for pane in self.panes.values_mut() {
+            if let Pane::Running {
+                token,
+                conversation,
+                origin,
+                ..
+            } = pane
+                && let Some(s) = crate::sessions::of_launch(live, token)
+                && conversation.as_deref() != Some(s.id.as_str())
+                && acta_terminal::launch::is_uuid(&s.id)
+            {
+                *conversation = Some(s.id.clone());
+                moved.push((origin.owner, s.id.clone()));
+            }
+        }
+        for (owner, id) in moved {
+            let key = conversation_key(owner);
+            let task = self
+                .ws
+                .read(cx)
+                .db
+                .run(cx, move |store| store.set_local_value(&key, Some(&id)));
+            task.detach();
+        }
+    }
+
+    /// The presence state of the project's running terminal session.
+    pub fn session_state(&self, project: ProjectId, cx: &App) -> Option<SessionState> {
+        let token = self.token(project)?;
+        crate::sessions::of_launch(crate::sessions::live(cx), token).map(|s| s.state)
     }
 
     pub fn change_text_size(&mut self, by: f32, cx: &mut Context<Self>) {
@@ -525,17 +631,17 @@ impl TerminalDock {
         .detach();
     }
 
-    /// The header's context: "on topic Embed the terminal".
+    /// The header's context: "Claude · T-12 Embed the terminal".
     fn context(origin: &Origin, locale: Locale) -> String {
-        let key = match origin.owner {
-            Owner::Topic(_) => Key::TerminalOnTopic,
-            Owner::Epic(_) => Key::TerminalOnEpic,
-            Owner::Project(_) => Key::TerminalOnProject,
-        };
-        tr(locale, key, &[("name", Arg::Text(&origin.name))])
+        format!(
+            "{} \u{b7} {}",
+            text(locale, Key::TerminalClaude),
+            focus_label(locale, origin.owner, &origin.name)
+        )
     }
 
     fn render_dock(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        self.follow_conversations(cx);
         let t = cx.global::<Tokens>().clone();
         let locale = settings::locale(cx);
         let mode = cx.global::<Appearance>().mode;
@@ -774,6 +880,9 @@ impl TerminalDock {
         let locale = settings::locale(cx);
         let (origin, mismatch) = self.shown_origin();
         let origin = origin?;
+        let waiting = self
+            .session_state(origin.project, cx)
+            .is_some_and(|s| s == SessionState::Waiting);
         Some(
             div()
                 .flex()
@@ -793,6 +902,15 @@ impl TerminalDock {
                         })
                         .child(Self::context(&origin, locale)),
                 )
+                .when(waiting, |this| {
+                    this.child(
+                        type_scale::SMALL
+                            .el()
+                            .flex_shrink_0()
+                            .text_color(t.warning)
+                            .child(format!("\u{b7} {}", text(locale, Key::TerminalWaiting))),
+                    )
+                })
                 .when(mismatch, |this| {
                     this.child(
                         ui::button(
@@ -869,6 +987,65 @@ impl TerminalDock {
     }
 }
 
+/// "T-12 Embed the terminal", "E-3 Storage", "project Acta": how the
+/// terminal and the Sessions view name a session's focus.
+pub fn focus_label(locale: Locale, owner: Owner, name: &str) -> String {
+    let id = owner.to_string();
+    let key = match owner {
+        Owner::Topic(_) => Key::TerminalOnTopic,
+        Owner::Epic(_) => Key::TerminalOnEpic,
+        Owner::Project(_) => Key::TerminalOnProject,
+    };
+    tr(
+        locale,
+        key,
+        &[("id", Arg::Text(&id)), ("name", Arg::Text(name))],
+    )
+}
+
+/// Where the page's last conversation id is kept (encrypted database,
+/// local, never exported): opaque, compared and passed to Claude Code only.
+fn conversation_key(owner: Owner) -> String {
+    format!("terminal.conversation.{owner}")
+}
+
+/// The conversation a start from `owner` opens (ADR 0008 amendment): the
+/// page's last one when the setting allows it and Claude Code still has
+/// its transcript, else a new one under a fresh id, recorded as the page's.
+fn conversation_for(
+    store: &mut acta_core::Store,
+    owner: Owner,
+    always_new: bool,
+    claude_config: Option<&std::path::Path>,
+    cwd: &std::path::Path,
+) -> acta_core::Result<Option<Conversation>> {
+    let key = conversation_key(owner);
+    let last = store.local_value(&key)?.filter(|id| {
+        !always_new
+            && claude_config.is_some_and(|dir| acta_terminal::transcript_exists(dir, cwd, id))
+    });
+    if let Some(id) = last {
+        return Ok(Some(Conversation::Resume(id)));
+    }
+    let Some(id) = acta_core::random_uuid() else {
+        return Ok(None);
+    };
+    store.set_local_value(&key, Some(&id))?;
+    Ok(Some(Conversation::New(id)))
+}
+
+/// Acta's plugin for the sessions it starts (`--plugin-dir`): written by
+/// `acta setup --files-only` when it is not there yet. `None` when it
+/// cannot be written; the session then has only what setup installed.
+fn plugin_dir() -> Option<PathBuf> {
+    let dir = crate::claude_setup::plugin_dir()?;
+    let manifest = dir.join(".claude-plugin").join("plugin.json");
+    if !manifest.is_file() {
+        crate::claude_setup::write_plugin_files();
+    }
+    manifest.is_file().then_some(dir)
+}
+
 fn theme_for(mode: Mode) -> TerminalTheme {
     match mode {
         Mode::Dark => TerminalTheme::dark(),
@@ -916,6 +1093,96 @@ impl Render for TerminalDock {
 mod tests {
     use super::*;
     use acta_core::model::{EpicId, TopicId};
+
+    #[test]
+    fn sessions_are_named_by_their_focus() {
+        assert_eq!(
+            focus_label(Locale::En, Owner::Topic(TopicId(12)), "Embed the terminal"),
+            "T-12 Embed the terminal"
+        );
+        assert_eq!(
+            focus_label(Locale::Fr, Owner::Project(ProjectId(1)), "Acta"),
+            "projet Acta"
+        );
+        let origin = Origin {
+            owner: Owner::Epic(EpicId(3)),
+            project: ProjectId(1),
+            name: "Storage".into(),
+        };
+        assert_eq!(
+            TerminalDock::context(&origin, Locale::En),
+            "Claude \u{b7} E-3 Storage"
+        );
+    }
+
+    #[test]
+    fn a_page_resumes_its_conversation_only_while_claude_code_has_it() {
+        let mut temp = crate::db::test_support::temp_store();
+        let store = &mut temp.store;
+        // A Claude Code configuration of the test's own, never ~/.claude.
+        let claude = tempfile::tempdir().unwrap();
+        let config = Some(claude.path());
+        let owner = Owner::Topic(TopicId(12));
+        let cwd = PathBuf::from(if cfg!(windows) {
+            "C:\\Users\\alexandre\\acta"
+        } else {
+            "/home/alexandre/acta"
+        });
+        // First start: a new conversation, recorded for the page.
+        let first = conversation_for(store, owner, false, config, &cwd)
+            .unwrap()
+            .unwrap();
+        let Conversation::New(id) = first else {
+            panic!("{first:?}")
+        };
+        assert!(acta_terminal::launch::is_uuid(&id));
+        assert_eq!(
+            store.local_value(&conversation_key(owner)).unwrap(),
+            Some(id.clone())
+        );
+        // No transcript yet: a new one again.
+        let again = conversation_for(store, owner, false, config, &cwd)
+            .unwrap()
+            .unwrap();
+        let Conversation::New(id) = again else {
+            panic!("{again:?}")
+        };
+        // Claude Code wrote the transcript under this folder's directory:
+        // the next start resumes it.
+        let project = claude
+            .path()
+            .join("projects")
+            .join(acta_terminal::launch::project_dir_name(&cwd).unwrap());
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(project.join(format!("{id}.jsonl")), "").unwrap();
+        assert_eq!(
+            conversation_for(store, owner, false, config, &cwd).unwrap(),
+            Some(Conversation::Resume(id.clone()))
+        );
+        // The page's folder moved: that transcript is another folder's, so
+        // a new conversation starts and becomes the page's.
+        let moved = PathBuf::from(if cfg!(windows) {
+            "C:\\Users\\alexandre\\elsewhere"
+        } else {
+            "/home/alexandre/elsewhere"
+        });
+        let fresh = conversation_for(store, owner, false, config, &moved)
+            .unwrap()
+            .unwrap();
+        let Conversation::New(fresh) = fresh else {
+            panic!("{fresh:?}")
+        };
+        assert_ne!(fresh, id);
+        assert_eq!(
+            store.local_value(&conversation_key(owner)).unwrap(),
+            Some(fresh)
+        );
+        // The setting asks for a new conversation every time.
+        let always = conversation_for(store, owner, true, config, &cwd)
+            .unwrap()
+            .unwrap();
+        assert!(matches!(always, Conversation::New(other) if other != id));
+    }
 
     #[test]
     fn the_focus_names_every_level_of_the_page() {

@@ -434,6 +434,11 @@ pub enum ToastKind {
     /// A layout change (workbench.md 4.8.11): Undo and Reset layout; gone
     /// after 6 s.
     Layout,
+    /// "Layout reset." (4.8.11): Undo only; gone after 6 s.
+    LayoutReset,
+    /// A move that would land out of sight: the one action that makes room
+    /// and moves; gone after 6 s.
+    LayoutNoRoom,
 }
 
 pub enum WorkspaceEvent {

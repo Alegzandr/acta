@@ -1063,7 +1063,9 @@ impl SettingsPage {
                         t,
                     )
                     .when(!busy, |this| {
-                        this.on_click(|_, _, cx| crate::claude_setup::run_install(cx))
+                        this.on_click(|_, window, cx| {
+                            window.dispatch_action(Box::new(crate::shell::SetUpClaude), cx)
+                        })
                     }),
                 )
                 .child(
@@ -1131,8 +1133,80 @@ impl SettingsPage {
                     .into_any_element(),
             );
         }
+        // How Acta starts and shows Claude Code (components-app.md 5,
+        // Claude Code sessions and Plan usage).
+        let prefs = crate::settings::current(cx).clone();
+        out.push(
+            setting_row(
+                text(locale, Key::SettingsResume),
+                text(locale, Key::SettingsResumeHint),
+                checkbox("settings-resume", !prefs.new_conversations, t).on_click(|_, _, cx| {
+                    crate::settings::change(cx, |p| p.new_conversations = !p.new_conversations);
+                    cx.refresh_windows();
+                }),
+                t,
+            )
+            .mt(px(16.))
+            .into_any_element(),
+        );
+        out.push(
+            setting_row(
+                text(locale, Key::SettingsUsage),
+                text(locale, Key::SettingsUsageHint),
+                checkbox("settings-usage", !prefs.hide_usage, t).on_click(|_, _, cx| {
+                    crate::settings::change(cx, |p| p.hide_usage = !p.hide_usage);
+                    cx.refresh_windows();
+                }),
+                t,
+            )
+            .into_any_element(),
+        );
+        out.push(
+            type_scale::SMALL
+                .el()
+                .max_w(px(420.))
+                .text_color(t.text_tertiary)
+                .child(text(locale, Key::SettingsPluginHint))
+                .into_any_element(),
+        );
+        if cfg!(windows) {
+            out.push(
+                setting_row(
+                    text(locale, Key::SettingsFlashWaiting),
+                    text(locale, Key::SettingsFlashWaitingHint),
+                    checkbox("settings-flash", prefs.flash_waiting, t).on_click(|_, _, cx| {
+                        crate::settings::change(cx, |p| p.flash_waiting = !p.flash_waiting);
+                        cx.refresh_windows();
+                    }),
+                    t,
+                )
+                .into_any_element(),
+            );
+        }
         out
     }
+}
+
+/// The checkbox of components.md 5 as a setting's control: 16, `radius.xs`,
+/// `border.strong`; checked, `accent` with a `check` in `text.on-accent`.
+fn checkbox(id: &'static str, checked: bool, t: &Tokens) -> gpui_kit::Stateful<Div> {
+    let hover = t.fill_hover;
+    div()
+        .id(id)
+        .size(px(16.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(crate::theme::RADIUS_XS))
+        .when(checked, |this| {
+            this.bg(t.accent)
+                .child(icon(Icon::Check, 12., t.text_on_accent))
+        })
+        .when(!checked, |this| {
+            this.border_1()
+                .border_color(t.border_strong)
+                .hover(move |s| s.bg(hover))
+        })
 }
 
 /// The Acta repository's releases: "Release notes".
