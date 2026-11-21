@@ -211,6 +211,7 @@ pub(super) struct LayoutUi {
     /// The views the shell last made visible (terminal started, chat
     /// shown).
     pub terminal_shown: bool,
+    #[cfg(windows)]
     pub chat_shown: bool,
     epoch: Instant,
 }
@@ -226,6 +227,7 @@ impl LayoutUi {
             left_overlay: false,
             zoomed: None,
             terminal_shown: false,
+            #[cfg(windows)]
             chat_shown: false,
             epoch: Instant::now(),
         }
@@ -1524,6 +1526,7 @@ impl Shell {
     }
 
     /// Whether `view` is drawn this frame.
+    #[cfg(windows)]
     fn view_on_screen(&mut self, view: ViewId, f: &layout_frame::Frame) -> bool {
         let Some(bench) = self.bench() else {
             return false;
