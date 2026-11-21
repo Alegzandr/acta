@@ -88,6 +88,16 @@ pub(crate) fn system_event(
     Ok(())
 }
 
+/// A write to a topic's timeline is a write to the topic: its Updated
+/// value and author follow (components-records.md 5, Properties block).
+fn touch_topic(tx: &rusqlite::Connection, topic: TopicId, author: Author, now: i64) -> Result<()> {
+    tx.execute(
+        "UPDATE topics SET updated_at = ?2, updated_by = ?3 WHERE id = ?1",
+        params![topic.0, now, author],
+    )?;
+    Ok(())
+}
+
 impl Store {
     /// Appends an entry and returns it with its number in the topic.
     pub fn log(&mut self, topic: TopicId, new: NewEntry, author: Author) -> Result<Entry> {
@@ -116,6 +126,8 @@ impl Store {
                 ..TopicPatch::default()
             };
             apply_topic_patch(&tx, &cur, patch, author, now)?;
+        } else {
+            touch_topic(&tx, topic, author, now)?;
         }
         tx.commit()?;
         self.entry(id)
@@ -172,6 +184,7 @@ impl Store {
             author,
             now,
         )?;
+        touch_topic(&tx, current.topic, author, now)?;
         tx.commit()?;
         Ok(())
     }
