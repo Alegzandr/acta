@@ -425,6 +425,8 @@ struct Bench {
     /// Where the next "New topic" goes when it was asked for from a tree
     /// row's `plus` (that project, and that epic if any).
     create_in: Option<(ProjectId, Option<EpicId>)>,
+    /// What the open picker does with the row chosen.
+    on_pick: Option<crate::palette::OnPick>,
     recent: Vec<TopicId>,
     overlay: Option<Overlay>,
     /// Where focus returns when the overlay closes.
@@ -635,6 +637,7 @@ impl Shell {
             view_subs: HashMap::new(),
             active_project: None,
             create_in: None,
+            on_pick: None,
             recent: Vec::new(),
             overlay: None,
             return_focus: None,
@@ -1169,6 +1172,9 @@ impl Shell {
                 cx.notify();
             }
             PageEvent::NewKb(draft) => self.new_kb_draft(*draft, window, cx),
+            PageEvent::Pick(picker, on_pick) => {
+                self.open_picker(picker.clone(), on_pick.clone(), window, cx)
+            }
             PageEvent::Located(project) => {
                 let project = *project;
                 if current == Some(tab)
@@ -1526,12 +1532,39 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.open_palette_with(scope, create, None, window, cx);
+    }
+
+    /// The palette as a picker a page asked for (a destination, a heading).
+    pub(super) fn open_picker(
+        &mut self,
+        picker: crate::palette::Picker,
+        on_pick: crate::palette::OnPick,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_palette_with(None, None, Some(picker), window, cx);
+        if let Some(bench) = self.bench() {
+            bench.on_pick = Some(on_pick);
+        }
+    }
+
+    fn open_palette_with(
+        &mut self,
+        scope: Option<Group>,
+        create: Option<CreateKind>,
+        picker: Option<crate::palette::Picker>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let context = self.command_context(window, cx);
         let Some(bench) = self.bench() else { return };
+        bench.on_pick = None;
         let ws = bench.ws.read(cx);
         let setup = Setup {
             scope,
             create,
+            picker,
             projects: ws.projects.clone(),
             recent: bench.recent.clone(),
             context,
@@ -1613,8 +1646,17 @@ impl Shell {
             PaletteEvent::Dismiss => {
                 if let Some(bench) = self.bench() {
                     bench.create_in = None;
+                    bench.on_pick = None;
                 }
                 self.close_overlay(window, cx)
+            }
+            PaletteEvent::Picked(index) => {
+                let index = *index;
+                let on_pick = self.bench().and_then(|b| b.on_pick.take());
+                self.close_overlay(window, cx);
+                if let Some(on_pick) = on_pick {
+                    (on_pick.0)(index, window, cx);
+                }
             }
             PaletteEvent::Run(target, new_tab) => {
                 let (target, new_tab) = (target.clone(), *new_tab);
@@ -1624,6 +1666,7 @@ impl Shell {
                     Target::Project(id) => Route::Project(id),
                     Target::Kb(id, _) => Route::Kb(id),
                     Target::Command(command) => return self.run_command(command, window, cx),
+                    Target::Choice(_) => return,
                 };
                 if new_tab {
                     self.open_in_tab(route, window, cx);

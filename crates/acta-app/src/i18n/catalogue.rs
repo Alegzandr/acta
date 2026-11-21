@@ -545,6 +545,22 @@ catalogue! {
         en: t("Make topic"),
         fr: t("Créer un sujet"),
     }
+    InboxFileTo "inbox.file_to" {
+        en: t("File\u{2026}"),
+        fr: t("Classer\u{2026}"),
+    }
+    InboxPickNewEpic "inbox.pick.new_epic" {
+        en: t("New epic"),
+        fr: t("Nouvel epic"),
+    }
+    InboxPickInEpic "inbox.pick.in_epic" {
+        en: t("New topic in {path}"),
+        fr: t("Nouveau sujet dans {path}"),
+    }
+    InboxPickAsEntry "inbox.pick.as_entry" {
+        en: t("Entry in {path}"),
+        fr: t("Entrée dans {path}"),
+    }
     InboxEmpty "inbox.empty" {
         en: t("Inbox is empty. Notes you capture land here until they become topics."),
         fr: t("La boîte de réception est vide. Les notes que vous saisissez arrivent ici jusqu\u{2019}à devenir des sujets."),
@@ -1285,6 +1301,10 @@ catalogue! {
         en: t("{keys} create"),
         fr: t("{keys} créer"),
     }
+    PaletteHintChoose "palette.hint.choose" {
+        en: t("{keys} choose"),
+        fr: t("{keys} choisir"),
+    }
     PaletteHintClose "palette.hint.close" {
         en: t("{keys} close"),
         fr: t("{keys} fermer"),
@@ -1292,6 +1312,10 @@ catalogue! {
     PaletteNone "palette.none" {
         en: t("Nothing matches \"{query}\". {keys} creates a topic with this title."),
         fr: t("Aucun résultat pour «\u{202f}{query}\u{202f}». {keys} crée un sujet avec ce titre."),
+    }
+    PaletteNoChoice "palette.no_choice" {
+        en: t("Nothing matches \"{query}\"."),
+        fr: t("Aucun résultat pour «\u{202f}{query}\u{202f}»."),
     }
     CmdGoTopic "cmd.go_topic" {
         en: t("Go to topic\u{2026}"),

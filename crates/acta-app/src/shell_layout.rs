@@ -3116,6 +3116,9 @@ impl Shell {
         match event {
             PageEvent::Open(route) => self.navigate(*route, true, window, cx),
             PageEvent::NewKb(draft) => self.new_kb_draft(*draft, window, cx),
+            PageEvent::Pick(picker, on_pick) => {
+                self.open_picker(picker.clone(), on_pick.clone(), window, cx)
+            }
             PageEvent::Saved(_) | PageEvent::Located(_) => cx.notify(),
         }
     }

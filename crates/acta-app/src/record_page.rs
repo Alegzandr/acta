@@ -52,6 +52,9 @@ pub enum PageEvent {
     /// The page learned which project it belongs to (a document opened by
     /// id): the active project follows it.
     Located(acta_core::model::ProjectId),
+    /// Show the palette as a picker of these rows; the chosen one is
+    /// handed to the page's callback.
+    Pick(crate::palette::Picker, crate::palette::OnPick),
 }
 
 gpui_kit::actions!(

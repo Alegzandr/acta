@@ -144,6 +144,10 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `inbox.dismissed` | Dismissed | Écartée |
 | `inbox.by_claude` | by Claude Code | par Claude Code |
 | `inbox.make_topic` | Make topic | Créer un sujet |
+| `inbox.file_to` | File... | Classer... |
+| `inbox.pick.new_epic` | New epic | Nouvel epic |
+| `inbox.pick.in_epic` | New topic in {path} | Nouveau sujet dans {path} |
+| `inbox.pick.as_entry` | Entry in {path} | Entrée dans {path} |
 | `inbox.empty` | Inbox is empty. Notes you capture land here until they become topics. | La boîte de réception est vide. Les notes que vous saisissez arrivent ici jusqu'à devenir des sujets. |
 | `inbox.filed_empty` | No filed notes yet. Notes that become topics or entries are listed here. | Aucune note classée pour l'instant. Les notes devenues des sujets ou des entrées sont listées ici. |
 | `kb.new_document` | New document | Nouveau document |
@@ -329,8 +333,10 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `palette.hint.open` | {keys} open | {keys} ouvrir |
 | `palette.hint.tab` | {keys} open in new tab | {keys} ouvrir dans un nouvel onglet |
 | `palette.hint.create` | {keys} create | {keys} créer |
+| `palette.hint.choose` | {keys} choose | {keys} choisir |
 | `palette.hint.close` | {keys} close | {keys} fermer |
 | `palette.none` | Nothing matches "{query}". {keys} creates a topic with this title. | Aucun résultat pour « {query} ». {keys} crée un sujet avec ce titre. |
+| `palette.no_choice` | Nothing matches "{query}". | Aucun résultat pour « {query} ». |
 | `cmd.go_topic` | Go to topic... | Aller au sujet... |
 | `cmd.capture` | Capture a note | Saisir une note |
 | `cmd.new_topic` | New topic | Nouveau sujet |

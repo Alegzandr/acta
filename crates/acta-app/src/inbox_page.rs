@@ -1,12 +1,18 @@
 //! A project's notes inbox (docs/design/screens.md 8.2): the capture editor
 //! (focused when the inbox opens), the Open / Filed filter, and the notes,
-//! newest first. Filing a note by hand ("Make topic") is here; Claude Code
-//! files them through the agent tools (`create` with `from_notes`). Filed
+//! newest first. Filing a note by hand is here: "Make topic" in one click,
+//! or "File..." to choose where it goes (a new topic or epic, a topic of
+//! an epic, an entry of a topic); Claude Code files them through the agent
+//! tools (`create` with `from_notes`). Filed
 //! notes link to where they went, say who filed them, and go back to the
 //! inbox with one click.
 
-use acta_core::model::{Author, Note, NoteFate, NoteId, PageReq, ProjectId, Record, Status};
-use acta_core::store::NewTopic;
+use acta_core::Store;
+use acta_core::model::{
+    Author, EntryKind, EpicId, Note, NoteFate, NoteId, PageReq, ProjectId, ProjectTree, Record,
+    Status, TopicId,
+};
+use acta_core::store::{NewEntry, NewTopic};
 use gpui_kit::component::input::{Escape, InputEvent, Textarea, TextareaState};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
@@ -18,6 +24,7 @@ use gpui_kit::{
 use crate::i18n::{Arg, Key, KeyName, Locale, text, tr};
 use crate::icons::Icon;
 use crate::markdown_view;
+use crate::palette::{Choice, Lead, OnPick, Picker};
 use crate::record_page::PageEvent;
 use crate::route::Route;
 use crate::settings;
@@ -41,6 +48,135 @@ pub fn title_from_note(text: &str) -> String {
         title.push('\u{2026}');
     }
     title
+}
+
+/// Where "File..." can send a note (the rows of its picker, in order).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Destination {
+    /// A Draft topic of the project, titled from the note.
+    NewTopic,
+    /// An epic of the project, titled from the note.
+    NewEpic,
+    /// A Draft topic in this epic.
+    InEpic(EpicId),
+    /// A Discussion entry of this topic, keeping the note's words.
+    Entry(TopicId),
+}
+
+/// The picker of "File...": the two new records, then each epic, then
+/// each topic (loose first, then by epic), with what choosing it does.
+pub fn destinations(tree: &ProjectTree, locale: Locale) -> Vec<(Destination, Choice)> {
+    let project = &tree.project.title;
+    let mut out = vec![
+        (
+            Destination::NewTopic,
+            Choice {
+                title: text(locale, Key::TopicNew),
+                detail: project.clone(),
+                lead: Lead::Icon(Icon::CornerDownRight),
+            },
+        ),
+        (
+            Destination::NewEpic,
+            Choice {
+                title: text(locale, Key::InboxPickNewEpic),
+                detail: project.clone(),
+                lead: Lead::Icon(Icon::Layers),
+            },
+        ),
+    ];
+    for (epic, _) in &tree.epics {
+        let path = format!("{project} / {}", epic.title);
+        out.push((
+            Destination::InEpic(epic.id),
+            Choice {
+                title: epic.title.clone(),
+                detail: tr(locale, Key::InboxPickInEpic, &[("path", Arg::Text(&path))]),
+                lead: Lead::Icon(Icon::Layers),
+            },
+        ));
+    }
+    let loose = tree.loose_topics.iter().map(|t| (t, project.clone()));
+    let in_epics = tree.epics.iter().flat_map(|(e, topics)| {
+        topics
+            .iter()
+            .map(move |t| (t, format!("{project} / {}", e.title)))
+    });
+    for (topic, path) in loose.chain(in_epics) {
+        out.push((
+            Destination::Entry(topic.id),
+            Choice {
+                title: topic.title.clone(),
+                detail: tr(locale, Key::InboxPickAsEntry, &[("path", Arg::Text(&path))]),
+                lead: Lead::Status(topic.status),
+            },
+        ));
+    }
+    out
+}
+
+/// File `note` (of `project`) at `to`, in one transaction, as the human.
+/// Returns the undo step (which puts the note back in the inbox and sends
+/// what filing created to the trash, as one step) and the page to open.
+pub fn file_note(
+    store: &mut Store,
+    project: ProjectId,
+    note: NoteId,
+    to: Destination,
+) -> acta_core::Result<(Undo, Option<Route>)> {
+    let me = Author::Human;
+    store.atomically(|store| {
+        let current = store.note(note)?;
+        let (created, route) = match to {
+            Destination::NewTopic | Destination::InEpic(_) => {
+                let epic = match to {
+                    Destination::InEpic(e) => Some(e),
+                    _ => None,
+                };
+                let topic = store.note_to_topic(
+                    note,
+                    NewTopic {
+                        project,
+                        epic,
+                        title: title_from_note(&current.text),
+                        description: current.text.clone(),
+                        status: Status::Draft,
+                    },
+                    me,
+                )?;
+                (Record::Topic(topic), Some(Route::Topic(topic)))
+            }
+            Destination::NewEpic => {
+                let epic = store.create_epic(
+                    project,
+                    &title_from_note(&current.text),
+                    &current.text,
+                    me,
+                )?;
+                store.file_notes_in_epic(&[note], epic, me)?;
+                (Record::Epic(epic), Some(Route::Epic(epic)))
+            }
+            Destination::Entry(topic) => {
+                // As Claude Code's triage does: the note's words and author.
+                let entry = store.log(
+                    topic,
+                    NewEntry {
+                        kind: EntryKind::Discussion,
+                        text: current.text.clone(),
+                        state: None,
+                        status: None,
+                    },
+                    current.author,
+                )?;
+                store.file_notes(&[note], topic, me)?;
+                (Record::Entry(entry.id), None)
+            }
+        };
+        Ok((
+            Undo::Many(vec![Undo::Unfile(note), Undo::Delete(created)]),
+            route,
+        ))
+    })
 }
 
 pub struct InboxPage {
@@ -279,40 +415,54 @@ impl InboxPage {
         });
     }
 
-    /// File a note by hand: a Draft topic titled from its first line, with
+    /// "Make topic": a Draft topic titled from the note's first line, with
     /// the note filed into it.
     fn make_topic(&mut self, note: &Note, cx: &mut Context<Self>) {
+        self.file(note.id, Destination::NewTopic, cx);
+    }
+
+    /// File a note at `to`, undoably as one step; the topic or epic it
+    /// creates opens.
+    fn file(&mut self, id: NoteId, to: Destination, cx: &mut Context<Self>) {
         let project = self.project;
-        let id = note.id;
-        let title = title_from_note(&note.text);
-        let description = note.text.clone();
-        // One transaction (acta-core `note_to_topic`); undo deletes the
-        // topic and puts the note back in the inbox, as one step.
         let task = self.ws.update(cx, |ws, cx| {
             ws.write_undoable(cx, Some(project), None, move |store| {
-                let topic = store.note_to_topic(
-                    id,
-                    NewTopic {
-                        project,
-                        epic: None,
-                        title,
-                        description,
-                        status: Status::Draft,
-                    },
-                    Author::Human,
-                )?;
-                Ok((
-                    Undo::Many(vec![Undo::Unfile(id), Undo::Delete(Record::Topic(topic))]),
-                    topic,
-                ))
+                file_note(store, project, id, to)
             })
         });
         cx.spawn(async move |page, cx| {
-            if let Ok(topic) = task.await {
-                let _ = page.update(cx, |_, cx| cx.emit(PageEvent::Open(Route::Topic(topic))));
+            if let Ok(Some(route)) = task.await {
+                let _ = page.update(cx, |_, cx| cx.emit(PageEvent::Open(route)));
             }
         })
         .detach();
+    }
+
+    /// "File...": the palette as a picker of where the note can go.
+    fn pick_destination(&mut self, id: NoteId, cx: &mut Context<Self>) {
+        let locale = settings::locale(cx);
+        let Some(tree) = self
+            .ws
+            .read(cx)
+            .projects
+            .iter()
+            .find(|t| t.project.id == self.project)
+        else {
+            return;
+        };
+        let (dests, choices): (Vec<Destination>, Vec<Choice>) =
+            destinations(tree, locale).into_iter().unzip();
+        let page = cx.entity().downgrade();
+        let on_pick = OnPick::new(move |i, _, cx| {
+            if let Some(to) = dests.get(i).copied() {
+                let _ = page.update(cx, |page, cx| page.file(id, to, cx));
+            }
+        });
+        let picker = Picker {
+            label: text(locale, Key::InboxFileTo),
+            choices,
+        };
+        cx.emit(PageEvent::Pick(picker, on_pick));
     }
 
     fn card(
@@ -409,6 +559,18 @@ impl InboxPage {
                         t,
                     )
                     .on_click(cx.listener(move |page, _, _, cx| page.make_topic(&for_topic, cx))),
+                )
+                .child(
+                    ui::ghost_icon_button(
+                        format!("note-file-{index}"),
+                        Icon::ArrowRight,
+                        24.,
+                        false,
+                        false,
+                        true,
+                        t,
+                    )
+                    .on_click(cx.listener(move |page, _, _, cx| page.pick_destination(id, cx))),
                 )
             })
             .when(filed, |this| {
@@ -647,6 +809,95 @@ impl Render for InboxPage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::test_support::temp_store;
+
+    fn inbox() -> (
+        crate::db::test_support::TempStore,
+        ProjectId,
+        EpicId,
+        TopicId,
+        NoteId,
+    ) {
+        let mut temp = temp_store();
+        let s = &mut temp.store;
+        let p = s.create_project("Acta", "", Author::Human).unwrap();
+        let e = s.create_epic(p, "Terminal", "", Author::Human).unwrap();
+        let t = s
+            .create_topic(
+                NewTopic {
+                    project: p,
+                    epic: Some(e),
+                    title: "Scrollback".into(),
+                    description: String::new(),
+                    status: Status::Active,
+                },
+                Author::Human,
+            )
+            .unwrap();
+        let n = s
+            .add_note(p, "Alexandre: keep the width per project", Author::Human)
+            .unwrap();
+        (temp, p, e, t, n)
+    }
+
+    #[test]
+    fn the_picker_lists_new_records_then_epics_then_topics() {
+        let (temp, p, e, t, _) = inbox();
+        let tree = temp.store.tree(p).unwrap();
+        let rows = destinations(&tree, Locale::En);
+        let dests: Vec<_> = rows.iter().map(|(d, _)| *d).collect();
+        assert_eq!(
+            dests,
+            [
+                Destination::NewTopic,
+                Destination::NewEpic,
+                Destination::InEpic(e),
+                Destination::Entry(t)
+            ]
+        );
+        assert_eq!(rows[2].1.detail, "New topic in Acta / Terminal");
+        assert_eq!(rows[3].1.detail, "Entry in Acta / Terminal");
+    }
+
+    #[test]
+    fn filing_as_an_entry_keeps_the_words_and_undoes_as_one_step() {
+        let (mut temp, p, _, t, n) = inbox();
+        let s = &mut temp.store;
+        let (undo, route) = file_note(s, p, n, Destination::Entry(t)).unwrap();
+        assert_eq!(route, None);
+        assert_eq!(s.note(n).unwrap().fate(), NoteFate::Topic(t));
+        let entries = s
+            .entries(t, &Default::default(), PageReq::first(10))
+            .unwrap();
+        assert!(entries.items.iter().any(|e| e.kind == EntryKind::Discussion
+            && e.text == "Alexandre: keep the width per project"));
+        assert!(undo.apply(s).unwrap().is_some());
+        assert!(s.note(n).unwrap().is_open());
+    }
+
+    #[test]
+    fn filing_into_an_epic_or_as_an_epic() {
+        let (mut temp, p, e, _, n) = inbox();
+        let s = &mut temp.store;
+        let (_, route) = file_note(s, p, n, Destination::InEpic(e)).unwrap();
+        let Some(Route::Topic(topic)) = route else {
+            panic!("a topic opens")
+        };
+        let topic = s.topic(topic).unwrap();
+        assert_eq!(topic.epic, Some(e));
+        assert_eq!(topic.status, Status::Draft);
+        assert_eq!(topic.title, "Alexandre: keep the width per project");
+
+        let m = s.add_note(p, "Notes\nmore", Author::Human).unwrap();
+        let (undo, route) = file_note(s, p, m, Destination::NewEpic).unwrap();
+        let Some(Route::Epic(epic)) = route else {
+            panic!("an epic opens")
+        };
+        assert_eq!(s.note(m).unwrap().fate(), NoteFate::Epic(epic));
+        assert!(undo.apply(s).unwrap().is_some());
+        assert!(s.epic(epic).is_err(), "in the trash");
+        assert!(s.note(m).unwrap().is_open());
+    }
 
     #[test]
     fn a_note_becomes_a_title_from_its_first_line() {
