@@ -1371,7 +1371,7 @@ impl Render for DocPage {
                 text(locale, Key::PropId),
                 text(locale, Key::PropUpdated),
             ];
-            let width = ui::label_width(&labels.iter().map(String::as_str).collect::<Vec<_>>());
+            let width = ui::label_width(&labels.iter().map(String::as_str).collect::<Vec<_>>(), cx);
             let macos = cfg!(target_os = "macos");
             let _ = macos;
             column = column

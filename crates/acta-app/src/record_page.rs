@@ -898,7 +898,7 @@ impl RecordPage {
         }
         rows.push((text(locale, Key::PropUpdated), updated));
         let labels: Vec<&str> = rows.iter().map(|(l, _)| l.as_str()).collect();
-        let width = ui::label_width(&labels);
+        let width = ui::label_width(&labels, cx);
         div()
             .flex()
             .flex_col()

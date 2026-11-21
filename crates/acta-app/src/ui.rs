@@ -450,6 +450,7 @@ pub fn property(
                 .el()
                 .flex_shrink_0()
                 .w(px(label_width))
+                .max_w(gpui_kit::relative(0.4))
                 .h(px(28.))
                 .flex()
                 .items_center()
@@ -469,11 +470,25 @@ pub fn property(
 }
 
 /// The label column of a properties block: as wide as its longest label in
-/// the current language (Inter at 13 averages about 0.53 em per character
-/// in labels), capped at 40% of the column.
-pub fn label_width(labels: &[&str]) -> f32 {
-    let longest = labels.iter().map(|l| l.chars().count()).max().unwrap_or(0) as f32;
-    (longest * 13. * 0.56).ceil().min(COLUMN_MAX * 0.4)
+/// the current language, measured in `type.ui` with the font's own
+/// advances. The 40% cap is applied against the actual column by
+/// [`property`].
+pub fn label_width(labels: &[&str], cx: &gpui_kit::App) -> f32 {
+    let system = cx.text_system();
+    let font = system.resolve_font(&gpui_kit::font(type_scale::UI.family()));
+    let size = px(type_scale::UI.size);
+    let width = |label: &str| -> f32 {
+        label
+            .chars()
+            .map(|ch| {
+                system
+                    .advance(font, size, ch)
+                    .map(|a| f32::from(a.width))
+                    .unwrap_or(type_scale::UI.size * 0.6)
+            })
+            .sum()
+    };
+    labels.iter().map(|l| width(l)).fold(0., f32::max).ceil() + 1.
 }
 
 /// A ghost value in the properties block: padding 0 x 8, shifted left by 8
