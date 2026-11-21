@@ -766,12 +766,17 @@ fn link_attached_and_setup_remove_round_trip_auto_memory() {
     let tmp = tempfile::tempdir().unwrap();
     let data = tmp.path().join("data");
     let repo = tmp.path().join("repo");
+    let broken = tmp.path().join("broken");
     let other = tmp.path().join("other");
-    std::fs::create_dir_all(&repo).unwrap();
-    std::fs::create_dir_all(&other).unwrap();
+    for d in [&repo, &broken, &other] {
+        std::fs::create_dir_all(d).unwrap();
+    }
     let (ok, out, err) = cli(&data, &repo, &["link", "--keep-auto-memory"], "");
     assert!(ok, "{out}{err}");
+    let (ok, out, err) = cli(&data, &broken, &["link", "--keep-auto-memory", "--add"], "");
+    assert!(ok, "{out}{err}");
     let local = repo.join(".claude").join("settings.local.json");
+    let broken_local = broken.join(".claude").join("settings.local.json");
     assert!(!local.exists());
 
     let (ok, out, err) = cli(
@@ -782,7 +787,7 @@ fn link_attached_and_setup_remove_round_trip_auto_memory() {
     );
     assert!(ok, "{out}{err}");
     assert!(
-        out.contains("1 attached folder") && out.contains("turned off in 1"),
+        out.contains("2 attached folder") && out.contains("turned off in 2"),
         "{out}"
     );
     let text = std::fs::read_to_string(&local).unwrap();
@@ -793,16 +798,33 @@ fn link_attached_and_setup_remove_round_trip_auto_memory() {
     let (ok, _, _) = cli(&data, &other, &["link", "--attached", "x"], "");
     assert!(!ok);
 
+    // One settings file can no longer be read: that folder keeps its record.
+    std::fs::write(&broken_local, "{ not json").unwrap();
     let config = tmp.path().join("claude-config");
     std::fs::create_dir_all(&config).unwrap();
-    let out = base_cmd(&data)
-        .args(["setup", "--remove", "--json"])
-        .env("CLAUDE_CONFIG_DIR", &config)
-        .current_dir(&other)
-        .stdin(Stdio::null())
-        .output()
-        .unwrap();
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("back on in 1 folder"), "{stdout}");
+    let remove = || {
+        let out = base_cmd(&data)
+            .args(["setup", "--remove", "--json"])
+            .env("CLAUDE_CONFIG_DIR", &config)
+            .current_dir(&other)
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    let stdout = remove();
+    assert!(
+        stdout.contains("back on in 1 folder") && stdout.contains("1 left as they were"),
+        "{stdout}"
+    );
     assert!(!local.exists(), "the settings file Acta created is gone");
+    assert_eq!(
+        std::fs::read_to_string(&broken_local).unwrap(),
+        "{ not json"
+    );
+    // Repaired, the next removal restores it: the record was kept.
+    std::fs::write(&broken_local, "{\"autoMemoryEnabled\": false}").unwrap();
+    let stdout = remove();
+    assert!(stdout.contains("back on in 1 folder"), "{stdout}");
+    assert!(!broken_local.exists());
 }

@@ -190,7 +190,9 @@ pub fn run_original(command: &Command, input: &str, limit: Duration) -> Option<S
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt as _;
-        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        // CREATE_NO_WINDOW | CREATE_SUSPENDED: the child runs only once it
+        // is in its job (`tree::Tree::of`), so nothing it starts escapes.
+        cmd.creation_flags(0x0800_0000 | 0x0000_0004);
     }
     #[cfg(unix)]
     {
@@ -252,23 +254,32 @@ mod tree {
                 SetInformationJobObject,
             };
             // SAFETY: plain Win32 calls; the job handle is owned by `Tree`
-            // and closed in `Drop`; the info struct lives on this frame.
-            unsafe {
+            // and closed in `Drop` (or here when it could not take the
+            // child); the info struct lives on this frame.
+            let tree = unsafe {
                 let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
                 if job.is_null() {
-                    return Tree(None);
+                    Tree(None)
+                } else {
+                    let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+                    info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+                    let limited = SetInformationJobObject(
+                        job,
+                        JobObjectExtendedLimitInformation,
+                        &info as *const _ as *const core::ffi::c_void,
+                        std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+                    ) != 0;
+                    if limited && AssignProcessToJobObject(job, child.as_raw_handle() as _) != 0 {
+                        Tree(Some(job))
+                    } else {
+                        // Not in a job: `kill` falls back to the child alone.
+                        windows_sys::Win32::Foundation::CloseHandle(job);
+                        Tree(None)
+                    }
                 }
-                let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
-                info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-                SetInformationJobObject(
-                    job,
-                    JobObjectExtendedLimitInformation,
-                    &info as *const _ as *const core::ffi::c_void,
-                    std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-                );
-                AssignProcessToJobObject(job, child.as_raw_handle() as _);
-                Tree(Some(job))
-            }
+            };
+            resume(child.id());
+            tree
         }
 
         pub fn kill(&self, child: &mut Child) {
@@ -282,6 +293,41 @@ mod tree {
                     let _ = child.kill();
                 }
             }
+        }
+    }
+
+    /// Resumes the threads of a process started suspended (std has no
+    /// handle to its first thread; there is one at this point).
+    #[cfg(windows)]
+    fn resume(pid: u32) {
+        use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+        use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+            CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
+        };
+        use windows_sys::Win32::System::Threading::{
+            OpenThread, ResumeThread, THREAD_SUSPEND_RESUME,
+        };
+        // SAFETY: a snapshot walked with a correctly sized entry; every
+        // handle opened here is closed here.
+        unsafe {
+            let snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+            if snap == INVALID_HANDLE_VALUE {
+                return;
+            }
+            let mut entry: THREADENTRY32 = std::mem::zeroed();
+            entry.dwSize = std::mem::size_of::<THREADENTRY32>() as u32;
+            let mut more = Thread32First(snap, &mut entry) != 0;
+            while more {
+                if entry.th32OwnerProcessID == pid {
+                    let thread = OpenThread(THREAD_SUSPEND_RESUME, 0, entry.th32ThreadID);
+                    if !thread.is_null() {
+                        ResumeThread(thread);
+                        CloseHandle(thread);
+                    }
+                }
+                more = Thread32Next(snap, &mut entry) != 0;
+            }
+            CloseHandle(snap);
         }
     }
 
