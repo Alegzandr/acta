@@ -286,8 +286,16 @@ fn every_tool_over_stdio_within_budget() {
         );
     }
     let (_, brief) = m.call("brief", json!({}));
+    // One data fence with a random 8-hex nonce around the whole brief.
+    let lines: Vec<&str> = brief.lines().collect();
+    let nonce = lines[0]
+        .strip_prefix("[acta data ")
+        .and_then(|r| r.strip_suffix(']'))
+        .unwrap_or_else(|| panic!("{brief}"));
+    assert!(nonce.len() == 8 && nonce.bytes().all(|b| b.is_ascii_hexdigit()));
+    assert_eq!(*lines.last().unwrap(), format!("[end acta data {nonce}]"));
     assert!(
-        brief.starts_with("T-1 Encrypted storage spike · active · E-1 Storage"),
+        lines[1].starts_with("T-1 Encrypted storage spike · active · E-1 Storage"),
         "{brief}"
     );
     assert!(brief.contains("State ("), "{brief}");

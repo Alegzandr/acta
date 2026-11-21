@@ -6,7 +6,7 @@
 //! is an `Err` with a one-line reason the agent can act on.
 
 use super::args::*;
-use super::render::{self, Text, budget, limit};
+use super::render::{self, Fence, Text, budget, limit};
 use super::session::{Session, parse_owner};
 use crate::error::Error;
 use crate::markdown;
@@ -220,7 +220,8 @@ impl Agent<'_> {
             }
             None => self.scope(None)?,
         };
-        self.render_brief(target, budget::BRIEF, true)
+        let body = self.render_brief(target, budget::BRIEF - render::FENCE_COST)?;
+        Ok(fenced_reply(None, &body, None, budget::BRIEF))
     }
 
     fn focus_mark(&self, o: Owner) -> &'static str {
@@ -251,9 +252,9 @@ impl Agent<'_> {
         parts.join(" · ")
     }
 
-    /// `fence`: wrap the stored text in data fences; the session briefing
-    /// passes `false` because it fences its whole body.
-    pub(crate) fn render_brief(&self, o: Owner, max: usize, fence: bool) -> Reply {
+    /// The brief, unfenced: every caller puts it inside one data fence.
+    /// Stored text is flattened to one line per item.
+    pub(crate) fn render_brief(&self, o: Owner, max: usize) -> Reply {
         let mut out = Text::new(max);
         match o {
             Owner::Topic(id) => {
@@ -269,7 +270,7 @@ impl Agent<'_> {
                             format!(
                                 " · {} {} ({}/{} done)",
                                 s.id,
-                                render::clip(&s.title, 40),
+                                render::clip(&render::one_line(&s.title), 40),
                                 s.progress.done,
                                 s.progress.total
                             )
@@ -288,17 +289,8 @@ impl Agent<'_> {
                     .store
                     .entries(id, &EntryFilter::default(), PageReq::first(3))
                     .map_err(err)?;
-                // Reserve room for the counts and the closing fence so they
-                // always print.
-                let close = if fence {
-                    render::DATA_CLOSE.len() + 1
-                } else {
-                    0
-                };
-                let reserve = render::chars(&counts) + 20 + close;
-                if fence {
-                    out.line(render::DATA_OPEN);
-                }
+                // Reserve room for the counts so they always print.
+                let reserve = render::chars(&counts) + 20;
                 // Stored text is flattened to one line: it cannot forge a
                 // header or an entry line.
                 let state = if t.state.trim().is_empty() {
@@ -319,9 +311,6 @@ impl Agent<'_> {
                         break;
                     }
                     out.line(entry_line(e, room.min(130)));
-                }
-                if fence {
-                    out.line(render::DATA_CLOSE);
                 }
                 out.line_clipped(format!(
                     "{} · {counts}",
@@ -345,13 +334,10 @@ impl Agent<'_> {
                     self.focus_mark(o)
                 ));
                 if !e.state.trim().is_empty() {
-                    let state =
-                        format!("State: {}", render::clip(&render::one_line(&e.state), 400));
-                    if fence {
-                        out.line(render::fenced(&state));
-                    } else {
-                        out.line(render::defuse(&state));
-                    }
+                    out.line(format!(
+                        "State: {}",
+                        render::clip(&render::one_line(&e.state), 400)
+                    ));
                 }
                 let counts = self.counts_line(o, e.project, None);
                 let topics = self
@@ -472,13 +458,15 @@ impl Agent<'_> {
             let (body, cut) = if total > room {
                 (
                     render::clip(&e.text, room),
-                    format!("\n[cut: {} more chars not shown]", total - room),
+                    Some(format!("[cut: {} more chars not shown]", total - room)),
                 )
             } else {
-                (e.text.clone(), String::new())
+                (e.text.clone(), None)
             };
-            return Ok(render::finish(
-                format!("{head}\n{}{cut}", render::fenced(&body)),
+            return Ok(fenced_reply(
+                Some(&head),
+                &body,
+                cut.as_deref(),
                 budget::ENTRY_FULL,
             ));
         }
@@ -523,17 +511,15 @@ impl Agent<'_> {
         let newest = shown.first().and_then(|e| e.seq).unwrap_or(0);
         let oldest = shown.last().and_then(|e| e.seq).unwrap_or(0);
         let more = page.total > n as i64;
-        let mut out = Text::new(max);
-        out.line(format!(
+        let head = format!(
             "{topic} entries #{newest}-#{oldest} of {all}{}",
             if more {
                 format!(" · older: before={oldest}")
             } else {
                 String::new()
             }
-        ));
-        out.line(render::fenced(&lines[..n].join("\n")));
-        Ok(out.finish())
+        );
+        Ok(fenced_reply(Some(&head), &lines[..n].join("\n"), None, max))
     }
 
     // ---- log ----
@@ -857,21 +843,23 @@ impl Agent<'_> {
         if lines.is_empty() {
             return Ok("0 hits".into());
         }
-        let n = render::fitting(&lines, budget::FIND - 60);
-        let mut out = Text::new(budget::FIND);
-        for l in &lines[..n] {
-            out.line(l);
-        }
+        // Titles, notes and excerpts are stored text: all inside the fence.
+        let n = render::fitting(&lines, budget::FIND - 60 - render::FENCE_COST);
         let shown_end = offset + n as i64;
-        if shown_end < page_total {
-            out.line(format!(
+        let foot = if shown_end < page_total {
+            format!(
                 "{}-{shown_end} of {page_total} · more: cursor={shown_end}",
                 offset + 1
-            ));
+            )
         } else {
-            out.line(plural(page_total, "hit", "hits"));
-        }
-        Ok(out.finish())
+            plural(page_total, "hit", "hits")
+        };
+        Ok(fenced_reply(
+            None,
+            &lines[..n].join("\n"),
+            Some(&foot),
+            budget::FIND,
+        ))
     }
 
     // ---- create ----
@@ -988,7 +976,7 @@ impl Agent<'_> {
             if page.items.is_empty() {
                 return Ok(format!("No knowledge in scope of {scope} matches."));
             }
-            let mut out = Text::new(budget::KB);
+            let mut lines = Vec::new();
             for h in &page.items {
                 let Record::Kb(id) = h.record else { continue };
                 let section = self
@@ -998,16 +986,20 @@ impl Agent<'_> {
                     .and_then(|e| section_of_match(&e.body, &h.snippet))
                     .map_or(String::new(), |s| format!(" §{s}"));
                 let excerpt = render::clip(&render::one_line(&strip_marks(&h.snippet)), 160);
-                out.line_clipped(format!(
+                lines.push(format!(
                     "{id}{section} {}: {excerpt}",
                     render::clip(&render::one_line(&h.title), 60)
                 ));
             }
             let end = offset + page.items.len() as i64;
-            if end < page.total {
-                out.line(format!("{} more: cursor={end}", page.total - end));
-            }
-            return Ok(out.finish());
+            let foot =
+                (end < page.total).then(|| format!("{} more: cursor={end}", page.total - end));
+            return Ok(fenced_reply(
+                None,
+                &lines.join("\n"),
+                foot.as_deref(),
+                budget::KB,
+            ));
         }
         let counts = self.store.kb_counts(scope).map_err(err)?;
         let page = self
@@ -1022,7 +1014,7 @@ impl Agent<'_> {
             )
             .map_err(err)?;
         let lines: Vec<String> = page.items.iter().map(kb_line).collect();
-        let n = render::fitting(&lines, budget::KB - 130);
+        let n = render::fitting(&lines, budget::KB - 130 - render::FENCE_COST);
         let end = offset + n as i64;
         let mut head = format!(
             "Knowledge in scope of {scope}: {}, {}",
@@ -1037,12 +1029,15 @@ impl Agent<'_> {
                 head.push_str(&format!(" · more: cursor={end}"));
             }
         }
-        let mut out = Text::new(budget::KB);
-        out.line(head);
-        for l in &lines[..n] {
-            out.line(l);
+        if page.total == 0 {
+            return Ok(head);
         }
-        Ok(out.finish())
+        Ok(fenced_reply(
+            Some(&head),
+            &lines[..n].join("\n"),
+            None,
+            budget::KB,
+        ))
     }
 
     fn kb_owned(&self, id: &str) -> Result<KbId, String> {
@@ -1061,13 +1056,15 @@ impl Agent<'_> {
         let id = self.kb_owned(&a.id)?;
         let e = self.store.kb_entry(id).map_err(err)?;
         let size = render::chars(&e.body);
+        // Ids and sizes outside the fence; the title, outline and body are
+        // stored text and go inside it.
         let head = format!(
-            "{id} {} · {} · rev {} · {}",
-            render::clip(&render::one_line(&e.title), 80),
+            "{id} {} · rev {} · {}",
             kind_word(e.kind),
             e.rev,
             render::token_label(size)
         );
+        let title = format!("Title: {}", render::clip(&render::one_line(&e.title), 100));
         let max = budget::KB_READ;
         // Lines are counted after wrapping long ones, so a body made of one
         // huge line is still readable part by part.
@@ -1081,7 +1078,7 @@ impl Agent<'_> {
                     format!(
                         "{id} rev {} has no section {n}; outline:\n{}",
                         e.rev,
-                        outline_text(&e.body, 1_200)
+                        outline_fenced(&e.body, 1_200)
                     )
                 })?;
             let physical: Vec<&str> = e.body.lines().collect();
@@ -1092,6 +1089,7 @@ impl Agent<'_> {
             return Ok(cut_body(
                 &head,
                 &format!("section {n}"),
+                &title,
                 part,
                 first,
                 all.len(),
@@ -1116,32 +1114,41 @@ impl Agent<'_> {
             return Ok(cut_body(
                 &head,
                 &format!("lines {from}-{to} of {}", all.len()),
+                &title,
                 &all[from - 1..to],
                 from,
                 all.len(),
                 max,
             ));
         }
-        if size + render::chars(&head) + render::FENCE_COST < max {
-            return Ok(render::finish(
-                format!("{head}\n{}", render::fenced(e.body.trim_end())),
-                max,
-            ));
+        // Whole when the fenced body fits, line by line (a line never has
+        // more than `WRAP` characters).
+        if size + all.len() + render::chars(&head) + render::chars(&title) + render::FENCE_COST + 4
+            < max
+        {
+            let body = format!("{title}\n{}", all.join("\n"));
+            return Ok(fenced_reply(Some(&head), &body, None, max));
         }
         let outline = markdown::outline(&e.body);
         if outline.is_empty() {
-            return Ok(format!(
-                "{head}, over the {} budget; no headings ({} lines).\nRead a part with lines=\"1-80\".",
-                render::token_label(max),
-                all.len()
+            return Ok(fenced_reply(
+                Some(&format!(
+                    "{head}, over the {} budget; no headings ({} lines). Read a part with lines=\"1-80\".",
+                    render::token_label(max),
+                    all.len()
+                )),
+                &title,
+                None,
+                max,
             ));
         }
-        Ok(render::finish(
-            format!(
-                "{head}, over the {} budget; outline:\n{}\nRead one with section=<n>.",
-                render::token_label(max),
-                outline_text(&e.body, max - 300)
-            ),
+        Ok(fenced_reply(
+            Some(&format!(
+                "{head}, over the {} budget; outline below. Read one with section=<n>.",
+                render::token_label(max)
+            )),
+            &format!("{title}\n{}", outline_text(&e.body, max - 400)),
+            None,
             max,
         ))
     }
@@ -1251,7 +1258,7 @@ impl Agent<'_> {
                     format!(
                         "not saved: {} \"{}\" (rev {}) looks like the same memory. Update it with kb_write(id=\"{}\", rev={}, op=\"replace_body\", ...), or repeat this call to save a new one anyway.",
                         dup.id,
-                        render::clip(&dup.title, 60),
+                        quoted(&dup.title, 60),
                         dup.rev,
                         dup.id,
                         dup.rev
@@ -1336,7 +1343,7 @@ impl Agent<'_> {
                     format!(
                         "{id} rev {} has no section {number}; outline:\n{}",
                         cur.rev,
-                        outline_text(&cur.body, 1_200)
+                        outline_fenced(&cur.body, 1_200)
                     )
                 })?,
             KbEdit::AppendSection { heading, text } => {
@@ -1361,7 +1368,7 @@ impl Agent<'_> {
                 )
             ),
             KbEdit::AppendSection { heading, .. } => {
-                format!("section \"{}\" appended", render::clip(heading, 40))
+                format!("section \"{}\" appended", quoted(heading, 40))
             }
         };
         // A move target is validated before anything is written, so a bad
@@ -1389,7 +1396,7 @@ impl Agent<'_> {
                     format!(
                         "not saved: {id} changed since rev {}; it is rev {current} now. Outline:\n{}\nRe-read what you change, then retry with rev={current}.",
                         a.rev.unwrap_or(0),
-                        outline_text(&fresh.body, 1_200)
+                        outline_fenced(&fresh.body, 1_200)
                     ),
                     1_600,
                 ));
@@ -1444,17 +1451,15 @@ impl Agent<'_> {
             .render_brief(
                 scope,
                 max - tail_len - head.len() - render::FENCE_COST - 120,
-                false,
             )
             .ok()?;
-        let mut out = Text::new(max);
+        // The tail is Acta's own text, after the fence: hold its room back.
+        let mut out = Text::new(max - tail_len);
         out.line(head);
-        // The whole body is stored text: one fence around it.
-        out.line(render::DATA_OPEN);
-        for l in brief.lines() {
-            out.line(render::defuse(l));
-        }
-        let tail_len = tail_len + render::DATA_CLOSE.len() + 1;
+        // The whole body is stored text: one fence around it, every line
+        // (memory titles included) defused by the fence.
+        out.open_fence(&Fence::new());
+        out.lines_of(&brief);
         // Memory titles: topic, then epic, then project; newest first.
         let memories = self
             .store
@@ -1468,10 +1473,10 @@ impl Agent<'_> {
             )
             .map(|p| p.items)
             .unwrap_or_default();
-        let room = out.left().saturating_sub(tail_len);
+        let room = out.left();
         let mut titles = String::new();
         for m in &memories {
-            let item = format!("{} {}", m.id, render::clip(&render::one_line(&m.title), 60));
+            let item = format!("{} {}", m.id, quoted(&m.title, 60));
             let sep = if titles.is_empty() {
                 "Recent memories: "
             } else {
@@ -1486,21 +1491,19 @@ impl Agent<'_> {
         if !titles.is_empty() {
             out.line(titles);
         }
-        out.line(render::DATA_CLOSE);
+        let mut text = out.finish();
         for t in tail {
-            out.line_clipped(t);
+            text.push('\n');
+            text.push_str(&t);
         }
-        Some(out.finish())
+        Some(render::finish(text, max))
     }
 
     /// The `SubagentStart` note: at most 300 characters.
     pub fn subagent_note(&self) -> Option<String> {
         let project = self.session.project?;
         let p = self.store.project(project).ok()?;
-        let mut parts = vec![format!(
-            "Acta: project {project} {}",
-            render::clip(&render::one_line(&p.title), 40)
-        )];
+        let mut parts = vec![format!("Acta: project {project} {}", quoted(&p.title, 40))];
         match self.session.focus {
             Some(Owner::Topic(t)) => {
                 if let Some(e) = self.store.topic(t).ok().and_then(|t| t.epic) {
@@ -1549,6 +1552,31 @@ pub fn hook_json(event: &str, context: &str) -> String {
 /// What `PreCompact` prints (ADR 0005): fixed text, no database.
 pub const PRE_COMPACT: &str = "Acta: in the summary, keep the Acta focus id (T-n or E-n) and list the decisions and progress not yet logged to Acta, so they can be logged with `log` after compaction.";
 
+/// One response: `head` (Acta's own words and ids, no stored text), then
+/// `body` inside one data fence with a fresh nonce, then `foot` (paging).
+/// Body lines that do not fit the budget are dropped at a line boundary.
+fn fenced_reply(head: Option<&str>, body: &str, foot: Option<&str>, max: usize) -> String {
+    let foot_len = foot.map_or(0, |f| render::chars(f) + 1);
+    let mut out = Text::new(max.saturating_sub(foot_len));
+    if let Some(h) = head {
+        out.line_clipped(h);
+    }
+    out.open_fence(&Fence::new());
+    out.lines_of(body);
+    let mut s = out.finish();
+    if let Some(f) = foot {
+        s.push('\n');
+        s.push_str(f);
+    }
+    s
+}
+
+/// A title, summary or heading quoted outside a fence: one line, markers
+/// defused.
+fn quoted(text: &str, max: usize) -> String {
+    render::defuse(&render::clip(&render::one_line(text), max))
+}
+
 fn plural(n: i64, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
 }
@@ -1596,7 +1624,7 @@ fn outline_text(body: &str, max: usize) -> String {
             format!(
                 "{} {} {}",
                 s.number,
-                render::clip(&s.title, 50),
+                render::clip(&render::one_line(&s.title), 50),
                 render::tokens(s.bytes)
             )
         })
@@ -1645,36 +1673,40 @@ fn display_lines(text: &str) -> Vec<String> {
 fn cut_body(
     head: &str,
     what: &str,
+    title: &str,
     part: &[String],
     first: usize,
     total: usize,
     max: usize,
 ) -> String {
-    let head = format!("{head} · {what}");
-    let room = max.saturating_sub(render::chars(&head) + render::FENCE_COST + 90);
-    let mut shown = Vec::new();
-    let mut used = 0;
+    const FOOT_ROOM: usize = 90;
+    let mut out = Text::new(max - FOOT_ROOM);
+    out.line_clipped(format!("{head} · {what}"));
+    out.open_fence(&Fence::new());
+    out.line_clipped(title);
+    let mut shown = 0;
     for l in part {
-        let add = render::chars(l) + 1;
-        if used + add > room {
+        if !out.line(l) {
             break;
         }
-        used += add;
-        shown.push(l.as_str());
+        shown += 1;
     }
-    let body = render::fenced(shown.join("\n").trim_end());
-    if shown.len() == part.len() {
-        return render::finish(format!("{head}\n{body}"), max);
-    }
-    let next = first + shown.len();
-    let last = first + part.len() - 1;
-    render::finish(
-        format!(
-            "{head}\n{body}\n[cut at line {} of {total}: read on with lines=\"{next}-{last}\"]",
+    let mut text = out.finish();
+    if shown < part.len() {
+        let next = first + shown;
+        let last = first + part.len() - 1;
+        text.push_str(&format!(
+            "\n[cut at line {} of {total}: read on with lines=\"{next}-{last}\"]",
             next - 1
-        ),
-        max,
-    )
+        ));
+    }
+    render::finish(text, max)
+}
+
+/// The outline of a body inside its own data fence (headings are stored
+/// text), for refusals that show it.
+fn outline_fenced(body: &str, max: usize) -> String {
+    Fence::new().wrap(&outline_text(body, max))
 }
 
 /// Outline number of the section holding the first highlighted term of a
