@@ -2238,7 +2238,12 @@ impl Shell {
         if rows.is_empty() {
             return;
         }
-        // An open menu takes the arrows, Enter and Esc.
+        // An open menu takes the arrows, Enter and Esc. A menu whose row
+        // went away (deleted by another process) closes.
+        if bench.tree_menu.is_some() && self.menu_items(&rows, cx).is_empty() {
+            self.close_tree_menu(cx);
+        }
+        let Some(bench) = self.bench() else { return };
         if bench.tree_menu.is_some() {
             match key {
                 TreeKey::Up | TreeKey::Down => {
