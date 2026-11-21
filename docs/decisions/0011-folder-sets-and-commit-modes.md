@@ -138,3 +138,6 @@ The user asked for a Pull button and a branch selector on git folders. These are
 - **Branch selector:** lists local branches (and remote branches as "track"), current one checked; switching runs `git switch <branch>` (or `git switch --track origin/<b>`). If the working tree has changes git would refuse to carry, Acta says so and changes nothing: no stash, no force. "New branch..." creates from the current HEAD with `git switch -c`.
 - A running Claude Code session in that folder is told nothing automatically; the terminal header shows the new branch, and switching while a session is working asks for confirmation first.
 - Strings, wireframe and tests are part of the folder-sets implementation (components-folders.md is updated with it).
+
+## Addendum (2026-11-21): live files
+ADR 0008 "Live files" applies to folder sets: a followed folder keeps its name, icon, commit mode and every page's active pointer (they hang on the record, not the path); a name left empty follows the new last segment. The git state is refreshed when the folder monitor reloads the pages and on window focus, never by a watcher on `.git`; `git status` runs with `--no-optional-locks` and `GIT_OPTIONAL_LOCKS=0`. When the settings ledger is keyed by path, it follows the folder in the same step as the auto-memory marker.

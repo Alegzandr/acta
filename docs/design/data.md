@@ -41,6 +41,7 @@ Nothing on screen is illustrative. Every value comes from the model of ADRs 0005
 | Settings: "Attached files: 312 MB in 48 files"; export: "Include attached files (32 MB)" | Sums over the blobs that live (not purged) attachments name, each blob counted once. |
 | Knowledge rows, summaries, kinds, levels, history | `kb_entries` and `kb_revisions` (ADR 0007). |
 | Folders, origin label, not-found state | The `folders` table and the inheritance rule of ADR 0011 (own, then epic's, then project's); existence is checked on this machine. |
+| Folder followed after a rename or move | The folder's identity (volume, file id, creation time), a local value read on this machine and never exported (ADR 0008, Live files). |
 | Folder name and icon | `folders.name` (empty: the last path segment) and `folders.icon` (empty: automatic, from the git detection below). |
 | Active folder, "Active" | The page's `active_folder_id` if it names a folder the page sees, else the default rule of ADR 0011 (first own folder, else the parent's active folder). |
 | Git state: branch, "3 changed", worktree icon | Read on this machine, never stored: `.git`, `HEAD` and `commondir` through `agent::git::inspect`; changed files from `git status --porcelain` with a 2 s timeout. |
