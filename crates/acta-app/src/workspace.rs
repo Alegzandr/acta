@@ -356,6 +356,13 @@ impl Undo {
     }
 }
 
+/// Whether a finished undo (or redo) keeps its inverse: a redo always goes
+/// back on the undo stack; an undo's redo is dropped when a new action of
+/// the project (which cleared the redo stack) came in while it was written.
+fn keeps_inverse(redo: bool, actions_then: u64, actions_now: u64) -> bool {
+    redo || actions_then == actions_now
+}
+
 /// The order of every undo step of the process: `Mod+Z` takes the newest
 /// of a window's layout steps and its writes (workbench.md 4.8.11, rule 3;
 /// interaction.md 6.4).
@@ -471,6 +478,9 @@ pub struct Workspace {
     /// of an undo, checked the same way. A new action of the project
     /// clears its redo.
     redo: HashMap<Option<ProjectId>, UndoStack>,
+    /// Bumped per project by every new action (which clears its redo): an
+    /// undo that finishes after one does not leave a redo behind it.
+    actions: HashMap<Option<ProjectId>, u64>,
     /// An undo or redo is being written; a second key waits for it.
     undoing: bool,
     _reload: Task<()>,
@@ -543,6 +553,7 @@ impl Workspace {
             revision: 0,
             undo: HashMap::new(),
             redo: HashMap::new(),
+            actions: HashMap::new(),
             undoing: false,
             _reload: Task::ready(()),
             _watch: watch,
@@ -676,6 +687,7 @@ impl Workspace {
             let _ = this.update(cx, |ws, cx| {
                 ws.undo.entry(project).or_default().push(undo);
                 ws.redo.remove(&project);
+                *ws.actions.entry(project).or_default() += 1;
                 if let Some(message) = message {
                     cx.emit(WorkspaceEvent::Toast(Toast {
                         message,
@@ -1007,6 +1019,7 @@ impl Workspace {
             return;
         };
         self.undoing = true;
+        let started = self.actions.get(&project).copied().unwrap_or(0);
         let applied = step.clone();
         let task = self.write(cx, Key::ErrorSave, move |store| applied.apply(store));
         cx.spawn(async move |ws, cx| {
@@ -1023,8 +1036,12 @@ impl Workspace {
                 if let Some(stack) = from.get_mut(&project) {
                     stack.remove(&step);
                 }
+                let now = ws.actions.get(&project).copied().unwrap_or(0);
                 match inverse {
-                    Some(inverse) => to.entry(project).or_default().push(inverse),
+                    Some(inverse) if keeps_inverse(redo, started, now) => {
+                        to.entry(project).or_default().push(inverse)
+                    }
+                    Some(_) => {}
                     None if redo => ws.toast_error(Key::RedoChanged, cx),
                     None => ws.toast_error(Key::UndoChanged, cx),
                 }
@@ -1378,6 +1395,16 @@ mod tests {
         assert_eq!(store.kb_entry(kb).unwrap().owner, Owner::Topic(id));
         redo.apply(store).unwrap().expect("redone");
         assert_eq!(store.kb_entry(kb).unwrap().owner, Owner::Project(project));
+    }
+
+    #[test]
+    fn an_undo_overtaken_by_a_new_action_leaves_no_redo() {
+        assert!(keeps_inverse(false, 3, 3));
+        assert!(
+            !keeps_inverse(false, 3, 4),
+            "a newer write cleared the redo"
+        );
+        assert!(keeps_inverse(true, 3, 4), "a redo is undoable again");
     }
 
     #[test]
