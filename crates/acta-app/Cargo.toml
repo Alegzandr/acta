@@ -3,6 +3,7 @@ name = "acta-app"
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
+license.workspace = true
 publish.workspace = true
 description = "Acta desktop application (GUI executable, Velopack main exe)."
 build = "build.rs"
