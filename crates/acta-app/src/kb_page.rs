@@ -113,8 +113,7 @@ fn kb_row(
             .child(entry.summary.clone())
             .into_any_element(),
     };
-    div()
-        .id(("kb-row", index))
+    ui::focusable(div().id(("kb-row", index)), t, false)
         .flex()
         .flex_row()
         .items_center()

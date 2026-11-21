@@ -1048,8 +1048,7 @@ impl RecordPage {
             (Icon::FolderOpen, t.text_secondary, t.text_primary)
         };
         let budget = paths_view::budget(220.);
-        let header = div()
-            .id("folder-row")
+        let header = ui::focusable(div().id("folder-row"), t, false)
             .flex()
             .flex_row()
             .items_center()
@@ -1524,8 +1523,7 @@ impl RecordPage {
         let kind = entry.kind;
         let open = self.kb_open == Some(id);
         let human = when::initial(&when::human_name(locale));
-        let row = div()
-            .id(("kb-row", index))
+        let row = ui::focusable(div().id(("kb-row", index)), t, false)
             .flex()
             .flex_row()
             .items_center()
@@ -2198,8 +2196,7 @@ impl RecordPage {
         let mut row = |topic: &TopicSummary, cx: &mut Context<Self>| {
             let id = topic.id;
             let open = topic.status.is_open();
-            let r = div()
-                .id(("table-row", row_index))
+            let r = ui::focusable(div().id(("table-row", row_index)), t, false)
                 .flex()
                 .flex_row()
                 .items_center()

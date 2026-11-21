@@ -365,8 +365,7 @@ impl InboxPage {
                 )
                 .on_click(cx.listener(move |page, _, _, cx| page.delete(id, cx))),
             );
-        div()
-            .id(("note", index))
+        ui::focusable(div().id(("note", index)), t, false)
             .group(group)
             .flex()
             .flex_col()

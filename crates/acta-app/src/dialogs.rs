@@ -70,6 +70,8 @@ pub struct Dialog {
     ws: Option<Entity<Workspace>>,
     pub kind: Kind,
     focus: FocusHandle,
+    /// Cancel (or Close): the safe button, focused when the dialog opens.
+    safe: FocusHandle,
 }
 
 impl EventEmitter<DialogEvent> for Dialog {}
@@ -191,8 +193,15 @@ impl Dialog {
         cx: &mut Context<Self>,
     ) -> Self {
         let focus = cx.focus_handle();
-        window.focus(&focus, cx);
-        Self { ws, kind, focus }
+        // components.md 5, Dialog: focus starts on the safe button.
+        let safe = cx.focus_handle().tab_index(0).tab_stop(true);
+        window.focus(&safe, cx);
+        Self {
+            ws,
+            kind,
+            focus,
+            safe,
+        }
     }
 
     fn close(&mut self, cx: &mut Context<Self>) {
@@ -382,6 +391,7 @@ impl Dialog {
                         false,
                         t,
                     )
+                    .track_focus(&self.safe)
                     .on_click(cx.listener(|d, _, _, cx| d.close(cx)))
                     .into_any_element(),
                     ui::button(
@@ -511,6 +521,7 @@ impl Dialog {
                         false,
                         t,
                     )
+                    .track_focus(&self.safe)
                     .on_click(cx.listener(|d, _, _, cx| d.close(cx)))
                     .into_any_element(),
                     ui::button(
@@ -537,6 +548,7 @@ impl Dialog {
                         false,
                         t,
                     )
+                    .track_focus(&self.safe)
                     .on_click(cx.listener(|d, _, _, cx| d.close(cx)))
                     .into_any_element(),
                 ];
@@ -621,6 +633,7 @@ impl Dialog {
                         false,
                         t,
                     )
+                    .track_focus(&self.safe)
                     .on_click(cx.listener(|d, _, _, cx| d.close(cx)))
                     .into_any_element(),
                     confirm.into_any_element(),
@@ -641,6 +654,7 @@ impl Dialog {
                         false,
                         t,
                     )
+                    .track_focus(&self.safe)
                     .on_click(cx.listener(|d, _, _, cx| d.close(cx)))
                     .into_any_element(),
                     ui::button(
@@ -670,6 +684,7 @@ impl Dialog {
                         false,
                         t,
                     )
+                    .track_focus(&self.safe)
                     .on_click(cx.listener(|d, _, _, cx| d.close(cx)))
                     .into_any_element(),
                     ui::button(
