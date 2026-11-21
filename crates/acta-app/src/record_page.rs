@@ -109,6 +109,11 @@ fn record_of(owner: Owner) -> Record {
 }
 
 impl RecordPage {
+    /// The status menu is open (the chat's web view hides under it).
+    pub fn menu_open(&self) -> bool {
+        self.status_menu.is_some()
+    }
+
     pub fn new(
         ws: Entity<Workspace>,
         owner: Owner,

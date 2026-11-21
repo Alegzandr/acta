@@ -186,6 +186,11 @@ pub struct KnowledgePage {
 impl EventEmitter<PageEvent> for KnowledgePage {}
 
 impl KnowledgePage {
+    /// A filter menu is open (the chat's web view hides under it).
+    pub fn menu_open(&self) -> bool {
+        self.menu.is_some()
+    }
+
     pub fn new(
         ws: Entity<Workspace>,
         project: ProjectId,

@@ -46,6 +46,13 @@ pub struct Preferences {
     pub sidebar_hidden: bool,
     /// Terminal text size, 11 to 18; `None` is the default 13.
     pub terminal_text_size: Option<u8>,
+    /// The chat panel lives in the bottom dock (default: the right one).
+    pub chat_bottom: bool,
+    /// The user has opened claude.ai in the panel: showing it starts the
+    /// web view without asking again. Cleared by "Sign out and clear".
+    pub chat_started: bool,
+    /// The sign-in help notice was dismissed ("Got it").
+    pub chat_help_dismissed: bool,
 }
 
 /// The file as stored. Every field but the version may be missing (it then
@@ -67,6 +74,12 @@ struct Stored {
     sidebar_hidden: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     terminal_text_size: Option<u8>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    chat_bottom: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    chat_started: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    chat_help_dismissed: bool,
 }
 
 #[derive(Clone, Copy, Default, Serialize, Deserialize)]
@@ -167,6 +180,9 @@ pub fn parse(text: &str) -> Result<Preferences, LoadError> {
         terminal_text_size: stored
             .terminal_text_size
             .filter(|size| (11..=18).contains(size)),
+        chat_bottom: stored.chat_bottom,
+        chat_started: stored.chat_started,
+        chat_help_dismissed: stored.chat_help_dismissed,
     })
 }
 
@@ -181,6 +197,9 @@ pub fn serialize(prefs: &Preferences) -> String {
         closed_shown: prefs.closed_shown.clone(),
         sidebar_hidden: prefs.sidebar_hidden,
         terminal_text_size: prefs.terminal_text_size,
+        chat_bottom: prefs.chat_bottom,
+        chat_started: prefs.chat_started,
+        chat_help_dismissed: prefs.chat_help_dismissed,
     };
     // A struct of plain enums and numbers always serializes.
     let mut text = serde_json::to_string_pretty(&stored).unwrap_or_default();
@@ -382,6 +401,9 @@ mod tests {
             closed_shown: vec!["closed:E-3".into()],
             sidebar_hidden: true,
             terminal_text_size: Some(15),
+            chat_bottom: true,
+            chat_started: true,
+            chat_help_dismissed: true,
         };
         save_to(&path, &prefs).unwrap();
         assert_eq!(load_from(&path).unwrap(), prefs);
