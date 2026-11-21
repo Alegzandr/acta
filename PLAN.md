@@ -11,7 +11,7 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 | M4 | Integrated terminal running Claude Code | v0.3.0 | doing (docked; live Claude Code session to verify) |
 | M5 | Claude chat panel beside the work (Windows and macOS; link on Linux; ADR 0009) | v0.5.0 | doing |
 | M6 | Notes inbox and notes-to-topics flow | v0.6.0 | todo |
-| M7 | Polish | v1.0.0 | todo |
+| M7 | Polish | v1.0.0 | doing |
 
 ## M0 - Research and spikes
 - [x] ADR 0001: UI stack - gpui-kit 0.10.0 (GPUI snapshot gpui-pre 0.3.12), proven on Windows; macOS/Linux to prove in M1 CI
@@ -77,7 +77,8 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 - [ ] "File with Claude Code" button (screens.md 8.2): needs a way to run a command in the terminal dock
 
 ## M7 - Polish
-- [ ] Design review of every screen against DESIGN.md
+- [x] Design review of every screen against DESIGN.md (6 blockers, 21 should, 8 nice)
+- [ ] Review findings applied on `gpui-engineer/m7-polish` (Windows; macOS and Linux by cross-target clippy only): pane sizes and the sidebar giving way at 880 x 560, resize handles, keyboard focus ring, Claude Code status and Settings section, damaged database vs lost key, measured property labels, entry menu, empty states, palette, knowledge, inbox, dialogs, terminal padding, first run, tabs, Keyboard shortcuts page, Updated to indicator. Left: unread dots (read markers, data request 1), the two-line row form under 520, "File with Claude Code", the document menu's Go to heading / Save as file / Move, the update indicator's ready and failed states, the auto-memory setting, the pseudo-language switch
 - [ ] Performance pass, empty and error states, onboarding
 - [ ] Documentation
 
