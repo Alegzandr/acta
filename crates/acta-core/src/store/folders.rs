@@ -4,7 +4,7 @@
 
 use super::{STAMP_COLS, Store, new_uuid, owner_at, owner_condition, owner_ids, stamp};
 use crate::error::{Error, Result};
-use crate::folder_identity::{self, Followed, Known};
+use crate::folder_identity::{self, Followed, Known, Learned};
 use crate::folder_path;
 use crate::model::{Author, EpicId, Folder, FolderId, Owner, ProjectId, TopicId};
 use crate::paths::Os;
@@ -51,6 +51,15 @@ const IDENTITY_PREFIX: &str = "folderid.";
 
 fn identity_key(id: FolderId) -> String {
     format!("local.{IDENTITY_PREFIX}{}", id.0)
+}
+
+/// Forgets the identity kept under a folder id: a row inserted by an import
+/// must not inherit one left by an earlier row with the same id.
+pub(crate) fn forget_identity(
+    conn: &rusqlite::Connection,
+    id: FolderId,
+) -> rusqlite::Result<usize> {
+    conn.execute("DELETE FROM meta WHERE key = ?1", [identity_key(id)])
 }
 
 fn upsert_meta(conn: &rusqlite::Connection, key: &str, value: &str) -> rusqlite::Result<usize> {
@@ -261,7 +270,9 @@ impl Store {
     }
 
     /// Writes what a monitor pass found, in one transaction: identities
-    /// learned, and folders followed to where they were moved. A followed
+    /// learned (only for a folder still at the path it was read at), and
+    /// folders followed to where they were moved. Identities kept for ids
+    /// that no longer name a folder row are dropped. A followed
     /// folder keeps everything but its path, and what depends on the path
     /// follows it: the auto-memory marker of `acta link` and the hooks'
     /// pre-check file. A folder whose path changed since the pass, or whose
@@ -269,7 +280,7 @@ impl Store {
     /// Returns the folders followed. Touches no disk but the pre-check file.
     pub fn apply_folder_pass(
         &mut self,
-        learned: &[(FolderId, String)],
+        learned: &[Learned],
         followed: &[Followed],
     ) -> Result<Vec<FolderId>> {
         if learned.is_empty() && followed.is_empty() {
@@ -277,11 +288,19 @@ impl Store {
         }
         let os = Os::CURRENT;
         let tx = self.write()?;
-        for (id, identity) in learned {
-            if read_folder(&tx, *id).is_ok() {
-                upsert_meta(&tx, &identity_key(*id), identity)?;
+        for l in learned {
+            if read_folder(&tx, l.id).is_ok_and(|f| f.path == l.path) {
+                upsert_meta(&tx, &identity_key(l.id), &l.identity)?;
             }
         }
+        tx.execute(
+            &format!(
+                "DELETE FROM meta WHERE substr(key, 1, {n}) = 'local.{IDENTITY_PREFIX}'
+                 AND CAST(substr(key, {n} + 1) AS INTEGER) NOT IN (SELECT id FROM folders)",
+                n = "local.".len() + IDENTITY_PREFIX.len()
+            ),
+            [],
+        )?;
         let mut moved = Vec::new();
         let now = now_ms();
         for f in followed {

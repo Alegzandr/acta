@@ -1702,3 +1702,56 @@ fn locate_and_its_undo_rewrite_the_hooks_pre_check() {
     assert!(linked(dir.path(), &old));
     assert!(!linked(dir.path(), &new));
 }
+
+#[test]
+fn an_identity_is_kept_only_for_the_path_it_was_read_at() {
+    use crate::folder_identity::Learned;
+    let TestStore { mut store, dir, .. } = open();
+    let p = store.create_project("Acta", "", H).unwrap();
+    let a = dir.path().join("a");
+    std::fs::create_dir_all(&a).unwrap();
+    let f = store.add_folder(Owner::Project(p), &a, H).unwrap();
+    let path = store.folder(f).unwrap().path;
+    let before = store.monitored_folders().unwrap()[0].identity.clone();
+    let stale = Learned {
+        id: f,
+        path: format!("{path}-elsewhere"),
+        identity: "v1:1:2:-".into(),
+    };
+    store.apply_folder_pass(&[stale], &[]).unwrap();
+    assert_eq!(store.monitored_folders().unwrap()[0].identity, before);
+    let fresh = Learned {
+        id: f,
+        path,
+        identity: "v1:1:2:-".into(),
+    };
+    // An identity left for an id with no folder row is dropped on the way.
+    store
+        .set_local_value("folderid.999", Some("v1:9:9:-"))
+        .unwrap();
+    store.apply_folder_pass(&[fresh], &[]).unwrap();
+    assert_eq!(
+        store.monitored_folders().unwrap()[0].identity.as_deref(),
+        Some("v1:1:2:-")
+    );
+    assert_eq!(store.local_value("folderid.999").unwrap(), None);
+}
+
+#[test]
+fn an_imported_folder_starts_without_an_identity() {
+    let mut a = open();
+    let p = a.store.create_project("Acta", "", H).unwrap();
+    let dir = a.dir.path().join("acta");
+    std::fs::create_dir_all(&dir).unwrap();
+    a.store.add_folder(Owner::Project(p), &dir, H).unwrap();
+    let file = a.store.export(None).unwrap();
+    let mut b = open();
+    // Left by an earlier row with the id the import will use.
+    b.store
+        .set_local_value("folderid.1", Some("v1:9:9:-"))
+        .unwrap();
+    b.store.import(&file, false).unwrap();
+    let known = b.store.monitored_folders().unwrap();
+    assert_eq!(known.len(), 1);
+    assert_eq!(known[0].identity, None);
+}

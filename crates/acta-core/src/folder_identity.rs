@@ -20,15 +20,59 @@ use crate::folder_path;
 use crate::model::FolderId;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
-use std::time::UNIX_EPOCH;
+use std::time::{Duration, Instant, UNIX_EPOCH};
 
 /// How deep the search for a moved folder goes below each place it looks.
 const SEARCH_DEPTH: usize = 3;
-/// Directories the search may list, in all: a missing folder near a huge
-/// tree costs a bounded pass, then reads as not found.
+/// Directories one monitor pass may list, for all its searches together:
+/// missing folders near a huge tree cost a bounded pass, then read as not
+/// found.
 const SEARCH_BUDGET: usize = 4_000;
+/// A missing folder is searched for again on window focus at most this often.
+const SEARCH_AGAIN: Duration = Duration::from_secs(60);
 /// Directories the search never goes into (it still matches them).
 const SKIPPED: [&str; 3] = ["node_modules", "target", ".git"];
+/// Where deleted folders go. A folder sent there was deleted, not moved:
+/// the search never goes into them and never matches anything inside.
+const TRASH: [&str; 5] = [
+    "$RECYCLE.BIN",
+    "RECYCLER",
+    "System Volume Information",
+    ".Trash",
+    ".Trashes",
+];
+
+/// Whether `path` is in a Recycle Bin or a Trash: a component named as one
+/// (`.Trash-1000` on removable drives included), or `.local/share/Trash`.
+fn in_trash(path: &Path) -> bool {
+    let parts: Vec<String> = path
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .collect();
+    parts
+        .iter()
+        .any(|p| TRASH.iter().any(|t| p.eq_ignore_ascii_case(t)) || p.starts_with(".Trash-"))
+        || parts
+            .windows(3)
+            .any(|w| w[0] == ".local" && w[1] == "share" && w[2] == "Trash")
+}
+
+/// Hidden system folders on Windows (the Recycle Bin under any name, volume
+/// data) are never searched or matched.
+#[cfg(windows)]
+fn hidden_system(entry: &std::fs::DirEntry) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    use windows_sys::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_SYSTEM};
+    let both = FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM;
+    entry
+        .metadata()
+        .is_ok_and(|m| m.file_attributes() & both == both)
+}
+
+#[cfg(not(windows))]
+fn hidden_system(_: &std::fs::DirEntry) -> bool {
+    false
+}
 
 /// What makes a folder the same folder after a rename or a move.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -140,19 +184,27 @@ pub fn is_dir(path: &Path) -> bool {
     use windows_sys::Win32::Storage::FileSystem::{
         FILE_ATTRIBUTE_DIRECTORY, GetFileAttributesW, INVALID_FILE_ATTRIBUTES,
     };
-    let text = path.as_os_str();
-    // Long paths need the verbatim prefix; stored paths are absolute and
-    // canonical, which the prefix requires.
-    let long = text.len() >= 240 && !text.to_string_lossy().starts_with(r"\\");
-    let mut wide: Vec<u16> = Vec::with_capacity(text.len() + 5);
-    if long && path.is_absolute() {
-        wide.extend(r"\\?\".encode_utf16());
-    }
-    wide.extend(text.encode_wide());
+    let mut wide: Vec<u16> = verbatim(path).encode_wide().collect();
     wide.push(0);
     // SAFETY: `wide` is a NUL-terminated UTF-16 string that outlives the call.
     let attributes = unsafe { GetFileAttributesW(wide.as_ptr()) };
     attributes != INVALID_FILE_ATTRIBUTES && attributes & FILE_ATTRIBUTE_DIRECTORY != 0
+}
+
+/// A long absolute path in the verbatim form `GetFileAttributesW` needs past
+/// `MAX_PATH`: `\\?\C:\...`, or `\\?\UNC\server\share\...` for a network
+/// path. Stored paths are absolute and canonical, which the verbatim form
+/// requires; a short path, or one already verbatim, is left as it is.
+#[cfg(windows)]
+fn verbatim(path: &Path) -> std::ffi::OsString {
+    let text = path.as_os_str().to_string_lossy();
+    if text.len() < 240 || text.starts_with(r"\\?\") || !path.is_absolute() {
+        return path.as_os_str().to_owned();
+    }
+    match text.strip_prefix(r"\\") {
+        Some(unc) => format!(r"\\?\UNC\{unc}").into(),
+        None => format!(r"\\?\{text}").into(),
+    }
 }
 
 /// Whether `path` is a folder on this computer (`stat` holds nothing).
@@ -164,19 +216,23 @@ pub fn is_dir(path: &Path) -> bool {
 /// Where the folder that was at `old` is now: searched below the nearest
 /// folder above `old` that still exists, then below its parent, a few
 /// levels deep, in a bounded number of directories. `None` when no folder
-/// or more than one has the identity.
-pub fn find_moved(old: &Path, id: &Identity) -> Option<PathBuf> {
+/// or more than one has the identity, or the only one is in a Recycle Bin
+/// or a Trash. `budget` is the directories left to list, shared by every
+/// search of a pass.
+pub fn find_moved(old: &Path, id: &Identity, budget: &mut usize) -> Option<PathBuf> {
     let mut base = old.parent()?;
     while !is_dir(base) {
         base = base.parent()?;
     }
-    let mut budget = SEARCH_BUDGET;
+    if in_trash(base) {
+        return None;
+    }
     let mut found = Vec::new();
-    search(base, None, id, &mut budget, &mut found);
+    search(base, None, id, budget, &mut found);
     if found.is_empty()
         && let Some(above) = base.parent()
     {
-        search(above, Some(base), id, &mut budget, &mut found);
+        search(above, Some(base), id, budget, &mut found);
     }
     match found.len() {
         1 => found.pop(),
@@ -210,7 +266,7 @@ fn search(
                 continue;
             }
             let path = entry.path();
-            if skip == Some(path.as_path()) {
+            if skip == Some(path.as_path()) || in_trash(&path) || hidden_system(&entry) {
                 continue;
             }
             if could_be(&entry, id) && identity(&path).is_some_and(|i| i.same(id)) {
@@ -262,6 +318,15 @@ pub struct Followed {
     pub identity: String,
 }
 
+/// An identity read from a folder that is at `path`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Learned {
+    pub id: FolderId,
+    /// The path it was read at: written only if the folder is still there.
+    pub path: String,
+    pub identity: String,
+}
+
 /// What one pass found.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Pass {
@@ -269,7 +334,7 @@ pub struct Pass {
     /// presence must be checked again.
     pub changed: bool,
     /// Identities to remember, for folders that had none (or a stale one).
-    pub learned: Vec<(FolderId, String)>,
+    pub learned: Vec<Learned>,
     pub followed: Vec<Followed>,
 }
 
@@ -286,9 +351,15 @@ impl Pass {
 #[derive(Debug, Default)]
 pub struct Monitor {
     present: HashMap<FolderId, bool>,
-    /// Missing folders already searched for at this path: not searched
-    /// again on every tick, only on a thorough pass.
-    searched: HashSet<(FolderId, String)>,
+    /// Missing folders already searched for at this path, and when: not
+    /// searched again on every tick, only on a thorough pass, and then at
+    /// most every `SEARCH_AGAIN`.
+    searched: HashMap<(FolderId, String), Instant>,
+    /// Present folders whose file system gives no stable identity: read
+    /// again only on a thorough pass.
+    unstable: HashSet<(FolderId, String)>,
+    /// Searches run, for the tests.
+    searches: usize,
 }
 
 impl Monitor {
@@ -302,7 +373,12 @@ impl Monitor {
     /// every present folder's identity again and searches again for every
     /// missing one.
     pub fn pass(&mut self, folders: &[Known], thorough: bool) -> Pass {
+        self.pass_at(folders, thorough, Instant::now())
+    }
+
+    fn pass_at(&mut self, folders: &[Known], thorough: bool, now: Instant) -> Pass {
         let mut out = Pass::default();
+        let mut budget = SEARCH_BUDGET;
         let mut seen = HashMap::with_capacity(folders.len());
         for folder in folders {
             let path = Path::new(&folder.path);
@@ -313,24 +389,42 @@ impl Monitor {
                 out.changed = true;
             }
             seen.insert(folder.id, present);
+            let key = (folder.id, folder.path.clone());
             if present {
-                self.searched.retain(|(id, _)| *id != folder.id);
-                if (folder.identity.is_none() || thorough)
-                    && let Some(now) = identity(path).map(|i| i.encode())
-                    && folder.identity.as_deref() != Some(now.as_str())
-                {
-                    out.learned.push((folder.id, now));
+                self.searched.retain(|(id, _), _| *id != folder.id);
+                let wanted =
+                    thorough || (folder.identity.is_none() && !self.unstable.contains(&key));
+                if !wanted {
+                    continue;
+                }
+                match identity(path).map(|i| i.encode()) {
+                    Some(read) => {
+                        self.unstable.remove(&key);
+                        if folder.identity.as_deref() != Some(read.as_str()) {
+                            out.learned.push(Learned {
+                                id: folder.id,
+                                path: folder.path.clone(),
+                                identity: read,
+                            });
+                        }
+                    }
+                    None => {
+                        self.unstable.insert(key);
+                    }
                 }
                 continue;
             }
             let Some(known) = folder.identity.as_deref().and_then(Identity::decode) else {
                 continue;
             };
-            let key = (folder.id, folder.path.clone());
-            if !thorough && self.searched.contains(&key) {
+            if let Some(at) = self.searched.get(&key)
+                && (!thorough || now.duration_since(*at) < SEARCH_AGAIN)
+            {
                 continue;
             }
-            match find_moved(path, &known).and_then(|p| folder_path::canonical(&p).ok()) {
+            self.searches += 1;
+            let found = find_moved(path, &known, &mut budget);
+            match found.and_then(|p| folder_path::canonical(&p).ok()) {
                 Some(new) => out.followed.push(Followed {
                     id: folder.id,
                     old: folder.path.clone(),
@@ -338,7 +432,7 @@ impl Monitor {
                     identity: known.encode(),
                 }),
                 None => {
-                    self.searched.insert(key);
+                    self.searched.insert(key, now);
                 }
             }
         }
@@ -442,17 +536,26 @@ mod tests {
         // Into a sibling.
         let into = work.join("archive").join("acta");
         fs::rename(&a, &into).unwrap();
-        assert_eq!(find_moved(&a, &id), Some(into.clone()));
+        assert_eq!(
+            find_moved(&a, &id, &mut SEARCH_BUDGET.clone()),
+            Some(into.clone())
+        );
 
         // Out of its parent: found below the parent's parent.
         let deep = work.join("acta");
         fs::rename(&into, &deep).unwrap();
-        assert_eq!(find_moved(&into, &id), Some(deep.clone()));
+        assert_eq!(
+            find_moved(&into, &id, &mut SEARCH_BUDGET.clone()),
+            Some(deep.clone())
+        );
 
         // With its parent renamed: the old parent is gone.
         let jobs = root.join("jobs");
         fs::rename(&work, &jobs).unwrap();
-        assert_eq!(find_moved(&deep, &id), Some(jobs.join("acta")));
+        assert_eq!(
+            find_moved(&deep, &id, &mut SEARCH_BUDGET.clone()),
+            Some(jobs.join("acta"))
+        );
     }
 
     #[test]
@@ -482,7 +585,7 @@ mod tests {
         assert!(
             monitor
                 .searched
-                .contains(&(FolderId(1), with_identity.path.clone()))
+                .contains_key(&(FolderId(1), with_identity.path.clone()))
         );
         let again = monitor.pass(&[with_identity, without], true);
         assert!(again.followed.is_empty());
@@ -498,7 +601,14 @@ mod tests {
         let real = folder.identity.take().unwrap();
         let mut monitor = Monitor::new();
         let pass = monitor.pass(std::slice::from_ref(&folder), false);
-        assert_eq!(pass.learned, [(FolderId(1), real.clone())]);
+        assert_eq!(
+            pass.learned,
+            [Learned {
+                id: FolderId(1),
+                path: folder.path.clone(),
+                identity: real.clone(),
+            }]
+        );
 
         folder.identity = Some(real.clone());
         assert!(
@@ -542,6 +652,106 @@ mod tests {
             tmp.path().join("acta"),
         )
         .expect("no handle left open");
+    }
+
+    #[test]
+    fn a_folder_sent_to_the_recycle_bin_or_the_trash_is_not_followed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let proj = root.join("proj");
+        fs::create_dir(&proj).unwrap();
+        let id = identity(&proj).unwrap();
+
+        let recycled = root.join("$RECYCLE.BIN").join("S-x").join("$R1");
+        fs::create_dir_all(recycled.parent().unwrap()).unwrap();
+        fs::rename(&proj, &recycled).unwrap();
+        assert_eq!(find_moved(&proj, &id, &mut SEARCH_BUDGET.clone()), None);
+
+        let trashed = root.join(".Trash").join("proj");
+        fs::create_dir_all(trashed.parent().unwrap()).unwrap();
+        fs::rename(&recycled, &trashed).unwrap();
+        assert_eq!(find_moved(&proj, &id, &mut SEARCH_BUDGET.clone()), None);
+
+        let freedesktop = root.join(".local").join("share").join("Trash");
+        fs::create_dir_all(&freedesktop).unwrap();
+        fs::rename(&trashed, freedesktop.join("proj")).unwrap();
+        assert_eq!(find_moved(&proj, &id, &mut SEARCH_BUDGET.clone()), None);
+
+        // The same folder moved out of the trash is followed again.
+        let back = root.join("proj-restored");
+        fs::rename(freedesktop.join("proj"), &back).unwrap();
+        assert_eq!(
+            find_moved(&proj, &id, &mut SEARCH_BUDGET.clone()),
+            Some(back)
+        );
+        assert!(in_trash(Path::new("/media/usb/.Trash-1000/files/proj")));
+        assert!(!in_trash(Path::new("/home/alexandre/share/Trash-notes")));
+    }
+
+    #[test]
+    fn the_search_budget_is_shared_and_spent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = tmp.path().join("a");
+        fs::create_dir(&a).unwrap();
+        let id = identity(&a).unwrap();
+        fs::rename(&a, tmp.path().join("b")).unwrap();
+        let mut budget = 0;
+        assert_eq!(find_moved(&a, &id, &mut budget), None, "no budget left");
+        let mut budget = SEARCH_BUDGET;
+        assert!(find_moved(&a, &id, &mut budget).is_some());
+        assert!(
+            budget < SEARCH_BUDGET,
+            "what one search lists is gone for the next"
+        );
+    }
+
+    #[test]
+    fn a_failed_search_is_repeated_on_focus_at_most_once_a_minute() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = tmp.path().join("acta");
+        fs::create_dir(&a).unwrap();
+        let folders = [known(1, &a)];
+        fs::remove_dir(&a).unwrap();
+        let mut monitor = Monitor::new();
+        let start = Instant::now();
+        monitor.pass_at(&folders, false, start);
+        assert_eq!(monitor.searches, 1);
+        monitor.pass_at(&folders, false, start + Duration::from_secs(1));
+        monitor.pass_at(&folders, true, start + Duration::from_secs(2));
+        assert_eq!(monitor.searches, 1, "not every tick, not every focus");
+        monitor.pass_at(
+            &folders,
+            true,
+            start + SEARCH_AGAIN + Duration::from_secs(1),
+        );
+        assert_eq!(monitor.searches, 2);
+        monitor.pass_at(&folders, false, start + SEARCH_AGAIN * 3);
+        assert_eq!(monitor.searches, 2, "a quick pass never searches again");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn long_paths_get_the_verbatim_prefix_unc_included() {
+        let long = "x".repeat(250);
+        let local = format!(r"C:\dev\{long}");
+        let unc = format!(r"\\server\share\{long}");
+        assert_eq!(
+            verbatim(Path::new(&local)),
+            std::ffi::OsString::from(format!(r"\\?\{local}"))
+        );
+        assert_eq!(
+            verbatim(Path::new(&unc)),
+            std::ffi::OsString::from(format!(r"\\?\UNC\server\share\{long}"))
+        );
+        assert_eq!(
+            verbatim(Path::new(r"C:\dev")),
+            std::ffi::OsString::from(r"C:\dev")
+        );
+        let already = format!(r"\\?\{local}");
+        assert_eq!(
+            verbatim(Path::new(&already)),
+            std::ffi::OsString::from(already.clone())
+        );
     }
 
     /// The user can rename the watched folder and the folder above it while
