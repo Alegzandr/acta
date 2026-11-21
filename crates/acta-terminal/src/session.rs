@@ -768,6 +768,7 @@ mod tests {
                 "019a7a6e-1c2d-7f00-8a00-0123456789ab".into(),
             )),
             token: None,
+            prompt: None,
         };
         let launch =
             build_claude_launch(&program, &folders, &Focus::default(), &options, |_| true).unwrap();

@@ -432,6 +432,7 @@ mod tests {
             plugin_dir: Some(plugin.clone()),
             conversation: Some(Conversation::Resume(id.into())),
             token: Some("tok-1".into()),
+            prompt: None,
         };
         let program = ClaudeProgram::Exe(PathBuf::from("claude"));
         let folders = [alexandre("acta")];
@@ -463,6 +464,7 @@ mod tests {
             conversation: Some(Conversation::Resume("x & del".into())),
             plugin_dir: None,
             token: None,
+            prompt: None,
         };
         let launch = build_claude_launch(&program, &folders, &focus(), &options, |_| true).unwrap();
         assert!(launch.spec.args.is_empty());
@@ -603,9 +605,14 @@ mod tests {
             )),
             ..ClaudeOptions::default()
         };
-        let launch =
-            build_claude_launch(&program, &folders, &focus(), &triage("/acta:triage"), |_| true)
-                .unwrap();
+        let launch = build_claude_launch(
+            &program,
+            &folders,
+            &focus(),
+            &triage("/acta:triage"),
+            |_| true,
+        )
+        .unwrap();
         // After every option, the conversation's included.
         assert_eq!(
             launch.spec.args.last().map(String::as_str),
