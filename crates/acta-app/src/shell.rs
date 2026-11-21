@@ -825,6 +825,12 @@ impl Shell {
                 self.open_palette(None, None, window, cx);
             }
             Ok("layout-menu") => self.open_menu(LayoutMenu::Layout, 1000., 40., cx),
+            // "File with Claude Code" against a live Claude Code: the
+            // terminal starts, then after 30 s the triage runs (typed into
+            // an idle session), then after 60 s more `/exit`, if idle. The
+            // terminal's screen goes to stderr at each step.
+            #[cfg(debug_assertions)]
+            Ok("triage-check") => self.dev_triage_check(window, cx),
             Ok("split") => {
                 self.change_layout(None, window, cx, |l| {
                     l.show_view(ViewId::Terminal);
@@ -2253,6 +2259,7 @@ impl Shell {
         let sent = dock.update(cx, |dock, cx| {
             dock.send(origin.clone(), TRIAGE_COMMAND, window, cx)
         });
+        crate::log::line(&format!("triage: {sent:?}"));
         if sent == crate::terminal_dock::Send::Busy {
             if let Some(bench) = self.bench() {
                 bench.pending_triage = Some(origin);
@@ -2473,6 +2480,49 @@ impl Shell {
         bench.toast = None;
         bench.ws.update(cx, |ws, cx| ws.undo_active(project, cx));
         cx.notify();
+    }
+
+    #[cfg(debug_assertions)]
+    fn dev_triage_check(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.view_action(ViewId::Terminal, ViewAction::Show, window, cx);
+        cx.spawn_in(window, async move |shell, cx| {
+            let dump = |shell: &mut Shell, step: &str, cx: &mut Context<Shell>| {
+                if let Some(bench) = shell.bench()
+                    && let Some(project) = bench.active_project
+                {
+                    let screen = bench.dock.read(cx).dev_screen(project, cx);
+                    eprintln!("[triage-check] {step}\n{}", screen.unwrap_or_default());
+                }
+            };
+            cx.background_executor()
+                .timer(Duration::from_secs(30))
+                .await;
+            let _ = shell.update_in(cx, |shell, window, cx| {
+                dump(shell, "before", cx);
+                if let Some(project) = shell.bench().and_then(|b| b.active_project) {
+                    shell.file_with_claude(project, window, cx);
+                }
+            });
+            cx.background_executor()
+                .timer(Duration::from_secs(60))
+                .await;
+            let _ = shell.update_in(cx, |shell, _, cx| {
+                dump(shell, "after triage", cx);
+                if let Some(bench) = shell.bench()
+                    && let Some(project) = bench.active_project
+                {
+                    let typed = bench
+                        .dock
+                        .update(cx, |dock, cx| dock.dev_type_if_idle(project, "/exit", cx));
+                    eprintln!("[triage-check] /exit typed: {typed}");
+                }
+            });
+            cx.background_executor()
+                .timer(Duration::from_secs(10))
+                .await;
+            let _ = shell.update_in(cx, |shell, _, cx| dump(shell, "after exit", cx));
+        })
+        .detach();
     }
 
     /// `Mod+Shift+Z` (`Ctrl+Y` on Windows and Linux): the newest undone
@@ -3845,10 +3895,15 @@ fn key_loss(db: PathBuf, unreadable: bool) -> Content {
 /// Debug builds started with `ACTA_DEV_SEED=1` fill an empty database with
 /// sample data, the current directory as the project folder.
 fn seed_if_asked(store: &mut acta_core::Store) {
+    let seed = std::env::var("ACTA_DEV_SEED").unwrap_or_default();
     if cfg!(debug_assertions)
-        && std::env::var_os("ACTA_DEV_SEED").is_some_and(|v| v == "1")
+        && (seed == "1" || seed == "bare")
         && let Ok(dir) = std::env::current_dir()
-        && let Err(err) = crate::dev_seed::seed(store, &dir)
+        && let Err(err) = if seed == "bare" {
+            crate::dev_seed::bare(store, &dir)
+        } else {
+            crate::dev_seed::seed(store, &dir)
+        }
     {
         crate::log::line(&format!(
             "dev seed failed: {}",

@@ -42,8 +42,14 @@ enum Pane {
         origin: Origin,
         _sub: Subscription,
     },
-    /// No folder anywhere up the chain.
-    Ask { origin: Origin, save: bool },
+    /// No folder anywhere up the chain. `prompt`: a command the launch was
+    /// to start Claude Code on ("File with Claude Code"), kept only while
+    /// this pane asks, so it never outlives a failed or replaced launch.
+    Ask {
+        origin: Origin,
+        save: bool,
+        prompt: Option<String>,
+    },
     /// The primary folder is not on this computer.
     Missing {
         origin: Origin,
@@ -65,6 +71,16 @@ pub enum Send {
     /// Claude Code is mid-task: nothing was typed. A new session on the
     /// command needs the restart confirmation (interaction.md 6.4).
     Busy,
+}
+
+/// What a launch's queued prompt becomes: kept (on the Ask pane) only
+/// when the launch stopped to ask for a folder; a started session already
+/// has it, and a missing folder or command drops it.
+fn queued_prompt(outcome: &Result<(), LaunchError>, prompt: Option<String>) -> Option<String> {
+    match outcome {
+        Err(LaunchError::NoFolder) => prompt,
+        _ => None,
+    }
 }
 
 /// The rule: type into a live session only when it is idle at its prompt;
@@ -91,9 +107,6 @@ pub struct TerminalDock {
     unsaved: HashMap<ProjectId, PathBuf>,
     /// The newest launch of each project.
     generations: HashMap<ProjectId, u64>,
-    /// A first prompt the next launch of a project starts Claude Code on;
-    /// kept until a session actually starts (a folder may be asked first).
-    prompts: HashMap<ProjectId, String>,
     pub project: Option<ProjectId>,
     /// The page shown now, set by the shell, to mark a mismatch.
     pub active: Option<Origin>,
@@ -144,7 +157,6 @@ impl TerminalDock {
             panes: HashMap::new(),
             unsaved: HashMap::new(),
             generations: HashMap::new(),
-            prompts: HashMap::new(),
             project: None,
             active: None,
             focus: cx.focus_handle(),
@@ -168,7 +180,7 @@ impl TerminalDock {
     pub fn show(&mut self, origin: Origin, window: &mut Window, cx: &mut Context<Self>) {
         self.project = Some(origin.project);
         if !self.panes.contains_key(&origin.project) {
-            self.launch(origin, window, cx);
+            self.launch(origin, None, window, cx);
         }
         cx.notify();
     }
@@ -176,7 +188,7 @@ impl TerminalDock {
     /// End the project's session and start it from `origin`.
     pub fn restart(&mut self, origin: Origin, window: &mut Window, cx: &mut Context<Self>) {
         self.project = Some(origin.project);
-        self.launch(origin, window, cx);
+        self.launch(origin, None, window, cx);
     }
 
     /// Run `command` (a slash command) in the session of `origin.project`
@@ -201,7 +213,7 @@ impl TerminalDock {
         let step = send_rule(live.is_some(), idle);
         match (step, live) {
             (Send::Typed, Some(view)) => {
-                view.update(cx, |view, _| view.send_line(command));
+                view.update(cx, |view, cx| view.send_line(command, cx));
                 view.read(cx).focus_handle(cx).focus(window, cx);
             }
             (Send::Started, _) => self.restart_on(origin, command, window, cx),
@@ -209,6 +221,30 @@ impl TerminalDock {
         }
         cx.notify();
         step
+    }
+
+    /// The project's terminal screen as text (development checks only).
+    #[cfg(debug_assertions)]
+    pub fn dev_screen(&self, project: ProjectId, cx: &App) -> Option<String> {
+        match self.panes.get(&project) {
+            Some(Pane::Running { view, .. }) => Some(view.read(cx).screen_text()),
+            _ => None,
+        }
+    }
+
+    /// Type `text` into the project's session if Claude Code is idle
+    /// (development checks only).
+    #[cfg(debug_assertions)]
+    pub fn dev_type_if_idle(&mut self, project: ProjectId, text: &str, cx: &mut App) -> bool {
+        let Some(Pane::Running { view, .. }) = self.panes.get(&project) else {
+            return false;
+        };
+        let view = view.clone();
+        if !view.read(cx).idle_at_prompt() {
+            return false;
+        }
+        view.update(cx, |view, cx| view.send_line(text, cx));
+        true
     }
 
     /// End the project's session and start Claude Code on `command`.
@@ -219,15 +255,24 @@ impl TerminalDock {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.prompts.insert(origin.project, command.to_owned());
-        self.restart(origin, window, cx);
+        self.project = Some(origin.project);
+        self.launch(origin, Some(command.to_owned()), window, cx);
     }
 
-    fn launch(&mut self, origin: Origin, window: &mut Window, cx: &mut Context<Self>) {
+    /// Start the project's session from `origin`, on `prompt` if given.
+    /// The prompt goes into this launch only: kept on the Ask pane if a
+    /// folder is asked first, dropped on any other outcome.
+    fn launch(
+        &mut self,
+        origin: Origin,
+        prompt: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let project = origin.project;
         let owner = origin.owner;
         let unsaved = self.unsaved.get(&project).cloned();
-        let prompt = self.prompts.get(&project).cloned();
+        let queued = prompt.clone();
         // Each launch of a project gets a number; a result that arrives
         // after a newer launch started is dropped.
         let generation = {
@@ -282,7 +327,6 @@ impl TerminalDock {
                 }
                 let pane = match result {
                     Ok(launch) => {
-                        dock.prompts.remove(&project);
                         if !launch.left_out.is_empty() {
                             let locale = settings::locale(cx);
                             for folder in &launch.left_out {
@@ -299,7 +343,11 @@ impl TerminalDock {
                         }
                         dock.running(origin, launch.spec, window, cx)
                     }
-                    Err(LaunchError::NoFolder) => Pane::Ask { origin, save: true },
+                    Err(LaunchError::NoFolder) => Pane::Ask {
+                        origin,
+                        save: true,
+                        prompt: queued_prompt(&Err(LaunchError::NoFolder), queued),
+                    },
                     Err(LaunchError::PrimaryMissing(path)) => Pane::Missing {
                         origin,
                         path,
@@ -381,6 +429,14 @@ impl TerminalDock {
         settings::change(cx, |prefs| prefs.terminal_text_size = Some(stored));
     }
 
+    /// The command the Ask pane of `project` holds, if it is asking.
+    fn asked_prompt(&self, project: ProjectId) -> Option<String> {
+        match self.panes.get(&project) {
+            Some(Pane::Ask { prompt, .. }) => prompt.clone(),
+            _ => None,
+        }
+    }
+
     fn choose_folder(
         &mut self,
         origin: Origin,
@@ -412,14 +468,17 @@ impl TerminalDock {
                     });
                     cx.spawn_in(window, async move |dock, cx| {
                         if task.await.is_ok() {
-                            let _ = dock
-                                .update_in(cx, |dock, window, cx| dock.launch(origin, window, cx));
+                            let _ = dock.update_in(cx, |dock, window, cx| {
+                                let prompt = dock.asked_prompt(project);
+                                dock.launch(origin, prompt, window, cx)
+                            });
                         }
                     })
                     .detach();
                 } else {
                     dock.unsaved.insert(project, path);
-                    dock.launch(origin, window, cx);
+                    let prompt = dock.asked_prompt(project);
+                    dock.launch(origin, prompt, window, cx);
                 }
             });
         })
@@ -455,8 +514,9 @@ impl TerminalDock {
                 });
                 cx.spawn_in(window, async move |dock, cx| {
                     if task.await {
-                        let _ =
-                            dock.update_in(cx, |dock, window, cx| dock.launch(origin, window, cx));
+                        let _ = dock.update_in(cx, |dock, window, cx| {
+                            dock.launch(origin, None, window, cx)
+                        });
                     }
                 })
                 .detach();
@@ -501,7 +561,7 @@ impl TerminalDock {
                 .bg(surface)
                 .child(view.clone())
                 .into_any_element(),
-            Some(Pane::Ask { origin, save }) => {
+            Some(Pane::Ask { origin, save, .. }) => {
                 let origin = origin.clone();
                 let save = *save;
                 let project_name = self.project_name(origin.project, cx);
@@ -640,7 +700,7 @@ impl TerminalDock {
                                 )
                                 .on_click(cx.listener(
                                     move |dock, _, window, cx| {
-                                        dock.launch(retry_origin.clone(), window, cx)
+                                        dock.launch(retry_origin.clone(), None, window, cx)
                                     },
                                 )),
                             ),
@@ -666,7 +726,9 @@ impl TerminalDock {
                                 &t,
                             )
                             .on_click(cx.listener(
-                                move |dock, _, window, cx| dock.launch(origin.clone(), window, cx),
+                                move |dock, _, window, cx| {
+                                    dock.launch(origin.clone(), None, window, cx)
+                                },
                             )),
                         ),
                     )
@@ -863,6 +925,18 @@ mod tests {
         assert_eq!(f.topic.as_deref(), Some("T-42"));
         let f = focus_of(Owner::Project(ProjectId(2)), ProjectId(2), None);
         assert_eq!((f.epic, f.topic), (None, None));
+    }
+
+    #[test]
+    fn a_queued_command_survives_only_the_folder_question() {
+        let p = || Some("/acta:triage".to_owned());
+        assert_eq!(queued_prompt(&Err(LaunchError::NoFolder), p()), p());
+        assert_eq!(queued_prompt(&Err(LaunchError::ClaudeNotFound), p()), None);
+        assert_eq!(
+            queued_prompt(&Err(LaunchError::PrimaryMissing(PathBuf::new())), p()),
+            None
+        );
+        assert_eq!(queued_prompt(&Ok(()), p()), None, "the session has it");
     }
 
     #[test]

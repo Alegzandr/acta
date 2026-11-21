@@ -6,7 +6,7 @@
 //! adjustable 11 to 18. The app registers the bundled fonts.
 
 use std::ops::Range;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use alacritty_terminal::grid::Scroll;
 use alacritty_terminal::index::Side;
@@ -98,6 +98,9 @@ impl GridLayout {
         (row, col, side)
     }
 }
+
+/// Between a typed command and its Enter (`send_line`).
+const ENTER_AFTER_PASTE: Duration = Duration::from_millis(50);
 
 pub struct TerminalView {
     spec: LaunchSpec,
@@ -192,22 +195,54 @@ impl TerminalView {
         let Some(session) = self.session.as_ref().filter(|_| self.exited.is_none()) else {
             return false;
         };
-        let Some(cursor) = session.cursor() else {
-            return false;
+        let frame = session.frame(&self.theme);
+        let skip = Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER;
+        let row_text = |row: usize, hide: Flags| -> String {
+            frame
+                .row(row)
+                .iter()
+                .filter(|c| !c.flags.intersects(skip | hide))
+                .map(|c| c.c)
+                .collect::<String>()
+                .trim_end()
+                .to_owned()
         };
-        let screen = session.text();
-        let row = screen.lines().nth(cursor.row).unwrap_or_default();
-        crate::idle::claude_idle(&screen, row, self.last_output.elapsed())
+        let screen = (0..frame.rows)
+            .map(|r| row_text(r, Flags::empty()))
+            .collect::<Vec<_>>()
+            .join("\n");
+        // Claude Code's placeholder is dimmed and its cursor inverse.
+        let plain: Vec<String> = (0..frame.rows)
+            .map(|r| row_text(r, Flags::DIM | Flags::INVERSE))
+            .collect();
+        crate::idle::claude_idle(&screen, &plain, self.last_output.elapsed())
     }
 
-    /// Type `line` and Enter into the session, as if from the keyboard.
-    /// Callers check [`TerminalView::idle_at_prompt`] first.
-    pub fn send_line(&mut self, line: &str) {
-        if let Some(session) = &self.session {
-            let mut bytes = line.as_bytes().to_vec();
-            bytes.push(b'\r');
-            session.input(bytes);
-        }
+    /// The visible screen as text (checks and diagnostics).
+    pub fn screen_text(&self) -> String {
+        self.session.as_ref().map(Session::text).unwrap_or_default()
+    }
+
+    /// Type `line` into the session (as a bracketed paste when the session
+    /// asked for it), then Enter as its own write a moment later, so the
+    /// program sees a paste and then a key press. Callers check
+    /// [`TerminalView::idle_at_prompt`] first.
+    pub fn send_line(&mut self, line: &str, cx: &mut Context<Self>) {
+        let Some(session) = &self.session else { return };
+        session.input(keys::paste_bytes(line, session.mode()));
+        let generation = self.generation;
+        let timer = cx.background_executor().timer(ENTER_AFTER_PASTE);
+        cx.spawn(async move |this, cx| {
+            timer.await;
+            let _ = this.update(cx, |this, _| {
+                if this.generation == generation
+                    && let Some(session) = &this.session
+                {
+                    session.input(b"\r".to_vec());
+                }
+            });
+        })
+        .detach();
     }
 
     pub fn title(&self) -> Option<&str> {
