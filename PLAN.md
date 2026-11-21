@@ -5,8 +5,13 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 | # | Milestone | Release | Status |
 |---|-----------|---------|--------|
 | M0 | Research, spikes, ADRs, DESIGN.md | - | done |
+<<<<<<< HEAD
 | M1 | Pipeline: window that installs silently and updates itself; design foundations; app icon | v0.1.x | doing |
 | M2 | Data model and core UI | v0.2.0 | doing |
+=======
+| M1 | Pipeline: window that installs silently and updates itself; design foundations; app icon | v0.1.x | done |
+| M2 | Data model and core UI | v0.2.0 | todo |
+>>>>>>> main
 | M3 | MCP server, CLI, Claude Code setup; Acta tracks itself | v0.3.0 | todo |
 | M4 | Integrated terminal running Claude Code | v0.4.0 | todo |
 | M5 | Claude chat panel beside the work (Windows and macOS; link on Linux; ADR 0009) | v0.5.0 | todo |
@@ -33,7 +38,7 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 - [x] App icon: "Companion" (planet, ring, moon), rendered by `scripts/icon/`; shipped in v0.1.3
 - [x] Self-update proven end to end by `update-e2e.yml` on Windows, macOS and Linux runners (v0.1.3 -> v0.1.4, run 44851174491; Windows also v0.1.0 -> v0.1.3). v0.1.4 moved the update source off the GitHub API; its first proof is the next release
 - [x] Silent per-user install and Windows uninstall verified (same workflow)
-- [ ] macOS keychain test with ad-hoc signed builds (ADR 0003, `platform-checks.yml`), and SQLCipher builds on macOS and Linux runners
+- [x] macOS keychain test with ad-hoc signed builds (ADR 0003, `platform-checks.yml` run 44851373960): keychain prompts after every update, so macOS keeps the key file; SQLCipher builds and encrypted snapshots pass on macOS and Linux runners
 
 ## M2 - Data model and core UI
 - [x] Encrypted database, key in OS keychain, migrations (`acta-core`; built and tested on Windows only, macOS and Linux by CI)
