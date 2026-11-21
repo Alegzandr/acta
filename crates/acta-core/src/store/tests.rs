@@ -777,6 +777,10 @@ fn populate(store: &mut Store, dir: &std::path::Path) -> ProjectId {
     let n = store.add_note(p, "Note from Alexandre", H).unwrap();
     store.add_note(p, "Unfiled", C).unwrap();
     store.file_notes(&[n], t, H).unwrap();
+    let as_epic = store.add_note(p, "Sync between laptops", H).unwrap();
+    store.file_notes_in_epic(&[as_epic], e, C).unwrap();
+    let noise = store.add_note(p, "Duplicate", H).unwrap();
+    store.dismiss_notes(&[noise], C).unwrap();
     let k = store
         .kb_create(kb(Owner::Topic(t), KbKind::Document, "Spec", "# A\nx\n"), H)
         .unwrap();
@@ -1208,7 +1212,7 @@ fn search_reports_whether_the_total_is_capped() {
 #[test]
 fn a_fresh_database_has_entry_numbers_unique_and_trash_batches() {
     let t = open();
-    assert_eq!(crate::schema::SCHEMA_VERSION, 1);
+    assert_eq!(crate::schema::SCHEMA_VERSION, 2);
     let count = |sql: &str| -> i64 { t.store.conn.query_row(sql, [], |r| r.get(0)).unwrap() };
     assert_eq!(
         count("SELECT count(*) FROM sqlite_master WHERE name = 'entries_topic_seq'"),
@@ -1317,6 +1321,37 @@ fn a_note_becomes_a_topic_in_one_step_and_can_go_back_to_the_inbox() {
 }
 
 #[test]
+fn notes_leave_the_inbox_for_a_topic_an_epic_or_nowhere_and_come_back() {
+    let mut t = open();
+    let s = &mut t.store;
+    let p = s.create_project("Acta", "", H).unwrap();
+    let e = s.create_epic(p, "Sync", "", H).unwrap();
+    let k = topic(s, p, Some(e), "Keys");
+    let n: Vec<_> = (0..3)
+        .map(|i| s.add_note(p, &format!("Note {i} by Alexandre"), H).unwrap())
+        .collect();
+    s.file_notes(&[n[0]], k, C).unwrap();
+    s.file_notes_in_epic(&[n[1]], e, C).unwrap();
+    s.dismiss_notes(&[n[2]], H).unwrap();
+    assert_eq!(s.inbox(p, all()).unwrap().total, 0);
+    assert_eq!(s.projects().unwrap()[0].inbox, 0);
+    let filed = s.filed_notes(p, all()).unwrap();
+    let fates: Vec<_> = filed.items.iter().map(|n| n.fate()).collect();
+    assert_eq!(fates.len(), 3);
+    assert!(fates.contains(&NoteFate::Topic(k)));
+    assert!(fates.contains(&NoteFate::Epic(e)));
+    assert!(fates.contains(&NoteFate::Dismissed));
+    assert_eq!(s.note(n[1]).unwrap().filed_by, Some(C));
+    for id in &n {
+        s.unfile_note(*id, H).unwrap();
+        let note = s.note(*id).unwrap();
+        assert!(note.is_open() && note.filed_by.is_none());
+    }
+    assert_eq!(s.inbox(p, all()).unwrap().total, 3);
+    assert_eq!(s.filed_notes(p, all()).unwrap().total, 0);
+}
+
+#[test]
 fn order_index_follows_the_stored_order_and_folder_paths_set_together() {
     let mut t = open();
     let s = &mut t.store;
@@ -1378,4 +1413,46 @@ fn a_panic_inside_atomically_rolls_back_and_leaves_autocommit() {
         H,
     )
     .unwrap();
+}
+
+#[test]
+fn a_version_1_database_with_notes_migrates_to_version_2() {
+    let dir = tempfile::tempdir().unwrap();
+    let keys = crate::keys::MemoryKeyStore::new();
+    let config = StoreConfig {
+        data_dir: dir.path().to_path_buf(),
+        keys: keys.stores(),
+    };
+    // A database written by 0.3.0: schema 1, one open and one filed note.
+    let mut v1 = Store::open_with(&config, &crate::schema::MIGRATIONS[..1]).unwrap();
+    assert_eq!(crate::db::user_version(&v1.conn).unwrap(), 1);
+    let p = v1.create_project("Acta", "", H).unwrap();
+    let k = topic(&mut v1, p, None, "Keys");
+    for (uuid, text, filed) in [
+        ("n1", "Open note by Alexandre", None),
+        ("n2", "Filed note", Some(k.0)),
+    ] {
+        v1.conn
+            .execute(
+                "INSERT INTO notes (uuid, project_id, text, author, filed_topic_id, filed_at,
+                                    created_at, updated_at, updated_by)
+                 VALUES (?1, ?2, ?3, 'human', ?4, CASE WHEN ?4 IS NULL THEN NULL ELSE 5 END, 1, 1, 'human')",
+                rusqlite::params![uuid, p.0, text, filed],
+            )
+            .unwrap();
+    }
+    drop(v1);
+    let s = Store::open(&config).unwrap();
+    assert_eq!(
+        crate::db::user_version(&s.conn).unwrap(),
+        crate::schema::SCHEMA_VERSION
+    );
+    let open_notes = s.inbox(p, all()).unwrap();
+    assert_eq!(open_notes.total, 1);
+    assert_eq!(open_notes.items[0].fate(), NoteFate::Open);
+    assert_eq!(s.projects().unwrap()[0].inbox, 1);
+    let filed = s.filed_notes(p, all()).unwrap();
+    assert_eq!(filed.total, 1);
+    assert_eq!(filed.items[0].fate(), NoteFate::Topic(k));
+    assert_eq!(filed.items[0].filed_by, None);
 }

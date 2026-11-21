@@ -152,13 +152,19 @@ enum Command {
         #[arg(long)]
         cursor: Option<i64>,
     },
-    /// Create a topic, epic or note: first line of stdin is the title, the rest the description
+    /// Create a topic, epic or note (first line of stdin is the title, the rest
+    /// the description); file notes into a topic's timeline (entry); dismiss
+    /// notes; or apply a triage plan (plan: create parameters as JSON on stdin)
     Create {
-        /// topic, epic or note
+        /// topic, epic, note, entry, dismiss or plan
         kind: String,
+        /// E-n for a new topic
         #[arg(long)]
         epic: Option<String>,
-        /// Comma-separated note ids to file under the new topic
+        /// T-n for entry
+        #[arg(long)]
+        topic: Option<String>,
+        /// Comma-separated note ids to file into the new item, or to dismiss
         #[arg(long, value_delimiter = ',')]
         from_notes: Vec<String>,
         #[command(flatten)]
@@ -598,21 +604,49 @@ fn run_on(store: &mut acta_core::Store, command: Command) -> Result<String, Stri
         Command::Create {
             kind,
             epic,
+            topic,
             from_notes,
             text,
         } => {
-            let t = read_text(&text)?;
-            let t = t.trim();
-            let (title, rest) = t.split_once('\n').unwrap_or((t, ""));
-            ag.create(CreateArgs {
-                items: vec![CreateItem {
-                    kind,
-                    title: title.trim().to_owned(),
-                    description: Some(rest.trim().to_owned()).filter(|d| !d.is_empty()),
-                    epic,
-                    from_notes: Some(from_notes).filter(|n| !n.is_empty()),
-                }],
-            })
+            let notes = Some(from_notes).filter(|n| !n.is_empty());
+            match kind.trim().to_ascii_lowercase().as_str() {
+                "plan" => {
+                    let a: CreateArgs = serde_json::from_str(&read_text(&text)?).map_err(|e| {
+                        format!("create plan takes the create parameters as JSON: {e}")
+                    })?;
+                    ag.create(a)
+                }
+                "dismiss" => ag.create(CreateArgs {
+                    items: Vec::new(),
+                    dismiss: Some(notes.ok_or("dismiss needs --from-notes N-1,N-2")?),
+                }),
+                // An entry's text is the notes' own: nothing on stdin.
+                "entry" => ag.create(CreateArgs {
+                    items: vec![CreateItem {
+                        kind,
+                        topic,
+                        from_notes: notes,
+                        ..CreateItem::default()
+                    }],
+                    dismiss: None,
+                }),
+                _ => {
+                    let t = read_text(&text)?;
+                    let t = t.trim();
+                    let (title, rest) = t.split_once('\n').unwrap_or((t, ""));
+                    ag.create(CreateArgs {
+                        items: vec![CreateItem {
+                            kind,
+                            title: title.trim().to_owned(),
+                            description: Some(rest.trim().to_owned()).filter(|d| !d.is_empty()),
+                            epic,
+                            topic,
+                            from_notes: notes,
+                        }],
+                        dismiss: None,
+                    })
+                }
+            }
         }
         Command::Kb {
             action,

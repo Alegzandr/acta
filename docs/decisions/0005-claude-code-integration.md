@@ -161,6 +161,8 @@ Slash commands are skills; the plugin ships three, in `plugins/acta/skills/<name
 - **Reading.** Before touching an unfamiliar area, call `kb`; open an entry only when its summary matches the task, and a long one by section.
 - **Summary.** One sentence saying what the entry answers and when to read it; never the title again.
 
+**Amendment (M6, notes triage).** `create` is also how an agreed triage is applied, in one transaction: items take `kind: entry` with `topic` (each note becomes a discussion entry of an existing topic, keeping its author and text), `epic: "@k"` names an epic item of the same call, `from_notes` works on epics too, and a top-level `dismiss` list closes notes without filing them. Every note must be open, in the project and used once; a bad item refuses the whole call. Topics made from notes start as draft, and an item without a description takes the notes' text. At most 40 notes per call; the ack names each new id and its notes, and drops the note lists if over budget. `update(id="N-n", status="open" | "dismissed")` puts a note back in the inbox or dismisses it. No new tool.
+
 ## Alternatives
 - Editing `~/.claude.json` and `settings.json` ourselves for the server and hooks: breaks on format changes, hard to remove cleanly, and hooks would mix with the user's own.
 - `claude mcp add --scope user` plus hooks in settings: half the plugin, still needs our own settings edits for hooks and skills.

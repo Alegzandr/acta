@@ -13,7 +13,7 @@
 //! `project_id` is always set so roll-up queries need no join.
 
 /// Step `i` takes `user_version` from `i` to `i + 1`.
-pub const MIGRATIONS: &[&str] = &[V1];
+pub const MIGRATIONS: &[&str] = &[V1, V2];
 
 /// The version this build writes.
 pub const SCHEMA_VERSION: i64 = MIGRATIONS.len() as i64;
@@ -241,4 +241,12 @@ CREATE TRIGGER kb_fts_au AFTER UPDATE OF title, summary, body ON kb_entries BEGI
     INSERT INTO kb_fts(rowid, title, summary, body)
     VALUES (new.id, new.title, new.summary, new.body);
 END;
+"#;
+
+/// M6: a note can become an epic, and the inbox shows who filed each note.
+/// A note with `filed_at` set and no target was dismissed.
+const V2: &str = r#"
+ALTER TABLE notes ADD COLUMN filed_epic_id INTEGER REFERENCES epics(id);
+ALTER TABLE notes ADD COLUMN filed_by TEXT;
+CREATE INDEX notes_filed_topic ON notes(filed_topic_id) WHERE filed_topic_id IS NOT NULL;
 "#;
