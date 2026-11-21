@@ -286,42 +286,39 @@ impl Palette {
                 icon(Icon::Pin, 16., t.text_secondary).into_any_element()
             }
             Target::Kb(..) => icon(Icon::FileText, 16., t.text_secondary).into_any_element(),
-            Target::Command(_) => {
-                icon(Icon::ChevronRight, 16., t.text_secondary).into_any_element()
-            }
+            // No glyph for commands: chevron-right is Claude Code's author
+            // mark, and commands have no kind to show; the slot keeps the
+            // titles aligned.
+            Target::Command(_) => div().size(px(16.)).flex_shrink_0().into_any_element(),
         };
-        let chars: Vec<char> = item.title.chars().collect();
-        let mut title = div().flex().flex_row().min_w_0().overflow_hidden();
-        let mut run = String::new();
-        let mut run_matched = false;
-        let flush = |title: gpui_kit::Div, run: &mut String, matched: bool| {
-            if run.is_empty() {
-                return title;
-            }
-            let text = std::mem::take(run);
-            let el = type_scale::UI.el().flex_shrink_0();
-            title.child(if matched {
-                el.text_color(t.text_primary)
-                    .font_weight(gpui_kit::FontWeight::SEMIBOLD)
-                    .child(text)
-            } else {
-                el.text_color(if item.matched.is_empty() {
-                    t.text_primary
-                } else {
-                    t.text_secondary
-                })
-                .child(text)
-            })
+        // One text run per matched stretch, so the title truncates with an
+        // ellipsis like any other text (components.md 5, Command palette):
+        // matched characters in text.primary at 600 on a text.secondary
+        // title.
+        let rest = if item.matched.is_empty() {
+            t.text_primary
+        } else {
+            t.text_secondary
         };
-        for (i, c) in chars.iter().enumerate() {
-            let m = item.matched.contains(&i);
-            if m != run_matched {
-                title = flush(title, &mut run, run_matched);
-                run_matched = m;
-            }
-            run.push(*c);
-        }
-        title = flush(title, &mut run, run_matched);
+        let strong = gpui_kit::HighlightStyle {
+            color: Some(t.text_primary),
+            font_weight: Some(gpui_kit::FontWeight::SEMIBOLD),
+            ..Default::default()
+        };
+        let highlights: Vec<(std::ops::Range<usize>, gpui_kit::HighlightStyle)> = item
+            .title
+            .char_indices()
+            .enumerate()
+            .filter(|(i, _)| item.matched.contains(i))
+            .map(|(_, (at, c))| (at..at + c.len_utf8(), strong))
+            .collect();
+        let title = type_scale::UI
+            .el()
+            .flex_shrink(1.)
+            .min_w_0()
+            .truncate()
+            .text_color(rest)
+            .child(gpui_kit::StyledText::new(item.title.clone()).with_highlights(highlights));
         let shortcut = match &item.target {
             Target::Command(command) => command.shortcut(locale, cfg!(target_os = "macos")),
             _ => vec![],
@@ -350,7 +347,13 @@ impl Palette {
                     .flex_1()
                     .min_w_0()
                     .truncate()
-                    .text_color(t.text_tertiary)
+                    // On the selected overlay row tertiary is too faint
+                    // (2.2): the path goes up to text.secondary.
+                    .text_color(if selected {
+                        t.text_secondary
+                    } else {
+                        t.text_tertiary
+                    })
                     .child(item.detail.clone()),
             )
             .when(!shortcut.is_empty(), |this| {
@@ -498,10 +501,12 @@ impl Render for Palette {
                     .child(icon(Icon::Search, 16., t.text_tertiary))
                     .children(chip)
                     .child(
-                        type_scale::READING
-                            .el()
-                            .flex_1()
-                            .child(Input::new(&self.input).appearance(false)),
+                        type_scale::READING.el().flex_1().child(
+                            Input::new(&self.input)
+                                .appearance(false)
+                                .text_size(px(type_scale::READING.size))
+                                .line_height(px(type_scale::READING.line)),
+                        ),
                     ),
             )
             .when(!shown.is_empty() || !query.is_empty(), |this| {
