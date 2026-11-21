@@ -184,6 +184,7 @@ impl Store {
                 items: Vec::new(),
                 total: 0,
                 offset,
+                capped: false,
             });
         };
         let kind = kind.map_or(String::new(), |k| format!(" AND k.kind = '{}'", k.as_str()));
@@ -219,6 +220,7 @@ impl Store {
             items,
             total,
             offset,
+            capped: false,
         })
     }
 }

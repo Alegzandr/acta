@@ -22,6 +22,7 @@ mod ui;
 #[cfg(any(windows, test))]
 mod uninstall;
 mod update;
+mod update_source;
 mod updater_window;
 mod user_path;
 
@@ -29,7 +30,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui_kit::{AnyWindowHandle, App, AppContext};
-use velopack::sources::GithubSource;
 use velopack::{UpdateManager, VelopackApp};
 
 use acta_core::paths::Os;
@@ -135,7 +135,7 @@ fn main() {
 /// installed by Velopack. Creating it reads local files only.
 fn velopack_manager() -> Option<UpdateManager> {
     UpdateManager::new(
-        GithubSource::new(acta_core::REPO_URL, None, false),
+        update_source::LatestRelease::new(acta_core::REPO_URL),
         None,
         None,
     )

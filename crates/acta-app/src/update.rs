@@ -246,13 +246,32 @@ pub fn error_kind(err: &velopack::Error) -> String {
         Error::ChecksumInvalid(..) => "checksum mismatch".into(),
         Error::SizeInvalid(..) => "size mismatch".into(),
         Error::Zip(_) => "archive error".into(),
-        Error::Network(_) => "network error".into(),
+        Error::Network(net) => format!("network error ({})", network_kind(net)),
         Error::Json(_) => "malformed feed".into(),
         Error::Semver(_) => "malformed version".into(),
         Error::InvalidPackage(_) => "invalid package".into(),
         Error::NotInstalled(_) => "not installed".into(),
         Error::NotSupported(_) => "not supported".into(),
         _ => "other error".into(),
+    }
+}
+
+/// The HTTP status or the transport failure behind a network error: enough to
+/// tell a rate limit (403, 429) from a dead network, never a URL.
+fn network_kind(err: &velopack::NetworkError) -> String {
+    use ureq::Error;
+    match err {
+        velopack::NetworkError::Url(_) => "bad url".into(),
+        velopack::NetworkError::Http(http) => match http {
+            Error::StatusCode(code) => format!("HTTP {code}"),
+            Error::Timeout(_) => "timeout".into(),
+            Error::HostNotFound => "host not found".into(),
+            Error::ConnectionFailed => "connection failed".into(),
+            Error::Io(io) => format!("io {:?}", io.kind()),
+            Error::Tls(_) | Error::Pem(_) | Error::Rustls(_) => "tls".into(),
+            Error::RedirectFailed | Error::TooManyRedirects => "redirect".into(),
+            _ => "other".into(),
+        },
     }
 }
 
@@ -415,6 +434,31 @@ mod tests {
         assert_eq!(error_kind(&err), "file not found");
         let err = velopack::Error::NotInstalled("C:/Users/Alexandre/Update.exe".into());
         assert!(!error_kind(&err).contains("Alexandre"));
+    }
+
+    #[test]
+    fn network_errors_name_the_status_or_the_transport() {
+        let net =
+            |e: ureq::Error| velopack::Error::Network(Box::new(velopack::NetworkError::Http(e)));
+        assert_eq!(
+            error_kind(&net(ureq::Error::StatusCode(403))),
+            "network error (HTTP 403)"
+        );
+        assert_eq!(
+            error_kind(&net(ureq::Error::HostNotFound)),
+            "network error (host not found)"
+        );
+        assert_eq!(
+            error_kind(&net(ureq::Error::Tls("handshake"))),
+            "network error (tls)"
+        );
+        let io = std::io::Error::new(std::io::ErrorKind::ConnectionReset, "/home/Alexandre");
+        assert_eq!(
+            error_kind(&net(ureq::Error::Io(io))),
+            "network error (io ConnectionReset)"
+        );
+        let uri = ureq::Error::BadUri("https://example.com/Alexandre".into());
+        assert_eq!(error_kind(&net(uri)), "network error (other)");
     }
 
     #[test]

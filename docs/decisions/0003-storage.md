@@ -1,6 +1,6 @@
 # 0003 - Encrypted storage and key management
 
-Status: accepted for Windows and Linux. The macOS key store is provisional: the key file is a departure from the product requirement (key in the OS keychain) based on untested reasoning, so the keychain test listed under Consequences runs on a macOS runner in M1 and decides; the keychain wins if it can be made prompt-free.
+Status: accepted on all three systems. macOS keeps the key file: the M1 runner test (run 44851373960, 2026-11-21) showed that with ad-hoc signed builds an updated build cannot read the keychain item of the previous build without a SecurityAgent prompt, and an item created with `security add-generic-password -A` also prompted (both timed out after 30 s on the runner). A per-update password prompt is unacceptable, so the key file is confirmed for macOS until builds are signed with a stable identity (which the zero-budget rule excludes). Windows, Linux (Secret Service, with the failure modes the same run recorded) and the encrypted VACUUM INTO / backup snapshots passed on the runners.
 Date: 2026-11-20
 
 ## Context

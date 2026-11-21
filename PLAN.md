@@ -5,7 +5,7 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 | # | Milestone | Release | Status |
 |---|-----------|---------|--------|
 | M0 | Research, spikes, ADRs, DESIGN.md | - | done |
-| M1 | Pipeline: window that installs silently and updates itself; design foundations; app icon | v0.1.x | doing |
+| M1 | Pipeline: window that installs silently and updates itself; design foundations; app icon | v0.1.x | done |
 | M2 | Data model and core UI | v0.2.0 | doing |
 | M3 | MCP server, CLI, Claude Code setup; Acta tracks itself | v0.3.0 | todo |
 | M4 | Integrated terminal running Claude Code | v0.4.0 | todo |
@@ -30,10 +30,10 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 - [x] CI: fmt, clippy, tests on every push, all three OSes (green since the Rust 1.100.0 bump)
 - [x] Release workflow on `v*` tags: builds all four channels, publishes installers, feeds, deltas, SHA256SUMS and attestations (v0.1.0 published; v0.1.1 and v0.1.2 are tags without a release, see ADR 0004 amendments)
 - [x] Repository settings: `v*` tag ruleset, immutable releases, `release` environment limited to `v*`
-- [ ] App icon: "Companion" (planet, ring, moon), rendered by `scripts/icon/`; ships in v0.1.3
-- [ ] Self-update proven end to end by `update-e2e.yml` on Windows, macOS and Linux runners: v0.1.0 -> v0.1.3; then delete the v0.1.2 draft
-- [ ] Silent per-user install verified (same workflow)
-- [ ] macOS keychain test with ad-hoc signed builds (ADR 0003, `platform-checks.yml`), and SQLCipher builds on macOS and Linux runners
+- [x] App icon: "Companion" (planet, ring, moon), rendered by `scripts/icon/`; shipped in v0.1.3
+- [x] Self-update proven end to end by `update-e2e.yml` on Windows, macOS and Linux runners (v0.1.3 -> v0.1.4, run 44851174491; Windows also v0.1.0 -> v0.1.3). v0.1.4 moved the update source off the GitHub API; its first proof is the next release
+- [x] Silent per-user install and Windows uninstall verified (same workflow)
+- [x] macOS keychain test with ad-hoc signed builds (ADR 0003, `platform-checks.yml` run 44851373960): keychain prompts after every update, so macOS keeps the key file; SQLCipher builds and encrypted snapshots pass on macOS and Linux runners
 
 ## M2 - Data model and core UI
 - [x] Encrypted database, key in OS keychain, migrations (`acta-core`; built and tested on Windows only, macOS and Linux by CI)
@@ -58,6 +58,7 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 ## M4 - Terminal
 - [ ] Embedded terminal launching Claude Code in the effective working folder of the topic, epic or project it was opened from (ADR 0008)
 - [ ] Rendering, input, resize, scrollback, copy/paste, links
+- [ ] Follow-up: per-row shaping cache keyed by row content, skipping rows `Term::damage()` leaves untouched (ADR 0002 rendering plan); the view relies on GPUI's per-frame line layout cache until then
 
 ## M5 - Claude chat panel
 - [x] ADR 0009 accepted with conditions: claude.ai in the system web view, Windows proven by the spike, macOS unproven, Linux gets a link; M5 opens with the keyboard handoff check, a real sign-in by the user and a macOS build
