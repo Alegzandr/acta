@@ -1635,6 +1635,7 @@ impl RecordPage {
         let id = entry.id;
         let kind = entry.kind;
         let open = self.kb_open == Some(id);
+        let unread = self.ws.read(cx).is_unread(acta_core::model::Record::Kb(id));
         let human = when::initial(&when::human_name(locale));
         let row = ui::focusable(div().id(("kb-row", index)), t, false)
             .flex()
@@ -1655,6 +1656,10 @@ impl RecordPage {
                     page.kb_open = if page.kb_open == Some(id) {
                         None
                     } else {
+                        // Unfolded is shown: the dot goes.
+                        page.ws.update(cx, |ws, cx| {
+                            ws.mark_seen(acta_core::model::Record::Kb(id), cx)
+                        });
                         Some(id)
                     };
                     cx.notify();
@@ -1688,6 +1693,7 @@ impl RecordPage {
                     .text_color(t.text_secondary)
                     .child(entry.summary.clone()),
             )
+            .when(unread, |this| this.child(ui::unread_dot(t)))
             .child(ui::author_mark(entry.updated_by, &human, t))
             .child(
                 type_scale::SMALL

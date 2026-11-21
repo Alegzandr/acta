@@ -18,7 +18,7 @@ use acta_core::model::{
     Author, EpicId, FolderId, KbId, Note, NoteId, Owner, ProjectId, ProjectTree, Record, Status,
     TopicId,
 };
-use acta_core::store::{EpicPatch, ProjectPatch, TopicPatch};
+use acta_core::store::{EpicPatch, ProjectPatch, TopicPatch, Unread};
 use acta_core::{ChangeWatcher, Store};
 use gpui_kit::{App, Context, EventEmitter, Task};
 
@@ -446,6 +446,9 @@ pub struct Workspace {
     pub db: Db,
     pub bulk: Option<BulkOffer>,
     pub projects: Vec<ProjectTree>,
+    /// What Claude Code changed since this installation last showed it
+    /// (the unread dots; data.md request 1), reloaded with the tree.
+    pub unread: Unread,
     /// Bumped on every reload, by any process's commit.
     pub revision: u64,
     undo: HashMap<Option<ProjectId>, UndoStack>,
@@ -521,6 +524,7 @@ impl Workspace {
             db,
             bulk: None,
             projects: Vec::new(),
+            unread: Unread::default(),
             revision: 0,
             undo: HashMap::new(),
             redo: HashMap::new(),
@@ -535,12 +539,15 @@ impl Workspace {
 
     /// Reload the tree; pages observing the workspace reload their data.
     pub fn reload(&mut self, cx: &mut Context<Self>) {
-        let task = self.db.run(cx, |store| load_trees(store));
+        let task = self
+            .db
+            .run(cx, |store| Ok((load_trees(store)?, store.unread()?)));
         self._reload = cx.spawn(async move |this, cx| {
             let loaded = task.await;
             let _ = this.update(cx, |ws, cx| match loaded {
-                Ok(projects) => {
+                Ok((projects, unread)) => {
                     ws.projects = projects;
+                    ws.unread = unread;
                     ws.revision += 1;
                     cx.emit(WorkspaceEvent::Reloaded);
                     cx.notify();
@@ -548,6 +555,39 @@ impl Workspace {
                 Err(err) => crate::log::line(&format!("store: reload failed: {}", err_kind(&err))),
             });
         });
+    }
+
+    /// Whether `record` carries an unread dot (topics and knowledge only).
+    pub fn is_unread(&self, record: Record) -> bool {
+        match record {
+            Record::Topic(id) => self.unread.topics.contains(&id),
+            Record::Kb(id) => self.unread.has_kb(id),
+            _ => false,
+        }
+    }
+
+    /// `record` is on screen: its dot goes now, and its read marker is
+    /// written in the background (local, never undone, never toasted).
+    /// Nothing is written for a record without a dot.
+    pub fn mark_seen(&mut self, record: Record, cx: &mut Context<Self>) {
+        if !self.is_unread(record) {
+            return;
+        }
+        match record {
+            Record::Topic(id) => {
+                self.unread.topics.remove(&id);
+            }
+            Record::Kb(id) => self.unread.kb.retain(|(k, _)| *k != id),
+            _ => {}
+        }
+        cx.notify();
+        let task = self.db.run(cx, move |store| store.mark_seen(record));
+        cx.spawn(async move |_, _| {
+            if let Err(err) = task.await {
+                crate::log::line(&format!("store: read marker failed: {}", err_kind(&err)));
+            }
+        })
+        .detach();
     }
 
     /// The project a record belongs to, from the loaded tree (`None` for

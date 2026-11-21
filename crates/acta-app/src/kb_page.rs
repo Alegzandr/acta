@@ -78,6 +78,7 @@ fn owner_route(owner: Owner) -> Route {
 fn kb_row(
     entry: &KbSummary,
     excerpt: Option<&str>,
+    unread: bool,
     index: usize,
     locale: Locale,
     t: &Tokens,
@@ -145,6 +146,8 @@ fn kb_row(
         )
         // 12 between title and summary: the row's gap of 8 plus 4.
         .child(div().ml(px(4.)).flex_1().min_w_0().flex().child(summary))
+        // The unread dot sits left of the author mark (5, Knowledge row).
+        .when(unread, |this| this.child(ui::unread_dot(t)))
         .child(ui::author_mark(entry.updated_by, &human, t))
         .child(
             type_scale::SMALL
@@ -660,20 +663,25 @@ impl Render for KnowledgePage {
                 let id = entry.id;
                 let kind = entry.kind;
                 let open = self.open_memory == Some(id);
+                let unread = self.ws.read(cx).is_unread(acta_core::model::Record::Kb(id));
                 column = column.child(
-                    kb_row(&entry, excerpt.as_deref(), index, locale, &t).on_click(cx.listener(
-                        move |page, _, _, cx| match kind {
+                    kb_row(&entry, excerpt.as_deref(), unread, index, locale, &t).on_click(
+                        cx.listener(move |page, _, _, cx| match kind {
                             KbKind::Document => cx.emit(PageEvent::Open(Route::Kb(id))),
                             KbKind::Memory => {
                                 page.open_memory = if page.open_memory == Some(id) {
                                     None
                                 } else {
+                                    // Unfolded is shown: the dot goes.
+                                    page.ws.update(cx, |ws, cx| {
+                                        ws.mark_seen(acta_core::model::Record::Kb(id), cx)
+                                    });
                                     Some(id)
                                 };
                                 cx.notify();
                             }
-                        },
-                    )),
+                        }),
+                    ),
                 );
                 if open {
                     column = column.child(

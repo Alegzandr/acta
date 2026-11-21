@@ -728,6 +728,7 @@ impl Shell {
             self.navigate(Route::Inbox(id), true, window, cx);
         }
         self.refresh_kb_titles(cx);
+        self.mark_shown_seen(cx);
     }
 
     /// The layout of `preferences.json` (4.8.12): every page tab whose key
@@ -1005,6 +1006,37 @@ impl Shell {
             bench.history.replace(route);
         }
         self.show(route, window, cx);
+        self.mark_shown_seen(cx);
+    }
+
+    /// The pages on screen (the active tab of every page group) lose their
+    /// unread dot and get their read marker (data.md request 1).
+    pub(super) fn mark_shown_seen(&mut self, cx: &mut Context<Self>) {
+        let Content::Workbench(bench) = &self.content else {
+            return;
+        };
+        let shown: Vec<Record> = bench
+            .layout
+            .page
+            .groups
+            .iter()
+            .filter_map(|g| match g.active_tab()? {
+                Tab::Page(id) if id == bench.current => bench.history.current(),
+                Tab::Page(id) => bench.slots.get(&id)?.history.current(),
+                Tab::View(_) => None,
+            })
+            .filter_map(|route| match route {
+                Route::Topic(id) => Some(Record::Topic(id)),
+                Route::Kb(id) => Some(Record::Kb(id)),
+                _ => None,
+            })
+            .collect();
+        let ws = bench.ws.clone();
+        ws.update(cx, |ws, cx| {
+            for record in shown {
+                ws.mark_seen(record, cx);
+            }
+        });
     }
 
     /// The view of a page, its events tied to the tab that shows it.
@@ -2858,6 +2890,15 @@ impl Shell {
         let menu = bench.tree_menu;
         let renaming = bench.rename.as_ref().map(|r| (r.key, r.state.clone()));
         let menu_items = self.menu_items(&rows, cx);
+        let unread: Vec<bool> = match self.bench() {
+            Some(bench) => {
+                let ws = bench.ws.read(cx);
+                rows.iter()
+                    .map(|row| tree::row_unread(row, &ws.projects, &ws.unread))
+                    .collect()
+            }
+            None => vec![false; rows.len()],
+        };
         let items: Vec<AnyElement> = rows
             .iter()
             .enumerate()
@@ -2875,7 +2916,9 @@ impl Shell {
                     .filter(|(k, _)| *k == key)
                     .map(|(_, state)| state.clone());
                 let cursor = ring && i == cursor && edit.is_none();
-                tree_row(row, i, current, cursor, menu, edit, locale, t, cx)
+                tree_row(
+                    row, i, current, unread[i], cursor, menu, edit, locale, t, cx,
+                )
             })
             .collect();
         let on_trash = current == Some(Route::Trash);
@@ -3866,6 +3909,7 @@ fn tree_row(
     row: &Row,
     index: usize,
     current: Option<Route>,
+    unread: bool,
     cursor: bool,
     menu: Option<AnyElement>,
     edit: Option<Entity<InputState>>,
@@ -4052,6 +4096,10 @@ fn tree_row(
                 )))
         }
     };
+    // The trailing slot: the unread dot (components.md 5, list / tree row).
+    if unread {
+        el = el.child(busy_dot(t));
+    }
     if let Some(route) = row.route() {
         // Mod+click or a middle click opens the row in a new tab (4.4).
         el = el

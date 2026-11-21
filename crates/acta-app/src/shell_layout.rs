@@ -438,6 +438,7 @@ impl Shell {
         }
         self.sync_page_views(window, cx);
         self.sync_tool_views(window, cx);
+        self.mark_shown_seen(cx);
         self.save_layout(cx);
         cx.notify();
     }
@@ -2411,8 +2412,24 @@ impl Shell {
             .bg(t.bg_sunken)
             .border_b_1()
             .border_color(t.border_subtle);
+        let ws = bench.ws.clone();
         for (i, tab) in g.tabs.iter().enumerate() {
             let is_active = i == g.active;
+            // 4.4: the dot of a background tab whose page another process
+            // changed; the close button takes its place on hover.
+            let unread = !is_active
+                && match tab {
+                    Tab::Page(id) => match self.route_of(*id) {
+                        Some(Route::Topic(t)) => {
+                            ws.read(cx).is_unread(acta_core::model::Record::Topic(t))
+                        }
+                        Some(Route::Kb(k)) => {
+                            ws.read(cx).is_unread(acta_core::model::Record::Kb(k))
+                        }
+                        _ => false,
+                    },
+                    Tab::View(_) => false,
+                };
             let (leading, title, view_kind, closable) = match *tab {
                 Tab::Page(id) => {
                     let route = self.route_of(id);
@@ -2439,6 +2456,7 @@ impl Shell {
             };
             let tab_v = *tab;
             let hover_group = SharedString::from(format!("tab-{group}-{i}"));
+            let hover_group_dot = hover_group.clone();
             let hover = t.fill_hover;
             let close = ui::ghost_icon_button(
                 format!("tab-close-{group}-{i}"),
@@ -2524,7 +2542,28 @@ impl Shell {
                         })
                         .child(title),
                 )
-                .when(closable, |this| this.child(close)),
+                .map(|this| {
+                    if !closable {
+                        this
+                    } else if unread {
+                        this.child(
+                            div()
+                                .relative()
+                                .flex_shrink_0()
+                                .size(px(16.))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child(
+                                    busy_dot(t)
+                                        .group_hover(hover_group_dot.clone(), |s| s.invisible()),
+                                )
+                                .child(div().absolute().top_0().left_0().child(close)),
+                        )
+                    } else {
+                        this.child(close)
+                    }
+                }),
             );
         }
         if folded {

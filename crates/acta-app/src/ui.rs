@@ -370,6 +370,15 @@ pub fn button(
 /// The author mark of a timeline entry or knowledge row (docs/design/
 /// components-records.md 5): a circle with the initial for the human, a
 /// square with a prompt chevron for Claude Code. Shape, not colour.
+/// The unread dot: 6, `accent` (components.md 5, list / tree row).
+pub fn unread_dot(t: &Tokens) -> Div {
+    div()
+        .flex_shrink_0()
+        .size(px(6.))
+        .rounded(px(3.))
+        .bg(t.accent)
+}
+
 pub fn author_mark(author: Author, human_initial: &str, tokens: &Tokens) -> Div {
     let mark = div()
         .flex()

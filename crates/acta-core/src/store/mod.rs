@@ -12,6 +12,7 @@ mod folders;
 mod kb;
 mod records;
 mod search;
+mod seen;
 mod timeline;
 mod trash;
 
@@ -23,6 +24,7 @@ pub use folders::{EffectiveFolder, EffectiveFolders, FolderResolution};
 pub use kb::{KbCounts, KbEdit, KbFilter, KbRevisionSummary, KbUpdate, NewKb};
 pub use records::{EpicPatch, NewTopic, ProjectPatch, TopicFilter, TopicPatch};
 pub use search::{SNIPPET_CLOSE, SNIPPET_OPEN, SearchHit, SearchKind, SearchQuery};
+pub use seen::Unread;
 pub use timeline::{EntryFilter, NewEntry};
 pub use trash::{TRASH_RETENTION_MS, TrashItem};
 
