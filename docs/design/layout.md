@@ -34,11 +34,189 @@ Part of the Acta design system. [DESIGN.md](../../DESIGN.md) is the index: direc
 
 Five regions, each with one job: the tree finds, the page reads and writes, tool windows run things beside it, the titlebar says where you are, the status bar says what Acta is connected to. This is the **default** arrangement. The four areas (left sidebar, page area, right sidebar, bottom panel) and the views in them can be shown, hidden, resized and moved, and nothing moved is ever hard to put back: the model, the drag and drop, persistence and recovery are in 4.8 ([workbench.md](workbench.md)), which wins where this section and it disagree.
 
-- **Sidebar: one tree, every project.** Top-level rows are projects, each collapsible. Under an expanded project, in this order: the Inbox row (`inbox` icon, count of open notes), the Knowledge row (`library` icon, count of entries in the project, unread dot when Claude Code has added some), the topics that belong to no epic, then the epics, each collapsible, with their topics. The project of the active page is expanded when that page opens; every other node stays as the user left it. Pinned at the bottom, outside the scroll, above a 1px `border.subtle` line: the Trash row (`trash-2`) and the Settings row (`settings`). The tree is the Projects view (4.8.3); in the left sidebar it sits under the area header "Projects" (4.8.4), which is how it is moved. Width 260, resizable from 200 to 60% of the window, hidden with `Mod+B`. Padding 8, rows inset 8, tree indent 16 per level (project 0, epic and loose topic 16, topic in an epic 32).
+- **Sidebar: one tree, every project.** Top-level rows are projects, each collapsible. Under an expanded project: its Inbox and Knowledge rows, then the topics that belong to no epic, then the epics with their topics; closed topics fold under one "3 closed" row per group. Opening a page reveals its row. Pinned at the bottom, outside the scroll, above a 1px `border.subtle` line: the Trash row (`trash-2`) and the Settings row (`settings`). The tree is the Projects view (4.8.3); in the left sidebar it sits under the area header "Projects" (4.8.4), which is how it is moved. Width 260, resizable from 200 to 60% of the window, hidden with `Mod+B`. Structure, geometry, signals, long trees and empty states are in 4.2.1; the row is in 5 (Tree row).
 - **Page area: one page per tab.** A page is a topic, an epic, a project, an inbox, a knowledge base, a document or memory, the trash, settings or the shortcuts list. Every record page has the same skeleton: title, properties block, then its sections. Section order in a topic is fixed: title, properties (status, epic, folders, id, updated), current state, description, knowledge, timeline; the timeline is last because it is the only unbounded section. An epic page: title, properties (progress, folders, id, updated), description, knowledge, topic table. A project page: title, properties (progress, folders, updated), description, knowledge, topic table grouped by epic. The content column is centred, at most the Reading width (typography.md 3.3: 480, 560 or 720), with at least 32 of side padding and 32 above the title. Sections of a page are 32 apart, each opened by a 28 header row with its `type.label` vertically centred; space separates them, never a line.
 - **Tabs** (4.4), **tool windows** (4.5) and the **status bar** (4.6) are specified below.
 - **Window**: default 1440 x 900, minimum **880 x 560**. The layout of 4.8 (areas, sizes, where each view is, page groups), open tabs and the tree's expansion are remembered per window in the preferences file (4.7).
 - **Narrow behaviour**: areas give way in a fixed order (4.8.10): the left sidebar first, then the page area's split, never a view's minimum. If left sidebar + 420 + right sidebar no longer fit, the left sidebar auto-hides (it returns when space returns; `Mod+B` still shows it as an overlay on top of the page, at its width, with `shadow.overlay`, dismissed by `Esc` or by opening something). At 880 with the right sidebar open the split is page 420 / right sidebar 460. Nothing ever scrolls horizontally except code blocks, wide tables and an overfull tab bar.
+
+### 4.2.1 The tree (Projects view)
+
+Decided on 2026-11-21 at the user's request: the tree must be clear at a glance, without noise. A glance answers four questions, and each has one answer, never two:
+
+| Question | What answers it | What does not, by decision |
+|---|---|---|
+| Where am I? | The open page's row: `fill.selected`, title `text.primary`. The project and epic rows on its path: title `text.primary`, while every other project and epic row is `text.secondary`. Opening a page reveals its row (below). | An accent bar, a bold title, an icon. |
+| What is being worked on? | The Active glyph, `circle-dot` in `accent`. | Sorting Active first; a "Now" section. |
+| What needs me? | The Blocked glyph, `circle-pause` in `warning` (leading); the unread dot (trailing); the Inbox count. | Badges on epics or projects; Blocked rolled up into folded parents. |
+| How is it organised? | Three row kinds, three treatments: project (depth 0, `type.ui-strong`, no icon), epic (depth 1, `type.ui-strong`, chevron), topic (`type.ui`, status glyph); a project's places (Inbox, Knowledge) above its work, set off by space; space between projects. | Guide lines, section headers, coloured icons. |
+
+How the references do it, and what Acta takes: **VS Code's explorer** reveals the active file (expands its folders, scrolls to it), sticks the parent folder at the top while scrolling (sticky scroll), and needs indent guides because folders nest without limit and every level looks the same. **Obsidian** draws guides for the same reason and marks the active file with a fill and brighter text, nothing else. **Notion** marks the current page with a fill and darker text, reveals controls (`+`, `...`) on hover only, and writes "No pages inside" under an empty page instead of leaving a lone open chevron. **Linear** keeps colour for status and a dot for unread, shows counts only where something waits (Inbox), and lets the user order things by hand. Acta takes the reveal, the sticky parent, the fill-and-text selection, the hover-only control, the empty-container line, the single unread dot and the manual order. It leaves the guides: the tree has three levels at most and every level change is also a change of row kind (chevron and weight, or glyph), so the eye never has to count indentation.
+
+**Order inside an expanded project**, top to bottom:
+
+1. **Inbox** (`inbox`), with the count of open notes when it is above 0 ("99+" above 99). The count is the one number in the tree: notes waiting to be filed are work waiting.
+2. **Knowledge** (`library`), no count; the unread dot when Claude Code created or changed an entry since it was last shown. A total of 55 entries asks nothing of the reader, so it is not shown (the knowledge page states it).
+3. 4 of space.
+4. **Topics in no epic**, open ones in stored order, then their "N closed" row.
+5. **Epics** in stored order, each followed, when expanded, by its open topics in stored order, then its "N closed" row, or by the "New topic" ghost row when it has no topic at all.
+
+Then 8 of space after the project's last visible row when another project follows. Folded projects stack with no space between them, so a list of folded projects reads as one list.
+
+Topics in no epic come first because (a) the project page's topic table already puts "No epic" first (components-records.md 5), so both views of a project agree; (b) after them every step down the tree changes row kind (topic, then epic with chevron and weight), and every step back up is a project row with space above it, so there is never a depth-2 row followed by a depth-1 row of the same kind, which is the ambiguity guide lines exist to resolve; (c) they are usually the newest, still unfiled work and sit next to the inbox most of them come from.
+
+**Status in the tree.** Colour is spent only on the two open states that say something to the reader: Active (`accent`, "here") and Blocked (`warning`, "needs you"). Draft is `text.tertiary`, Planned `text.secondary`, and closed topics (Done, Dropped) draw glyph and title in `text.tertiary`: in a list, a finished topic asks nothing, so it does not get the green of its Status property (2.3). Status still reads in greyscale: the glyph shapes differ (dashes, empty, dot, bars, check, slash). Topics keep their **stored order**, which the human sets (drag, `Alt+Up` / `Alt+Down`) and Claude Code sees; the tree never sorts by status, because a status written by Claude Code would then move rows under the reader (6.5, rule 5) and a hand-made order would mean nothing. Closed topics fold under the "N closed" row at the end of their group, folded by default, the fold remembered per group (4.7).
+
+**Signals: one trailing slot, one signal at most.** Every row has a leading slot (what the row is, or its state) and a trailing slot (what is new for you, or how much waits). Nothing else is drawn in a row.
+
+| Row | Leading (16 slot) | Trailing at rest | Trailing on hover |
+|---|---|---|---|
+| Project | `chevron-right` / `chevron-down` | Unread dot when folded and anything inside it is unread | Ghost `plus`, "New topic" (in no epic) |
+| Epic | Chevron | Unread dot when folded and one of its topics is unread | Ghost `plus`, "New topic" (in this epic) |
+| Inbox | `inbox` | Count of open notes, when above 0 | Unchanged |
+| Knowledge | `library` | Unread dot | Unchanged |
+| Topic | Status glyph 14 | Unread dot | Unchanged |
+| "N closed" | Chevron 14 | Unread dot when folded and a closed topic in it is unread | Unchanged |
+| "New topic" (ghost) | `plus` 14 | Nothing | Nothing |
+
+Only unread rolls up into a folded parent, because it is transient and folding must never hide it; Active and Blocked are lasting states, and rolling them up would mark a folded epic for weeks until the reader stops seeing the mark. Epics and projects carry no counts and no progress in the tree: progress is on their pages (components-records.md 5). The unread dot means one thing everywhere: Claude Code (or any other process) wrote it since this installation last showed it (6.5, data.md 11 request 1); its tooltip says so.
+
+**Where am I: reveal.** Opening a page by any route (tree, palette, link, back and forward, switching tabs or groups) reveals its row: its project and its epic expand (and stay expanded, as if the user had unfolded them), revealing a closed topic also unfolds its "N closed" row, and the tree scrolls by the least amount that shows the row whole below the sticky row (below). One exception keeps the reader's place: while the pointer is over the tree, the tree expands but does not scroll, and the rows on screen keep their position (anchored as in 6.5, rule 2). A document or memory selects the row of its owner (components-knowledge.md 5). `Mod+1` focuses the tree and puts the keyboard cursor on the open page's row, revealing it the same way. If the user folds the open page's epic or project afterwards, the folded row keeps its `text.primary` title, so the path stays visible.
+
+**Geometry** (x from the view's left edge; the view is `bg.sunken`):
+
+| Part | Value |
+|---|---|
+| Tree viewport padding | 8 on every side |
+| Row | height 28, a pill from x 8 to the right edge minus 8, `radius.sm`, padding 0 x 8 |
+| Indent | 16 per depth: project 0, Inbox, Knowledge, epic and topic in no epic 1, topic in an epic 2. "N closed" and "New topic" take the depth of the topics of their group |
+| Leading slot | 16 x 16 at x = 16 + 16 x depth (16, 32, 48); a 14 glyph is centred in it |
+| Title | starts 8 after the leading slot: x = 40, 56, 72; fills, truncates at the end |
+| Trailing slot | right-aligned at the row's content edge (view width minus 16), 8 after the title. Project and epic rows always reserve 24 (so the `plus` appears without moving the title); Inbox reserves the count's width; topic, Knowledge and "N closed" rows reserve 16 only while the dot shows |
+| Unread dot | 6, `accent`, centred in a 16 x 16 box at the right of the trailing slot |
+| `plus` | compact ghost icon button 24, its centre on the dot's centre line (it overhangs the row padding by 4) |
+| Space | 4 below the Knowledge row; 8 below the last visible row of an expanded project when another project follows |
+
+Title space at the two widths that matter (projects and epics with their reserved 24; topics without / with a dot): at **260**, project 172, epic 156, topic in no epic 188 / 164, topic in an epic 172 / 148; at **200**, project 112, epic 96, topic in no epic 128 / 104, topic in an epic 112 / 88. At 200 a topic title in an epic shows about 14 characters; the tooltip gives the rest. Nothing hides or changes layout at narrow widths: the counts, the dots and the hover `plus` keep their place, because each is what the row is for.
+
+**Long trees** (100 topics in a project, 10,000 in all; the budgets of 6.3 hold):
+- Rows are virtualised: only the rows in the viewport, plus one screen above and below, are laid out (GPUI `list` with per-item heights, because of the 4 and 8 spaces). Building the row list is a pure function of the model and the folds (`tree::rows`), done once per model change, not per frame.
+- **Sticky project row.** While the tree is scrolled so that an expanded project's row is above the viewport and any of its rows are still in it, a copy of that project row is drawn at the top of the viewport (5, Tree row). The next project's row pushes it up as it arrives. One row at most, so it never costs more than 28; epics do not stick. It answers "which project is this?" anywhere in a long tree, which the breadcrumb cannot (it names the open page, not the scrolled place).
+- Titles truncate at the end with an ellipsis; a truncated title shows its full text in a tooltip (5, Tooltip, the title exception). Ids are never shown in the tree.
+- **Collapse all**: the Projects view menu's first item, above the view menu items and a separator (as the chat's own items are, 4.8.4), and the palette command "Projects: Collapse all". It folds every project and every epic; the "N closed" folds are kept. The open page's project unfolds again the next time a page of it is opened.
+- **No filter field.** Type-ahead (6.1) jumps to a visible title; the palette (`Mod+K`, scope chip Topics) finds any topic, folded or not, and opening it reveals it. A filter box at the top of the tree would be a second search for navigation, which 5 (Command palette) rules out, and would cost a permanent 36 of height for something the palette already does with one key. VS Code's explorer hides its find-in-tree behind a key for the same reason.
+
+**Empty states.**
+- **No project** (only reachable after deleting the last one; first run has no sidebar, 8.5): at the top of the tree, padding 8 then 8 inside, "No projects yet." in `type.ui` `text.secondary`, then 8 below it a secondary button "New project..." (`cmd.new_project`). Trash and Settings stay pinned.
+- **A project with no topic and no epic**: its Inbox and Knowledge rows only. It does not look broken, so nothing is added; the project row's hover `plus` and the project page's empty state (8.5) offer the action.
+- **An expanded epic with no topic**: one ghost row, `plus` 14 and "New topic", at the topics' depth. An open chevron with nothing under it reads as a fold that failed (Notion writes "No pages inside" for the same reason); the ghost row says it is empty and offers the one action.
+- **First run, once the project exists**: the tree shows one expanded project, "Inbox" (no count), "Knowledge", nothing else, the project row in `text.primary` (it is the active project), and the Inbox row selected (choosing the folder opens the inbox, 8.5).
+- No loading state: the tree is drawn from the model already in memory, on the window's first frame after the database opens.
+
+**Wireframes.** Characters are 8 wide; `[ ... ]` marks the selected row (its fill spans the whole pill, x 8 to the width minus 8), `*` the unread dot, `[+]` the hover `plus`.
+
+Default, 260 wide:
+
+```
++--------------------------------+
+| Projects                [.][-] |  28  area header (4.8.4)
+|--------------------------------|
+| v Acta                         |  project, on path: 600, text.primary
+|     [i] Inbox                4 |  depth 1, count text.tertiary
+|     [k] Knowledge            * |  no count; unread dot
+|                                |  4
+|     (o) Naming                 |  no epic: Draft glyph text.tertiary
+|     ( ) Release checklist      |  Planned glyph text.secondary
+|     > 1 closed                 |  ghost row, type.small text.tertiary
+|   v Terminal                   |  epic on path: 600, text.primary
+|     [(.) Embed the terminal  ] |  selected: fill.selected, text.primary
+|       (=) Scrollback           |  Blocked: glyph in warning
+|       ( ) Links in output    * |  unread: Claude Code wrote it
+|       > 2 closed               |
+|   > Core UI                  * |  folded epic, 600 text.secondary; dot
+|   v Notes                      |
+|       + New topic              |  empty epic: ghost row
+|                                |  8
+| > Atlas                    [+] |  other project, hovered: plus
+| > Field notes                * |  folded project with unread inside
+|                                |
+|--------------------------------|  border.subtle
+|  [t] Trash                     |  pinned
+|  [s] Settings                  |
++--------------------------------+
+  x: rows 8..252; leading 16 / 32 / 48; titles 40 / 56 / 72; trailing ends at 244
+```
+
+Long tree, scrolled into the middle of a project with 140 topics:
+
+```
++--------------------------------+
+| Projects                [.][-] |
+|--------------------------------|
+| v Acta                         |  sticky copy of the project row, bg.sunken
+|--------------------------------|  border.subtle, only while stuck
+|       ( ) Palette ranking      |  rows of epic "Core UI" pass under it
+|       (o) Recent files in th.. |  truncated: full title in the tooltip
+|       ( ) Shortcut cheat sh..  |
+|       > 14 closed              |
+|   v Storage                    |
+|       (.) Encrypted backups    |
+|       (=) Snapshot restore   * |
+|       ( ) Export to Markdo..   |
+|       > 31 closed              |
+|   > Sync                       |
+|   > Website                    |
+|                                |  8
+| v Atlas                        |  next project: pushes the sticky row up
+|     [i] Inbox                  |
+|     [k] Knowledge              |       scrollbar: overlay, 4 wide (5)
+|--------------------------------|
+|  [t] Trash                     |
+|  [s] Settings                  |
++--------------------------------+
+```
+
+Narrow, 200 wide (the minimum):
+
+```
++-------------------------+
+| Projects         [.][-] |
+|-------------------------|
+| v Acta                  |
+|     [i] Inbox         4 |
+|     [k] Knowledge     * |
+|                         |
+|     (o) Naming          |
+|   v Terminal            |
+|     [(.) Embed the t.. ]|  depth 2: 112 of title (88 with a dot)
+|       (=) Scrollback    |
+|       ( ) Links in o.. *|
+|       > 2 closed        |
+|   > Core UI           * |
+|                         |
+| > Atlas                 |
+|-------------------------|
+|  [t] Trash              |
+|  [s] Settings           |
++-------------------------+
+```
+
+No project (after the last one was deleted):
+
+```
++--------------------------------+
+| Projects                [.][-] |
+|--------------------------------|
+|  No projects yet.              |  type.ui text.secondary, at x 16
+|  [New project...]              |  secondary button, 8 below
+|                                |
+|--------------------------------|
+|  [t] Trash                     |
+|  [s] Settings                  |
++--------------------------------+
+```
+
+Glyphs as in 8.1: `(o)` Draft, `( )` Planned, `(.)` Active, `(=)` Blocked, `(v)` Done, `(-)` Dropped; `v` and `>` are chevrons; `[i]` `inbox`, `[k]` `library`.
 
 ### 4.3 Titlebar (client-side, 36 high, `bg.sunken`, bottom border `border.subtle`)
 
