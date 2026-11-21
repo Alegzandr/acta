@@ -386,6 +386,9 @@ struct Bench {
     next_tab: u64,
     /// Closed tabs, most recent last ("Reopen closed tab").
     closed_tabs: Vec<History>,
+    /// Page tabs a layout change closed (an Inbox page that became the
+    /// view), for the undo of that change.
+    retired: HashMap<TabId, History>,
     /// The titles of the documents and memories open in tabs, read off the
     /// UI thread, for the tabs that are not active.
     kb_titles: std::collections::HashMap<KbId, String>,
@@ -595,6 +598,7 @@ impl Shell {
             slots: HashMap::new(),
             next_tab: 1,
             closed_tabs: Vec::new(),
+            retired: HashMap::new(),
             kb_titles: Default::default(),
             _kb_titles: Task::ready(()),
             settings: settings_page,
@@ -780,6 +784,25 @@ impl Shell {
                     )
                     .is_ok()
                 });
+            }
+            // 8.19: a second page split to the right, Inbox as a view.
+            Ok("groups") => {
+                let project = self.bench().and_then(|b| b.active_project);
+                if let Some(project) = project {
+                    self.open_in_tab(Route::Settings, window, cx);
+                    self.split_page(Direction::Row, window, cx);
+                    self.open_in_tab(Route::Inbox(project), window, cx);
+                    if let Some(tab) = self.bench().map(|b| b.current) {
+                        self.change_layout(None, window, cx, |l| {
+                            l.page_to_view(
+                                tab,
+                                ViewId::Inbox,
+                                crate::layout::Target::Area(Side::Left),
+                            )
+                            .is_ok()
+                        });
+                    }
+                }
             }
             Ok("export") => self.open_export(window, cx),
             Ok("snapshots") => self.open_snapshots(window, cx),

@@ -344,11 +344,29 @@ impl Shell {
     /// the preferences saved.
     pub(super) fn after_layout(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(bench) = self.bench() else { return };
+        // Pages the change closed leave their slots; their history is kept
+        // so that undoing the change brings them back.
+        let named = bench.layout.page_tabs();
+        let closed: Vec<TabId> = bench
+            .slots
+            .keys()
+            .copied()
+            .filter(|id| !named.contains(id))
+            .collect();
+        for id in closed {
+            if let Some(slot) = bench.slots.remove(&id) {
+                bench.retired.insert(id, slot.history);
+            }
+        }
+        if !named.contains(&bench.current) {
+            bench.retired.insert(bench.current, bench.history.clone());
+        }
         let mut live: Vec<TabId> = bench.slots.keys().copied().collect();
-        live.push(bench.current);
+        if named.contains(&bench.current) {
+            live.push(bench.current);
+        }
         bench.layout.repair(&live, CHAT);
         let tabs = bench.layout.page_tabs();
-        bench.slots.retain(|id, _| tabs.contains(id));
         bench.ui.menu = None;
         if let Some((place, group)) = bench.ui.zoomed
             && group >= bench.layout.area(place).groups.len()
@@ -794,7 +812,26 @@ impl Shell {
         let Some(before) = bench.layout_undo.undo() else {
             return;
         };
+        // Pages the step closed come back; pages opened since stay.
+        for id in before.page_tabs() {
+            if id != bench.current
+                && !bench.slots.contains_key(&id)
+                && let Some(history) = bench.retired.remove(&id)
+            {
+                bench.slots.insert(
+                    id,
+                    PageSlot {
+                        history,
+                        view: None,
+                        sub: None,
+                    },
+                );
+            }
+        }
+        let mut live: Vec<TabId> = bench.slots.keys().copied().collect();
+        live.push(bench.current);
         bench.layout = before;
+        bench.layout.repair(&live, CHAT);
         bench.toast = None;
         self.after_layout(window, cx);
     }
