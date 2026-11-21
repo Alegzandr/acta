@@ -10,6 +10,7 @@ pub mod folder_path;
 mod fsutil;
 pub mod git_cmd;
 pub mod keys;
+pub mod launch_plan;
 pub mod link_index;
 pub mod markdown;
 pub mod model;
