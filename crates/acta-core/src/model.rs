@@ -384,6 +384,8 @@ pub struct Page<T> {
     /// Count of all matching items, not only this page.
     pub total: i64,
     pub offset: i64,
+    /// `true` when `total` stopped at a cap (search ranks at most 500 hits).
+    pub capped: bool,
 }
 
 impl<T> Page<T> {
@@ -434,12 +436,14 @@ mod tests {
             items: vec![1, 2],
             total: 5,
             offset: 2,
+            capped: false,
         };
         assert_eq!(page.next(), Some(4));
         let last = Page {
             items: vec![5],
             total: 5,
             offset: 4,
+            capped: false,
         };
         assert_eq!(last.next(), None);
     }

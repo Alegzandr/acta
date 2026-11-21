@@ -102,13 +102,13 @@ impl Store {
     pub fn kb_create(&mut self, new: NewKb, author: Author) -> Result<KbId> {
         let title = required("title", &new.title)?;
         let summary = required("summary", &new.summary)?;
-        let (project, epic, topic) = owner_ids(self, new.owner)?;
         let change = if new.from_file {
             ChangeKind::CreatedFromFile
         } else {
             ChangeKind::Created
         };
         let tx = self.write()?;
+        let (project, epic, topic) = owner_ids(&tx, new.owner)?;
         let now = now_ms();
         tx.execute(
             "INSERT INTO kb_entries (uuid, project_id, epic_id, topic_id, kind, title, summary, body, rev,
@@ -170,7 +170,7 @@ impl Store {
         if title == cur.title && summary == cur.summary && body == cur.body {
             return Ok(cur.rev);
         }
-        let rev = cur.rev + 1;
+        let rev = next_rev(&tx, id)?;
         let now = now_ms();
         tx.execute(
             "UPDATE kb_entries SET title = ?2, summary = ?3, body = ?4, rev = ?5, updated_at = ?6, updated_by = ?7
@@ -196,13 +196,13 @@ impl Store {
     /// Files an entry at another level (ADR 0007: the human moves what the
     /// agent filed). Recorded as a revision.
     pub fn kb_move(&mut self, id: KbId, owner: Owner, author: Author) -> Result<i64> {
-        let (project, epic, topic) = owner_ids(self, owner)?;
         let tx = self.write()?;
+        let (project, epic, topic) = owner_ids(&tx, owner)?;
         let cur = read_kb(&tx, id)?;
         if cur.owner == owner {
             return Ok(cur.rev);
         }
-        let rev = cur.rev + 1;
+        let rev = next_rev(&tx, id)?;
         let now = now_ms();
         tx.execute(
             "UPDATE kb_entries SET project_id = ?2, epic_id = ?3, topic_id = ?4, rev = ?5,
@@ -225,13 +225,19 @@ impl Store {
         Ok(rev)
     }
 
-    /// Every revision of an entry, newest first, without bodies.
-    pub fn kb_history(&self, id: KbId) -> Result<Vec<KbRevisionSummary>> {
+    /// A page of an entry's revisions, newest first, without bodies.
+    pub fn kb_history(&self, id: KbId, page: PageReq) -> Result<Page<KbRevisionSummary>> {
         self.kb_entry(id)?;
-        let mut stmt = self.conn.prepare(
-            "SELECT rev, author, change, section, length(CAST(body AS BLOB)), created_at
-             FROM kb_revisions WHERE entry_id = ?1 ORDER BY rev DESC",
+        let (offset, limit) = page.clamped();
+        let total: i64 = self.conn.query_row(
+            "SELECT count(*) FROM kb_revisions WHERE entry_id = ?1",
+            [id.0],
+            |r| r.get(0),
         )?;
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT rev, author, change, section, length(CAST(body AS BLOB)), created_at
+             FROM kb_revisions WHERE entry_id = ?1 ORDER BY rev DESC LIMIT {limit} OFFSET {offset}"
+        ))?;
         let rows = stmt.query_map([id.0], |r| {
             Ok(KbRevisionSummary {
                 rev: r.get(0)?,
@@ -242,7 +248,12 @@ impl Store {
                 created_at: r.get(5)?,
             })
         })?;
-        Ok(rows.collect::<rusqlite::Result<_>>()?)
+        Ok(Page {
+            items: rows.collect::<rusqlite::Result<_>>()?,
+            total,
+            offset,
+            capped: false,
+        })
     }
 
     pub fn kb_revision(&self, id: KbId, rev: i64) -> Result<KbRevision> {
@@ -261,8 +272,8 @@ impl Store {
     pub fn kb_restore_revision(&mut self, id: KbId, rev: i64, author: Author) -> Result<i64> {
         let old = self.kb_revision(id, rev)?;
         let tx = self.write()?;
-        let cur = read_kb(&tx, id)?;
-        let new_rev = cur.rev + 1;
+        read_kb(&tx, id)?;
+        let new_rev = next_rev(&tx, id)?;
         let now = now_ms();
         tx.execute(
             "UPDATE kb_entries SET title = ?2, summary = ?3, body = ?4, rev = ?5, updated_at = ?6, updated_by = ?7
@@ -305,7 +316,7 @@ impl Store {
         filter: &KbFilter,
         page: PageReq,
     ) -> Result<Page<KbSummary>> {
-        owner_ids(self, owner)?;
+        owner_ids(&self.conn, owner)?;
         let cond = match owner {
             Owner::Project(id) => format!("k.project_id = {}", id.0),
             Owner::Epic(id) => format!(
@@ -398,6 +409,7 @@ impl Store {
             items,
             total,
             offset,
+            capped: false,
         })
     }
 }
@@ -421,6 +433,16 @@ pub(crate) fn revision_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<KbRevision
         section: r.get(7)?,
         created_at: r.get(8)?,
     })
+}
+
+/// The number of the next revision: one above every revision kept, so a
+/// merge import that brought in higher numbers can never collide.
+pub(crate) fn next_rev(conn: &rusqlite::Connection, id: KbId) -> Result<i64> {
+    Ok(conn.query_row(
+        "SELECT coalesce(max(rev), 0) + 1 FROM kb_revisions WHERE entry_id = ?1",
+        [id.0],
+        |r| r.get(0),
+    )?)
 }
 
 #[allow(clippy::too_many_arguments)]

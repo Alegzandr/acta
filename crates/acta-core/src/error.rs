@@ -12,6 +12,9 @@ pub enum OpenError {
     /// The database exists but its key is in none of the stores.
     KeyMissing {
         db: PathBuf,
+        /// The store the key should be in (`keychain` or `file`), or `None`
+        /// when no store had it and none was recorded.
+        store: Option<&'static str>,
     },
     /// The database exists, a key was found, and it does not decrypt it (or
     /// the file is not a database).
@@ -33,11 +36,14 @@ pub enum OpenError {
 impl fmt::Display for OpenError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            OpenError::KeyMissing { db } => write!(
-                f,
-                "the database {} exists but its key is not in the keychain",
-                db.display()
-            ),
+            OpenError::KeyMissing { db, store } => {
+                let where_ = match store {
+                    Some("keychain") => "its key is not in the keychain",
+                    Some("file") => "its key file (acta.key) is missing",
+                    _ => "its key was not found",
+                };
+                write!(f, "the database {} exists but {where_}", db.display())
+            }
             OpenError::KeyWrongOrCorrupt { db } => write!(
                 f,
                 "the key does not open the database {} (wrong key or damaged file)",
