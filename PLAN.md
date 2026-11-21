@@ -7,7 +7,7 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 | M0 | Research, spikes, ADRs, DESIGN.md | - | done |
 | M1 | Pipeline: window that installs silently and updates itself; design foundations; app icon | v0.1.x | done |
 | M2 | Data model and core UI | v0.2.0 | doing |
-| M3 | MCP server, CLI, Claude Code setup; Acta tracks itself | v0.3.0 | todo |
+| M3 | MCP server, CLI, Claude Code setup; Acta tracks itself | v0.3.0 | doing |
 | M4 | Integrated terminal running Claude Code | v0.4.0 | todo |
 | M5 | Claude chat panel beside the work (Windows and macOS; link on Linux; ADR 0009) | v0.5.0 | todo |
 | M6 | Notes inbox and notes-to-topics flow | v0.6.0 | todo |
@@ -47,12 +47,14 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 - [ ] Key-loss recovery path: never overwrite an unreadable database, offer import - typed open errors and recovery screen built (Import, Try again, Start empty keeps the file aside)
 
 ## M3 - MCP, CLI, Claude Code setup
-- [ ] `acta mcp` (stdio) and `acta <command>` CLI sharing the domain layer
-- [ ] Compact responses with enforced size budgets
-- [ ] Knowledge tools: list with summaries, outline, read by section, search, section-level writes; the skill routes durable memory to Acta
-- [ ] `acta export`, `acta import`, `acta snapshot restore` in the CLI (not exposed over MCP)
-- [ ] Hooks, skill, slash commands; `acta setup` one-step install
-- [ ] `acta link` at any level; sessions started outside Acta resolve their topic from the folder (ADR 0008)
+- [x] `acta mcp` (stdio, rmcp 3.11) and `acta <command>` CLI sharing the domain layer (`acta_core::agent`)
+- [x] Compact responses with enforced size budgets: one renderer, a budget test per tool on pathological data and on real `tools/call` results over stdio; `tools/list` under 7,000 chars, instructions under 800
+- [x] Knowledge tools: list with summaries, outline, read by section or lines, scoped search, section-level writes, near-duplicate memory refusal; the skill routes durable memory to Acta
+- [x] `acta export`, `acta import`, `acta snapshot list|restore` in the CLI (not exposed over MCP)
+- [x] Hooks, skill, slash commands; `acta setup` one-step install, `--check`, `--remove` (proven with the real `claude` CLI against a temporary config directory, and one headless Haiku run with the generated plugin); Windows only so far
+- [x] `acta link` at any level; sessions started outside Acta resolve their topic from the folder (ADR 0008); salted-hash pre-check file for hooks
+- [ ] `mcp_tool` hooks after `/clear`, after compaction and on `SubagentStart` seen in an interactive session; macOS and Linux runs
+- [ ] `--json` output of the CLI agent commands (ADR 0005, section 4)
 - [ ] Dogfooding: this project is tracked in Acta from here on
 
 ## M4 - Terminal

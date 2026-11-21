@@ -262,6 +262,7 @@ impl KnowledgePage {
                     text: query,
                     project: Some(project),
                     kinds: vec![SearchKind::Kb],
+                    ..SearchQuery::default()
                 },
                 PageReq::first(PageReq::MAX_LIMIT),
             )

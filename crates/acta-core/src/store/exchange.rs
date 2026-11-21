@@ -482,6 +482,7 @@ impl Store {
         let tx = self.write()?;
         let report = merge(&tx, file)?;
         tx.commit()?;
+        let _ = self.refresh_link_index();
         Ok(report)
     }
 }

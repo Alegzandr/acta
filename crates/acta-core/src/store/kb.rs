@@ -345,7 +345,9 @@ impl Store {
         })
     }
 
-    fn scope_condition(&self, owner: Owner) -> Result<String> {
+    /// SQL condition (alias `k`) selecting the knowledge an agent at `owner`
+    /// sees, looking up.
+    pub(crate) fn scope_condition(&self, owner: Owner) -> Result<String> {
         Ok(match owner {
             Owner::Project(id) => {
                 self.project(id)?;

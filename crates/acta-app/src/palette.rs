@@ -127,6 +127,7 @@ impl Palette {
                         text: query,
                         project: None,
                         kinds: vec![SearchKind::Kb],
+                        ..SearchQuery::default()
                     },
                     PageReq::first(5),
                 )

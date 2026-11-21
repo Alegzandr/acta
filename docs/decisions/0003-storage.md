@@ -72,7 +72,7 @@ getrandom = "0.4"
 - `rusqlite_migration`: incompatible with rusqlite 0.43 today, and a ladder is 15 lines.
 
 ## Consequences
-- Windows developers need Strawberry Perl; CI needs nothing extra. Linux builds need `perl` and `make` (on GitHub runners). `Swatinem/rust-cache` hides the OpenSSL build after the first run.
+- Windows developers need Strawberry Perl. Windows CI selects the image's Strawberry Perl with `scripts/ci/windows-perl.ps1` (`OPENSSL_SRC_PERL`), because bash steps put Git's Perl first on PATH. Linux builds need `perl` and `make` (on GitHub runners). `Swatinem/rust-cache` hides the OpenSSL build after the first run.
 - The MSVC link of vendored OpenSSL prints about 800 `LNK4099` (missing PDB) lines as rustc linker warnings. They do not affect `cargo clippy`; a build or test run under `RUSTFLAGS=-D warnings` needs `-A linker_messages` or equivalent. To settle in M1.
 - Encryption protects the files at rest and in copies. It does not protect against code running as the same user on any OS; on macOS it does not protect a full-disk backup either. Say so in the documentation.
 - Losing the key makes the database unreadable by design; the answer is the export of ADR 0006.
