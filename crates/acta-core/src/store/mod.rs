@@ -79,8 +79,9 @@ impl Store {
     }
 
     pub(crate) fn open_with(config: &StoreConfig, steps: &[&str]) -> Result<Store, OpenError> {
-        let (mut conn, key, opened) = db::open_or_init(&config.data_dir, &config.keys)?;
+        let (mut conn, key, opened, lock) = db::open_or_init(&config.data_dir, &config.keys)?;
         db::migrate(&mut conn, &config.data_dir, &key, steps)?;
+        drop(lock);
         let min: Option<i64> = conn
             .query_row(
                 "SELECT value FROM meta WHERE key = ?1",
@@ -162,8 +163,18 @@ impl Store {
     /// snapshot of the current state. Other processes see an ordinary commit.
     pub fn restore_snapshot(&mut self, snapshot: &Path) -> Result<()> {
         self.check_writable()?;
-        self.snapshot(SnapshotKind::Restore)?;
-        db::restore_into(&mut self.conn, snapshot, &self.key).map_err(open_to_error)?;
+        let _lock = db::InitLock::acquire(&self.data_dir)?;
+        // Open the source first, and keep it out of retention: restoring a
+        // `restore` snapshot must not delete it by taking the next one.
+        let src = db::connect(snapshot, &self.key, db::Mode::Snapshot).map_err(open_to_error)?;
+        snapshots::take_protecting(
+            &self.conn,
+            &self.data_dir,
+            SnapshotKind::Restore,
+            Some(snapshot),
+        )?;
+        db::restore_from(&mut self.conn, &src).map_err(open_to_error)?;
+        drop(src);
         db::migrate(
             &mut self.conn,
             &self.data_dir,
@@ -248,11 +259,15 @@ pub(crate) fn stamp(row: &Row<'_>, at: usize) -> rusqlite::Result<Stamp> {
 }
 
 /// The owner columns of a live owner: project, epic, topic.
-pub(crate) fn owner_ids(store: &Store, owner: Owner) -> Result<(i64, Option<i64>, Option<i64>)> {
+pub(crate) fn owner_ids(
+    conn: &Connection,
+    owner: Owner,
+) -> Result<(i64, Option<i64>, Option<i64>)> {
+    use records::{read_epic, read_project, read_topic};
     Ok(match owner {
-        Owner::Project(id) => (store.project(id)?.id.0, None, None),
-        Owner::Epic(id) => (store.epic(id)?.project.0, Some(id.0), None),
-        Owner::Topic(id) => (store.topic(id)?.project.0, None, Some(id.0)),
+        Owner::Project(id) => (read_project(conn, id)?.id.0, None, None),
+        Owner::Epic(id) => (read_epic(conn, id)?.project.0, Some(id.0), None),
+        Owner::Topic(id) => (read_topic(conn, id)?.project.0, None, Some(id.0)),
     })
 }
 

@@ -66,6 +66,7 @@ impl Store {
                 items: Vec::new(),
                 total: 0,
                 offset,
+                capped: false,
             });
         };
         let wants = |k: SearchKind| query.kinds.is_empty() || query.kinds.contains(&k);
@@ -113,11 +114,13 @@ impl Store {
                 items: Vec::new(),
                 total: 0,
                 offset,
+                capped: false,
             });
         }
         let sql = format!(
-            "SELECT * FROM ({}) ORDER BY 7, 2 LIMIT {MAX_HITS}",
-            parts.join(" UNION ALL ")
+            "SELECT * FROM ({}) ORDER BY 7, 1, 2 LIMIT {}",
+            parts.join(" UNION ALL "),
+            MAX_HITS + 1
         );
         let mut stmt = self.conn.prepare(&sql)?;
         let all: Vec<SearchHit> = stmt
@@ -144,9 +147,11 @@ impl Store {
                 })
             })?
             .collect::<rusqlite::Result<_>>()?;
-        let total = all.len() as i64;
+        let capped = all.len() as i64 > MAX_HITS;
+        let total = (all.len() as i64).min(MAX_HITS);
         let items = all
             .into_iter()
+            .take(MAX_HITS as usize)
             .skip(offset as usize)
             .take(limit as usize)
             .collect();
@@ -154,6 +159,7 @@ impl Store {
             items,
             total,
             offset,
+            capped,
         })
     }
 }

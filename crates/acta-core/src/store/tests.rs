@@ -100,7 +100,10 @@ fn a_lost_key_is_refused_and_the_file_left_untouched() {
     let before = std::fs::read(&db).unwrap();
     t.keys.forget();
     match Store::open(&config) {
-        Err(OpenError::KeyMissing { db: path }) => assert_eq!(path, db),
+        Err(OpenError::KeyMissing { db: path, store }) => {
+            assert_eq!(path, db);
+            assert_eq!(store, Some("memory"));
+        }
         other => panic!("expected KeyMissing, got {:?}", other.err()),
     }
     assert_eq!(std::fs::read(&db).unwrap(), before);
@@ -237,12 +240,9 @@ fn snapshots_are_daily_encrypted_and_restorable() {
     let p = t.store.create_project("Before", "", H).unwrap();
     let snap = t.store.snapshot_if_due().unwrap().expect("first daily");
     assert!(t.store.snapshot_if_due().unwrap().is_none());
-    assert!(
-        !std::fs::read(&snap.path)
-            .unwrap()
-            .windows(6)
-            .any(|w| w == b"Before")
-    );
+    let bytes = std::fs::read(&snap.path).unwrap();
+    assert!(!bytes.windows(6).any(|w| w == b"Before"));
+    assert!(!bytes.windows(15).any(|w| w == b"SQLite format 3"));
     t.store
         .update_project(
             p,
@@ -474,7 +474,7 @@ fn knowledge_revisions_sections_and_stale_writes() {
         text: "None.".into(),
     };
     store.kb_update(k, update(None, append), H).unwrap();
-    let history = store.kb_history(k).unwrap();
+    let history = store.kb_history(k, all()).unwrap().items;
     let changes: Vec<_> = history
         .iter()
         .map(|h| (h.rev, h.change, h.section.clone()))
@@ -953,4 +953,252 @@ fn database_files_are_private() {
     let snap = t.store.snapshot(SnapshotKind::Manual).unwrap();
     let snap_mode = std::fs::metadata(&snap.path).unwrap().permissions().mode() & 0o777;
     assert_eq!(snap_mode, 0o600);
+}
+
+// ---- review regressions ----
+
+#[test]
+fn restoring_a_restore_snapshot_keeps_it_and_the_last_three() {
+    let mut t = open();
+    let p = t.store.create_project("Original", "", H).unwrap();
+    let s1 = t.store.snapshot(SnapshotKind::Manual).unwrap();
+    let rename = |s: &mut Store, title: &str| {
+        let patch = ProjectPatch {
+            title: Some(title.into()),
+            ..Default::default()
+        };
+        s.update_project(p, patch, H).unwrap();
+    };
+    rename(&mut t.store, "Changed");
+    t.store.restore_snapshot(&s1.path).unwrap();
+    let r1 = t
+        .store
+        .snapshots()
+        .unwrap()
+        .into_iter()
+        .find(|s| s.kind == SnapshotKind::Restore)
+        .unwrap();
+    // r1 holds "Changed". Restoring it takes a new restore snapshot, which
+    // must not delete r1 through retention.
+    t.store.restore_snapshot(&r1.path).unwrap();
+    assert!(r1.path.exists());
+    assert_eq!(t.store.project(p).unwrap().title, "Changed");
+    for title in ["a", "b", "c"] {
+        rename(&mut t.store, title);
+        t.store.restore_snapshot(&s1.path).unwrap();
+    }
+    let restores = t
+        .store
+        .snapshots()
+        .unwrap()
+        .into_iter()
+        .filter(|s| s.kind == SnapshotKind::Restore)
+        .count();
+    assert_eq!(restores, 3);
+}
+
+#[test]
+fn a_busy_database_fails_a_migration_without_restoring() {
+    let mut t = open();
+    let p = t.store.create_project("Acta", "", H).unwrap();
+    let config = t.config();
+    // Another process holds the write lock for longer than the busy timeout.
+    t.store.conn.execute_batch("BEGIN IMMEDIATE;").unwrap();
+    let mut steps: Vec<&str> = crate::schema::MIGRATIONS.to_vec();
+    steps.push("CREATE TABLE extra (a INTEGER) STRICT;");
+    match Store::open_with(&config, &steps) {
+        Err(OpenError::MigrationFailed { restored_from, .. }) => {
+            assert!(restored_from.is_none())
+        }
+        other => panic!("expected MigrationFailed, got {:?}", other.err()),
+    }
+    t.store.conn.execute_batch("COMMIT;").unwrap();
+    assert_eq!(t.store.project(p).unwrap().title, "Acta");
+    // Once the lock is free the same ladder succeeds.
+    drop(Store::open_with(&config, &steps).unwrap());
+}
+
+#[test]
+fn an_import_that_lowers_rev_does_not_block_edits() {
+    let mut a = open();
+    let p = a.store.create_project("Acta", "", H).unwrap();
+    let doc = kb(Owner::Project(p), KbKind::Document, "Spec", "x");
+    let k = a.store.kb_create(doc, H).unwrap();
+    let base = a.store.export(None).unwrap();
+    a.store
+        .kb_update(k, update(None, KbEdit::Body("y".into())), H)
+        .unwrap();
+    a.store
+        .kb_update(k, update(None, KbEdit::Body("z".into())), H)
+        .unwrap();
+    let mut file = base;
+    file.knowledge[0].stamp.updated_at += 60_000;
+    file.knowledge[0].body = "remote".into();
+    a.store.import(&file, false).unwrap();
+    // The imported body is saved as a revision of its own and is current.
+    let now = a.store.kb_entry(k).unwrap();
+    assert_eq!((now.body.as_str(), now.rev), ("remote", 4));
+    assert_eq!(a.store.kb_revision(k, 4).unwrap().body, "remote");
+    let rev = a
+        .store
+        .kb_update(k, update(Some(4), KbEdit::Body("after".into())), H)
+        .unwrap();
+    assert_eq!(rev, 5);
+}
+
+#[test]
+fn an_import_skipping_an_entry_keeps_its_revisions_without_collisions() {
+    let mut a = open();
+    let p = a.store.create_project("Acta", "", H).unwrap();
+    let doc = kb(Owner::Project(p), KbKind::Document, "Spec", "x");
+    let k = a.store.kb_create(doc, H).unwrap();
+    let mut b = open();
+    b.store
+        .import(&a.store.export(None).unwrap(), false)
+        .unwrap();
+    let bp = b.store.projects().unwrap()[0].id;
+    let bk = b
+        .store
+        .kb_rollup(Owner::Project(bp), &KbFilter::default(), all())
+        .unwrap()
+        .items[0]
+        .id;
+    for body in ["b2", "b3"] {
+        b.store
+            .kb_update(bk, update(None, KbEdit::Body(body.into())), H)
+            .unwrap();
+    }
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    a.store
+        .kb_update(k, update(None, KbEdit::Body("a2".into())), H)
+        .unwrap();
+    let rep = a
+        .store
+        .import(&b.store.export(None).unwrap(), false)
+        .unwrap();
+    assert_eq!(rep.knowledge.skipped, 1);
+    // b2 and b3 are kept, renumbered after a's own history.
+    assert_eq!(rep.revisions.created, 2);
+    let now = a.store.kb_entry(k).unwrap();
+    assert_eq!((now.body.as_str(), now.rev), ("a2", 2));
+    assert_eq!(a.store.kb_history(k, all()).unwrap().total, 4);
+    let rev = a
+        .store
+        .kb_update(k, update(Some(2), KbEdit::Body("a3".into())), H)
+        .unwrap();
+    assert_eq!(rev, 5);
+    let page = a.store.kb_history(k, PageReq::first(2)).unwrap();
+    assert_eq!((page.items.len(), page.total, page.next()), (2, 5, Some(2)));
+}
+
+#[test]
+fn merged_timelines_keep_unique_entry_numbers() {
+    let mut a = open();
+    let p = a.store.create_project("Acta", "", H).unwrap();
+    let t = topic(&mut a.store, p, None, "T");
+    let mut b = open();
+    b.store
+        .import(&a.store.export(None).unwrap(), false)
+        .unwrap();
+    let bt = b
+        .store
+        .topics(&TopicFilter::default(), all())
+        .unwrap()
+        .items[0]
+        .id;
+    let from_a = a
+        .store
+        .log(t, entry(EntryKind::Progress, "from A"), H)
+        .unwrap();
+    b.store
+        .log(bt, entry(EntryKind::Progress, "from B"), H)
+        .unwrap();
+    a.store
+        .import(&b.store.export(None).unwrap(), false)
+        .unwrap();
+    let entries = a.store.entries(t, &EntryFilter::default(), all()).unwrap();
+    let mut seqs: Vec<_> = entries.items.iter().filter_map(|e| e.seq).collect();
+    seqs.sort();
+    assert_eq!(seqs, [1, 2]);
+    // The local entry keeps its number; the imported one takes the next.
+    assert_eq!(a.store.entry_by_seq(t, 1).unwrap().id, from_a.id);
+    assert_eq!(a.store.entry_by_seq(t, 2).unwrap().text, "from B");
+}
+
+#[test]
+fn folder_resolution_prefers_the_most_specific_level() {
+    let TestStore { mut store, dir, .. } = open();
+    let repo = dir.path().join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    let p = store.create_project("Acta", "", H).unwrap();
+    let e = store.create_epic(p, "Storage", "", H).unwrap();
+    let t = topic(&mut store, p, Some(e), "Keys");
+    store.add_folder(Owner::Project(p), &repo, H).unwrap();
+    store.add_folder(Owner::Epic(e), &repo, H).unwrap();
+    let hit = store.resolve_folder(&repo).unwrap().unwrap();
+    assert_eq!((hit.epic, hit.topic), (Some(e), None));
+    assert!(hit.candidates.is_empty());
+    store.add_folder(Owner::Topic(t), &repo, H).unwrap();
+    let hit = store.resolve_folder(&repo).unwrap().unwrap();
+    assert_eq!((hit.epic, hit.topic), (Some(e), Some(t)));
+    assert!(hit.candidates.is_empty());
+}
+
+#[test]
+fn a_restore_brings_back_only_what_one_delete_trashed() {
+    let TestStore { mut store, .. } = open();
+    let p = store.create_project("Acta", "", H).unwrap();
+    let e = store.create_epic(p, "Storage", "", H).unwrap();
+    let t = topic(&mut store, p, Some(e), "Keys");
+    let entry_id = store.log(t, entry(EntryKind::Progress, "x"), H).unwrap().id;
+    // Two deletes in the same millisecond still form two batches.
+    store.delete(Record::Entry(entry_id), H).unwrap();
+    store.delete(Record::Epic(e), H).unwrap();
+    store.restore(Record::Epic(e), H).unwrap();
+    assert!(store.topic(t).is_ok());
+    assert!(store.entry(entry_id).is_err());
+    let trash = store.trash(all()).unwrap();
+    assert_eq!(trash.items[0].record, Record::Entry(entry_id));
+}
+
+#[test]
+fn a_dry_run_import_works_on_a_read_only_database() {
+    let mut a = open();
+    let p = a.store.create_project("Acta", "", H).unwrap();
+    topic(&mut a.store, p, None, "Keys");
+    let file = a.store.export(None).unwrap();
+    let b = open();
+    let config = b.config();
+    b.store
+        .conn
+        .execute(
+            "INSERT INTO meta (key, value) VALUES ('min_compatible_version', ?1)",
+            [(crate::schema::SCHEMA_VERSION + 1).to_string()],
+        )
+        .unwrap();
+    drop(b.store);
+    let mut ro = Store::open(&config).unwrap();
+    assert!(!ro.is_writable());
+    let preview = ro.import(&file, true).unwrap();
+    assert_eq!(preview.topics.created, 1);
+    assert!(ro.projects().unwrap().is_empty());
+    assert!(matches!(ro.import(&file, false), Err(Error::ReadOnly)));
+}
+
+#[test]
+fn search_reports_whether_the_total_is_capped() {
+    let TestStore { mut store, .. } = open();
+    let p = store.create_project("Acta", "", H).unwrap();
+    let t = topic(&mut store, p, None, "Keys");
+    for i in 0..3 {
+        let text = format!("keychain {i}");
+        store.log(t, entry(EntryKind::Progress, &text), H).unwrap();
+    }
+    let q = SearchQuery {
+        text: "keychain".into(),
+        project: Some(p),
+        kinds: vec![],
+    };
+    let page = store.search(&q, all()).unwrap();
+    assert_eq!((page.total, page.capped), (3, false));
 }

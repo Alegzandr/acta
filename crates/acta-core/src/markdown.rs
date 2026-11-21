@@ -75,12 +75,16 @@ pub fn outline(body: &str) -> Vec<Section> {
     let mut stack: Vec<(usize, usize)> = Vec::new();
     let mut out = Vec::with_capacity(found.len());
     for (n, (start, level, title)) in found.iter().enumerate() {
+        // Popping deeper headings frees their depth slot; a heading that
+        // takes the slot continues its count, so `# A / ### C / ## D` gives
+        // 1, 1.1, 1.2 and `## A / # B` gives 1, 2: numbers never repeat.
+        let mut freed = None;
         while stack.last().is_some_and(|(l, _)| *l > *level) {
-            stack.pop();
+            freed = stack.pop().map(|(_, count)| count);
         }
         match stack.last_mut() {
             Some((l, count)) if *l == *level => *count += 1,
-            _ => stack.push((*level, 1)),
+            _ => stack.push((*level, freed.map_or(1, |c| c + 1))),
         }
         let number = stack
             .iter()
@@ -207,6 +211,61 @@ mod tests {
         assert_eq!(section_text(DOC, "3").unwrap(), "# Crates\nDuplicate\n");
         assert!(outline("no headings at all").is_empty());
         assert!(outline("#hashtag\n    # indented code\n").is_empty());
+    }
+
+    #[test]
+    fn numbers_never_repeat_when_levels_skip() {
+        let numbers =
+            |body: &str| -> Vec<String> { outline(body).into_iter().map(|s| s.number).collect() };
+        assert_eq!(
+            numbers(
+                "# A
+### C
+## D
+"
+            ),
+            ["1", "1.1", "1.2"]
+        );
+        assert_eq!(
+            numbers(
+                "## A
+# B
+"
+            ),
+            ["1", "2"]
+        );
+        assert_eq!(
+            numbers(
+                "# A
+## B
+#### C
+### D
+# E
+"
+            ),
+            ["1", "1.1", "1.1.1", "1.1.2", "2"]
+        );
+        for body in [
+            "# A
+### C
+## D
+",
+            "## A
+# B
+",
+            "### a
+## b
+# c
+## d
+### e
+",
+        ] {
+            let mut all = numbers(body);
+            let n = all.len();
+            all.sort();
+            all.dedup();
+            assert_eq!(all.len(), n, "{body:?}");
+        }
     }
 
     #[test]

@@ -159,8 +159,8 @@ impl Store {
         author: Author,
     ) -> Result<EpicId> {
         let title = required("title", title)?;
-        self.project(project)?;
         let tx = self.write()?;
+        read_project(&tx, project)?;
         let now = now_ms();
         let position: i64 = tx.query_row(
             "SELECT coalesce(max(position) + 1, 0) FROM epics WHERE project_id = ?1 AND deleted_at IS NULL",
@@ -227,11 +227,11 @@ impl Store {
 
     pub fn create_topic(&mut self, new: NewTopic, author: Author) -> Result<TopicId> {
         let title = required("title", &new.title)?;
-        self.project(new.project)?;
-        if let Some(epic) = new.epic {
-            self.check_epic_in(epic, new.project)?;
-        }
         let tx = self.write()?;
+        read_project(&tx, new.project)?;
+        if let Some(epic) = new.epic {
+            check_epic_in(&tx, epic, new.project)?;
+        }
         let now = now_ms();
         let position = next_topic_position(&tx, new.project, new.epic)?;
         tx.execute(
@@ -325,6 +325,7 @@ impl Store {
             items,
             total,
             offset,
+            capped: false,
         })
     }
 
@@ -371,17 +372,18 @@ impl Store {
     /// (clamped). Siblings whose position changes get a new `updated_at`, so
     /// an import carries the order.
     pub fn reorder(&mut self, record: Record, index: usize, author: Author) -> Result<()> {
+        let tx = self.write()?;
         let (table, scope) = match record {
             Record::Project(id) => {
-                self.project(id)?;
+                read_project(&tx, id)?;
                 ("projects", String::from("1 = 1"))
             }
             Record::Epic(id) => {
-                let e = self.epic(id)?;
+                let e = read_epic(&tx, id)?;
                 ("epics", format!("project_id = {}", e.project.0))
             }
             Record::Topic(id) => {
-                let t = self.topic(id)?;
+                let t = read_topic(&tx, id)?;
                 let epic = t
                     .epic
                     .map_or("IS NULL".to_owned(), |e| format!("= {}", e.0));
@@ -391,7 +393,7 @@ impl Store {
                 )
             }
             Record::Folder(id) => {
-                let f = self.folder(id)?;
+                let f = super::folders::read_folder(&tx, id)?;
                 ("folders", super::owner_condition(f.owner))
             }
             other => return Err(Error::Invalid(format!("{other} cannot be reordered"))),
@@ -403,7 +405,6 @@ impl Store {
             Record::Folder(id) => id.0,
             _ => unreachable!(),
         };
-        let tx = self.write()?;
         let mut ids: Vec<(i64, i64)> = {
             let mut stmt = tx.prepare(&format!(
                 "SELECT id, position FROM {table} WHERE {scope} AND deleted_at IS NULL ORDER BY position, id"
@@ -429,16 +430,16 @@ impl Store {
         tx.commit()?;
         Ok(())
     }
+}
 
-    fn check_epic_in(&self, epic: EpicId, project: ProjectId) -> Result<()> {
-        let e = self.epic(epic)?;
-        if e.project != project {
-            return Err(Error::Invalid(format!(
-                "{epic} belongs to another project than {project}"
-            )));
-        }
-        Ok(())
+fn check_epic_in(conn: &rusqlite::Connection, epic: EpicId, project: ProjectId) -> Result<()> {
+    let e = read_epic(conn, epic)?;
+    if e.project != project {
+        return Err(Error::Invalid(format!(
+            "{epic} belongs to another project than {project}"
+        )));
     }
+    Ok(())
 }
 
 fn next_topic_position(

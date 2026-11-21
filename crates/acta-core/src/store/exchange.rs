@@ -16,7 +16,7 @@
 
 use super::Store;
 use crate::error::{Error, Result};
-use crate::model::{Author, ChangeKind, EntryKind, EventKind, KbKind, ProjectId, Status};
+use crate::model::{Author, ChangeKind, EntryKind, EventKind, KbId, KbKind, ProjectId, Status};
 use crate::snapshots::SnapshotKind;
 use rusqlite::{OptionalExtension, Transaction, params};
 use serde::{Deserialize, Serialize};
@@ -265,7 +265,10 @@ impl Store {
             None => None,
         };
         let only = |col: &str| project.map_or(String::new(), |p| format!(" AND {col} = {}", p.0));
-        let conn = &self.conn;
+        // One read transaction: every table is read from the same state even
+        // while other processes write.
+        let read = self.conn.unchecked_transaction()?;
+        let conn: &rusqlite::Connection = &read;
         let projects = collect(
             conn,
             &format!(
@@ -436,6 +439,7 @@ impl Store {
                 })
             },
         )?;
+        drop(read);
         Ok(ExportFile {
             format: FORMAT_NAME.into(),
             version: FORMAT_VERSION,
@@ -465,7 +469,14 @@ impl Store {
             self.check_writable()?;
             self.snapshot(SnapshotKind::Import)?;
         }
-        let tx = self.write()?;
+        // A dry run writes nothing that survives, so it works on a
+        // read-only database too.
+        let tx = if dry_run {
+            self.conn
+                .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?
+        } else {
+            self.write()?
+        };
         let report = merge(&tx, file)?;
         if dry_run {
             tx.rollback()?;
@@ -474,6 +485,37 @@ impl Store {
         }
         Ok(report)
     }
+}
+
+/// Points an entry's `rev` at the newest revision holding its current
+/// title, summary and body. If none does (the file's version of the entry
+/// was newer than any revision it carried), that version is saved as a new
+/// revision, so history always contains what the entry shows.
+fn reconcile_rev(tx: &Transaction<'_>, id: i64) -> Result<()> {
+    let matching: Option<i64> = tx.query_row(
+        "SELECT max(r.rev) FROM kb_revisions r JOIN kb_entries k ON k.id = r.entry_id
+         WHERE k.id = ?1 AND r.title = k.title AND r.summary = k.summary AND r.body = k.body",
+        [id],
+        |r| r.get(0),
+    )?;
+    let rev = match matching {
+        Some(rev) => rev,
+        None => {
+            let rev = super::kb::next_rev(tx, KbId(id))?;
+            tx.execute(
+                "INSERT INTO kb_revisions (uuid, entry_id, rev, title, summary, body, author, change, section, created_at)
+                 SELECT ?2, id, ?3, title, summary, body, updated_by, 'edited', NULL, updated_at
+                 FROM kb_entries WHERE id = ?1",
+                params![id, super::new_uuid(), rev],
+            )?;
+            rev
+        }
+    };
+    tx.execute(
+        "UPDATE kb_entries SET rev = ?2 WHERE id = ?1 AND rev <> ?2",
+        params![id, rev],
+    )?;
+    Ok(())
 }
 
 /// What a known record looks like locally.
@@ -642,11 +684,32 @@ fn merge(tx: &Transaction<'_>, f: &ExportFile) -> Result<ImportReport> {
         let topic = local_id(tx, "topics", &x.topic)?;
         match action {
             Action::Insert => {
+                // Two installations may both have written `T-42#15`: the
+                // imported one keeps its UUID and takes the next number.
+                let seq = match x.seq {
+                    Some(seq) => {
+                        let taken: bool = tx.query_row(
+                            "SELECT EXISTS (SELECT 1 FROM entries WHERE topic_id = ?1 AND seq = ?2)",
+                            params![topic, seq],
+                            |r| r.get(0),
+                        )?;
+                        if taken {
+                            Some(tx.query_row(
+                                "SELECT coalesce(max(seq), 0) + 1 FROM entries WHERE topic_id = ?1",
+                                [topic],
+                                |r| r.get::<_, i64>(0),
+                            )?)
+                        } else {
+                            Some(seq)
+                        }
+                    }
+                    None => None,
+                };
                 tx.execute(
                     "INSERT INTO entries (uuid, topic_id, seq, kind, author, text, event, old_value, new_value,
                                           created_at, updated_at, updated_by, deleted_at, deleted_by)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
-                    params![s.uuid, topic, x.seq, x.kind, x.author, x.text, x.event, x.old_value, x.new_value,
+                    params![s.uuid, topic, seq, x.kind, x.author, x.text, x.event, x.old_value, x.new_value,
                             s.created_at, s.updated_at, s.updated_by, s.deleted_at, s.deleted_by],
                 )?;
             }
@@ -744,19 +807,26 @@ fn merge(tx: &Transaction<'_>, f: &ExportFile) -> Result<ImportReport> {
                 rep.revisions.skipped += 1;
                 continue;
             }
-            // A revision number already taken by another history is kept out
-            // rather than overwriting it.
-            let added = tx.execute(
-                "INSERT OR IGNORE INTO kb_revisions (uuid, entry_id, rev, title, summary, body, author, change, section, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-                params![r.uuid, id, r.rev, r.title, r.summary, r.body, r.author, r.change, r.section, r.created_at],
+            // A number another history already uses: the imported revision
+            // is kept, under the next free number.
+            let taken: bool = tx.query_row(
+                "SELECT EXISTS (SELECT 1 FROM kb_revisions WHERE entry_id = ?1 AND rev = ?2)",
+                params![id, r.rev],
+                |row| row.get(0),
             )?;
-            if added == 1 {
-                rep.revisions.created += 1;
+            let rev = if taken {
+                super::kb::next_rev(tx, KbId(id))?
             } else {
-                rep.revisions.skipped += 1;
-            }
+                r.rev
+            };
+            tx.execute(
+                "INSERT INTO kb_revisions (uuid, entry_id, rev, title, summary, body, author, change, section, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                params![r.uuid, id, rev, r.title, r.summary, r.body, r.author, r.change, r.section, r.created_at],
+            )?;
+            rep.revisions.created += 1;
         }
+        reconcile_rev(tx, id)?;
     }
 
     for x in &f.folders {

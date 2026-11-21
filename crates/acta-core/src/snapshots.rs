@@ -4,7 +4,9 @@
 //!
 //! Taken before every migration, import and snapshot restore, and once per
 //! day of use. Retention: the 7 newest daily snapshots, then the newest of
-//! each of the 4 weeks before them, plus the newest of every other kind.
+//! each of the 4 weeks before them, the 3 newest `restore` snapshots, and
+//! the newest of every other kind. A snapshot being restored is never
+//! removed by retention.
 
 use crate::error::Result;
 use crate::fsutil;
@@ -16,6 +18,7 @@ use std::path::{Path, PathBuf};
 pub const SNAPSHOT_DIR: &str = "snapshots";
 const KEEP_DAILY: usize = 7;
 const KEEP_WEEKLY: usize = 4;
+const KEEP_RESTORE: usize = 3;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SnapshotKind {
@@ -70,6 +73,17 @@ fn parse_name(name: &str) -> Option<(SnapshotKind, i64)> {
 
 /// Takes a snapshot of the database `conn` is open on, then applies retention.
 pub(crate) fn take(conn: &Connection, data_dir: &Path, kind: SnapshotKind) -> Result<Snapshot> {
+    take_protecting(conn, data_dir, kind, None)
+}
+
+/// [`take`], with a snapshot retention must leave in place (the one about
+/// to be restored).
+pub(crate) fn take_protecting(
+    conn: &Connection,
+    data_dir: &Path,
+    kind: SnapshotKind,
+    protect: Option<&Path>,
+) -> Result<Snapshot> {
     let dir = data_dir.join(SNAPSHOT_DIR);
     fsutil::create_private_dir(&dir)?;
     // Two snapshots in the same millisecond get distinct names.
@@ -95,9 +109,19 @@ pub(crate) fn take(conn: &Connection, data_dir: &Path, kind: SnapshotKind) -> Re
         taken_at,
     };
     for old in expired(&list(data_dir)?) {
+        if protect.is_some_and(|p| same_file(p, &old.path)) {
+            continue;
+        }
         let _ = fs::remove_file(&old.path);
     }
     Ok(snapshot)
+}
+
+fn same_file(a: &Path, b: &Path) -> bool {
+    match (fs::canonicalize(a), fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a == b,
+    }
 }
 
 /// Every snapshot, newest first.
@@ -130,6 +154,7 @@ pub(crate) fn expired(all: &[Snapshot]) -> Vec<Snapshot> {
     let mut daily_seen = 0;
     let mut weeks: Vec<i64> = Vec::new();
     let mut other_seen: Vec<SnapshotKind> = Vec::new();
+    let mut restore_seen = 0;
     for (i, s) in all.iter().enumerate() {
         if s.kind == SnapshotKind::Daily {
             if daily_seen < KEEP_DAILY {
@@ -141,6 +166,11 @@ pub(crate) fn expired(all: &[Snapshot]) -> Vec<Snapshot> {
                     weeks.push(week);
                     keep[i] = true;
                 }
+            }
+        } else if s.kind == SnapshotKind::Restore {
+            if restore_seen < KEEP_RESTORE {
+                restore_seen += 1;
+                keep[i] = true;
             }
         } else if !other_seen.contains(&s.kind) {
             other_seen.push(s.kind);
@@ -194,6 +224,9 @@ mod tests {
         all.push(snap(SnapshotKind::Migration, today - 1));
         all.push(snap(SnapshotKind::Migration, today - 30));
         all.push(snap(SnapshotKind::Import, today - 40));
+        for d in 50..55 {
+            all.push(snap(SnapshotKind::Restore, today - d));
+        }
         all.sort_by_key(|s| std::cmp::Reverse(s.taken_at));
 
         let dropped = expired(&all);
@@ -218,6 +251,12 @@ mod tests {
         assert!(kept.contains(&&snap(SnapshotKind::Migration, today - 1)));
         assert!(!kept.contains(&&snap(SnapshotKind::Migration, today - 30)));
         assert!(kept.contains(&&snap(SnapshotKind::Import, today - 40)));
+        let restores: Vec<_> = kept
+            .iter()
+            .filter(|s| s.kind == SnapshotKind::Restore)
+            .collect();
+        assert_eq!(restores.len(), 3);
+        assert!(restores.contains(&&&snap(SnapshotKind::Restore, today - 50)));
     }
 
     #[test]

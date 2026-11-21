@@ -12,7 +12,7 @@
 //! `project_id` is always set so roll-up queries need no join.
 
 /// Step `i` takes `user_version` from `i` to `i + 1`.
-pub const MIGRATIONS: &[&str] = &[V1];
+pub const MIGRATIONS: &[&str] = &[V1, V2];
 
 /// The version this build writes.
 pub const SCHEMA_VERSION: i64 = MIGRATIONS.len() as i64;
@@ -231,4 +231,18 @@ CREATE TRIGGER kb_fts_au AFTER UPDATE OF title, summary, body ON kb_entries BEGI
     INSERT INTO kb_fts(rowid, title, summary, body)
     VALUES (new.id, new.title, new.summary, new.body);
 END;
+"#;
+
+/// One number per entry in a topic, even after a merge import; and the id
+/// of the delete that trashed a record, so a restore brings back exactly
+/// what went with it (local, not exported).
+const V2: &str = r#"
+CREATE UNIQUE INDEX entries_topic_seq ON entries(topic_id, seq) WHERE seq IS NOT NULL;
+ALTER TABLE projects ADD COLUMN deleted_batch TEXT;
+ALTER TABLE epics ADD COLUMN deleted_batch TEXT;
+ALTER TABLE topics ADD COLUMN deleted_batch TEXT;
+ALTER TABLE entries ADD COLUMN deleted_batch TEXT;
+ALTER TABLE notes ADD COLUMN deleted_batch TEXT;
+ALTER TABLE kb_entries ADD COLUMN deleted_batch TEXT;
+ALTER TABLE folders ADD COLUMN deleted_batch TEXT;
 "#;

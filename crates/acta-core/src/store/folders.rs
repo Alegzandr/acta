@@ -68,9 +68,10 @@ impl Store {
         stored: &str,
         author: Author,
     ) -> Result<FolderId> {
-        let (project, epic, topic) = owner_ids(self, owner)?;
-        if self
-            .folders(owner)?
+        let cond = owner_condition(owner);
+        let tx = self.write()?;
+        let (project, epic, topic) = owner_ids(&tx, owner)?;
+        if folders_of(&tx, owner)?
             .iter()
             .any(|f| folder_path::same(Os::CURRENT, &f.path, stored))
         {
@@ -78,8 +79,6 @@ impl Store {
                 "this folder is already attached to {owner}"
             )));
         }
-        let cond = owner_condition(owner);
-        let tx = self.write()?;
         let now = now_ms();
         let position: i64 = tx.query_row(
             &format!("SELECT coalesce(max(position) + 1, 0) FROM folders WHERE {cond} AND deleted_at IS NULL"),
@@ -97,25 +96,12 @@ impl Store {
     }
 
     pub fn folder(&self, id: FolderId) -> Result<Folder> {
-        self.conn
-            .query_row(
-                &format!("SELECT {FOLDER_COLS}, {STAMP_COLS} FROM folders WHERE id = ?1 AND deleted_at IS NULL"),
-                [id.0],
-                folder_row,
-            )
-            .optional()?
-            .ok_or_else(|| Error::NotFound(id.to_string()))
+        read_folder(&self.conn, id)
     }
 
     /// The owner's own folders, in order.
     pub fn folders(&self, owner: Owner) -> Result<Vec<Folder>> {
-        let mut stmt = self.conn.prepare(&format!(
-            "SELECT {FOLDER_COLS}, {STAMP_COLS} FROM folders
-             WHERE {} AND deleted_at IS NULL ORDER BY position, id",
-            owner_condition(owner)
-        ))?;
-        let rows = stmt.query_map([], folder_row)?;
-        Ok(rows.collect::<rusqlite::Result<_>>()?)
+        folders_of(&self.conn, owner)
     }
 
     /// Every live folder of every live owner, for the "folders not found"
@@ -302,8 +288,16 @@ impl Store {
             // Attached in two projects: nothing can be chosen safely.
             return Ok(None);
         }
+        // The most specific level wins: a topic over an epic over the
+        // project. Only owners at that level can be ambiguous.
+        let rank = |o: &Owner| match o {
+            Owner::Topic(_) => 0,
+            Owner::Epic(_) => 1,
+            Owner::Project(_) => 2,
+        };
+        let best_rank = hits.iter().map(|h| rank(&h.owner)).min().unwrap_or(2);
         let mut owners: Vec<Owner> = Vec::new();
-        for h in &hits {
+        for h in hits.iter().filter(|h| rank(&h.owner) == best_rank) {
             if !owners.contains(&h.owner) {
                 owners.push(h.owner);
             }
@@ -365,4 +359,26 @@ impl Store {
         let rows = stmt.query_map([], folder_row)?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
+}
+
+fn folders_of(conn: &rusqlite::Connection, owner: Owner) -> Result<Vec<Folder>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {FOLDER_COLS}, {STAMP_COLS} FROM folders
+         WHERE {} AND deleted_at IS NULL ORDER BY position, id",
+        owner_condition(owner)
+    ))?;
+    let rows = stmt.query_map([], folder_row)?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+pub(crate) fn read_folder(conn: &rusqlite::Connection, id: FolderId) -> Result<Folder> {
+    conn.query_row(
+        &format!(
+            "SELECT {FOLDER_COLS}, {STAMP_COLS} FROM folders WHERE id = ?1 AND deleted_at IS NULL"
+        ),
+        [id.0],
+        folder_row,
+    )
+    .optional()?
+    .ok_or_else(|| Error::NotFound(id.to_string()))
 }

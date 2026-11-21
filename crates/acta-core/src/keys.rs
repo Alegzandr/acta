@@ -14,6 +14,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use zeroize::{Zeroize, Zeroizing};
 
 /// Keychain service and account names of the database key.
 pub const KEYCHAIN_SERVICE: &str = "Acta";
@@ -40,9 +41,9 @@ impl Key {
         Key(bytes)
     }
 
-    /// The stored form: 64 lower-case hex characters.
-    pub fn to_hex(&self) -> String {
-        let mut s = String::with_capacity(64);
+    /// The stored form: 64 lower-case hex characters, wiped when dropped.
+    pub fn to_hex(&self) -> Zeroizing<String> {
+        let mut s = Zeroizing::new(String::with_capacity(64));
         for b in self.0 {
             s.push(char::from(HEX[usize::from(b >> 4)]));
             s.push(char::from(HEX[usize::from(b & 15)]));
@@ -75,9 +76,7 @@ impl fmt::Debug for Key {
 
 impl Drop for Key {
     fn drop(&mut self) {
-        self.0 = [0; 32];
-        // Keeps the wipe from being optimised away as a dead store.
-        std::hint::black_box(&self.0);
+        self.0.zeroize();
     }
 }
 
@@ -179,7 +178,7 @@ impl KeyStore for OsKeychain {
     }
 
     fn load(&self) -> Result<Option<Key>, KeyStoreError> {
-        match self.entry()?.get_password() {
+        match self.entry()?.get_password().map(Zeroizing::new) {
             Ok(text) => Key::from_hex(&text)
                 .map(Some)
                 .ok_or_else(|| KeyStoreError("keychain entry is not a 256-bit hex key".into())),
@@ -213,7 +212,7 @@ impl KeyStore for KeyFile {
     }
 
     fn load(&self) -> Result<Option<Key>, KeyStoreError> {
-        match fs::read_to_string(&self.path) {
+        match fs::read_to_string(&self.path).map(Zeroizing::new) {
             Ok(text) => Key::from_hex(&text)
                 .map(Some)
                 .ok_or_else(|| KeyStoreError("key file is not a 256-bit hex key".into())),

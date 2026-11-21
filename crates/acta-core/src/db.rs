@@ -46,11 +46,8 @@ pub(crate) fn connect(path: &Path, key: &Key, mode: Mode) -> Result<Connection, 
     // SQLCipher logs decryption failures to stderr by default; we report them.
     conn.execute_batch("PRAGMA cipher_log_level = NONE;")?;
     // Raw key: no PBKDF2. Must be the first statement that touches the file.
-    let mut sql = format!("PRAGMA key = \"x'{}'\";", key.to_hex()).into_bytes();
-    let keyed = conn.execute_batch(std::str::from_utf8(&sql).unwrap_or_default());
-    sql.fill(0);
-    std::hint::black_box(&sql);
-    keyed?;
+    let sql = zeroize::Zeroizing::new(format!("PRAGMA key = \"x'{}'\";", key.to_hex().as_str()));
+    conn.execute_batch(&sql)?;
     conn.busy_timeout(BUSY_TIMEOUT)?;
     // The first real read: where a wrong key surfaces as SQLITE_NOTADB.
     match conn.query_row("SELECT count(*) FROM sqlite_master", [], |r| {
@@ -91,17 +88,36 @@ pub enum Opened {
 /// | absent | present | create with that key |
 /// | present | absent | `KeyMissing`, nothing touched |
 /// | present | does not decrypt | `KeyWrongOrCorrupt`, nothing touched |
+///
+/// Returns the init lock still held: the caller keeps it until migrations
+/// are done, so two processes never migrate or restore at the same time.
 pub(crate) fn open_or_init(
     dir: &Path,
     stores: &KeyStores,
-) -> Result<(Connection, Key, Opened), OpenError> {
+) -> Result<(Connection, Key, Opened, InitLock), OpenError> {
     fsutil::create_private_dir(dir)?;
-    // Serialises first runs between processes (GUI and MCP starting together).
-    let lock = fs::File::create(dir.join(LOCK_FILE))?;
-    lock.lock()?;
-    let result = open_locked(dir, stores);
-    let _ = lock.unlock();
-    result
+    let lock = InitLock::acquire(dir)?;
+    let (conn, key, opened) = open_locked(dir, stores)?;
+    Ok((conn, key, opened, lock))
+}
+
+/// Exclusive lock on `acta.init.lock`: serialises first runs, migrations and
+/// snapshot restores between processes (GUI and MCP starting together).
+/// Released when dropped.
+pub(crate) struct InitLock(fs::File);
+
+impl InitLock {
+    pub(crate) fn acquire(dir: &Path) -> std::io::Result<InitLock> {
+        let file = fs::File::create(dir.join(LOCK_FILE))?;
+        file.lock()?;
+        Ok(InitLock(file))
+    }
+}
+
+impl Drop for InitLock {
+    fn drop(&mut self) {
+        let _ = self.0.unlock();
+    }
 }
 
 fn open_locked(dir: &Path, stores: &KeyStores) -> Result<(Connection, Key, Opened), OpenError> {
@@ -110,8 +126,13 @@ fn open_locked(dir: &Path, stores: &KeyStores) -> Result<(Connection, Key, Opene
     let store_err = |e: crate::keys::KeyStoreError| OpenError::KeyStore(e.0);
 
     if db.exists() {
+        let mut checked = None;
         let key = match &marker {
-            Some(name) => named_store(stores, name)?.load().map_err(store_err)?,
+            Some(name) => {
+                let store = named_store(stores, name)?;
+                checked = Some(store.name());
+                store.load().map_err(store_err)?
+            }
             // No marker: look in every store, and record the one that has it.
             None => {
                 let mut found = None;
@@ -136,7 +157,10 @@ fn open_locked(dir: &Path, stores: &KeyStores) -> Result<(Connection, Key, Opene
                 }
             }
         };
-        let key = key.ok_or(OpenError::KeyMissing { db: db.clone() })?;
+        let key = key.ok_or(OpenError::KeyMissing {
+            db: db.clone(),
+            store: checked,
+        })?;
         let conn = connect(&db, &key, Mode::Live { create: false })?;
         return Ok((conn, key, Opened::Existing));
     }
@@ -224,10 +248,12 @@ pub(crate) fn user_version(conn: &Connection) -> rusqlite::Result<i64> {
     conn.pragma_query_value(None, "user_version", |r| r.get(0))
 }
 
-/// Runs the ladder up to the end of `steps`. A database that is behind gets a
-/// migration snapshot first; if a step fails, that snapshot is restored into
-/// the live database and the error says so. A database ahead of this build
-/// is left alone (ADR 0003: an older binary keeps working).
+/// Runs the ladder up to the end of `steps`, under the [`InitLock`]. A
+/// database that is behind gets a migration snapshot first. If one of this
+/// process's own steps fails (not a busy or locked database) and the
+/// database is still behind afterwards, that snapshot is restored into the
+/// live database and the error says so. A database ahead of this build is
+/// left alone (ADR 0003: an older binary keeps working).
 pub(crate) fn migrate(
     conn: &mut Connection,
     dir: &Path,
@@ -249,35 +275,66 @@ pub(crate) fn migrate(
     } else {
         None
     };
-    let result = run_steps(conn, steps);
-    match (result, snapshot) {
-        (Ok(()), _) => Ok(()),
-        (Err(e), Some(snap)) => {
-            let message = e.to_string();
+    let failure = match run_steps(conn, steps) {
+        Ok(()) => return Ok(()),
+        Err(f) => f,
+    };
+    let message = failure.error.to_string();
+    let behind = user_version(conn).map_or(true, |v| v < steps.len() as i64);
+    match snapshot {
+        Some(snap) if failure.own_step && !is_busy(&failure.error) && behind => {
             restore_into(conn, &snap.path, key)?;
             Err(OpenError::MigrationFailed {
                 message,
                 restored_from: Some(snap.path),
             })
         }
-        (Err(e), None) => Err(OpenError::MigrationFailed {
-            message: e.to_string(),
+        _ => Err(OpenError::MigrationFailed {
+            message,
             restored_from: None,
         }),
     }
 }
 
-fn run_steps(conn: &mut Connection, steps: &[&str]) -> rusqlite::Result<()> {
+struct StepFailure {
+    error: rusqlite::Error,
+    /// The error came from executing a step's own SQL, not from waiting for
+    /// the write lock or reading the version.
+    own_step: bool,
+}
+
+fn is_busy(e: &rusqlite::Error) -> bool {
+    matches!(
+        e,
+        rusqlite::Error::SqliteFailure(f, _)
+            if matches!(f.code, ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked)
+    )
+}
+
+fn run_steps(conn: &mut Connection, steps: &[&str]) -> Result<(), StepFailure> {
+    let outside = |error| StepFailure {
+        error,
+        own_step: false,
+    };
     for (i, sql) in steps.iter().enumerate() {
         let to = i as i64 + 1;
         // IMMEDIATE and a re-read: two processes cannot both apply a step.
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        if user_version(&tx)? >= to {
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(outside)?;
+        if user_version(&tx).map_err(outside)? >= to {
             continue;
         }
-        tx.execute_batch(sql)?;
-        tx.pragma_update(None, "user_version", to)?;
-        tx.commit()?;
+        let applied = tx
+            .execute_batch(sql)
+            .and_then(|_| tx.pragma_update(None, "user_version", to));
+        if let Err(error) = applied {
+            return Err(StepFailure {
+                error,
+                own_step: true,
+            });
+        }
+        tx.commit().map_err(outside)?;
     }
     Ok(())
 }
@@ -290,7 +347,12 @@ pub(crate) fn restore_into(
     key: &Key,
 ) -> Result<(), OpenError> {
     let src = connect(snapshot, key, Mode::Snapshot)?;
-    let backup = rusqlite::backup::Backup::new(&src, conn)?;
+    restore_from(conn, &src)
+}
+
+/// [`restore_into`] from a snapshot connection already open.
+pub(crate) fn restore_from(conn: &mut Connection, src: &Connection) -> Result<(), OpenError> {
+    let backup = rusqlite::backup::Backup::new(src, conn)?;
     backup.run_to_completion(256, Duration::from_millis(5), None)?;
     Ok(())
 }
