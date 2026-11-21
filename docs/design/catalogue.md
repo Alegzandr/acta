@@ -124,6 +124,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `error.save_entry` | Could not save the entry. The database is locked by another process. | Impossible d'enregistrer l'entrée. La base de données est verrouillée par un autre processus. |
 | `error.save` | Could not save the change. Try again. | Impossible d'enregistrer la modification. Réessayez. |
 | `undo.changed` | Not undone: it was changed since. | Non annulé : cela a été modifié depuis. |
+| `redo.changed` | Not redone: it was changed since. | Non rétabli : cela a été modifié depuis. |
 | `table.count` | {n} topic · {n} topics | {n} sujet · {n} sujets |
 | `table.filter.open` | Open | Ouverts |
 | `table.filter.all` | All | Tous |

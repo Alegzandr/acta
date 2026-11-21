@@ -465,6 +465,10 @@ catalogue! {
         en: t("Not undone: it was changed since."),
         fr: t("Non annulé\u{202f}: cela a été modifié depuis."),
     }
+    RedoChanged "redo.changed" {
+        en: t("Not redone: it was changed since."),
+        fr: t("Non rétabli\u{202f}: cela a été modifié depuis."),
+    }
     TableCount "table.count" {
         en: p("{n} topic", "{n} topics"),
         fr: p("{n} sujet", "{n} sujets"),

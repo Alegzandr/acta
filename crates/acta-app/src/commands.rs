@@ -26,6 +26,7 @@ pub enum Command {
     Back,
     Forward,
     Undo,
+    Redo,
     ToggleSidebar,
     ToggleRight,
     ToggleBottom,
@@ -190,6 +191,7 @@ impl Command {
             out.push(Command::ReopenTab);
         }
         out.push(Command::Undo);
+        out.push(Command::Redo);
         // The workbench layout (4.8): the focused view's commands first,
         // then the areas, every other view, the page groups, recovery.
         if let Some(focused) = ctx.focused_view
@@ -268,6 +270,7 @@ impl Command {
             Command::Back => Key::CmdBack,
             Command::Forward => Key::CmdForward,
             Command::Undo => Key::CmdUndo,
+            Command::Redo => Key::CmdRedo,
             Command::ToggleSidebar => Key::CmdToggleSidebar,
             Command::ToggleRight => Key::CmdToggleRight,
             Command::ToggleBottom => Key::CmdToggleBottom,
@@ -393,6 +396,7 @@ impl Command {
             Command::TerminalLarger => vec![KeyName::Ctrl.label(locale, macos), alt, "="],
             Command::TerminalSmaller => vec![KeyName::Ctrl.label(locale, macos), alt, "-"],
             Command::Undo => vec![m, "Z"],
+            Command::Redo => vec![m, shift, "Z"],
             Command::Back if macos => vec![m, "["],
             Command::Forward if macos => vec![m, "]"],
             Command::Back => vec![alt, "\u{2190}"],

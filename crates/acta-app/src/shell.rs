@@ -138,6 +138,8 @@ actions!(
         Forward,
         /// `Mod+Z`.
         Undo,
+        /// `Mod+Shift+Z`, also `Ctrl+Y` on Windows and Linux.
+        Redo,
         /// ``Ctrl+` `` or `Mod+Shift+J`.
         ToggleTerminal,
         /// `Mod+1`.
@@ -265,6 +267,7 @@ fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new(m("cmd-shift-d", "ctrl-shift-d"), NewDocument, app),
         KeyBinding::new(m("cmd-shift-m", "ctrl-shift-m"), NewMemory, app),
         KeyBinding::new(m("cmd-z", "ctrl-z"), Undo, plain),
+        KeyBinding::new(m("cmd-shift-z", "ctrl-shift-z"), Redo, plain),
         KeyBinding::new("ctrl-`", ToggleTerminal, None),
         KeyBinding::new(m("cmd-shift-j", "ctrl-shift-j"), ToggleTerminal, None),
         KeyBinding::new(m("cmd-1", "ctrl-1"), FocusSidebar, None),
@@ -298,6 +301,7 @@ fn key_bindings() -> Vec<KeyBinding> {
     } else {
         out.push(KeyBinding::new("alt-left", Back, plain));
         out.push(KeyBinding::new("alt-right", Forward, plain));
+        out.push(KeyBinding::new("ctrl-y", Redo, plain));
     }
     out
 }
@@ -1757,6 +1761,7 @@ impl Shell {
             Command::Back => self.back(window, cx),
             Command::Forward => self.forward(window, cx),
             Command::Undo => self.undo(window, cx),
+            Command::Redo => self.redo(window, cx),
             Command::ToggleSidebar => self.toggle_sidebar(window, cx),
             Command::ToggleRight => self.toggle_area(Side::Right, window, cx),
             Command::ToggleBottom => self.toggle_area(Side::Bottom, window, cx),
@@ -2307,6 +2312,21 @@ impl Shell {
         }
         bench.toast = None;
         bench.ws.update(cx, |ws, cx| ws.undo_active(project, cx));
+        cx.notify();
+    }
+
+    /// `Mod+Shift+Z` (`Ctrl+Y` on Windows and Linux): the newest undone
+    /// step of the window, layout or write, by the same rule as `Mod+Z`.
+    fn redo(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(bench) = self.bench() else { return };
+        let project = bench.active_project;
+        let write = bench.ws.read(cx).newest_redo(project);
+        let layout = bench.layout_undo.newest_redo();
+        if crate::layout::layout_step_first(layout, write) {
+            return self.redo_layout(window, cx);
+        }
+        bench.toast = None;
+        bench.ws.update(cx, |ws, cx| ws.redo_active(project, cx));
         cx.notify();
     }
 
@@ -4215,6 +4235,7 @@ impl Render for Shell {
             .on_action(cx.listener(|s, _: &Back, w, cx| s.back(w, cx)))
             .on_action(cx.listener(|s, _: &Forward, w, cx| s.forward(w, cx)))
             .on_action(cx.listener(|s, _: &Undo, w, cx| s.undo(w, cx)))
+            .on_action(cx.listener(|s, _: &Redo, w, cx| s.redo(w, cx)))
             .on_action(cx.listener(|s, _: &ExportData, w, cx| s.open_export(w, cx)))
             .on_action(cx.listener(|s, _: &ImportData, w, cx| s.import(w, cx)))
             .on_action(cx.listener(|s, _: &RestoreSnapshot, w, cx| s.open_snapshots(w, cx)))

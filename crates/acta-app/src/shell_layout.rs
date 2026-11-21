@@ -917,8 +917,24 @@ impl Shell {
 
     /// "Undo layout change": the newest layout step, whatever has focus.
     pub(super) fn undo_layout(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.step_layout(false, window, cx);
+    }
+
+    /// `Mod+Shift+Z` when the newest undone step is a layout change.
+    pub(super) fn redo_layout(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.step_layout(true, window, cx);
+    }
+
+    fn step_layout(&mut self, redo: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some(bench) = self.bench() else { return };
-        let Some(before) = bench.layout_undo.undo() else {
+        let seq = crate::workspace::next_undo_seq();
+        let current = bench.layout.clone();
+        let target = if redo {
+            bench.layout_undo.redo(current, seq)
+        } else {
+            bench.layout_undo.undo(current, seq)
+        };
+        let Some(before) = target else {
             return;
         };
         // Pages the step closed come back; pages opened since stay.
