@@ -318,63 +318,7 @@ impl RecordPage {
         }
         self.saving_title = true;
         let owner = self.owner;
-        let project = self.project_id();
-        let task = self.ws.update(cx, |ws, cx| {
-            ws.write_undoable(cx, project, None, move |store| {
-                let me = Author::Human;
-                let undo = match owner {
-                    Owner::Topic(id) => {
-                        let back = store.topic(id)?.title;
-                        store.update_topic(
-                            id,
-                            TopicPatch {
-                                title: Some(new.clone()),
-                                ..TopicPatch::default()
-                            },
-                            me,
-                        )?;
-                        Undo::TopicTitle {
-                            id,
-                            back,
-                            expect: store.topic(id)?.title,
-                        }
-                    }
-                    Owner::Epic(id) => {
-                        let back = store.epic(id)?.title;
-                        store.update_epic(
-                            id,
-                            EpicPatch {
-                                title: Some(new.clone()),
-                                ..EpicPatch::default()
-                            },
-                            me,
-                        )?;
-                        Undo::EpicTitle {
-                            id,
-                            back,
-                            expect: store.epic(id)?.title,
-                        }
-                    }
-                    Owner::Project(id) => {
-                        let back = store.project(id)?.title;
-                        store.update_project(
-                            id,
-                            ProjectPatch {
-                                title: Some(new.clone()),
-                                ..ProjectPatch::default()
-                            },
-                            me,
-                        )?;
-                        Undo::ProjectTitle {
-                            id,
-                            back,
-                            expect: store.project(id)?.title,
-                        }
-                    }
-                };
-                Ok((undo, ()))
-            })
-        });
+        let task = self.ws.update(cx, |ws, cx| ws.rename(owner, new, cx));
         cx.spawn_in(window, async move |page, cx| {
             let saved = task.await.is_ok();
             let _ = page.update_in(cx, |page, window, cx| {

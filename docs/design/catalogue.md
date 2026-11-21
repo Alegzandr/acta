@@ -56,6 +56,9 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `tree.settings` | Settings | Paramètres |
 | `tree.closed` | {n} closed | {n} clos |
 | `tree.no_epic` | No epic | Sans epic |
+| `tree.rename` | Rename | Renommer |
+| `tree.set_status` | Set status | Changer le statut |
+| `tree.move_epic` | Move to epic | Déplacer vers un epic |
 | `status.draft` | Draft | Brouillon |
 | `status.planned` | Planned | Prévu |
 | `status.active` | Active | En cours |

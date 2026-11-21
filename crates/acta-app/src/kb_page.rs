@@ -743,6 +743,11 @@ impl DocPage {
         self.mode == Mode::Edit
     }
 
+    /// The kind of a document or memory not saved yet.
+    pub fn draft_kind(&self) -> Option<KbKind> {
+        self.draft.filter(|_| self.id.is_none()).map(|d| d.kind)
+    }
+
     /// The entry's owner and title, once loaded (the breadcrumb, and the
     /// tree row it selects). A draft has its owner and no title yet.
     pub fn located(&self) -> Option<(Owner, Option<String>)> {

@@ -13,18 +13,19 @@
 //! right dock hides the other there, and both go on running.
 
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use acta_core::model::{Author, EpicId, KbKind, Owner, ProjectId, Record, Status, TopicId};
+use acta_core::model::{Author, EpicId, KbId, KbKind, Owner, ProjectId, Record, Status, TopicId};
 use acta_core::store::ExportFile;
+use gpui_kit::component::input::{Escape, Input, InputEvent, InputState};
 use gpui_kit::component::window_border;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, AnyView, App, AppContext, Bounds, Context, DragMoveEvent, Entity, FocusHandle,
-    Focusable, InteractiveElement, IntoElement, KeyBinding, ParentElement, PathPromptOptions,
-    Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Task, TitlebarOptions,
-    Window, WindowBounds, WindowDecorations, WindowOptions, actions, deferred, div, point, px,
-    size,
+    Focusable, InteractiveElement, IntoElement, KeyBinding, KeyDownEvent, ParentElement,
+    PathPromptOptions, Render, SharedString, StatefulInteractiveElement, Styled, Subscription,
+    Task, TitlebarOptions, Window, WindowBounds, WindowDecorations, WindowOptions, actions,
+    deferred, div, point, px, size,
 };
 
 use crate::capture::{Capture, CaptureEvent};
@@ -53,7 +54,7 @@ use crate::terminal_dock::{DockEvent, Origin, TerminalDock};
 use crate::theme::{self, RADIUS_MD, RADIUS_SM, Tokens};
 use crate::titlebar::{self, Crumb};
 use crate::trash_page::TrashPage;
-use crate::tree::{self, Folds, Row};
+use crate::tree::{self, Folds, MenuItem, MenuKind, Row, RowKey};
 use crate::type_scale;
 use crate::ui::{self, Variant};
 use crate::workspace::{Toast, ToastKind, Workspace, WorkspaceEvent};
@@ -69,6 +70,9 @@ pub const MIN_SIZE: (f32, f32) = (880., 560.);
 const STATUS_BAR_HEIGHT: f32 = 24.;
 /// docs/design/components.md 5, Toast: 6 s.
 const TOAST_TIME: Duration = Duration::from_secs(6);
+/// Type-ahead in the tree: keys typed within this of each other extend
+/// the same search.
+const TYPE_AHEAD_PAUSE: Duration = Duration::from_secs(1);
 
 actions!(
     acta,
@@ -247,9 +251,7 @@ fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("f2", EditTitle, Some("RecordPage && !Input")),
         KeyBinding::new("escape", crate::dialogs::CancelDialog, Some("Dialog")),
         KeyBinding::new("up", TreeUp, Some("Tree")),
-        KeyBinding::new("k", TreeUp, Some("Tree")),
         KeyBinding::new("down", TreeDown, Some("Tree")),
-        KeyBinding::new("j", TreeDown, Some("Tree")),
         KeyBinding::new("left", TreeLeft, Some("Tree")),
         KeyBinding::new("right", TreeRight, Some("Tree")),
         KeyBinding::new("enter", TreeOpen, Some("Tree")),
@@ -316,6 +318,23 @@ impl PageView {
     }
 }
 
+/// A menu of a tree row, with its highlighted item.
+#[derive(Clone, Copy, Debug)]
+struct TreeMenu {
+    row: RowKey,
+    kind: MenuKind,
+    highlight: usize,
+}
+
+/// A tree row being renamed in place.
+#[derive(Clone)]
+struct Rename {
+    key: RowKey,
+    state: Entity<InputState>,
+    /// The new title is being written.
+    saving: bool,
+}
+
 enum Overlay {
     Palette(Entity<Palette>),
     Capture(Entity<Capture>),
@@ -332,10 +351,20 @@ struct Bench {
     active_tab: usize,
     /// Closed tabs, most recent last ("Reopen closed tab").
     closed_tabs: Vec<History>,
+    /// The titles of the documents and memories open in tabs, read off the
+    /// UI thread, for the tabs that are not active.
+    kb_titles: std::collections::HashMap<KbId, String>,
+    _kb_titles: Task<()>,
     page: PageView,
     settings: Entity<SettingsPage>,
     folds: Folds,
-    cursor: usize,
+    cursor: tree::Cursor,
+    /// The tree's open menu (`Shift+F10`, `S`, `M`).
+    tree_menu: Option<TreeMenu>,
+    /// The row being renamed in place.
+    rename: Option<Rename>,
+    /// Type-ahead: what was typed, and when the last key came.
+    find: (String, Option<Instant>),
     tree_focus: FocusHandle,
     page_focus: FocusHandle,
     active_project: Option<ProjectId>,
@@ -347,9 +376,6 @@ struct Bench {
     /// Where focus returns when the overlay closes.
     return_focus: Option<FocusHandle>,
     capture_draft: String,
-    /// After a reorder, the row the keyboard cursor follows once the tree
-    /// reloads.
-    pending_cursor: Option<Route>,
     toast: Option<Toast>,
     toast_timer: Task<()>,
     dock: Entity<TerminalDock>,
@@ -520,10 +546,15 @@ impl Shell {
             tabs: vec![History::default()],
             active_tab: 0,
             closed_tabs: Vec::new(),
+            kb_titles: Default::default(),
+            _kb_titles: Task::ready(()),
             page: PageView::FirstRun(first_run),
             settings: settings_page,
             folds,
-            cursor: 0,
+            cursor: tree::Cursor::default(),
+            tree_menu: None,
+            rename: None,
+            find: (String::new(), None),
             tree_focus: cx.focus_handle(),
             page_focus: cx.focus_handle(),
             active_project: None,
@@ -532,7 +563,6 @@ impl Shell {
             overlay: None,
             return_focus: None,
             capture_draft: String::new(),
-            pending_cursor: None,
             toast: None,
             toast_timer: Task::ready(()),
             dock,
@@ -618,6 +648,8 @@ impl Shell {
             self.dev_overlay(window, cx);
             return;
         }
+        // Titles may have changed: read them again.
+        bench.kb_titles.clear();
         if !has_projects && !matches!(bench.page, PageView::Settings(_) | PageView::Trash(_)) {
             self.show_first_run(window, cx);
         } else if has_projects
@@ -626,19 +658,7 @@ impl Shell {
         {
             self.navigate(Route::Inbox(id), true, window, cx);
         }
-        self.follow_cursor(cx);
-        self.clamp_cursor(cx);
-    }
-
-    /// Put the keyboard cursor back on the row that moved.
-    fn follow_cursor(&mut self, cx: &mut Context<Self>) {
-        let rows = self.rows(cx);
-        let Some(bench) = self.bench() else { return };
-        if let Some(route) = bench.pending_cursor.take()
-            && let Some(at) = rows.iter().position(|r| r.route() == Some(route))
-        {
-            bench.cursor = at;
-        }
+        self.refresh_kb_titles(cx);
     }
 
     /// Debug builds: `ACTA_DEV_OVERLAY=palette|capture|terminal|chat|chat-palette|export|snapshots`
@@ -846,6 +866,18 @@ impl Shell {
     }
 
     fn show(&mut self, route: Route, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_route(route, true, window, cx);
+    }
+
+    /// Show `route`; `focus` moves the keyboard to the page (not when the
+    /// tree previews a row with `Space`, or a tab switches from the chat).
+    fn show_route(
+        &mut self,
+        route: Route,
+        focus: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         // Opening something dismisses the sidebar shown over the page.
         self.sidebar_overlay = false;
         let Some(bench) = self.bench() else { return };
@@ -925,7 +957,9 @@ impl Shell {
             cx.notify();
         });
         self.save_layout(cx);
-        self.focus_page(window, cx);
+        if focus {
+            self.focus_page(window, cx);
+        }
         let _ = page_focus;
         cx.notify();
     }
@@ -987,8 +1021,41 @@ impl Shell {
         self.navigate(Route::Settings, true, window, cx);
     }
 
+    /// Read the titles of the documents and memories open in tabs.
+    fn refresh_kb_titles(&mut self, cx: &mut Context<Self>) {
+        let Some(bench) = self.bench() else { return };
+        let mut tabs = bench.tabs.clone();
+        tabs[bench.active_tab] = bench.history.clone();
+        let ids: Vec<KbId> = tabs
+            .iter()
+            .filter_map(|h| match h.current() {
+                Some(Route::Kb(id)) => Some(id),
+                _ => None,
+            })
+            .collect();
+        if ids.is_empty() || ids.iter().all(|id| bench.kb_titles.contains_key(id)) {
+            return;
+        }
+        let task = bench.ws.read(cx).db.run(cx, move |store| {
+            Ok(ids
+                .into_iter()
+                .filter_map(|id| store.kb_entry(id).ok().map(|e| (id, e.title)))
+                .collect::<Vec<_>>())
+        });
+        bench._kb_titles = cx.spawn(async move |shell, cx| {
+            let Ok(titles) = task.await else { return };
+            let _ = shell.update(cx, |shell, cx| {
+                if let Some(bench) = shell.bench() {
+                    bench.kb_titles.extend(titles);
+                }
+                cx.notify();
+            });
+        });
+    }
+
     /// Write the page and the tree's folds to `preferences.json` (ids only).
     fn save_layout(&mut self, cx: &mut Context<Self>) {
+        self.refresh_kb_titles(cx);
         let Some(bench) = self.bench() else { return };
         let page = bench.history.current().map(Route::key);
         let mut collapsed: Vec<String> = bench.folds.collapsed.iter().cloned().collect();
@@ -1042,6 +1109,18 @@ impl Shell {
     }
 
     fn switch_tab(&mut self, at: usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.switch_tab_to(at, true, window, cx);
+    }
+
+    /// `focus`: the keyboard goes to the page; a tab switched from the
+    /// chat or the terminal leaves the keyboard there.
+    fn switch_tab_to(
+        &mut self,
+        at: usize,
+        focus: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(bench) = self.bench() else { return };
         if at >= bench.tabs.len() {
             return;
@@ -1050,7 +1129,7 @@ impl Shell {
         bench.active_tab = at;
         bench.history = bench.tabs[at].clone();
         if let Some(route) = bench.history.current() {
-            self.show(route, window, cx);
+            self.show_route(route, focus, window, cx);
         }
         cx.notify();
     }
@@ -1099,8 +1178,15 @@ impl Shell {
         self.switch_tab(at, window, cx);
     }
 
-    /// `Ctrl+Tab` / `Ctrl+Shift+Tab`, wrapping.
-    fn cycle_tab(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
+    /// `Ctrl+Tab` / `Ctrl+Shift+Tab`, wrapping. From the terminal or the
+    /// chat the keyboard stays where it is (`focus` false).
+    fn cycle_tab(
+        &mut self,
+        forward: bool,
+        focus: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(bench) = self.bench() else { return };
         let n = bench.tabs.len();
         if n < 2 {
@@ -1111,14 +1197,27 @@ impl Shell {
         } else {
             (bench.active_tab + n - 1) % n
         };
-        self.switch_tab(at, window, cx);
+        self.switch_tab_to(at, focus, window, cx);
     }
 
-    /// A tab's icon and title (layout.md 4.4).
-    fn tab_label(&self, route: Route, locale: Locale, cx: &App) -> (Icon, Option<Status>, String) {
+    /// A tab's icon and title (layout.md 4.4). The active tab shows a
+    /// draft as "New document" or "New memory".
+    fn tab_label(
+        &self,
+        route: Route,
+        active: bool,
+        locale: Locale,
+        cx: &App,
+    ) -> (Icon, Option<Status>, String) {
         let Content::Workbench(bench) = &self.content else {
             return (Icon::FileText, None, String::new());
         };
+        if active
+            && let PageView::Doc(page) = &bench.page
+            && let Some(kind) = page.read(cx).draft_kind()
+        {
+            return (Icon::FileText, None, draft_label(locale, kind));
+        }
         let projects = &bench.ws.read(cx).projects;
         match route {
             Route::Topic(id) => {
@@ -1150,12 +1249,14 @@ impl Shell {
                     .unwrap_or_else(|| id.to_string()),
             ),
             Route::Kb(id) => {
+                // Inactive tabs: the titles read for them (`kb_titles`).
                 let title = match &bench.page {
                     PageView::Doc(page) if bench.history.current() == Some(route) => {
                         page.read(cx).located().and_then(|(_, t)| t)
                     }
                     _ => None,
-                };
+                }
+                .or_else(|| bench.kb_titles.get(&id).cloned());
                 (
                     Icon::FileText,
                     None,
@@ -1199,8 +1300,8 @@ impl Shell {
             .border_color(t.border_subtle);
         for (i, route) in routes.into_iter().enumerate() {
             let Some(route) = route else { continue };
-            let (glyph, status, title) = self.tab_label(route, locale, cx);
             let is_active = i == active;
+            let (glyph, status, title) = self.tab_label(route, is_active, locale, cx);
             let group = SharedString::from(format!("tab-{i}"));
             let hover = t.fill_hover;
             let leading = match status {
@@ -1821,6 +1922,16 @@ impl Shell {
 
     // ---- terminal ----
 
+    fn terminal_focused(&mut self, window: &Window, cx: &mut Context<Self>) -> bool {
+        self.bench().is_some_and(|bench| {
+            bench
+                .dock
+                .read(cx)
+                .focus_handle(cx)
+                .contains_focused(window, cx)
+        })
+    }
+
     fn toggle_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let origin = self.origin(cx);
         let Some(bench) = self.bench() else { return };
@@ -1923,8 +2034,12 @@ impl Shell {
             Kept::Focus(1) => Box::new(FocusSidebar),
             Kept::Focus(2) => Box::new(FocusPage),
             Kept::Focus(3) => Box::new(FocusTerminal),
-            Kept::NextTab => Box::new(NextTab),
-            Kept::PreviousTab => Box::new(PreviousTab),
+            // The chat keeps the keyboard: the next Mod+W is the page's
+            // own, not Acta's Close tab.
+            Kept::NextTab | Kept::PreviousTab => {
+                self.cycle_tab(kept == Kept::NextTab, false, window, cx);
+                return;
+            }
             Kept::Focus(_) | Kept::NextPane | Kept::PreviousPane | Kept::ZoomToolWindow => return,
         };
         // The keyboard comes back to the GPUI window before the action
@@ -2109,19 +2224,11 @@ impl Shell {
         }
     }
 
-    fn clamp_cursor(&mut self, cx: &mut Context<Self>) {
-        let len = self.rows(cx).len();
-        if let Some(bench) = self.bench() {
-            bench.cursor = bench.cursor.min(len.saturating_sub(1));
-        }
-    }
-
     fn toggle_fold(&mut self, key: String, cx: &mut Context<Self>) {
         if let Some(bench) = self.bench() {
             bench.folds.toggle(key);
         }
         self.save_layout(cx);
-        self.clamp_cursor(cx);
         cx.notify();
     }
 
@@ -2131,24 +2238,48 @@ impl Shell {
         if rows.is_empty() {
             return;
         }
-        let at = bench.cursor.min(rows.len() - 1);
+        // An open menu takes the arrows, Enter and Esc.
+        if bench.tree_menu.is_some() {
+            match key {
+                TreeKey::Up | TreeKey::Down => {
+                    let n = self.menu_items(&rows, cx).len();
+                    if let Some(menu) = self.bench().and_then(|b| b.tree_menu.as_mut()) {
+                        menu.highlight = if key == TreeKey::Up {
+                            menu.highlight.saturating_sub(1)
+                        } else {
+                            (menu.highlight + 1).min(n.saturating_sub(1))
+                        };
+                    }
+                }
+                TreeKey::Open | TreeKey::Right => {
+                    let at = self.bench().and_then(|b| b.tree_menu).map(|m| m.highlight);
+                    if let Some(at) = at {
+                        self.choose_menu_item(at, window, cx);
+                    }
+                }
+                _ => {}
+            }
+            cx.notify();
+            return;
+        }
+        let at = bench.cursor.index(&rows);
         let row = rows[at].clone();
         match key {
-            TreeKey::Up => bench.cursor = at.saturating_sub(1),
-            TreeKey::Down => bench.cursor = (at + 1).min(rows.len() - 1),
-            TreeKey::Home => bench.cursor = 0,
-            TreeKey::End => bench.cursor = rows.len() - 1,
+            TreeKey::Up => bench.cursor.set(&rows, at.saturating_sub(1)),
+            TreeKey::Down => bench.cursor.set(&rows, at + 1),
+            TreeKey::Home => bench.cursor.set(&rows, 0),
+            TreeKey::End => bench.cursor.set(&rows, rows.len() - 1),
             TreeKey::Left => match (row.fold_key(), row.is_expanded()) {
                 (Some(k), Some(true)) => self.toggle_fold(k, cx),
                 _ => {
                     if let Some(parent) = tree::parent_index(&rows, at) {
-                        bench.cursor = parent;
+                        bench.cursor.set(&rows, parent);
                     }
                 }
             },
             TreeKey::Right => match (row.fold_key(), row.is_expanded()) {
                 (Some(k), Some(false)) => self.toggle_fold(k, cx),
-                (Some(_), Some(true)) => bench.cursor = (at + 1).min(rows.len() - 1),
+                (Some(_), Some(true)) => bench.cursor.set(&rows, at + 1),
                 _ => {}
             },
             TreeKey::Open => match row.route() {
@@ -2159,13 +2290,7 @@ impl Shell {
                     }
                 }
             },
-            TreeKey::Delete => {
-                if let Some(record) = tree::row_record(&row) {
-                    let projects = bench.ws.read(cx).projects.clone();
-                    let project = row_project(&projects, &row);
-                    bench.ws.update(cx, |ws, cx| ws.delete(record, project, cx));
-                }
-            }
+            TreeKey::Delete => self.delete_row(&row, cx),
             TreeKey::MoveUp | TreeKey::MoveDown => {
                 let up = key == TreeKey::MoveUp;
                 let projects = bench.ws.read(cx).projects.clone();
@@ -2189,8 +2314,8 @@ impl Shell {
                     .collect();
                 let stored = tree::stored_siblings(&projects, &row);
                 if let Some(target) = tree::move_target(&stored, &visible, &record, up) {
+                    // The cursor is on the record, so it follows it there.
                     let project = row_project(&projects, &row);
-                    bench.pending_cursor = row.route();
                     bench
                         .ws
                         .update(cx, |ws, cx| ws.reorder(record, target, project, cx));
@@ -2200,34 +2325,320 @@ impl Shell {
         cx.notify();
     }
 
-    fn sidebar(&mut self, width: f32, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let tokens = cx.global::<Tokens>().clone();
-        let t = &tokens;
-        let locale = settings::locale(cx);
+    fn delete_row(&mut self, row: &Row, cx: &mut Context<Self>) {
+        let Some(bench) = self.bench() else { return };
+        if let Some(record) = tree::row_record(row) {
+            let projects = bench.ws.read(cx).projects.clone();
+            let project = row_project(&projects, row);
+            bench.ws.update(cx, |ws, cx| ws.delete(record, project, cx));
+        }
+    }
+
+    /// Keys the tree reads itself (interaction.md 6.1): the letter keys,
+    /// type-ahead, `F2`, `Shift+F10` or the menu key, and `1` to `6` in the
+    /// status menu.
+    fn tree_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let keystroke = &event.keystroke;
+        let m = keystroke.modifiers;
+        if m.control || m.alt || m.platform || m.function {
+            return;
+        }
         let rows = self.rows(cx);
-        let Some(bench) = self.bench() else {
-            return div().into_any_element();
+        let Some(bench) = self.bench() else { return };
+        if rows.is_empty() || bench.rename.is_some() {
+            return;
+        }
+        let at = bench.cursor.index(&rows);
+        let row = rows[at].clone();
+        if (keystroke.key == "f10" && m.shift) || keystroke.key == "menu" {
+            self.open_tree_menu(MenuKind::Row, &rows, cx);
+            cx.stop_propagation();
+            return;
+        }
+        if keystroke.key == "f2" {
+            self.start_rename(&row, window, cx);
+            cx.stop_propagation();
+            return;
+        }
+        // In the status menu, 1 to 6 pick a status.
+        if let Some(menu) = bench.tree_menu {
+            if menu.kind == MenuKind::Status
+                && let Some(n) = keystroke
+                    .key
+                    .parse::<usize>()
+                    .ok()
+                    .filter(|n| (1..=6).contains(n))
+            {
+                self.choose_menu_item(n - 1, window, cx);
+                cx.stop_propagation();
+            }
+            return;
+        }
+        let Some(ch) = keystroke
+            .key_char
+            .as_deref()
+            .filter(|c| c.chars().count() == 1)
+            .and_then(|c| c.chars().next())
+            .filter(|c| !c.is_control())
+        else {
+            return;
         };
-        let mut current = bench.history.current();
-        // A document or memory selects its owner's row (components-knowledge.md 5).
-        if let (Some(Route::Kb(_)), PageView::Doc(page)) = (current, &bench.page)
+        let typing = bench.find.1.is_some_and(|t| t.elapsed() < TYPE_AHEAD_PAUSE);
+        let buffer = if typing {
+            bench.find.0.clone()
+        } else {
+            String::new()
+        };
+        match tree::letter(&buffer, ch) {
+            tree::Letter::Up => self.tree_key(TreeKey::Up, window, cx),
+            tree::Letter::Down => self.tree_key(TreeKey::Down, window, cx),
+            tree::Letter::Status => self.open_tree_menu(MenuKind::Status, &rows, cx),
+            tree::Letter::Move => self.open_tree_menu(MenuKind::Epics, &rows, cx),
+            tree::Letter::Rename => self.start_rename(&row, window, cx),
+            tree::Letter::Preview => {
+                if let Some(route) = row.route() {
+                    if let Some(bench) = self.bench() {
+                        bench.history.open(route);
+                    }
+                    self.show_route(route, false, window, cx);
+                }
+            }
+            tree::Letter::Find(query) => {
+                let from = if query.chars().count() == 1 {
+                    at + 1
+                } else {
+                    at
+                };
+                if let Some(bench) = self.bench() {
+                    if let Some(hit) = tree::type_ahead(&rows, from, &query) {
+                        bench.cursor.set(&rows, hit);
+                    }
+                    bench.find = (query, Some(Instant::now()));
+                }
+            }
+        }
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    /// The items of the open tree menu.
+    fn menu_items(&mut self, rows: &[Row], cx: &mut Context<Self>) -> Vec<MenuItem> {
+        let no_epic = text(settings::locale(cx), Key::TreeNoEpic);
+        let Some(bench) = self.bench() else {
+            return Vec::new();
+        };
+        let Some(menu) = bench.tree_menu else {
+            return Vec::new();
+        };
+        let Some(row) = rows.iter().find(|r| r.key() == menu.row) else {
+            return Vec::new();
+        };
+        let projects = &bench.ws.read(cx).projects;
+        tree::menu_items(projects, row, menu.kind, &no_epic)
+    }
+
+    /// Open a menu of the cursor's row, if it has one.
+    fn open_tree_menu(&mut self, kind: MenuKind, rows: &[Row], cx: &mut Context<Self>) {
+        let Some(bench) = self.bench() else { return };
+        let row = &rows[bench.cursor.index(rows)];
+        let highlight = match row {
+            Row::Topic { status, .. } if kind == MenuKind::Status => {
+                Status::ALL.iter().position(|s| s == status).unwrap_or(0)
+            }
+            _ => 0,
+        };
+        bench.tree_menu = Some(TreeMenu {
+            row: row.key(),
+            kind,
+            highlight,
+        });
+        if self.menu_items(rows, cx).is_empty()
+            && let Some(bench) = self.bench()
+        {
+            bench.tree_menu = None;
+        }
+        cx.notify();
+    }
+
+    fn close_tree_menu(&mut self, cx: &mut Context<Self>) -> bool {
+        let closed = self.bench().and_then(|b| b.tree_menu.take()).is_some();
+        if closed {
+            cx.notify();
+        }
+        closed
+    }
+
+    fn choose_menu_item(&mut self, at: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let rows = self.rows(cx);
+        let items = self.menu_items(&rows, cx);
+        let Some(bench) = self.bench() else { return };
+        let Some(menu) = bench.tree_menu else { return };
+        let (Some(item), Some(row)) = (
+            items.get(at).cloned(),
+            rows.iter().find(|r| r.key() == menu.row).cloned(),
+        ) else {
+            return;
+        };
+        bench.tree_menu = None;
+        let ws = bench.ws.clone();
+        match item {
+            MenuItem::Open => {
+                if let Some(route) = row.route() {
+                    self.navigate(route, true, window, cx);
+                }
+            }
+            MenuItem::OpenInNewTab => {
+                if let Some(route) = row.route() {
+                    self.open_in_tab(route, window, cx);
+                }
+            }
+            MenuItem::Rename => self.start_rename(&row, window, cx),
+            MenuItem::StatusMenu => self.open_tree_menu(MenuKind::Status, &rows, cx),
+            MenuItem::MoveMenu => self.open_tree_menu(MenuKind::Epics, &rows, cx),
+            MenuItem::Status(status) => {
+                if let Row::Topic { id, .. } = row {
+                    ws.update(cx, |ws, cx| ws.set_status(id, status, cx));
+                }
+            }
+            MenuItem::MoveTo(epic, _) => {
+                if let Row::Topic { id, .. } = row {
+                    ws.update(cx, |ws, cx| ws.move_topic(id, epic, cx));
+                }
+            }
+            MenuItem::Delete => self.delete_row(&row, cx),
+        }
+        cx.notify();
+    }
+
+    /// `E` / `F2`: the row's title becomes an inline edit (components.md 5).
+    fn start_rename(&mut self, row: &Row, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(title), Some(_)) = (row.title(), owner_of(row)) else {
+            return;
+        };
+        let key = row.key();
+        let state = cx.new(|cx| InputState::new(window, cx).default_value(title.to_owned()));
+        state.update(cx, |state, cx| state.focus(window, cx));
+        let sub = cx.subscribe_in(
+            &state,
+            window,
+            |shell, _, event: &InputEvent, window, cx| match event {
+                InputEvent::PressEnter { .. } | InputEvent::Blur => shell.commit_rename(window, cx),
+                _ => {}
+            },
+        );
+        let Some(bench) = self.bench() else { return };
+        bench._subs.push(sub);
+        bench.tree_menu = None;
+        bench.rename = Some(Rename {
+            key,
+            state,
+            saving: false,
+        });
+        cx.notify();
+    }
+
+    /// Save the inline edit; it stays with the typed text until the write
+    /// succeeds (interaction.md 6.4).
+    fn commit_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let rows = self.rows(cx);
+        let Some(bench) = self.bench() else { return };
+        let Some(Rename { key, state, saving }) = bench.rename.clone() else {
+            return;
+        };
+        if saving {
+            return;
+        }
+        let new = state.read(cx).value().trim().to_owned();
+        let row = rows.iter().find(|r| r.key() == key);
+        let unchanged = row.and_then(Row::title).is_none_or(|old| old == new);
+        let owner = row.and_then(owner_of);
+        let (Some(owner), false, false) = (owner, new.is_empty(), unchanged) else {
+            self.cancel_rename(window, cx);
+            return;
+        };
+        if let Some(rename) = bench.rename.as_mut() {
+            rename.saving = true;
+        }
+        let task = bench.ws.update(cx, |ws, cx| ws.rename(owner, new, cx));
+        cx.spawn_in(window, async move |shell, cx| {
+            let saved = task.await.is_ok();
+            let _ = shell.update_in(cx, |shell, window, cx| {
+                if saved {
+                    shell.cancel_rename(window, cx);
+                } else if let Some(rename) = shell.bench().and_then(|b| b.rename.as_mut()) {
+                    rename.saving = false;
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Close the inline edit. The keyboard goes back to the tree only if
+    /// the edit had it: a click elsewhere that ended it keeps its focus.
+    fn cancel_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(bench) = self.bench() else { return };
+        if let Some(rename) = bench.rename.take()
+            && rename.state.focus_handle(cx).is_focused(window)
+        {
+            let handle = bench.tree_focus.clone();
+            window.focus(&handle, cx);
+        }
+        cx.notify();
+    }
+
+    /// The route whose row the tree selects: the open page, or for a
+    /// document or memory its owner (components-knowledge.md 5).
+    fn tree_route(&mut self, cx: &mut Context<Self>) -> Option<Route> {
+        let bench = self.bench()?;
+        let current = bench.history.current();
+        if let PageView::Doc(page) = &bench.page
             && let Some((owner, _)) = page.read(cx).located()
         {
-            current = Some(match owner {
+            return Some(match owner {
                 Owner::Project(id) => Route::Project(id),
                 Owner::Epic(id) => Route::Epic(id),
                 Owner::Topic(id) => Route::Topic(id),
             });
         }
-        let cursor = bench.cursor;
+        current
+    }
+
+    fn sidebar(&mut self, width: f32, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let tokens = cx.global::<Tokens>().clone();
+        let t = &tokens;
+        let locale = settings::locale(cx);
+        let rows = self.rows(cx);
+        let current = self.tree_route(cx);
+        let Some(bench) = self.bench() else {
+            return div().into_any_element();
+        };
+        let cursor = bench.cursor.index(&rows);
         let tree_focus = bench.tree_focus.clone();
-        let tree_focused = tree_focus.is_focused(window);
-        let ws = bench.ws.clone();
-        let _ = ws;
+        // components.md 5: the keyboard cursor is a focus ring, which
+        // pointer input never draws (interaction.md 6.2).
+        let ring = tree_focus.is_focused(window) && window.last_input_was_keyboard();
+        let menu = bench.tree_menu;
+        let renaming = bench.rename.as_ref().map(|r| (r.key, r.state.clone()));
+        let menu_items = self.menu_items(&rows, cx);
         let items: Vec<AnyElement> = rows
             .iter()
             .enumerate()
-            .map(|(i, row)| tree_row(row, i, current, tree_focused && i == cursor, locale, t, cx))
+            .map(|(i, row)| {
+                let key = row.key();
+                let menu = menu.filter(|m| m.row == key).map(|m| {
+                    let status = match row {
+                        Row::Topic { status, .. } => Some(*status),
+                        _ => None,
+                    };
+                    tree_menu(&menu_items, m, status, locale, t, cx)
+                });
+                let edit = renaming
+                    .as_ref()
+                    .filter(|(k, _)| *k == key)
+                    .map(|(_, state)| state.clone());
+                let cursor = ring && i == cursor && edit.is_none();
+                tree_row(row, i, current, cursor, menu, edit, locale, t, cx)
+            })
             .collect();
         let on_trash = current == Some(Route::Trash);
         let on_settings = current == Some(Route::Settings);
@@ -2302,17 +2713,23 @@ impl Shell {
                         cx.listener(|s, _: &TreeHome, w, cx| s.tree_key(TreeKey::Home, w, cx)),
                     )
                     .on_action(cx.listener(|s, _: &TreeEnd, w, cx| s.tree_key(TreeKey::End, w, cx)))
-                    .on_action(cx.listener(|s, _: &DismissSidebar, w, cx| s.dismiss_sidebar(w, cx)))
+                    .on_action(cx.listener(|s, _: &DismissSidebar, w, cx| {
+                        if !s.close_tree_menu(cx) {
+                            s.dismiss_sidebar(w, cx)
+                        }
+                    }))
                     .on_action(cx.listener(|s, _: &TreeOpenTab, w, cx| {
                         let rows = s.rows(cx);
                         let route = s
                             .bench()
-                            .and_then(|b| rows.get(b.cursor))
+                            .and_then(|b| rows.get(b.cursor.index(&rows)))
                             .and_then(Row::route);
                         if let Some(route) = route {
                             s.open_in_tab(route, w, cx);
                         }
                     }))
+                    .on_action(cx.listener(|s, _: &Escape, w, cx| s.cancel_rename(w, cx)))
+                    .on_key_down(cx.listener(Self::tree_key_down))
                     .children(items),
             )
             .child(pinned)
@@ -2532,6 +2949,36 @@ impl Shell {
         };
         match (bench.history.current(), &bench.page) {
             (_, PageView::FirstRun(_)) | (None, _) => vec![crumb(acta_core::APP_NAME.into(), None)],
+            // A document or memory: its owner's place as links, then the
+            // entry itself (layout.md 4.3).
+            // A draft too, whose history step is still the page it was started
+            // from: "New document" ends it.
+            (Some(_), PageView::Doc(page)) => {
+                let page = page.read(cx);
+                let Some((owner, title)) = page.located() else {
+                    return Vec::new();
+                };
+                let title = title.or_else(|| page.draft_kind().map(|k| draft_label(locale, k)));
+                let mut out = Vec::new();
+                match owner {
+                    Owner::Project(id) => out.extend(project_crumb(id)),
+                    Owner::Epic(id) => {
+                        if let Some(at) = tree::locate_epic(&projects, id) {
+                            out.extend(at.project.map(|(p, n)| crumb(n, Some(Route::Project(p)))));
+                            out.extend(at.epic.map(|(e, n)| crumb(n, Some(Route::Epic(e)))));
+                        }
+                    }
+                    Owner::Topic(id) => {
+                        if let Some(at) = tree::locate_topic(&projects, id) {
+                            out.extend(at.project.map(|(p, n)| crumb(n, Some(Route::Project(p)))));
+                            out.extend(at.epic.map(|(e, n)| crumb(n, Some(Route::Epic(e)))));
+                            out.extend(at.topic.map(|(t, n)| crumb(n, Some(Route::Topic(t)))));
+                        }
+                    }
+                }
+                out.extend(title.map(|t| crumb(t, None)));
+                out
+            }
             (Some(Route::Topic(id)), _) => match tree::locate_topic(&projects, id) {
                 Some(at) => {
                     let mut out = Vec::new();
@@ -2575,32 +3022,6 @@ impl Shell {
                 .into_iter()
                 .chain([crumb(text(locale, Key::TreeKnowledge), None)])
                 .collect(),
-            // A document or memory: its owner's place as links, then the
-            // entry itself (layout.md 4.3).
-            (Some(Route::Kb(_)), PageView::Doc(page)) => {
-                let Some((owner, title)) = page.read(cx).located() else {
-                    return Vec::new();
-                };
-                let mut out = Vec::new();
-                match owner {
-                    Owner::Project(id) => out.extend(project_crumb(id)),
-                    Owner::Epic(id) => {
-                        if let Some(at) = tree::locate_epic(&projects, id) {
-                            out.extend(at.project.map(|(p, n)| crumb(n, Some(Route::Project(p)))));
-                            out.extend(at.epic.map(|(e, n)| crumb(n, Some(Route::Epic(e)))));
-                        }
-                    }
-                    Owner::Topic(id) => {
-                        if let Some(at) = tree::locate_topic(&projects, id) {
-                            out.extend(at.project.map(|(p, n)| crumb(n, Some(Route::Project(p)))));
-                            out.extend(at.epic.map(|(e, n)| crumb(n, Some(Route::Epic(e)))));
-                            out.extend(at.topic.map(|(t, n)| crumb(n, Some(Route::Topic(t)))));
-                        }
-                    }
-                }
-                out.extend(title.map(|t| crumb(t, None)));
-                out
-            }
             (Some(Route::Kb(_)), _) => Vec::new(),
             (Some(Route::Trash), _) => vec![crumb(text(locale, Key::TreeTrash), None)],
             (Some(Route::Settings), _) => vec![crumb(text(locale, Key::TreeSettings), None)],
@@ -3202,6 +3623,28 @@ fn row_project(projects: &[acta_core::model::ProjectTree], row: &Row) -> Option<
     }
 }
 
+/// "New document" / "New memory": a draft's place in the tab and the
+/// breadcrumb.
+fn draft_label(locale: Locale, kind: KbKind) -> String {
+    text(
+        locale,
+        match kind {
+            KbKind::Document => Key::KbNewDocument,
+            KbKind::Memory => Key::KbNewMemory,
+        },
+    )
+}
+
+/// The record a tree row renames.
+fn owner_of(row: &Row) -> Option<Owner> {
+    match row {
+        Row::Project { id, .. } => Some(Owner::Project(*id)),
+        Row::Epic { id, .. } => Some(Owner::Epic(*id)),
+        Row::Topic { id, .. } => Some(Owner::Topic(*id)),
+        _ => None,
+    }
+}
+
 fn record(
     ws: Entity<Workspace>,
     owner: Owner,
@@ -3228,11 +3671,14 @@ enum TreeKey {
 }
 
 /// One row of the tree (docs/design/components.md 5, list / tree row).
+#[allow(clippy::too_many_arguments)]
 fn tree_row(
     row: &Row,
     index: usize,
     current: Option<Route>,
     cursor: bool,
+    menu: Option<AnyElement>,
+    edit: Option<Entity<InputState>>,
     locale: Locale,
     t: &Tokens,
     cx: &mut Context<Shell>,
@@ -3277,14 +3723,24 @@ fn tree_row(
                 t.text_secondary,
             ))
     };
-    let title = |role: type_scale::TypeRole, label: String, color| {
-        role.el()
+    // Renaming: the title becomes an inline edit (components.md 5).
+    let title = |role: type_scale::TypeRole, label: String, color| match &edit {
+        Some(state) => role
+            .el()
+            .flex_1()
+            .min_w_0()
+            .text_color(primary)
+            .child(Input::new(state).appearance(false))
+            .into_any_element(),
+        None => role
+            .el()
             .flex_1()
             .min_w_0()
             .truncate()
             .text_color(color)
             .group_hover(id.clone(), move |s| s.text_color(primary))
             .child(label)
+            .into_any_element(),
     };
     let count = |n: i64| {
         type_scale::SMALL
@@ -3406,8 +3862,10 @@ fn tree_row(
         el = el
             .on_click(
                 cx.listener(move |shell, event: &gpui_kit::ClickEvent, window, cx| {
+                    let rows = shell.rows(cx);
                     if let Some(bench) = shell.bench() {
-                        bench.cursor = index;
+                        bench.cursor.set(&rows, index);
+                        bench.tree_menu = None;
                     }
                     if event.modifiers().secondary(cx) {
                         shell.open_in_tab(route, window, cx)
@@ -3419,9 +3877,86 @@ fn tree_row(
             .on_mouse_down(
                 gpui_kit::MouseButton::Middle,
                 cx.listener(move |shell, _, window, cx| shell.open_in_tab(route, window, cx)),
+            )
+            // A right click opens the row's menu (components.md 5).
+            .on_mouse_down(
+                gpui_kit::MouseButton::Right,
+                cx.listener(move |shell, _, window, cx| {
+                    let rows = shell.rows(cx);
+                    let Some(bench) = shell.bench() else { return };
+                    bench.cursor.set(&rows, index);
+                    let handle = bench.tree_focus.clone();
+                    window.focus(&handle, cx);
+                    shell.open_tree_menu(MenuKind::Row, &rows, cx);
+                }),
             );
     }
-    el.into_any_element()
+    el.children(menu.map(|menu| div().absolute().top_0().left(px(8. + indent)).child(menu)))
+        .into_any_element()
+}
+
+/// The open menu of a tree row (components.md 5, Context menu): the row
+/// menu, the status menu (`S`, then `1` to `6`) or the epics (`M`).
+fn tree_menu(
+    items: &[MenuItem],
+    menu: TreeMenu,
+    status: Option<Status>,
+    locale: Locale,
+    t: &Tokens,
+    cx: &mut Context<Shell>,
+) -> AnyElement {
+    let mut panel =
+        crate::menu::panel("tree-menu", t).on_mouse_down_out(cx.listener(|shell, _, _, cx| {
+            shell.close_tree_menu(cx);
+        }));
+    for (i, item) in items.iter().enumerate() {
+        let hint = |s: &str| Some(crate::menu::hint(s.to_owned(), t));
+        let (leading, label, trailing): (Option<AnyElement>, String, Option<AnyElement>) =
+            match item {
+                MenuItem::Open => (None, text(locale, Key::CommonOpen), None),
+                MenuItem::OpenInNewTab => (None, text(locale, Key::TabOpenNew), None),
+                MenuItem::Rename => (None, text(locale, Key::TreeRename), hint("E")),
+                MenuItem::StatusMenu => (None, text(locale, Key::TreeSetStatus), hint("S")),
+                MenuItem::MoveMenu => (None, text(locale, Key::TreeMoveEpic), hint("M")),
+                MenuItem::Status(s) => (
+                    Some(ui::status_glyph(*s, 16., t).into_any_element()),
+                    text(locale, ui::status_key(*s)),
+                    if status == Some(*s) {
+                        Some(crate::menu::check(t))
+                    } else {
+                        hint(&(i + 1).to_string())
+                    },
+                ),
+                MenuItem::MoveTo(_, name) => (None, name.clone(), None),
+                MenuItem::Delete => (None, text(locale, Key::CommonDelete), None),
+            };
+        let danger = *item == MenuItem::Delete;
+        if danger {
+            panel = panel.child(crate::menu::separator(t));
+        }
+        panel = panel.child(
+            crate::menu::item(
+                ("tree-menu-item", i),
+                leading,
+                label,
+                trailing,
+                i == menu.highlight,
+                t,
+            )
+            .when(danger, |this| this.text_color(t.danger))
+            .on_click(cx.listener(move |shell, _, window, cx| {
+                cx.stop_propagation();
+                shell.choose_menu_item(i, window, cx)
+            })),
+        );
+    }
+    deferred(
+        gpui_kit::anchored()
+            .offset(point(px(0.), px(28.)))
+            .child(panel),
+    )
+    .with_priority(1)
+    .into_any_element()
 }
 
 /// A pinned row of the sidebar (docs/design/components.md 5, list / tree row).
@@ -3544,8 +4079,14 @@ impl Render for Shell {
             .on_action(cx.listener(|s, _: &RemoveClaudeSetup, w, cx| {
                 s.open_dialog(DialogKind::RemoveSetup, w, cx)
             }))
-            .on_action(cx.listener(|s, _: &NextTab, w, cx| s.cycle_tab(true, w, cx)))
-            .on_action(cx.listener(|s, _: &PreviousTab, w, cx| s.cycle_tab(false, w, cx)))
+            .on_action(cx.listener(|s, _: &NextTab, w, cx| {
+                let focus = !s.terminal_focused(w, cx);
+                s.cycle_tab(true, focus, w, cx)
+            }))
+            .on_action(cx.listener(|s, _: &PreviousTab, w, cx| {
+                let focus = !s.terminal_focused(w, cx);
+                s.cycle_tab(false, focus, w, cx)
+            }))
             .on_action(|_: &FocusNext, window, cx| window.focus_next(cx))
             .on_action(|_: &FocusPrevious, window, cx| window.focus_prev(cx))
             .on_action(cx.listener(|s, _: &OpenPalette, w, cx| s.open_palette(None, None, w, cx)))
@@ -3590,7 +4131,13 @@ impl Render for Shell {
             .on_action(|_: &OpenChatInBrowser, _, cx| cx.open_url(CLAUDE_HOME))
             .on_action(cx.listener(|s, _: &ChatSignOut, w, cx| s.ask_chat_sign_out(w, cx)))
             .on_action(cx.listener(|s, _: &FocusSidebar, w, cx| {
+                let rows = s.rows(cx);
+                let current = s.tree_route(cx);
                 if let Some(bench) = s.bench() {
+                    // The cursor starts on the open page's row.
+                    if let Some(route) = current {
+                        bench.cursor.put(&rows, route);
+                    }
                     let handle = bench.tree_focus.clone();
                     if s.sidebar_fits {
                         s.sidebar_visible = true;

@@ -193,6 +193,18 @@ catalogue! {
         en: t("No epic"),
         fr: t("Sans epic"),
     }
+    TreeRename "tree.rename" {
+        en: t("Rename"),
+        fr: t("Renommer"),
+    }
+    TreeSetStatus "tree.set_status" {
+        en: t("Set status"),
+        fr: t("Changer le statut"),
+    }
+    TreeMoveEpic "tree.move_epic" {
+        en: t("Move to epic"),
+        fr: t("Déplacer vers un epic"),
+    }
     StatusDraft "status.draft" {
         en: t("Draft"),
         fr: t("Brouillon"),
