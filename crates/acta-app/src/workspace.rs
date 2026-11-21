@@ -89,11 +89,9 @@ impl Undo {
                 },
                 me,
             ),
-            Undo::FolderPath(id, path) => {
-                // The old path may no longer exist (that is why it was
-                // located); it is put back as stored.
-                store.set_folder_path(*id, std::path::Path::new(path), me)
-            }
+            // The old path may no longer exist (that is why it was
+            // located); it is put back as stored.
+            Undo::FolderPath(id, path) => store.restore_folder_path(*id, path, me),
             Undo::RemoveFolder(id) => store.delete(Record::Folder(*id), me),
             Undo::IncludeInherited(owner, include) => {
                 store.set_include_inherited(*owner, *include, me)
@@ -496,6 +494,26 @@ mod tests {
         assert!(store.topic(id).is_err());
         Undo::Restore(Record::Topic(id)).apply(store).unwrap();
         assert!(store.topic(id).is_ok());
+    }
+
+    #[test]
+    fn undoing_a_locate_puts_back_a_path_that_no_longer_exists() {
+        let mut temp = temp_store();
+        let store = &mut temp.store;
+        let (project, _) = topic(store);
+        let dir = tempfile::tempdir().unwrap();
+        let old = dir.path().join("old");
+        let new = dir.path().join("new");
+        std::fs::create_dir(&old).unwrap();
+        std::fs::create_dir(&new).unwrap();
+        let id = store
+            .add_folder(Owner::Project(project), &old, Author::Human)
+            .unwrap();
+        let stored = store.folder(id).unwrap().path;
+        std::fs::remove_dir(&old).unwrap();
+        store.set_folder_path(id, &new, Author::Human).unwrap();
+        Undo::FolderPath(id, stored.clone()).apply(store).unwrap();
+        assert_eq!(store.folder(id).unwrap().path, stored);
     }
 
     #[test]

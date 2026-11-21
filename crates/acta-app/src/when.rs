@@ -50,6 +50,11 @@ pub fn date(locale: Locale, ms: i64) -> String {
     time::date(locale, local(ms))
 }
 
+/// Whole local days between `ms` and now (0 for today).
+pub fn days_between(ms: i64) -> u64 {
+    (now().day_number() - local(ms).day_number()).max(0) as u64
+}
+
 /// The name shown for an author. Claude Code is named as such in every
 /// language; the human is the user of this computer (the model stores no
 /// name, docs/design/data.md 11).

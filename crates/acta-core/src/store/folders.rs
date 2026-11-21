@@ -130,6 +130,24 @@ impl Store {
         Ok(())
     }
 
+    /// Puts back a path exactly as it was stored, without checking that it
+    /// exists: the undo of a Locate, whose old path is by definition gone.
+    pub fn restore_folder_path(
+        &mut self,
+        id: FolderId,
+        stored: &str,
+        author: Author,
+    ) -> Result<()> {
+        self.folder(id)?;
+        let tx = self.write()?;
+        tx.execute(
+            "UPDATE folders SET path = ?2, updated_at = ?3, updated_by = ?4 WHERE id = ?1",
+            params![id.0, stored, now_ms(), author],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Bulk repair (ADR 0008): every folder under `old_root` whose path with
     /// `new_root` substituted exists on this machine is moved there. Returns
     /// the folders changed.

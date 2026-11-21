@@ -14,9 +14,9 @@
 
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    App, Context, Div, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent, ParentElement,
-    Render, Stateful, StatefulInteractiveElement, Styled, Subscription, Window, anchored, deferred,
-    div, point, px, transparent_black,
+    App, Context, Div, Entity, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent,
+    ParentElement, Render, Stateful, StatefulInteractiveElement, Styled, Subscription, Task,
+    Window, anchored, deferred, div, point, px, transparent_black,
 };
 
 use crate::first_run::COLUMN_MAX;
@@ -25,6 +25,8 @@ use crate::icons::{Icon, icon};
 use crate::settings;
 use crate::theme::{RADIUS_MD, RADIUS_SM, ThemeSetting, Tokens};
 use crate::type_scale;
+use crate::ui;
+use crate::workspace::Workspace;
 
 const THEMES: [ThemeSetting; 3] = [
     ThemeSetting::System,
@@ -90,6 +92,11 @@ pub struct SettingsPage {
     language_menu_open: bool,
     language_highlighted: usize,
     _language_blur: Subscription,
+    ws: Option<Entity<Workspace>>,
+    facts: Option<DataFacts>,
+    seen_revision: u64,
+    _load: Task<()>,
+    _ws_sub: Option<Subscription>,
 }
 
 impl SettingsPage {
@@ -108,6 +115,11 @@ impl SettingsPage {
             language_menu_open: false,
             language_highlighted: 0,
             _language_blur: language_blur,
+            ws: None,
+            facts: None,
+            seen_revision: 0,
+            _load: Task::ready(()),
+            _ws_sub: None,
         }
     }
 
@@ -345,6 +357,8 @@ impl Render for SettingsPage {
         let (locale, theme) = locale_and_theme(cx);
         let theme_control = self.theme_control(locale, theme, &t);
         let language = self.language_control(locale, &t, cx);
+        let text_size = self.text_size_control(&t, cx);
+        let data = self.data_sections(locale, &t, cx);
 
         div()
             .id("settings")
@@ -387,8 +401,348 @@ impl Render for SettingsPage {
                         text(locale, Key::SettingsLanguageHint),
                         language,
                         &t,
-                    )),
+                    ))
+                    .child(setting_row(
+                        text(locale, Key::SettingsTerminalSize),
+                        String::new(),
+                        text_size,
+                        &t,
+                    ))
+                    .children(data),
             )
+    }
+}
+
+/// What the Working folders and Data sections show (docs/design/data.md 11:
+/// export history, the snapshot list, the trash, the storage location, and
+/// every folder not found on this computer).
+#[derive(Clone, Debug, Default)]
+pub struct DataFacts {
+    pub last_export: Option<i64>,
+    pub snapshots: usize,
+    pub newest_snapshot: Option<i64>,
+    pub trash: i64,
+    pub database: String,
+    /// Folders not found: id, path, owner name.
+    pub missing: Vec<(acta_core::model::FolderId, String, String)>,
+}
+
+/// Read the facts off the UI thread (existence checks touch the disk).
+pub fn load_facts(store: &acta_core::Store) -> acta_core::Result<DataFacts> {
+    use acta_core::model::{Owner, PageReq};
+    let snapshots = store.snapshots()?;
+    let newest = snapshots.iter().map(|s| s.taken_at).max();
+    let trash = store.trash(PageReq::first(1))?.total;
+    let mut missing = Vec::new();
+    for folder in store.all_folders()? {
+        if std::path::Path::new(&folder.path).is_dir() {
+            continue;
+        }
+        let owner = match folder.owner {
+            Owner::Project(id) => store.project(id).map(|p| p.title),
+            Owner::Epic(id) => store.epic(id).map(|e| e.title),
+            Owner::Topic(id) => store.topic(id).map(|t| t.title),
+        }
+        .unwrap_or_default();
+        missing.push((folder.id, folder.path, owner));
+    }
+    Ok(DataFacts {
+        last_export: store.last_export_at()?,
+        snapshots: snapshots.len(),
+        newest_snapshot: newest,
+        trash,
+        database: store.db_path().to_string_lossy().into_owned(),
+        missing,
+    })
+}
+
+impl SettingsPage {
+    /// Give the page the open store; the data sections appear.
+    pub fn attach(&mut self, ws: Entity<Workspace>, cx: &mut Context<Self>) {
+        self._ws_sub = Some(cx.observe(&ws, |page, ws, cx| {
+            let revision = ws.read(cx).revision;
+            if revision != page.seen_revision {
+                page.seen_revision = revision;
+                page.reload(cx);
+            }
+        }));
+        self.ws = Some(ws);
+        self.reload(cx);
+    }
+
+    fn reload(&mut self, cx: &mut Context<Self>) {
+        let Some(ws) = &self.ws else { return };
+        let task = ws.read(cx).db.run(cx, |store| load_facts(store));
+        self._load = cx.spawn(async move |page, cx| {
+            if let Ok(facts) = task.await {
+                let _ = page.update(cx, |page, cx| {
+                    page.facts = Some(facts);
+                    cx.notify();
+                });
+            }
+        });
+    }
+
+    fn locate(&mut self, id: acta_core::model::FolderId, cx: &mut Context<Self>) {
+        let Some(ws) = self.ws.clone() else { return };
+        let locale = settings::locale(cx);
+        let chosen = cx.prompt_for_paths(gpui_kit::PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some(text(locale, Key::FoldersPicker).into()),
+        });
+        cx.spawn(async move |_, cx| {
+            let Ok(Ok(Some(mut paths))) = chosen.await else {
+                return;
+            };
+            let Some(path) = paths.pop() else { return };
+            ws.update(cx, |ws, cx| {
+                ws.write_detached(cx, Key::ErrorSave, move |store| {
+                    store.set_folder_path(id, &path, acta_core::model::Author::Human)
+                })
+            });
+        })
+        .detach();
+    }
+
+    fn text_size_control(&self, t: &Tokens, cx: &mut Context<Self>) -> Div {
+        let size = settings::current(cx)
+            .terminal_text_size
+            .unwrap_or(acta_terminal::view::DEFAULT_TEXT_SIZE as u8);
+        let step = |by: i8| {
+            move |_: &gpui_kit::ClickEvent, window: &mut Window, cx: &mut App| {
+                let action: Box<dyn gpui_kit::Action> = if by > 0 {
+                    Box::new(acta_terminal::view::IncreaseTextSize)
+                } else {
+                    Box::new(acta_terminal::view::DecreaseTextSize)
+                };
+                window.dispatch_action(action, cx);
+                window.refresh();
+            }
+        };
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(4.))
+            .child(
+                ui::ghost_icon_button(
+                    "text-size-down",
+                    Icon::Minus,
+                    24.,
+                    false,
+                    size <= 11,
+                    true,
+                    t,
+                )
+                .on_click(step(-1)),
+            )
+            .child(
+                type_scale::UI
+                    .el()
+                    .w(px(24.))
+                    .flex()
+                    .justify_center()
+                    .font_features(type_scale::tabular())
+                    .text_color(t.text_primary)
+                    .child(size.to_string()),
+            )
+            .child(
+                ui::ghost_icon_button("text-size-up", Icon::Plus, 24., false, size >= 18, true, t)
+                    .on_click(step(1)),
+            )
+    }
+
+    fn data_sections(
+        &self,
+        locale: Locale,
+        t: &Tokens,
+        cx: &mut Context<Self>,
+    ) -> Vec<gpui_kit::AnyElement> {
+        let Some(facts) = &self.facts else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        let subtitle = |key: Key| {
+            type_scale::SUBTITLE
+                .el()
+                .mt(px(32.))
+                .mb(px(8.))
+                .text_color(t.text_primary)
+                .child(text(locale, key))
+                .into_any_element()
+        };
+        let action = |id: &'static str, label: String, act: Box<dyn gpui_kit::Action>| {
+            ui::button(id, label, ui::Variant::Secondary, false, t)
+                .on_click(move |_, window, cx| window.dispatch_action(act.boxed_clone(), cx))
+        };
+        if !facts.missing.is_empty() {
+            out.push(subtitle(Key::SettingsFolders));
+            let home = crate::paths_view::home();
+            let mut list = div().flex().flex_col();
+            for (i, (id, path, owner)) in facts.missing.iter().take(6).enumerate() {
+                let id = *id;
+                list = list.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(8.))
+                        .h(px(28.))
+                        .child(icon(Icon::FolderX, 16., t.warning))
+                        .child(
+                            type_scale::CODE
+                                .el()
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .text_color(t.text_secondary)
+                                .child(crate::paths_view::shorten_home(path, home.as_deref())),
+                        )
+                        .child(
+                            type_scale::SMALL
+                                .el()
+                                .text_color(t.text_tertiary)
+                                .child(owner.clone()),
+                        )
+                        .child(
+                            ui::button(
+                                ("settings-locate", i),
+                                text(locale, Key::FoldersLocate),
+                                ui::Variant::Ghost,
+                                false,
+                                t,
+                            )
+                            .on_click(cx.listener(move |page, _, _, cx| page.locate(id, cx))),
+                        ),
+                );
+            }
+            out.push(
+                setting_row(
+                    text(locale, Key::SettingsNotFound),
+                    crate::i18n::number(locale, facts.missing.len() as u64),
+                    div(),
+                    t,
+                )
+                .into_any_element(),
+            );
+            out.push(list.into_any_element());
+        }
+        out.push(subtitle(Key::SettingsData));
+        let export_line = match facts.last_export {
+            Some(at) => {
+                let days = crate::i18n::time::days_ago(locale, crate::when::days_between(at));
+                crate::i18n::tr(
+                    locale,
+                    Key::SettingsExportLast,
+                    &[("days", crate::i18n::Arg::Text(&days))],
+                )
+            }
+            None => text(locale, Key::SettingsExportNever),
+        };
+        out.push(
+            setting_row(
+                text(locale, Key::ExportTitle),
+                export_line,
+                action(
+                    "settings-export",
+                    text(locale, Key::CmdExport),
+                    Box::new(crate::shell::ExportData),
+                ),
+                t,
+            )
+            .into_any_element(),
+        );
+        out.push(
+            setting_row(
+                text(locale, Key::ImportConfirm),
+                String::new(),
+                action(
+                    "settings-import",
+                    text(locale, Key::CmdImport),
+                    Box::new(crate::shell::ImportData),
+                ),
+                t,
+            )
+            .into_any_element(),
+        );
+        let snapshots = match facts.newest_snapshot {
+            Some(at) if crate::when::days_between(at) == 0 => crate::i18n::tr(
+                locale,
+                Key::SettingsSnapshotsToday,
+                &[
+                    ("n", crate::i18n::Arg::Count(facts.snapshots as u64)),
+                    (
+                        "time",
+                        crate::i18n::Arg::Text(&crate::i18n::time::clock(crate::when::local(at))),
+                    ),
+                ],
+            ),
+            Some(at) => crate::i18n::tr(
+                locale,
+                Key::SettingsSnapshotsOlder,
+                &[
+                    ("n", crate::i18n::Arg::Count(facts.snapshots as u64)),
+                    (
+                        "datetime",
+                        crate::i18n::Arg::Text(&crate::when::datetime(locale, at)),
+                    ),
+                ],
+            ),
+            None => String::new(),
+        };
+        out.push(
+            setting_row(
+                text(locale, Key::CmdSnapshot),
+                snapshots,
+                action(
+                    "settings-snapshots",
+                    text(locale, Key::CommonRestore),
+                    Box::new(crate::shell::RestoreSnapshot),
+                ),
+                t,
+            )
+            .into_any_element(),
+        );
+        out.push(
+            setting_row(
+                text(locale, Key::TreeTrash),
+                crate::i18n::tr(
+                    locale,
+                    Key::SettingsTrashCount,
+                    &[("n", crate::i18n::Arg::Count(facts.trash.max(0) as u64))],
+                ),
+                action(
+                    "settings-trash",
+                    text(locale, Key::CmdTrash),
+                    Box::new(crate::shell::OpenTrash),
+                ),
+                t,
+            )
+            .into_any_element(),
+        );
+        out.push(
+            div()
+                .flex()
+                .flex_col()
+                .min_h(px(44.))
+                .py(px(8.))
+                .child(
+                    type_scale::UI
+                        .el()
+                        .text_color(t.text_primary)
+                        .child(text(locale, Key::SettingsDatabase)),
+                )
+                .child(
+                    type_scale::CODE
+                        .el()
+                        .text_color(t.text_secondary)
+                        .child(facts.database.clone()),
+                )
+                .into_any_element(),
+        );
+        out
     }
 }
 

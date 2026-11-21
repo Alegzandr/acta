@@ -112,6 +112,14 @@ actions!(
         TreeMoveDown,
         TreeHome,
         TreeEnd,
+        /// Settings: "Export...".
+        ExportData,
+        /// Settings: "Import...".
+        ImportData,
+        /// Settings: "Restore from snapshot...".
+        RestoreSnapshot,
+        /// "Open trash".
+        OpenTrash,
     ]
 );
 
@@ -335,6 +343,7 @@ impl Shell {
             closed_shown: prefs.closed_shown.iter().cloned().collect(),
         };
         let settings_page = cx.new(|cx| SettingsPage::new(window, cx));
+        settings_page.update(cx, |page, cx| page.attach(ws.clone(), cx));
         let subs = vec![
             cx.subscribe_in(&ws, window, Self::on_workspace),
             cx.observe(&ws, |_, _, cx| cx.notify()),
@@ -2256,6 +2265,10 @@ impl Render for Shell {
             .on_action(cx.listener(|s, _: &Back, w, cx| s.back(w, cx)))
             .on_action(cx.listener(|s, _: &Forward, w, cx| s.forward(w, cx)))
             .on_action(cx.listener(|s, _: &Undo, _, cx| s.undo(cx)))
+            .on_action(cx.listener(|s, _: &ExportData, w, cx| s.open_export(w, cx)))
+            .on_action(cx.listener(|s, _: &ImportData, w, cx| s.import(w, cx)))
+            .on_action(cx.listener(|s, _: &RestoreSnapshot, w, cx| s.open_snapshots(w, cx)))
+            .on_action(cx.listener(|s, _: &OpenTrash, w, cx| s.navigate(Route::Trash, true, w, cx)))
             .on_action(cx.listener(|s, _: &ToggleTerminal, w, cx| s.toggle_terminal(w, cx)))
             .on_action(cx.listener(|s, _: &FocusSidebar, w, cx| {
                 if let Some(bench) = s.bench() {

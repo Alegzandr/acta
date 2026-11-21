@@ -279,14 +279,16 @@ impl TerminalDock {
     }
 
     pub fn change_text_size(&mut self, by: f32, cx: &mut Context<Self>) {
+        use acta_terminal::view::{MAX_TEXT_SIZE, MIN_TEXT_SIZE};
+        self.text_size = (self.text_size + by).clamp(MIN_TEXT_SIZE, MAX_TEXT_SIZE);
+        let size = self.text_size;
         for pane in self.panes.values() {
             if let Pane::Running { view, .. } = pane {
-                view.update(cx, |view, cx| {
-                    let size = view.text_size() + by;
-                    view.set_text_size(size, cx)
-                });
+                view.update(cx, |view, cx| view.set_text_size(size, cx));
             }
         }
+        let stored = size.round() as u8;
+        settings::change(cx, |prefs| prefs.terminal_text_size = Some(stored));
     }
 
     fn choose_folder(
