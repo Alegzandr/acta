@@ -281,7 +281,8 @@ INSERT INTO read_markers (kind, record_id, last_seen_at)
 ///   `include_inherited_folders` stays, no longer read or written.
 /// - Projects, epics and topics get an optional due day, `YYYY-MM-DD` in
 ///   2000 to 2099. No backfill.
-/// - `entries_recent` holds only the Overview's "last 7 days" rows.
+/// - `entries_recent` holds only the Overview's "last 7 days" rows;
+///   `entries_live` gives a topic's last activity from the index alone.
 const V4: &str = r#"
 ALTER TABLE folders ADD COLUMN name TEXT NOT NULL DEFAULT '';
 ALTER TABLE folders ADD COLUMN icon TEXT NOT NULL DEFAULT '';
@@ -304,4 +305,8 @@ CREATE INDEX epics_due ON epics(project_id, due_on) WHERE due_on IS NOT NULL;
 
 CREATE INDEX entries_recent ON entries(created_at)
     WHERE deleted_at IS NULL AND (kind = 'decision' OR (kind = 'system' AND event = 'status'));
+-- The newest live entry of a topic from the index alone (the Overview's
+-- "no activity" line): entries_topic needs a row read per entry for
+-- deleted_at, which missed the 5 ms budget on 10,000 topics.
+CREATE INDEX entries_live ON entries(topic_id, created_at) WHERE deleted_at IS NULL;
 "#;

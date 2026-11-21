@@ -156,8 +156,8 @@ const EPIC_TOPICS_SQL: &str = "SELECT t.id, t.epic_id, t.status, t.due_on, t.cre
 /// The live epics of a project, in stored order.
 const EPICS_SQL: &str = "SELECT e.id, e.title, e.due_on FROM epics e
     WHERE e.project_id = ?1 AND e.deleted_at IS NULL ORDER BY e.position, e.id";
-/// Active topics with their newest live entry (any kind), one index probe
-/// each on `entries_topic`.
+/// Active topics with their newest live entry (any kind), one probe each
+/// on `entries_live`, which answers without reading the entry rows.
 const ACTIVE_SQL: &str = "SELECT t.id, t.created_at,
         (SELECT e.created_at FROM entries e
           WHERE e.topic_id = t.id AND e.deleted_at IS NULL
@@ -510,12 +510,12 @@ pub(crate) const QUERIES: &[(&str, &str)] = &[
     (TOPICS_SQL, "topics_project"),
     (EPIC_TOPICS_SQL, "topics_project"),
     (EPICS_SQL, "epics_project"),
-    (ACTIVE_SQL, "entries_topic"),
+    (ACTIVE_SQL, "entries_live"),
     (RECENT_SQL, "entries_recent"),
     (INBOX_SQL, "notes_project"),
     (STALE_SQL, "kb_project"),
-    (LAST_ACTIVITY_SQL, "entries_topic"),
-    (LAST_ACTIVITY_EPIC_SQL, "entries_topic"),
+    (LAST_ACTIVITY_SQL, "entries_live"),
+    (LAST_ACTIVITY_EPIC_SQL, "entries_live"),
 ];
 
 #[cfg(test)]
@@ -964,7 +964,8 @@ mod tests {
     /// entries, 2,000 notes and 1,000 memories in at most 5 ms. Timed
     /// locally (`cargo test -p acta-core --release -- --ignored
     /// overview_timing --nocapture`), not asserted: a timing would be
-    /// flaky in CI.
+    /// flaky in CI. `ACTA_TIMING_CACHE_KIB` sets the page cache for the run
+    /// (SQLite's default is 2,000 KiB).
     #[test]
     #[ignore]
     fn overview_timing() {
@@ -1009,7 +1010,7 @@ mod tests {
                 let id = s.conn.last_insert_rowid();
                 for j in 0..20i64 {
                     n += 1;
-                    let at = base + (n * 197) % (now - base);
+                    let at = base + n * 172_800;
                     let (kind, event, new) = match j % 10 {
                         0 => ("system", Some("status"), Some(status)),
                         1 => ("decision", None, None),
@@ -1037,6 +1038,11 @@ mod tests {
             }
         }
         s.conn.execute_batch("COMMIT; ANALYZE;").unwrap();
+        if let Ok(kib) = std::env::var("ACTA_TIMING_CACHE_KIB") {
+            s.conn
+                .execute_batch(&format!("PRAGMA cache_size = -{kib};"))
+                .unwrap();
+        }
         let scope = Scope::Project(ProjectId(1));
         // Warm the statement cache and the page cache, as the store
         // thread is after the first page open.
@@ -1054,6 +1060,13 @@ mod tests {
             std::hint::black_box(s.overview(scope, calm, ZONE).unwrap());
         }
         let calm_per = start.elapsed() / runs;
+        for f in OverviewFilter::ALL {
+            let start = std::time::Instant::now();
+            for _ in 0..runs {
+                std::hint::black_box(s.overview_list(scope, f, today(), ZONE).unwrap());
+            }
+            println!("{f:?}: {:?}", start.elapsed() / runs);
+        }
         println!(
             "overview of 10,000 topics / 200,000 entries / 2,000 notes / 1,000 memories: {per:?} per call ({calm_per:?} with no activity in the window); blocked {} overdue {} idle {} inbox {} done {} decisions {} created {} stale {}",
             o.blocked, o.overdue, o.idle, o.inbox, o.done, o.decisions, o.created, o.stale_memories
