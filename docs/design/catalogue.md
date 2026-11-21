@@ -290,7 +290,6 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `chat.signout.title` | Sign out and clear chat data? | Se déconnecter et effacer les données du chat ? |
 | `chat.signout.body` | This deletes the panel's cookies and site data from this computer. Your conversations stay in your Claude account. | Cela supprime de cet ordinateur les cookies et les données de site du panneau. Vos conversations restent dans votre compte Claude. |
 | `chat.signout.confirm` | Sign out and clear | Se déconnecter et effacer |
-| `chat.hide` | Hide chat | Masquer le chat |
 | `chat.more` | More | Plus |
 | `chat.clear_failed` | The chat data could not be deleted. Acta tries again at the next start. | Les données du chat n'ont pas pu être supprimées. Acta réessaiera au prochain démarrage. |
 | `tab.open_new` | Open in new tab | Ouvrir dans un nouvel onglet |

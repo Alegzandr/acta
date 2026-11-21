@@ -100,7 +100,7 @@ Annotations: the capture editor is focused when the inbox opens. Newest note fir
                     | (v) Terminal spike            Acta / Research           | 32
                     | Commands                                                | 28
                     |  >_ Toggle terminal                            Ctrl `   | 32
-                    |  >_ Move terminal to bottom                             | 32
+                    |  >_ Terminal: Move to bottom panel                      | 32
                     +---------------------------------------------------------+
                     | Enter open   Ctrl Enter open in new tab       Esc close | 28  footer, type.small
                     +---------------------------------------------------------+

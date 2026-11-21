@@ -52,16 +52,6 @@ impl Rect {
     pub fn contains(&self, x: f32, y: f32) -> bool {
         x >= self.x && x < self.right() && y >= self.y && y < self.bottom()
     }
-
-    /// The half of this rectangle on `edge`.
-    pub fn half(&self, edge: Edge) -> Rect {
-        match edge {
-            Edge::Left => Rect::new(self.x, self.y, self.w / 2., self.h),
-            Edge::Right => Rect::new(self.x + self.w / 2., self.y, self.w / 2., self.h),
-            Edge::Top => Rect::new(self.x, self.y, self.w, self.h / 2.),
-            Edge::Bottom => Rect::new(self.x, self.y + self.h / 2., self.w, self.h / 2.),
-        }
-    }
 }
 
 /// The minimum of an area along its own axis (width for a sidebar, height
@@ -328,6 +318,7 @@ pub fn zone_at(
     regions: &[Region],
     strips: &[Strip],
     dragged: Dragged,
+    ctx: DropContext,
     x: f32,
     y: f32,
 ) -> Option<Zone> {
@@ -335,12 +326,7 @@ pub fn zone_at(
     if is_view {
         for strip in strips {
             if strip.hit.contains(x, y) {
-                let target = Target::Area(strip.side);
-                return lands(layout, dragged, target).then_some(Zone {
-                    target,
-                    preview: strip.preview,
-                    line: None,
-                });
+                return finish(layout, dragged, Target::Area(strip.side), None, ctx);
             }
         }
     }
@@ -377,11 +363,7 @@ pub fn zone_at(
                 Some(Rect::new(line_x - 1., line_y, 2., LINE_HEIGHT)),
             )
         };
-        return lands(layout, dragged, target).then_some(Zone {
-            target,
-            preview: region.bounds,
-            line,
-        });
+        return finish(layout, dragged, target, line, ctx);
     }
     // The content: an edge that may split, else the centre.
     let content = match region.header {
@@ -433,25 +415,272 @@ pub fn zone_at(
             best = Some((distance, edge));
         }
     }
-    let (target, preview) = match best {
-        Some((_, edge)) => (
-            Target::Split { place, group, edge },
-            region.bounds.half(edge),
-        ),
-        None => (into(None), region.bounds),
+    let target = match best {
+        Some((_, edge)) => Target::Split { place, group, edge },
+        None => into(None),
     };
-    lands(layout, dragged, target).then_some(Zone {
+    finish(layout, dragged, target, None, ctx)
+}
+
+/// What a drop needs besides the layout: the body it lays out in, and the
+/// page tab that closes when an Inbox or Knowledge view lands in the page
+/// area (its page is open once, 4.4).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DropContext {
+    pub body: Rect,
+    pub close: Option<TabId>,
+}
+
+/// The zone of `target`, its preview the bounds the tab takes after the
+/// drop (4.8.11, rule 6): the drop is made on a copy and the copy laid
+/// out. No zone when the drop fails, changes nothing, or lands somewhere
+/// not drawn (an auto-hidden sidebar, a folded group).
+fn finish(
+    layout: &Layout,
+    dragged: Dragged,
+    target: Target,
+    line: Option<Rect>,
+    ctx: DropContext,
+) -> Option<Zone> {
+    let (after, spot) = simulate(layout, dragged, target, ctx.close, TabId(u64::MAX))?;
+    let f = frame(&after, ctx.body.w, ctx.body.h);
+    let preview = group_rect(&after, &f, ctx.body, spot.place, spot.group)?;
+    Some(Zone {
         target,
         preview,
-        line: None,
+        line,
     })
 }
 
-/// Whether dropping `dragged` at `target` would succeed and change the
-/// layout: the same call the drop makes, on a copy.
-pub fn lands(layout: &Layout, dragged: Dragged, target: Target) -> bool {
+/// The layout after dropping `dragged` at `target`, and where it landed.
+pub fn simulate(
+    layout: &Layout,
+    dragged: Dragged,
+    target: Target,
+    close: Option<TabId>,
+    new_page: TabId,
+) -> Option<(Layout, crate::layout::Spot)> {
     let mut copy = layout.clone();
-    drop_into(&mut copy, dragged, target, TabId(u64::MAX)).is_ok()
+    let into_page = match target {
+        Target::Into { place, .. } | Target::Split { place, .. } => place == Place::Page,
+        Target::Area(_) => false,
+    };
+    // Only an Inbox or Knowledge view landing in the page area closes the
+    // page it becomes, where that page was already open.
+    let close =
+        close.filter(|_| into_page && matches!(dragged.tab, Tab::View(v) if v.is_page_kind()));
+    if let Some(close) = close {
+        copy.close_page(close).ok()?;
+    }
+    // The closed page may shift the target's group or index: the target is
+    // named against the layout the user sees, so it is read again in the
+    // layout without that page.
+    let target = if close.is_some() {
+        retarget(layout, &copy, target)?
+    } else {
+        target
+    };
+    let spot = drop_into(&mut copy, dragged, target, new_page).ok()?;
+    Some((copy, spot))
+}
+
+/// `target` named in `before`, read in `after` (a page tab closed between).
+fn retarget(before: &Layout, after: &Layout, target: Target) -> Option<Target> {
+    let map_group = |place: Place, group: usize| -> Option<usize> {
+        if place != Place::Page {
+            return Some(group);
+        }
+        // The group whose tabs survive at the same position.
+        let tabs = &before.page.groups.get(group)?.tabs;
+        let survivor = tabs.iter().find_map(|t| after.locate(*t))?;
+        Some(survivor.group)
+    };
+    Some(match target {
+        Target::Into {
+            place,
+            group,
+            index,
+        } => {
+            let new_group = map_group(place, group)?;
+            let len = after.area(place).groups[new_group].tabs.len();
+            Target::Into {
+                place,
+                group: new_group,
+                index: index.map(|i| i.min(len)),
+            }
+        }
+        Target::Split { place, group, edge } => Target::Split {
+            place,
+            group: map_group(place, group)?,
+            edge,
+        },
+        Target::Area(side) => Target::Area(side),
+    })
+}
+
+/// The minimum of each page group along the page area's direction.
+pub fn page_mins(l: &Layout) -> Vec<f32> {
+    let min = match l.page.direction {
+        Direction::Row => GROUP_MIN_W,
+        Direction::Column => PAGE_MIN_H,
+    };
+    vec![min; l.page.groups.len()]
+}
+
+/// The minimum of each group of a side area along its direction.
+pub fn side_group_mins(l: &Layout, side: Side) -> Vec<f32> {
+    l.side(side)
+        .groups
+        .iter()
+        .map(|g| match g.active_tab() {
+            Some(Tab::View(v)) => match side.direction() {
+                Direction::Column => v.min().1,
+                Direction::Row => v.min().0,
+            },
+            _ => 0.,
+        })
+        .collect()
+}
+
+/// The bounds of an area as `f` lays it out in `body` (handles aside).
+/// `None` when the area is not drawn beside the page.
+pub fn area_rect(f: &Frame, body: Rect, place: Place) -> Option<Rect> {
+    let left = f.left.unwrap_or(0.);
+    let page_x = body.x + left;
+    Some(match place {
+        Place::Side(Side::Left) => Rect::new(body.x, body.y, f.left?, body.h),
+        Place::Side(Side::Right) => {
+            let w = f.right?;
+            Rect::new(body.right() - w, body.y, w, body.h)
+        }
+        Place::Side(Side::Bottom) => Rect::new(page_x, body.y + f.page_h, f.page_w, f.bottom?),
+        Place::Page => Rect::new(page_x, body.y, f.page_w, f.page_h),
+    })
+}
+
+/// The bounds of `group` of `place` as `f` lays it out; `None` when it is
+/// not drawn (its area hidden or auto-hidden, or folded away).
+pub fn group_rect(l: &Layout, f: &Frame, body: Rect, place: Place, group: usize) -> Option<Rect> {
+    let rect = area_rect(f, body, place)?;
+    let area = l.area(place);
+    let n = area.groups.len();
+    if group >= n {
+        return (n == 0).then_some(rect);
+    }
+    let folded = match place {
+        Place::Page => f.page_folded,
+        Place::Side(side) => f.side_folded(side),
+    };
+    if folded || n == 1 {
+        let shown = match place {
+            Place::Page => l.focused.min(n - 1),
+            Place::Side(_) => 0,
+        };
+        return (group == shown).then_some(rect);
+    }
+    let mins = match place {
+        Place::Page => page_mins(l),
+        Place::Side(side) => side_group_mins(l, side),
+    };
+    let total = match area.direction {
+        Direction::Row => rect.w,
+        Direction::Column => rect.h,
+    };
+    let sizes = group_sizes(total, &area.shares, &mins);
+    let start: f32 = sizes[..group].iter().sum();
+    Some(match area.direction {
+        Direction::Row => Rect::new(rect.x + start, rect.y, sizes[group], rect.h),
+        Direction::Column => Rect::new(rect.x, rect.y + start, rect.w, sizes[group]),
+    })
+}
+
+/// Where the handle after group `at` sits along an area's axis, for a
+/// handle drag; `None` when there is no group after `at`.
+pub fn handle_position(
+    start: f32,
+    total: f32,
+    shares: &[f32],
+    mins: &[f32],
+    at: usize,
+) -> Option<f32> {
+    if at + 1 >= shares.len() || shares.len() != mins.len() {
+        return None;
+    }
+    let sizes = group_sizes(total, shares, mins);
+    Some(start + sizes[..=at].iter().sum::<f32>())
+}
+
+/// Whether "Split right" or "Split down" may run (4.8.8): the rules of
+/// the layout, and room for every group at its minimum once split.
+pub fn split_fits(l: &Layout, f: &Frame, direction: Direction) -> bool {
+    let n = l.page.groups.len() as f32 + 1.;
+    let room = match direction {
+        Direction::Row => f.page_w >= GROUP_MIN_W * n,
+        Direction::Column => f.page_h >= PAGE_MIN_H * n,
+    };
+    room && l.can_split_active(direction)
+}
+
+/// What the shell draws over or instead of the layout, which decides what
+/// is on screen with it.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Shown {
+    /// "Maximize focused area": only that group is drawn.
+    pub zoomed: Option<(Place, usize)>,
+    /// The auto-hidden left sidebar shown over the page.
+    pub left_overlay: bool,
+}
+
+/// Whether `view` is drawn: visible in the layout, its area beside the
+/// page (or over it), its group not folded away, no other group maximized.
+pub fn on_screen(l: &Layout, f: &Frame, shown: Shown, view: ViewId) -> bool {
+    let Some(spot) = l.locate(Tab::View(view)) else {
+        return false;
+    };
+    if !l.is_visible(view) {
+        return false;
+    }
+    if let Some(zoom) = shown.zoomed {
+        return zoom == (spot.place, spot.group);
+    }
+    match spot.place {
+        Place::Page => !f.page_folded || spot.group == l.focused,
+        Place::Side(side) => {
+            let drawn = match side {
+                Side::Left => f.left.is_some() || (f.left_auto_hidden && shown.left_overlay),
+                _ => f.side(side).is_some(),
+            };
+            drawn && (!f.side_folded(side) || spot.group == 0)
+        }
+    }
+}
+
+/// Bring a placed and visible view on screen (the toggle rule, 4.8.5): a
+/// maximized other group gives way, a folded page group takes the place of
+/// the focused one, a folded second sidebar group moves its view into the
+/// first, the auto-hidden left sidebar shows over the page.
+pub fn reveal(l: &mut Layout, f: &Frame, shown: &mut Shown, view: ViewId) {
+    let Some(spot) = l.locate(Tab::View(view)) else {
+        return;
+    };
+    if shown.zoomed.is_some_and(|z| z != (spot.place, spot.group)) {
+        shown.zoomed = None;
+    }
+    match spot.place {
+        Place::Page => l.focused = spot.group,
+        Place::Side(Side::Left) if f.left_auto_hidden => shown.left_overlay = true,
+        Place::Side(side) if f.side_folded(side) && spot.group > 0 => {
+            let _ = l.move_tab(
+                Tab::View(view),
+                Target::Into {
+                    place: Place::Side(side),
+                    group: 0,
+                    index: None,
+                },
+            );
+        }
+        _ => {}
+    }
 }
 
 /// Apply a drop: a plain move, or Inbox and Knowledge crossing between
@@ -484,6 +713,16 @@ mod tests {
     const P1: TabId = TabId(1);
     const P2: TabId = TabId(2);
     const RIGHT: Place = Place::Side(Side::Right);
+    /// The body of the drawn regions below: 1440 x 840 at the origin.
+    const CTX: DropContext = DropContext {
+        body: Rect {
+            x: 0.,
+            y: 0.,
+            w: 1440.,
+            h: 840.,
+        },
+        close: None,
+    };
 
     fn base() -> Layout {
         Layout::defaults(vec![P1, P2], true)
@@ -648,11 +887,11 @@ mod tests {
             as_view: None,
         };
         // 8.18: the 24 strip along the bottom of the page area.
-        let zone = zone_at(&l, &regions, &strips, chat, 500., 830.).unwrap();
+        let zone = zone_at(&l, &regions, &strips, chat, CTX, 500., 830.).unwrap();
         assert_eq!(zone.target, Target::Area(Side::Bottom));
         assert_eq!(zone.preview, Rect::new(260., 520., 532., 320.));
         // The page area's centre: a view tab in that group.
-        let zone = zone_at(&l, &regions, &strips, chat, 520., 400.).unwrap();
+        let zone = zone_at(&l, &regions, &strips, chat, CTX, 520., 400.).unwrap();
         assert_eq!(
             zone.target,
             Target::Into {
@@ -664,12 +903,12 @@ mod tests {
         assert_eq!(zone.preview, regions[1].bounds);
         // The page area's left edge: a new group there, half the old one.
         // (532 / 2 = 266 < 400: too narrow to split, so it is the centre.)
-        let zone = zone_at(&l, &regions, &strips, chat, 270., 400.).unwrap();
+        let zone = zone_at(&l, &regions, &strips, chat, CTX, 270., 400.).unwrap();
         assert!(matches!(zone.target, Target::Into { .. }));
         // Its own group's centre is its own place: no zone.
-        assert_eq!(zone_at(&l, &regions, &strips, chat, 1100., 400.), None);
+        assert_eq!(zone_at(&l, &regions, &strips, chat, CTX, 1100., 400.), None);
         // Before the terminal in the header: an insertion line.
-        let zone = zone_at(&l, &regions, &strips, chat, 805., 10.).unwrap();
+        let zone = zone_at(&l, &regions, &strips, chat, CTX, 805., 10.).unwrap();
         assert_eq!(
             zone.target,
             Target::Into {
@@ -680,9 +919,9 @@ mod tests {
         );
         assert_eq!(zone.line.map(|r| r.h), Some(20.));
         // Just after itself: no change, no zone.
-        assert_eq!(zone_at(&l, &regions, &strips, chat, 940., 10.), None);
+        assert_eq!(zone_at(&l, &regions, &strips, chat, CTX, 940., 10.), None);
         // The bottom of the right sidebar: a second group, stacked.
-        let zone = zone_at(&l, &regions, &strips, chat, 1100., 800.).unwrap();
+        let zone = zone_at(&l, &regions, &strips, chat, CTX, 1100., 800.).unwrap();
         assert_eq!(
             zone.target,
             Target::Split {
@@ -693,10 +932,10 @@ mod tests {
         );
         assert_eq!(zone.preview, Rect::new(792., 420., 648., 420.));
         // The right edge of a sidebar is not a split: centre.
-        let zone = zone_at(&l, &regions, &strips, chat, 1430., 400.);
+        let zone = zone_at(&l, &regions, &strips, chat, CTX, 1430., 400.);
         assert_eq!(zone, None, "the centre of its own group");
         // Outside every region: nothing.
-        assert_eq!(zone_at(&l, &regions, &strips, chat, 2000., 400.), None);
+        assert_eq!(zone_at(&l, &regions, &strips, chat, CTX, 2000., 400.), None);
     }
 
     #[test]
@@ -713,7 +952,7 @@ mod tests {
             tab: crate::layout::Tab::View(ViewId::Chat),
             as_view: None,
         };
-        let zone = zone_at(&l, &[], &[strip], chat, 400., 700.).unwrap();
+        let zone = zone_at(&l, &[], &[strip], chat, CTX, 400., 700.).unwrap();
         assert_eq!(zone.target, Target::Area(Side::Bottom));
         let mut after = l.clone();
         drop_into(&mut after, chat, zone.target, TabId(99)).unwrap();
@@ -737,10 +976,10 @@ mod tests {
             tab: crate::layout::Tab::Page(P1),
             as_view: None,
         };
-        assert_eq!(zone_at(&l, &regions, &strips, page, 100., 400.), None);
-        assert_eq!(zone_at(&l, &regions, &strips, page, 1100., 400.), None);
+        assert_eq!(zone_at(&l, &regions, &strips, page, CTX, 100., 400.), None);
+        assert_eq!(zone_at(&l, &regions, &strips, page, CTX, 1100., 400.), None);
         // No strip for a page: the page group's bottom edge splits it.
-        let zone = zone_at(&l, &regions, &strips, page, 500., 830.).unwrap();
+        let zone = zone_at(&l, &regions, &strips, page, CTX, 500., 830.).unwrap();
         assert!(matches!(
             zone.target,
             Target::Split {
@@ -750,7 +989,7 @@ mod tests {
             }
         ));
         // After the second tab in the tab bar.
-        let zone = zone_at(&l, &regions, &strips, page, 700., 10.).unwrap();
+        let zone = zone_at(&l, &regions, &strips, page, CTX, 700., 10.).unwrap();
         assert_eq!(
             zone.target,
             Target::Into {
@@ -764,7 +1003,7 @@ mod tests {
             tab: crate::layout::Tab::Page(P2),
             as_view: Some(ViewId::Inbox),
         };
-        let zone = zone_at(&l, &regions, &strips, inbox, 100., 10.).unwrap();
+        let zone = zone_at(&l, &regions, &strips, inbox, CTX, 100., 10.).unwrap();
         assert_eq!(
             zone.target,
             Target::Into {
@@ -777,6 +1016,15 @@ mod tests {
 
     #[test]
     fn a_wide_page_area_splits_at_its_edges_and_corners_go_to_the_nearer_edge() {
+        const CTX: DropContext = DropContext {
+            body: Rect {
+                x: 0.,
+                y: 0.,
+                w: 1200.,
+                h: 800.,
+            },
+            close: None,
+        };
         let l = base();
         let regions = vec![Region {
             place: Place::Page,
@@ -789,7 +1037,7 @@ mod tests {
             tab: crate::layout::Tab::Page(P2),
             as_view: None,
         };
-        let zone = zone_at(&l, &regions, &[], p2, 1150., 400.).unwrap();
+        let zone = zone_at(&l, &regions, &[], p2, CTX, 1150., 400.).unwrap();
         assert_eq!(
             zone.target,
             Target::Split {
@@ -798,9 +1046,9 @@ mod tests {
                 edge: Edge::Right
             }
         );
-        assert_eq!(zone.preview, Rect::new(600., 0., 600., 800.));
+        assert_eq!(zone.preview, Rect::new(730., 0., 470., 800.));
         // Near the bottom right corner, nearer the bottom edge.
-        let zone = zone_at(&l, &regions, &[], p2, 1100., 790.).unwrap();
+        let zone = zone_at(&l, &regions, &[], p2, CTX, 1100., 790.).unwrap();
         assert!(matches!(
             zone.target,
             Target::Split {
@@ -813,5 +1061,232 @@ mod tests {
         drop_into(&mut after, p2, zone.target, TabId(99)).unwrap();
         assert_eq!(after.page.direction, crate::layout::Direction::Column);
         assert_eq!(after.page.groups.len(), 2);
+    }
+
+    /// The bounds `spot` has after the drop, as the frame lays them out.
+    fn landed(l: &Layout, body: Rect, tab: crate::layout::Tab) -> Rect {
+        let spot = l.locate(tab).unwrap();
+        let f = frame(l, body.w, body.h);
+        group_rect(l, &f, body, spot.place, spot.group).unwrap()
+    }
+
+    #[test]
+    fn every_preview_is_the_bounds_after_the_drop() {
+        use crate::layout::Tab;
+        // Wide enough that the left sidebar keeps the 400 of a terminal or
+        // chat beside the right one (narrower, it would auto-hide and the
+        // drop be refused).
+        let body = Rect::new(0., 0., 1700., 840.);
+        let ctx = DropContext { body, close: None };
+        let l = shown();
+        let regions = regions(&l);
+        let strips = strips(&l, body, Rect::new(260., 0., 532., 840.));
+        let chat = Dragged {
+            tab: Tab::View(ViewId::Chat),
+            as_view: None,
+        };
+        let page = Dragged {
+            tab: Tab::Page(P1),
+            as_view: None,
+        };
+        let inbox_page = Dragged {
+            tab: Tab::Page(P2),
+            as_view: Some(ViewId::Inbox),
+        };
+        // A hidden area's strip, a header, a centre, an edge, a tab row, a
+        // page that becomes a view.
+        let cases = [
+            (chat, 500., 830.),
+            (chat, 100., 10.),
+            (chat, 520., 400.),
+            (chat, 1100., 800.),
+            (chat, 805., 10.),
+            (page, 700., 10.),
+            (page, 500., 830.),
+            (inbox_page, 100., 400.),
+        ];
+        let mut kinds = 0;
+        for (dragged, x, y) in cases {
+            let zone = zone_at(&l, &regions, &strips, dragged, ctx, x, y)
+                .unwrap_or_else(|| panic!("a zone at {x}, {y}"));
+            let mut after = l.clone();
+            drop_into(&mut after, dragged, zone.target, TabId(99)).unwrap();
+            let tab = match dragged.as_view {
+                Some(view) => Tab::View(view),
+                None => dragged.tab,
+            };
+            assert_eq!(zone.preview, landed(&after, body, tab), "{x}, {y}");
+            kinds += 1;
+        }
+        assert_eq!(kinds, cases.len());
+    }
+
+    #[test]
+    fn a_centre_preview_grows_with_the_minimum_of_what_lands() {
+        use crate::layout::Tab;
+        // The terminal (400 wide) dropped into the 260 left sidebar: the
+        // preview is the 400 the sidebar takes, not the 260 drawn now.
+        let l = shown();
+        let regions = regions(&l);
+        let terminal = Dragged {
+            tab: Tab::View(ViewId::Terminal),
+            as_view: None,
+        };
+        let mut l = l;
+        l.set_area_shown(Side::Right, false);
+        let zone = zone_at(&l, &regions, &[], terminal, CTX, 130., 400.).unwrap();
+        assert_eq!(zone.preview.w, 400.);
+        let mut after = l.clone();
+        drop_into(&mut after, terminal, zone.target, TabId(99)).unwrap();
+        assert_eq!(zone.preview, landed(&after, CTX.body, terminal.tab));
+    }
+
+    #[test]
+    fn a_view_that_becomes_an_open_page_closes_it_and_lands_where_previewed() {
+        use crate::layout::Tab;
+        // The Inbox view dropped into the page area where its page P2 is
+        // open: P2 closes, the new page lands, exactly as previewed.
+        let mut l = base();
+        l.page_to_view(P2, ViewId::Inbox, Target::Area(Side::Left))
+            .unwrap();
+        l.add_page(TabId(7));
+        let regions = vec![Region {
+            place: Place::Page,
+            group: 0,
+            bounds: Rect::new(260., 0., 1180., 840.),
+            header: Some(Rect::new(260., 0., 1180., 32.)),
+            tabs: vec![
+                Rect::new(260., 0., 150., 32.),
+                Rect::new(410., 0., 150., 32.),
+            ],
+        }];
+        let inbox = Dragged {
+            tab: Tab::View(ViewId::Inbox),
+            as_view: None,
+        };
+        let ctx = DropContext {
+            body: CTX.body,
+            close: Some(TabId(7)),
+        };
+        let zone = zone_at(&l, &regions, &[], inbox, ctx, 600., 10.).unwrap();
+        let (after, spot) = simulate(&l, inbox, zone.target, ctx.close, TabId(9)).unwrap();
+        assert!(
+            after.locate(Tab::Page(TabId(7))).is_none(),
+            "the open page closed"
+        );
+        assert_eq!(after.locate(Tab::Page(TabId(9))), Some(spot));
+        assert!(!after.is_placed(ViewId::Inbox));
+        let f = frame(&after, CTX.body.w, CTX.body.h);
+        assert_eq!(
+            Some(zone.preview),
+            group_rect(&after, &f, CTX.body, spot.place, spot.group)
+        );
+    }
+
+    #[test]
+    fn a_drop_into_the_auto_hidden_sidebar_is_no_zone() {
+        use crate::layout::Tab;
+        // At 880 with the right sidebar shown the left one is auto-hidden:
+        // a view dropped into it would not be seen, so there is no zone.
+        let mut l = shown();
+        l.hide_view(ViewId::Projects);
+        l.set_area_shown(Side::Left, true);
+        let body = Rect::new(0., 0., 880., 500.);
+        let strip = Strip {
+            side: Side::Left,
+            hit: Rect::new(0., 0., 24., 500.),
+            preview: Rect::new(0., 0., 260., 500.),
+        };
+        let chat = Dragged {
+            tab: Tab::View(ViewId::Chat),
+            as_view: None,
+        };
+        let ctx = DropContext { body, close: None };
+        assert_eq!(zone_at(&l, &[], &[strip], chat, ctx, 10., 100.), None);
+    }
+
+    #[test]
+    fn a_handle_after_the_last_group_is_none() {
+        assert_eq!(
+            handle_position(0., 1000., &[0.5, 0.5], &[400., 400.], 0),
+            Some(500.)
+        );
+        assert_eq!(
+            handle_position(0., 1000., &[0.5, 0.5], &[400., 400.], 1),
+            None
+        );
+        assert_eq!(handle_position(0., 1000., &[1.], &[400.], 0), None);
+        assert_eq!(handle_position(0., 1000., &[0.5, 0.5], &[400.], 0), None);
+    }
+
+    #[test]
+    fn split_needs_room_for_every_group() {
+        let l = base();
+        assert!(split_fits(&l, &frame(&l, 1440., 840.), Direction::Row));
+        // 1100 - 260 = 840 < 2 x 420? 840 >= 800: fits; 1000 - 260 does not.
+        assert!(split_fits(&l, &frame(&l, 1100., 840.), Direction::Row));
+        assert!(!split_fits(&l, &frame(&l, 1000., 840.), Direction::Row));
+        assert!(split_fits(&l, &frame(&l, 1440., 500.), Direction::Column));
+        assert!(!split_fits(&l, &frame(&l, 1440., 380.), Direction::Column));
+    }
+
+    #[test]
+    fn toggles_bring_folded_and_auto_hidden_views_on_screen() {
+        use crate::layout::Tab;
+        // A view in the second, folded group of the right sidebar.
+        let mut l = shown();
+        l.split_off(ViewId::Chat).unwrap();
+        let f = frame(&l, 1440., 380.);
+        assert!(f.side_folded(Side::Right));
+        let mut shown_ = Shown::default();
+        assert!(l.is_visible(ViewId::Chat));
+        assert!(!on_screen(&l, &f, shown_, ViewId::Chat), "folded away");
+        reveal(&mut l, &f, &mut shown_, ViewId::Chat);
+        let f = frame(&l, 1440., 380.);
+        assert!(on_screen(&l, &f, shown_, ViewId::Chat));
+        assert!(l.locate(Tab::View(ViewId::Chat)).unwrap().group == 0);
+
+        // Projects in the auto-hidden left sidebar at 880.
+        let mut l = shown();
+        let f = frame(&l, 880., 500.);
+        let mut shown_ = Shown::default();
+        assert!(!on_screen(&l, &f, shown_, ViewId::Projects));
+        reveal(&mut l, &f, &mut shown_, ViewId::Projects);
+        assert!(shown_.left_overlay);
+        assert!(on_screen(&l, &f, shown_, ViewId::Projects));
+
+        // A view tab in a folded page group: its group takes the focus.
+        let mut l = base();
+        l.split_active(Direction::Row).unwrap();
+        l.move_tab(
+            Tab::View(ViewId::Terminal),
+            Target::Into {
+                place: Place::Page,
+                group: 1,
+                index: None,
+            },
+        )
+        .unwrap();
+        l.focused = 0;
+        let f = frame(&l, 1000., 840.);
+        assert!(f.page_folded);
+        let mut shown_ = Shown::default();
+        assert!(!on_screen(&l, &f, shown_, ViewId::Terminal));
+        reveal(&mut l, &f, &mut shown_, ViewId::Terminal);
+        assert_eq!(l.focused, 1);
+        assert!(on_screen(&l, &f, shown_, ViewId::Terminal));
+
+        // A maximized other group gives way.
+        let l = shown();
+        let f = frame(&l, 1440., 840.);
+        let mut zoomed = Shown {
+            zoomed: Some((Place::Page, 0)),
+            left_overlay: false,
+        };
+        assert!(!on_screen(&l, &f, zoomed, ViewId::Terminal));
+        let mut l2 = l.clone();
+        reveal(&mut l2, &f, &mut zoomed, ViewId::Terminal);
+        assert_eq!(zoomed.zoomed, None);
+        assert!(on_screen(&l2, &f, zoomed, ViewId::Terminal));
     }
 }

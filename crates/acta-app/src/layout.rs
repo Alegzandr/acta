@@ -1384,6 +1384,12 @@ pub fn migrate(old: &Old) -> Saved {
 
 // ---- undo (4.8.11, rule 3) ----
 
+/// Whether `Mod+Z` takes the newest layout step rather than the newest
+/// write (interaction.md 6.4: whichever of the two is most recent).
+pub fn layout_step_first(layout: Option<u64>, write: Option<u64>) -> bool {
+    layout.is_some() && layout > write
+}
+
 /// 4.8.11: the last 50 steps per window, for the session.
 const UNDO_DEPTH: usize = 50;
 /// Keyboard resize steps within one second are one step.

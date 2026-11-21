@@ -1129,10 +1129,6 @@ catalogue! {
         en: t("Sign out and clear"),
         fr: t("Se déconnecter et effacer"),
     }
-    ChatHide "chat.hide" {
-        en: t("Hide chat"),
-        fr: t("Masquer le chat"),
-    }
     ChatMore "chat.more" {
         en: t("More"),
         fr: t("Plus"),

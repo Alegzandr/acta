@@ -1240,4 +1240,25 @@ mod tests {
         let err = acta_core::Error::Invalid("title of Alexandre's secret".into());
         assert_eq!(err_kind(&err), "Invalid");
     }
+
+    #[test]
+    fn mod_z_takes_the_newest_of_layout_steps_and_writes() {
+        use crate::layout::{Layout, UndoLog, layout_step_first};
+        let mut writes = UndoStack::default();
+        let mut layout = UndoLog::default();
+        let step = Undo::Delete(Record::Topic(TopicId(1)));
+        // A write, then a layout change, then a write.
+        writes.push(step.clone());
+        layout.record(Layout::defaults(Vec::new(), true), next_undo_seq(), None);
+        assert!(layout_step_first(layout.newest(), writes.newest()));
+        writes.push(Undo::Delete(Record::Topic(TopicId(2))));
+        assert!(!layout_step_first(layout.newest(), writes.newest()));
+        // The write is taken back: the layout step is now the newest.
+        writes.pop();
+        assert!(layout_step_first(layout.newest(), writes.newest()));
+        layout.undo();
+        assert!(!layout_step_first(layout.newest(), writes.newest()));
+        assert!(!layout_step_first(None, None));
+        assert!(layout_step_first(Some(3), None));
+    }
 }

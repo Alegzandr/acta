@@ -400,7 +400,7 @@ pub fn render(
                 format!("titlebar-view-{}", view.key()),
                 crate::shell::view_icon(view),
                 BUTTON,
-                shell.view_selected(view),
+                shell.view_selected(view, window),
                 false,
                 active,
                 &tokens,

@@ -237,6 +237,14 @@ impl LayoutUi {
         self.epoch.elapsed().as_millis() as u64
     }
 
+    /// What is drawn over or instead of the layout.
+    pub fn shown(&self) -> layout_frame::Shown {
+        layout_frame::Shown {
+            zoomed: self.zoomed,
+            left_overlay: self.left_overlay,
+        }
+    }
+
     pub fn dragging(&self) -> bool {
         self.drag.is_some()
     }
@@ -380,8 +388,11 @@ impl Shell {
         bench.layout.repair(&live, CHAT);
         let tabs = bench.layout.page_tabs();
         bench.ui.menu = None;
+        // A change ends any resize drag; a maximized group whose area hid or
+        // whose group went away gives way.
+        bench.ui.resize = None;
         if let Some((place, group)) = bench.ui.zoomed
-            && group >= bench.layout.area(place).groups.len()
+            && (group >= bench.layout.area(place).groups.len() || !bench.layout.area(place).shown)
         {
             bench.ui.zoomed = None;
         }
@@ -490,8 +501,11 @@ impl Shell {
         let Some(bench) = self.bench() else { return };
         let project = bench.active_project;
         let ws = bench.ws.clone();
-        let inbox_placed = bench.layout.is_placed(ViewId::Inbox);
-        let kb_placed = bench.layout.is_placed(ViewId::Knowledge);
+        // A hidden view keeps running (4.8.1); only a view that became a
+        // page again lets its entity go.
+        let is_view = |v| bench.layout.is_placed(v) || bench.layout.last.contains_key(&v);
+        let inbox_placed = is_view(ViewId::Inbox);
+        let kb_placed = is_view(ViewId::Knowledge);
         let inbox_stale = bench
             .inbox_view
             .as_ref()
@@ -543,27 +557,15 @@ impl Shell {
             ViewId::Chat => bench.chat.read(cx).focus_handle(cx),
             #[cfg(not(windows))]
             ViewId::Chat => return None,
-            ViewId::Inbox | ViewId::Knowledge => bench.view_focus.clone(),
+            ViewId::Inbox => bench.inbox_focus.clone(),
+            ViewId::Knowledge => bench.knowledge_focus.clone(),
         })
     }
 
     /// Whether keyboard focus is inside `view`.
     fn view_has_focus(&self, view: ViewId, window: &Window, cx: &App) -> bool {
-        let Content::Workbench(bench) = &self.content else {
-            return false;
-        };
-        let place = bench.layout.locate(Tab::View(view));
-        match view {
-            ViewId::Inbox | ViewId::Knowledge => {
-                // One container for both: the active view of its group.
-                place.is_some_and(|spot| {
-                    bench.layout.area(spot.place).groups[spot.group].active == spot.index
-                }) && bench.view_focus.contains_focused(window, cx)
-            }
-            _ => self
-                .view_focus(view, cx)
-                .is_some_and(|h| h.contains_focused(window, cx)),
-        }
+        self.view_focus(view, cx)
+            .is_some_and(|h| h.contains_focused(window, cx))
     }
 
     /// Focus `view` (shown already).
@@ -608,16 +610,48 @@ impl Shell {
             };
             return self.go_project_page(route, window, cx);
         }
-        let visible = bench.layout.is_visible(view);
-        if visible && self.view_has_focus(view, window, cx) {
+        let drawn = self.view_drawn(view, window);
+        if drawn && self.view_has_focus(view, window, cx) {
             self.change_layout(None, window, cx, |l| l.hide_view(view));
             self.focus_page(window, cx);
             return;
         }
-        if !visible {
-            self.change_layout(None, window, cx, |l| l.show_view(view).is_some());
+        if !drawn {
+            self.bring_on_screen(view, window, cx);
         }
         self.focus_view(view, window, cx);
+    }
+
+    /// Whether `view` is drawn now (4.8.5: a toggle is selected only then).
+    pub(crate) fn view_drawn(&self, view: ViewId, window: &Window) -> bool {
+        let Content::Workbench(bench) = &self.content else {
+            return false;
+        };
+        let (w, h) = body_size(window);
+        let f = layout_frame::frame(&bench.layout, w, h);
+        layout_frame::on_screen(&bench.layout, &f, bench.ui.shown(), view)
+    }
+
+    /// Show `view` where it was last and bring it on screen: unfolded,
+    /// over the page when its sidebar is auto-hidden, out from under a
+    /// maximized group (4.8.5, 4.8.10).
+    fn bring_on_screen(&mut self, view: ViewId, window: &mut Window, cx: &mut Context<Self>) {
+        let (w, h) = body_size(window);
+        let Some(bench) = self.bench() else { return };
+        let mut shown = bench.ui.shown();
+        self.change_layout(None, window, cx, |l| {
+            if l.show_view(view).is_none() {
+                return false;
+            }
+            let f = layout_frame::frame(l, w, h);
+            layout_frame::reveal(l, &f, &mut shown, view);
+            true
+        });
+        if let Some(bench) = self.bench() {
+            bench.ui.zoomed = shown.zoomed;
+            bench.ui.left_overlay = shown.left_overlay;
+        }
+        cx.notify();
     }
 
     /// Show or hide a side area with everything in it; showing focuses
@@ -633,8 +667,11 @@ impl Shell {
             return;
         }
         let Some(bench) = self.bench() else { return };
+        // An area toggle always shows the whole layout again.
+        bench.ui.zoomed = None;
         let shown = bench.layout.side(side).shown;
         self.change_layout(None, window, cx, |l| l.set_area_shown(side, !shown));
+        cx.notify();
         if shown {
             // Focus inside the hidden area returns to the page.
             let lost = self
@@ -677,7 +714,7 @@ impl Shell {
                 {
                     return self.toggle_view(view, window, cx);
                 }
-                self.change_layout(None, window, cx, |l| l.show_view(view).is_some());
+                self.bring_on_screen(view, window, cx);
                 self.focus_view(view, window, cx);
             }
             ViewAction::Hide => {
@@ -792,11 +829,15 @@ impl Shell {
         }
         let id = new_tab.map_or(TabId(u64::MAX), |(id, _)| id);
         let closing = new_tab.and_then(|(_, open)| open);
+        // The very simulation the preview showed (4.8.11, rule 6).
         let done = self.change_layout(None, window, cx, |l| {
-            if let Some(open) = closing {
-                let _ = l.close_page(open);
+            match layout_frame::simulate(l, dragged, target, closing, id) {
+                Some((after, _)) => {
+                    *l = after;
+                    true
+                }
+                None => false,
             }
-            layout_frame::drop_into(l, dragged, target, id).is_ok()
         });
         if !done
             && let Some((id, _)) = new_tab
@@ -807,8 +848,29 @@ impl Shell {
         done
     }
 
+    /// The open page an Inbox or Knowledge view closes when it lands in the
+    /// page area as that page.
+    fn page_to_close(&mut self, dragged: Dragged) -> Option<TabId> {
+        let Tab::View(view) = dragged.tab else {
+            return None;
+        };
+        if !view.is_page_kind() {
+            return None;
+        }
+        let bench = self.bench()?;
+        let project = bench.active_project?;
+        bench.find_tab(match view {
+            ViewId::Inbox => Route::Inbox(project),
+            _ => Route::Knowledge(project),
+        })
+    }
+
     /// "Reset layout" (4.8.13): one undoable step, toasted.
     pub(super) fn reset_layout(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(bench) = self.bench() {
+            bench.ui.zoomed = None;
+            bench.ui.left_overlay = false;
+        }
         if self.change_layout(None, window, cx, |l| {
             l.reset(CHAT);
             true
@@ -873,18 +935,13 @@ impl Shell {
         self.focus_page(window, cx);
     }
 
-    pub(super) fn can_split_page(&mut self, direction: Direction, window: &Window) -> bool {
+    pub(super) fn can_split_page(&self, direction: Direction, window: &Window) -> bool {
         let (w, h) = body_size(window);
-        let Some(bench) = self.bench() else {
+        let Content::Workbench(bench) = &self.content else {
             return false;
         };
         let f = layout_frame::frame(&bench.layout, w, h);
-        let n = bench.layout.page.groups.len() as f32 + 1.;
-        let room = match direction {
-            Direction::Row => f.page_w >= layout_frame::GROUP_MIN_W * n,
-            Direction::Column => f.page_h >= layout_frame::PAGE_MIN_H * n,
-        };
-        room && bench.layout.can_split_active(direction)
+        layout_frame::split_fits(&bench.layout, &f, direction)
     }
 
     pub(super) fn move_tab_to_group(
@@ -942,6 +999,13 @@ impl Shell {
                 let now = f.side(side).unwrap_or(l.side(side).size);
                 let min = layout_frame::side_min(l, side);
                 l.side_mut(side).size = (now + by).max(min);
+                // Never past what the window draws (60% of it, 70% of the
+                // body, the page's room).
+                let drawn = match side {
+                    Side::Bottom => layout_frame::bottom_height(l, h),
+                    _ => layout_frame::sidebar_width(l, side, w),
+                };
+                l.side_mut(side).size = drawn;
                 true
             }
             Place::Page => {
@@ -954,7 +1018,7 @@ impl Shell {
                     Direction::Row => f.page_w,
                     Direction::Column => f.page_h,
                 };
-                let mins = page_mins(l);
+                let mins = layout_frame::page_mins(l);
                 // The handle after the group, or before the last one.
                 let (at, delta) = if group + 1 < n {
                     (group, by)
@@ -1151,8 +1215,11 @@ impl Shell {
             });
             self.set_rearranging(true, window, cx);
         }
+        let Some(drag) = self.bench().and_then(|b| b.ui.drag) else {
+            return;
+        };
+        let close = self.page_to_close(drag.dragged);
         let Some(bench) = self.bench() else { return };
-        let Some(drag) = bench.ui.drag else { return };
         let geometry = bench.ui.geometry.borrow();
         let regions = geometry.regions(&bench.layout);
         let page = geometry
@@ -1160,7 +1227,8 @@ impl Shell {
             .get(&place_key(Place::Page))
             .copied()
             .unwrap_or_default();
-        let mut strips = layout_frame::strips(&bench.layout, geometry.body, page);
+        let body = geometry.body;
+        let mut strips = layout_frame::strips(&bench.layout, body, page);
         // An area shown while empty is a drop target like any area (4.8.2).
         for side in Side::ALL {
             let area = bench.layout.side(side);
@@ -1176,7 +1244,8 @@ impl Shell {
             }
         }
         drop(geometry);
-        let zone = layout_frame::zone_at(&bench.layout, &regions, &strips, drag.dragged, x, y);
+        let ctx = layout_frame::DropContext { body, close };
+        let zone = layout_frame::zone_at(&bench.layout, &regions, &strips, drag.dragged, ctx, x, y);
         bench.ui.drag = Some(Drag { x, y, zone, ..drag });
         cx.notify();
     }
@@ -1187,9 +1256,9 @@ impl Shell {
         let Some(drag) = bench.ui.drag.take() else {
             return;
         };
-        self.set_rearranging(false, window, cx);
         let Some(zone) = drag.zone else {
             // 4.8.11, rule 5: an invalid drop changes nothing.
+            self.set_rearranging(false, window, cx);
             cx.notify();
             return;
         };
@@ -1203,7 +1272,10 @@ impl Shell {
         };
         // A page tab moved within the page area is a tab move: no toast.
         let is_view_move = matches!(drag.dragged.tab, Tab::View(_)) || place != Place::Page;
-        if self.drop_view(drag.dragged, zone.target, window, cx) {
+        let dropped = self.drop_view(drag.dragged, zone.target, window, cx);
+        // The web views return at their new bounds once the layout settled.
+        self.set_rearranging(false, window, cx);
+        if dropped {
             match (view, is_view_move) {
                 (Some(view), true) => self.after_move(view, place, window, cx),
                 _ => self.focus_page(window, cx),
@@ -1288,11 +1360,14 @@ impl Shell {
                     Direction::Column => (rect.h, rect.y, y),
                 };
                 let mins = match place {
-                    Place::Page => page_mins(&bench.layout),
-                    Place::Side(side) => side_group_mins(&bench.layout, side),
+                    Place::Page => layout_frame::page_mins(&bench.layout),
+                    Place::Side(side) => layout_frame::side_group_mins(&bench.layout, side),
                 };
-                let sizes = layout_frame::group_sizes(total, &area.shares, &mins);
-                let edge: f32 = start + sizes[..=at].iter().sum::<f32>();
+                let Some(edge) =
+                    layout_frame::handle_position(start, total, &area.shares, &mins, at)
+                else {
+                    return;
+                };
                 let shares =
                     layout_frame::resize_shares(&area.shares, at, pos - edge, total, &mins);
                 drop(geometry);
@@ -1545,25 +1620,7 @@ impl Shell {
         let Some(bench) = self.bench() else {
             return false;
         };
-        let Some(spot) = bench.layout.locate(Tab::View(view)) else {
-            return false;
-        };
-        if !bench.layout.is_visible(view) {
-            return false;
-        }
-        if let Some(zoom) = bench.ui.zoomed {
-            return zoom == (spot.place, spot.group);
-        }
-        match spot.place {
-            Place::Page => !f.page_folded || spot.group == bench.layout.focused,
-            Place::Side(side) => {
-                let shown = match side {
-                    Side::Left => f.left.is_some() || bench.ui.left_overlay,
-                    _ => f.side(side).is_some(),
-                };
-                shown && (!f.side_folded(side) || spot.group == 0)
-            }
-        }
+        layout_frame::on_screen(&bench.layout, f, bench.ui.shown(), view)
     }
 
     /// A side area: its groups along its direction, or the empty line.
@@ -1585,7 +1642,7 @@ impl Shell {
         let n = bench.layout.side(side).groups.len();
         let folded = f.side_folded(side);
         let shares = bench.layout.side(side).shares.clone();
-        let mins = side_group_mins(&bench.layout, side);
+        let mins = layout_frame::side_group_mins(&bench.layout, side);
         let container = div()
             .relative()
             .flex()
@@ -2068,7 +2125,10 @@ impl Shell {
             #[cfg(not(windows))]
             ViewId::Chat => div().into_any_element(),
             ViewId::Inbox | ViewId::Knowledge => {
-                let focus = bench.view_focus.clone();
+                let focus = match view {
+                    ViewId::Inbox => bench.inbox_focus.clone(),
+                    _ => bench.knowledge_focus.clone(),
+                };
                 let page = match view {
                     ViewId::Inbox => bench.inbox_view.clone().map(|v| v.into_any_element()),
                     _ => bench.knowledge_view.clone().map(|v| v.into_any_element()),
@@ -3069,30 +3129,6 @@ pub(super) fn menu_row(
     } else {
         menu::disabled_item(id.into(), label, Some(trailing.into_any_element()), t)
     }
-}
-
-/// The minimum of each page group along the page area's direction.
-fn page_mins(l: &Layout) -> Vec<f32> {
-    let min = match l.page.direction {
-        Direction::Row => layout_frame::GROUP_MIN_W,
-        Direction::Column => layout_frame::PAGE_MIN_H,
-    };
-    vec![min; l.page.groups.len()]
-}
-
-/// The minimum of each group of a side area along its direction.
-fn side_group_mins(l: &Layout, side: Side) -> Vec<f32> {
-    l.side(side)
-        .groups
-        .iter()
-        .map(|g| match g.active_tab() {
-            Some(Tab::View(v)) => match side.direction() {
-                Direction::Column => v.min().1,
-                Direction::Row => v.min().0,
-            },
-            _ => 0.,
-        })
-        .collect()
 }
 
 /// The body's size: the window between the titlebar and the status bar.

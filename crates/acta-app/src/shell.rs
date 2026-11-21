@@ -407,8 +407,9 @@ struct Bench {
     tree_focus: FocusHandle,
     /// One focus handle per page group (at most three, 4.8.8).
     group_focus: [FocusHandle; 3],
-    /// The container of the Inbox or Knowledge view.
-    view_focus: FocusHandle,
+    /// The containers of the Inbox and the Knowledge views.
+    inbox_focus: FocusHandle,
+    knowledge_focus: FocusHandle,
     inbox_view: Option<Entity<InboxPage>>,
     knowledge_view: Option<Entity<KnowledgePage>>,
     view_subs: HashMap<ViewId, Subscription>,
@@ -610,7 +611,8 @@ impl Shell {
             find: (String::new(), None),
             tree_focus: cx.focus_handle(),
             group_focus: [cx.focus_handle(), cx.focus_handle(), cx.focus_handle()],
-            view_focus: cx.focus_handle(),
+            inbox_focus: cx.focus_handle(),
+            knowledge_focus: cx.focus_handle(),
             inbox_view: None,
             knowledge_view: None,
             view_subs: HashMap::new(),
@@ -889,11 +891,14 @@ impl Shell {
     /// Whether a view's titlebar toggle is selected (4.8.5): visible in the
     /// layout; for Inbox and Knowledge while they are pages, the focused
     /// group's active tab shows that page.
-    pub fn view_selected(&self, view: ViewId) -> bool {
+    pub fn view_selected(&self, view: ViewId, window: &Window) -> bool {
         let Content::Workbench(bench) = &self.content else {
             return false;
         };
-        if view.is_page_kind() && !bench.layout.is_placed(view) {
+        if view.is_page_kind()
+            && !bench.layout.is_placed(view)
+            && !bench.layout.last.contains_key(&view)
+        {
             let showing =
                 matches!(bench.layout.focused_tab(), Some(Tab::Page(id)) if id == bench.current);
             return showing
@@ -903,7 +908,9 @@ impl Shell {
                         | (ViewId::Knowledge, Some(Route::Knowledge(_)))
                 );
         }
-        bench.layout.is_visible(view)
+        // Selected only while drawn: a view in a folded group, an
+        // auto-hidden sidebar or under a maximized group is not (4.8.5).
+        self.view_drawn(view, window)
     }
 
     /// The titlebar is a workbench's (toggles shown).
@@ -1539,8 +1546,8 @@ impl Shell {
             views: states,
             focused_view,
             groups: bench.layout.page.groups.len(),
-            can_split_right: bench.layout.can_split_active(Direction::Row),
-            can_split_down: bench.layout.can_split_active(Direction::Column),
+            can_split_right: self.can_split_page(Direction::Row, window),
+            can_split_down: self.can_split_page(Direction::Column, window),
             layout_undo: !bench.layout_undo.is_empty(),
         }
     }
@@ -2178,8 +2185,17 @@ impl Shell {
                 .knowledge_view
                 .as_ref()
                 .is_some_and(|v| v.read(cx).menu_open());
+        // The move toast sits at the bottom left of the page area.
+        let toast_over = bench.toast.is_some()
+            && bench
+                .layout
+                .locate(Tab::View(ViewId::Chat))
+                .map(|s| s.place)
+                == Some(Place::Page);
         bench.ui.left_overlay
             || bench.ui.menu.is_some()
+            || bench.tree_menu.is_some()
+            || toast_over
             || bench.overlay.is_some()
             || any_page_menu
             || bench.chat.read(cx).menu_open()
@@ -2223,7 +2239,7 @@ impl Shell {
         let project = bench.active_project;
         let write = bench.ws.read(cx).newest_undo(project);
         let layout = bench.layout_undo.newest();
-        if layout.is_some() && layout > write {
+        if crate::layout::layout_step_first(layout, write) {
             return self.undo_layout(window, cx);
         }
         bench.toast = None;
@@ -4064,6 +4080,13 @@ impl Render for Shell {
             .key_context("Workbench")
             .track_focus(&self.focus)
             .when(dragging, |this| this.key_context("Dragging"))
+            // 4.8.7: `Esc` cancels a drag before it means anything else,
+            // whatever has focus.
+            .capture_key_down(cx.listener(|s, e: &KeyDownEvent, w, cx| {
+                if e.keystroke.key == "escape" && s.cancel_drag(w, cx) {
+                    cx.stop_propagation();
+                }
+            }))
             .on_action(cx.listener(|s, _: &CancelDrag, w, cx| {
                 s.cancel_drag(w, cx);
             }))
