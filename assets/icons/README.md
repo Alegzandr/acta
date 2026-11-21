@@ -1,6 +1,6 @@
 # Acta app icon
 
-The mark is a capital A whose crossbar is a ledger rule in the accent colour. The rule touches the left leg, stops short of the right leg, and continues past it off the edge of the plate, like a line leaving the page. The plate is `#42413D`, the A is `#E4E3DF` and the rule is verdigris `#72B5A2` (the dark-theme `accent` of DESIGN.md).
+The mark is a capital A whose crossbar is a ledger rule in the accent colour. The rule touches the left leg, stops short of the right leg, and continues past it off the edge of the plate, like a line leaving the page. The plate is `#42413D`, the A is `#E4E3DF` and the rule is verdigris `#72B5A2` (the dark-theme `accent` of `docs/design/color.md`).
 
 ## Files
 

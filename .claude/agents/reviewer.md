@@ -11,7 +11,7 @@ Review the branch you are given against `main` (`git diff main...<branch>`, `git
 2. Portability: anything that only works on one OS, one shell or one filesystem layout.
 3. Data safety: the database is encrypted and the key lives in the OS keychain. Flag any path where plaintext data or the key reaches disk, logs, panics messages or process arguments.
 4. Context economy: agent-facing output (MCP tools, CLI, hooks) must be compact, paginated and summary-first. Flag dumps and unbounded lists.
-5. Conformance: `DESIGN.md` for UI, ADRs in `docs/decisions/` for architecture, `CLAUDE.md` for conventions.
+5. Conformance: `DESIGN.md` and `docs/design/` for UI, ADRs in `docs/decisions/` for architecture, `CLAUDE.md` for conventions.
 6. Tests: do they test behavior, would they fail if the code were wrong, what important case is missing.
 
 Method:
