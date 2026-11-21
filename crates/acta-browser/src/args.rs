@@ -164,7 +164,46 @@ pub enum Request {
     Handoff(HandoffArgs),
 }
 
+/// Field limits, in characters. `acta mcp browser` checks them before
+/// sending and the app again on receipt.
+pub mod limits {
+    pub const URL: usize = 2_048;
+    pub const TEXT: usize = 2_000;
+    pub const MESSAGE: usize = 200;
+    pub const REF: usize = 24;
+    pub const QUERY: usize = 200;
+}
+
+fn within(field: &str, value: Option<&str>, max: usize) -> Result<(), String> {
+    match value.map(|v| v.chars().count()) {
+        Some(n) if n > max => Err(format!("refused: {field} is {n} chars, at most {max}")),
+        _ => Ok(()),
+    }
+}
+
 impl Request {
+    /// Every field within its limit, or the one-line refusal.
+    pub fn check(&self) -> Result<(), String> {
+        use limits::*;
+        match self {
+            Request::Open(a) => within("url", a.url.as_deref(), URL),
+            Request::Snapshot(a) => {
+                within("within", a.within.as_deref(), REF)?;
+                within("wait_for", a.wait_for.as_deref(), QUERY)
+            }
+            Request::Read(a) => within("within", a.within.as_deref(), REF),
+            Request::Click(a) => within("ref", Some(&a.target), REF),
+            Request::Type(a) => {
+                within("ref", Some(&a.target), REF)?;
+                within("text", a.text.as_deref(), TEXT)
+            }
+            Request::Screenshot(a) => within("ref", a.target.as_deref(), REF),
+            Request::Console(a) => within("pattern", a.pattern.as_deref(), QUERY),
+            Request::Network(a) => within("pattern", a.pattern.as_deref(), QUERY),
+            Request::Handoff(a) => within("message", Some(&a.message), MESSAGE),
+        }
+    }
+
     pub fn name(&self) -> &'static str {
         match self {
             Request::Open(_) => "open",
@@ -232,5 +271,17 @@ mod tests {
             })
         ));
         assert!(serde_json::from_str::<Request>(r#"{"op":"eval","args":{}}"#).is_err());
+        let long = Request::Type(TypeArgs {
+            target: "e2".into(),
+            text: Some("a".repeat(limits::TEXT + 1)),
+            ..Default::default()
+        });
+        assert!(long.check().unwrap_err().contains("at most 2000"));
+        assert!(t.check().is_ok());
+        let url = Request::Open(OpenArgs {
+            url: Some(format!("https://example.com/{}", "a".repeat(limits::URL))),
+            go: None,
+        });
+        assert!(url.check().is_err());
     }
 }

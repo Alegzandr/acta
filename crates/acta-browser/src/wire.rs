@@ -27,6 +27,27 @@ impl<R: Read, W: Write> Conn<R, W> {
         }
     }
 
+    /// Reads and drops bytes up to and including the next newline, a
+    /// buffer at a time.
+    fn discard_line(&mut self) -> std::io::Result<()> {
+        loop {
+            let buf = self.reader.fill_buf()?;
+            if buf.is_empty() {
+                return Ok(());
+            }
+            match buf.iter().position(|b| *b == b'\n') {
+                Some(i) => {
+                    self.reader.consume(i + 1);
+                    return Ok(());
+                }
+                None => {
+                    let len = buf.len();
+                    self.reader.consume(len);
+                }
+            }
+        }
+    }
+
     pub fn send<T: Serialize>(&mut self, v: &T) -> std::io::Result<()> {
         let mut line = serde_json::to_vec(v)?;
         line.push(b'\n');
@@ -34,7 +55,9 @@ impl<R: Read, W: Write> Conn<R, W> {
         self.writer.flush()
     }
 
-    /// One line, at most `max` bytes; `None` at the end of the stream.
+    /// One line, at most `max` bytes; `None` at the end of the stream. A
+    /// longer line is read to its end and dropped (`InvalidData`), so the
+    /// next call reads the next line and replies never go out of step.
     pub fn recv<T: DeserializeOwned>(&mut self, max: u64) -> std::io::Result<Option<T>> {
         let mut line = Vec::new();
         let n = (&mut self.reader).take(max).read_until(b'\n', &mut line)?;
@@ -42,6 +65,7 @@ impl<R: Read, W: Write> Conn<R, W> {
             return Ok(None);
         }
         if line.last() != Some(&b'\n') && n as u64 >= max {
+            self.discard_line()?;
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 "line too long",
@@ -131,4 +155,24 @@ pub fn client_handshake<R: Read, W: Write>(
         return Err("the pipe's server did not prove Acta's key: not the Acta app".into());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_oversized_line_is_dropped_whole_and_the_next_one_read() {
+        let mut input = vec![b'x'; 200_000];
+        input.push(b'\n');
+        input.extend_from_slice(b"{\"ok\":true}\n");
+        let mut c = Conn::new(&input[..], Vec::new());
+        let err = c.recv::<Value>(REQUEST_MAX).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(
+            c.recv::<Value>(REQUEST_MAX).unwrap().unwrap(),
+            json!({"ok": true})
+        );
+        assert!(c.recv::<Value>(REQUEST_MAX).unwrap().is_none());
+    }
 }

@@ -15,8 +15,13 @@ pub struct Fake {
     pub stopped: AtomicBool,
     pub tree: Value,
     pub handoff: Handoff,
+    /// How long a handoff waits before answering.
+    pub handoff_delay: Duration,
     pub activity: Mutex<Vec<Activity>>,
-    pub created: AtomicBool,
+    /// The view exists and is set up.
+    pub set_up: AtomicBool,
+    /// Fail every setup call (`Page.enable`).
+    pub fail_setup: AtomicBool,
 }
 
 impl Fake {
@@ -27,8 +32,10 @@ impl Fake {
             stopped: AtomicBool::new(false),
             tree,
             handoff: Handoff::Done,
+            handoff_delay: Duration::ZERO,
             activity: Mutex::default(),
-            created: AtomicBool::new(false),
+            set_up: AtomicBool::new(false),
+            fail_setup: AtomicBool::new(false),
         }
     }
 
@@ -74,11 +81,18 @@ pub fn big_tree(n: usize) -> Value {
 
 impl Host for Fake {
     fn ensure_view(&self) -> Result<bool, String> {
-        Ok(!self.created.swap(true, Ordering::SeqCst))
+        Ok(!self.set_up.load(Ordering::SeqCst))
+    }
+
+    fn set_up(&self) {
+        self.set_up.store(true, Ordering::SeqCst);
     }
 
     fn cdp(&self, method: &str, params: Value) -> Result<Value, String> {
         self.calls.lock().unwrap().push(method.to_string());
+        if method == "Page.enable" && self.fail_setup.load(Ordering::SeqCst) {
+            return Err("Page.enable: no answer in 10 s".into());
+        }
         Ok(match method {
             "Page.navigate" => {
                 self.events.on("Page.loadEventFired", &json!({}));
@@ -126,6 +140,7 @@ impl Host for Fake {
     fn highlight(&self, _: i64) {}
 
     fn handoff(&self, _: &str, _: Duration) -> Handoff {
+        std::thread::sleep(self.handoff_delay);
         self.handoff
     }
 
@@ -222,6 +237,14 @@ fn every_tool_stays_within_its_budget_and_fences_the_page() {
     for (req, max) in every_request() {
         let fake = Fake::new(big_tree(3_000));
         flood(&fake.events);
+        // Pending notices too: the reply keeps room for their line.
+        for i in 0..40 {
+            fake.events.notice(Notice::Navigation(format!(
+                "https://{INJECTION}-{i}.example"
+            )));
+        }
+        let max = budget_with_notices(&req).max(max);
+        assert!(max <= budget::HARD);
         let reply = run(&fake, &req);
         assert!(reply.ok, "{}: {}", req.name(), reply.text);
         assert!(
@@ -485,4 +508,69 @@ fn console_filters_by_level_and_limit() {
     );
     let empty = run(&fake, &Request::Console(ConsoleArgs::default())).text;
     assert!(empty.contains("0 new") && empty.contains("none match"));
+}
+
+#[test]
+fn a_view_made_by_the_human_is_set_up_on_the_first_call_and_a_failed_setup_again() {
+    // The human opened an address: the view exists, nothing is enabled.
+    let fake = Fake::new(big_tree(1));
+    fake.fail_setup.store(true, Ordering::SeqCst);
+    let reply = run(&fake, &Request::Console(ConsoleArgs::default()));
+    assert!(!reply.ok && reply.text.starts_with("the agent browser did not start"));
+    assert!(!fake.set_up.load(Ordering::SeqCst));
+    fake.fail_setup.store(false, Ordering::SeqCst);
+    assert!(run(&fake, &Request::Console(ConsoleArgs::default())).ok);
+    let intercepts = |f: &Fake| {
+        f.methods()
+            .iter()
+            .filter(|m| *m == "Page.setInterceptFileChooserDialog")
+            .count()
+    };
+    assert_eq!(intercepts(&fake), 1);
+    // The app closed and recreated the view: set up again.
+    fake.set_up.store(false, Ordering::SeqCst);
+    run(&fake, &Request::Console(ConsoleArgs::default()));
+    assert_eq!(intercepts(&fake), 2);
+}
+
+#[test]
+fn text_never_goes_where_focus_moved_to_a_secret_field() {
+    let mut tree = big_tree(1);
+    for n in tree["nodes"].as_array_mut().unwrap() {
+        if n["backendDOMNodeId"] == 5 {
+            n["properties"] =
+                json!([{"name": "focused", "value": {"type": "boolean", "value": true}}]);
+        }
+    }
+    let fake = Fake::new(tree);
+    let reply = run(
+        &fake,
+        &Request::Type(TypeArgs {
+            target: "e2".into(),
+            text: Some("Alexandre".into()),
+            ..Default::default()
+        }),
+    );
+    assert!(
+        !reply.ok && reply.text.contains("focus moved"),
+        "{}",
+        reply.text
+    );
+    assert!(!fake.methods().iter().any(|m| m == "Input.insertText"));
+}
+
+#[test]
+fn screenshots_account_for_the_display_scale() {
+    // 100% display: a 1280-wide viewport scaled to 1024.
+    let g = shot_geometry(1280.0, 800.0, 1.0, 1024.0);
+    assert_eq!((g.scale, g.width, g.height), (0.8, 1024.0, 640.0));
+    assert_eq!(g.tokens, (1024.0f64 * 640.0 / 750.0).round());
+    // 150%: 1280 CSS pixels are 1920 device pixels; still 1024 wide.
+    let g = shot_geometry(1280.0, 800.0, 1.5, 1024.0);
+    assert_eq!((g.width, g.height), (1024.0, 640.0));
+    assert!((g.scale - 1024.0 / 1920.0).abs() < 1e-9);
+    // A small element is never enlarged, at any scale.
+    let g = shot_geometry(65.0, 31.0, 2.0, 1024.0);
+    assert_eq!((g.scale, g.width, g.height), (1.0, 130.0, 62.0));
+    assert_eq!(shot_geometry(100.0, 100.0, f64::NAN, 1024.0).width, 100.0);
 }

@@ -13,6 +13,28 @@ use crate::events::{Events, Notice, Severity};
 use crate::policy::{Policy, clip, origin_of, secret_field};
 use crate::render::{self, Fence, Filter, budget, one_line};
 
+/// Room the list replies keep for a `blocked:` line (its newline included),
+/// so a reply with notices still fits its budget. The short replies add it
+/// to theirs: see [`budget_with_notices`].
+pub const NOTICE_ROOM: usize = budget::NOTICES + 1;
+
+/// The most a reply to `req` may be, a `blocked:` line included.
+pub fn budget_with_notices(req: &Request) -> usize {
+    match req {
+        Request::Snapshot(a) => a
+            .max
+            .map(|m| (m as usize).clamp(500, budget::SNAPSHOT_MAX))
+            .unwrap_or(budget::SNAPSHOT),
+        Request::Read(_) => budget::READ,
+        Request::Console(_) => budget::CONSOLE,
+        Request::Network(_) => budget::NETWORK,
+        Request::Open(_) => budget::OPEN + NOTICE_ROOM,
+        Request::Click(_) | Request::Type(_) => budget::ACK + NOTICE_ROOM,
+        Request::Screenshot(_) => budget::CAPTION + NOTICE_ROOM,
+        Request::Handoff(_) => budget::HANDOFF + NOTICE_ROOM,
+    }
+}
+
 /// The one line every call gets while the user has pressed Stop.
 pub const STOPPED: &str = "stopped by the user; ask them before continuing";
 /// How long `open` (and a click or key that navigates) waits for the load.
@@ -49,9 +71,14 @@ pub enum Activity {
 /// What the operations need from the app.
 pub trait Host: Send + Sync {
     /// Makes sure the agent web view exists, creating it on first use. True
-    /// when it was created by this call (the operations then enable the
-    /// DevTools domains they read). `Err` is one line saying why not.
+    /// when the view is not set up yet, whoever created it (the agent, the
+    /// human's address field, Retry) and whether an earlier setup failed:
+    /// the operations then run [`setup`] and call [`Host::set_up`]. `Err`
+    /// is one line saying why there is no view.
     fn ensure_view(&self) -> Result<bool, String>;
+    /// [`setup`] succeeded on the current view. The app forgets it when the
+    /// view is closed or created again.
+    fn set_up(&self);
     /// One DevTools Protocol call on the agent view's top-level page.
     fn cdp(&self, method: &str, params: Value) -> Result<Value, String>;
     fn events(&self) -> &Events;
@@ -107,14 +134,16 @@ pub fn run(host: &dyn Host, req: &Request) -> Reply {
         return Reply::err(STOPPED);
     }
     match host.ensure_view() {
-        Ok(true) => {
-            if let Err(e) = setup(host) {
+        Ok(true) => match setup(host) {
+            Ok(()) => host.set_up(),
+            // Not marked: the next call sets it up again.
+            Err(e) => {
                 return Reply::err(clip(
                     &format!("the agent browser did not start: {e}"),
                     budget::ERROR,
                 ));
             }
-        }
+        },
         Ok(false) => {}
         Err(why) => return Reply::err(clip(&why, budget::ERROR)),
     }
@@ -156,6 +185,7 @@ pub fn notices_line(notices: &[Notice]) -> Option<String> {
             Notice::Permission(k) => format!("{} permission denied", clip(k, 20)),
             Notice::HttpAuth(o) => format!("sign-in prompt of {}", clip(o, 60)),
             Notice::FileChooser => "file chooser (no uploads)".into(),
+            Notice::ExternalApp(s) => format!("{}: link to another application", clip(s, 20)),
         })
         .collect();
     let fence = Fence::new();
@@ -363,7 +393,7 @@ fn snapshot(host: &dyn Host, a: &SnapshotArgs) -> Reply {
         head.push_str(" · wait_for text not found after 10 s");
     }
     let tail_room = 100;
-    let (mut text, n) = render::fenced(&head, &lines, max, tail_room);
+    let (mut text, n) = render::fenced(&head, &lines, max, tail_room + NOTICE_ROOM);
     if n < lines.len() {
         text.push_str(&format!(
             "\n+{} more lines; narrow with within=<ref> or filter=interactive",
@@ -401,7 +431,7 @@ fn read(host: &dyn Host, a: &ReadArgs) -> Reply {
     let fence = Fence::new();
     let head_max = "read · lines 999999-999999 of 999999".len();
     let tail_max = "\nmore: cursor=999999".len();
-    let room = budget::READ - head_max - 1 - fence.cost() - tail_max;
+    let room = budget::READ - head_max - 1 - fence.cost() - tail_max - NOTICE_ROOM;
     let n = render::fitting(&lines[from..], room).max(1);
     let to = (from + n).min(lines.len());
     let mut text = format!(
@@ -420,6 +450,22 @@ fn read(host: &dyn Host, a: &ReadArgs) -> Reply {
         text.push_str(&format!("\nmore: cursor={to}"));
     }
     Reply::ok(text)
+}
+
+/// The element that has focus, from the accessibility tree (no script).
+fn focused(host: &dyn Host) -> Option<i64> {
+    let tree = host.cdp("Accessibility.getFullAXTree", json!({})).ok()?;
+    tree["nodes"].as_array()?.iter().rev().find_map(|n| {
+        let focused = n["properties"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|p| p["name"] == "focused" && p["value"]["value"] == json!(true));
+        let role = n["role"]["value"].as_str().unwrap_or("");
+        (focused && role != "RootWebArea")
+            .then(|| n["backendDOMNodeId"].as_i64())
+            .flatten()
+    })
 }
 
 /// The centre of the element's first box, after scrolling it into view.
@@ -642,6 +688,29 @@ fn type_text(host: &dyn Host, a: &TypeArgs) -> Reply {
     if let Err(e) = host.cdp("DOM.focus", json!({ "backendNodeId": b })) {
         return failed("type", Some(rf), &e);
     }
+    // The page may move focus on focus (to a password field, say): what
+    // receives the text is checked again.
+    if let Some(f) = focused(host).filter(|f| *f != b) {
+        let secret = host
+            .cdp("DOM.describeNode", json!({ "backendNodeId": f }))
+            .map(|d| {
+                let name = d["node"]["nodeName"].as_str().unwrap_or("").to_string();
+                let attrs: Vec<String> = d["node"]["attributes"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|a| a.as_str().map(str::to_string))
+                    .collect();
+                secret_field(&name, &attrs)
+            })
+            // Unknown: refused rather than typed into.
+            .unwrap_or(true);
+        if secret {
+            return Reply::err(format!(
+                "refused: focus moved from {rf} to a password, one-time code or card field. Call handoff so the user signs in by hand."
+            ));
+        }
+    }
     if a.clear == Some(true) {
         let select = json!({
             "type": "rawKeyDown", "key": "a", "code": "KeyA", "modifiers": 2,
@@ -703,6 +772,15 @@ fn screenshot(host: &dyn Host, a: &ScreenshotArgs) -> Reply {
         Err(e) => return failed("screenshot", None, &e),
     };
     let vv = &m["cssVisualViewport"];
+    // Device pixels per CSS pixel: the deprecated `visualViewport` is in
+    // device pixels, `cssVisualViewport` in CSS pixels.
+    let dpr = match (
+        m["visualViewport"]["clientWidth"].as_f64(),
+        vv["clientWidth"].as_f64(),
+    ) {
+        (Some(device), Some(css)) if css > 0.0 && device > 0.0 => device / css,
+        _ => 1.0,
+    };
     let (px, py) = (
         vv["pageX"].as_f64().unwrap_or(0.0),
         vv["pageY"].as_f64().unwrap_or(0.0),
@@ -742,7 +820,8 @@ fn screenshot(host: &dyn Host, a: &ScreenshotArgs) -> Reply {
         }
         (x, y, w, h) = (px + x0, py + y0, x1 - x0, y1 - y0);
     }
-    let scale = (width / w).min(1.0);
+    let geometry = shot_geometry(w, h, dpr, width);
+    let scale = geometry.scale;
     let shot = host.cdp(
         "Page.captureScreenshot",
         json!({
@@ -756,9 +835,7 @@ fn screenshot(host: &dyn Host, a: &ScreenshotArgs) -> Reply {
             if data.is_empty() {
                 return Reply::err("screenshot failed: no image");
             }
-            let (iw, ih) = ((w * scale).round(), (h * scale).round());
-            // Claude's image cost is about width * height / 750 tokens.
-            let tokens = (iw * ih / 750.0).round();
+            let (iw, ih, tokens) = (geometry.width, geometry.height, geometry.tokens);
             let of = a
                 .target
                 .as_deref()
@@ -775,6 +852,36 @@ fn screenshot(host: &dyn Host, a: &ScreenshotArgs) -> Reply {
             }
         }
         Err(e) => failed("screenshot", None, &e),
+    }
+}
+
+/// The capture's scale and the image it gives.
+#[derive(Debug, PartialEq)]
+pub struct ShotGeometry {
+    /// `clip.scale` of `Page.captureScreenshot`.
+    pub scale: f64,
+    pub width: f64,
+    pub height: f64,
+    /// Claude's image cost: about width * height / 750 tokens.
+    pub tokens: f64,
+}
+
+/// A clip of `w` x `h` CSS pixels on a display of `dpr` device pixels per
+/// CSS pixel gives `w * scale * dpr` image pixels: the scale keeps the image
+/// at most `width` wide and never enlarges it.
+pub fn shot_geometry(w: f64, h: f64, dpr: f64, width: f64) -> ShotGeometry {
+    let dpr = if dpr.is_finite() && dpr > 0.0 {
+        dpr
+    } else {
+        1.0
+    };
+    let scale = (width / (w * dpr)).min(1.0);
+    let (iw, ih) = ((w * scale * dpr).round(), (h * scale * dpr).round());
+    ShotGeometry {
+        scale,
+        width: iw,
+        height: ih,
+        tokens: (iw * ih / 750.0).round(),
     }
 }
 
@@ -815,7 +922,7 @@ fn console(host: &dyn Host, a: &ConsoleArgs) -> Reply {
         return Reply::ok(head);
     }
     head.push_str(&format!(" · last {} shown", lines.len()));
-    let (text, _) = render::fenced(&head, &lines, budget::CONSOLE, 0);
+    let (text, _) = render::fenced(&head, &lines, budget::CONSOLE, NOTICE_ROOM);
     Reply::ok(text)
 }
 
@@ -872,7 +979,7 @@ fn network(host: &dyn Host, a: &NetworkArgs) -> Reply {
         return Reply::ok(head);
     }
     head.push_str(&format!(" · last {} shown", lines.len()));
-    let (text, _) = render::fenced(&head, &lines, budget::NETWORK, 0);
+    let (text, _) = render::fenced(&head, &lines, budget::NETWORK, NOTICE_ROOM);
     Reply::ok(text)
 }
 

@@ -16,6 +16,8 @@ use crate::wire::{self, Conn, REQUEST_MAX};
 
 pub const IN_USE: &str = "the browser is in use by another Claude Code session";
 pub const LEASE_IDLE: Duration = Duration::from_secs(300);
+/// The longest a request line may be; longer ones are dropped whole.
+const LINE_MAX: u64 = REQUEST_MAX;
 
 /// What the app shows about the connections: who drives the browser and
 /// whether a call is running.
@@ -27,6 +29,9 @@ pub trait Status: Send + Sync {
 struct Lease {
     holder: u64,
     last: Instant,
+    /// A call of the holder is running (a handoff waits up to 10 min): a
+    /// busy lease is never idle.
+    busy: bool,
     session: Option<String>,
 }
 
@@ -35,6 +40,7 @@ pub struct Server<H: Host> {
     status: Arc<dyn Status>,
     lease: Mutex<Option<Lease>>,
     next: AtomicU64,
+    idle: Duration,
 }
 
 /// Releases the lease when the connection ends, a panic included.
@@ -62,22 +68,31 @@ impl<H: Host> Server<H> {
             status,
             lease: Mutex::new(None),
             next: AtomicU64::new(1),
+            idle: LEASE_IDLE,
         }
     }
 
-    /// Takes or renews the lease for connection `id`; false when another
-    /// connection holds it and used it recently.
+    /// Tests: a shorter idle time before another session may take over.
+    pub fn with_idle(mut self, idle: Duration) -> Self {
+        self.idle = idle;
+        self
+    }
+
+    /// Takes or renews the lease for connection `id` and marks it busy;
+    /// false when another connection holds it and is running a call or
+    /// used it recently.
     fn acquire(&self, id: u64, session: &Option<String>) -> bool {
         let mut lease = self.lease.lock().unwrap_or_else(|p| p.into_inner());
         let free = match lease.as_ref() {
             None => true,
-            Some(l) => l.holder == id || l.last.elapsed() >= LEASE_IDLE,
+            Some(l) => l.holder == id || (!l.busy && l.last.elapsed() >= self.idle),
         };
         if free {
             let changed = lease.as_ref().is_none_or(|l| l.holder != id);
             *lease = Some(Lease {
                 holder: id,
                 last: Instant::now(),
+                busy: true,
                 session: session.clone(),
             });
             if changed {
@@ -91,6 +106,7 @@ impl<H: Host> Server<H> {
         let mut lease = self.lease.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(l) = lease.as_mut().filter(|l| l.holder == id) {
             l.last = Instant::now();
+            l.busy = false;
         }
     }
 
@@ -111,7 +127,7 @@ impl<H: Host> Server<H> {
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         let _held = Held { server: self, id };
         loop {
-            let req: Result<Option<Request>, _> = conn.recv(REQUEST_MAX);
+            let req: Result<Option<Request>, _> = conn.recv(LINE_MAX);
             let reply = match req {
                 Ok(None) => return Ok(()),
                 Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
@@ -119,7 +135,9 @@ impl<H: Host> Server<H> {
                 }
                 Err(_) => return Ok(()),
                 Ok(Some(req)) => {
-                    if !self.acquire(id, &hello.session) {
+                    if let Err(why) = req.check() {
+                        Reply::err(why)
+                    } else if !self.acquire(id, &hello.session) {
                         Reply::err(IN_USE)
                     } else {
                         self.status.busy(true);
@@ -180,6 +198,75 @@ mod tests {
 
     fn server(seen: Arc<Seen>) -> Arc<Server<Fake>> {
         Arc::new(Server::new(Arc::new(Fake::new(big_tree(1))), seen))
+    }
+
+    #[test]
+    fn a_session_in_a_long_call_keeps_the_browser() {
+        let mut fake = Fake::new(big_tree(1));
+        fake.handoff_delay = Duration::from_millis(600);
+        let s = Arc::new(
+            Server::new(Arc::new(fake), Arc::new(Seen::default()))
+                .with_idle(Duration::from_millis(50)),
+        );
+        let key = [4; 32];
+        let (mut a, _ta) = connect(&s, key);
+        wire::client_handshake(&mut a, &key, &Hello::default()).unwrap();
+        let (mut b, _tb) = connect(&s, key);
+        wire::client_handshake(&mut b, &key, &Hello::default()).unwrap();
+        assert!(console(&mut a).ok);
+        a.send(&Request::Handoff(crate::args::HandoffArgs {
+            message: "Sign in, then press Done.".into(),
+        }))
+        .unwrap();
+        // Well past the idle time, the handoff still runs: not taken over.
+        std::thread::sleep(Duration::from_millis(250));
+        assert_eq!(console(&mut b).text, IN_USE);
+        let done: Reply = a.recv(REPLY_MAX).unwrap().unwrap();
+        assert!(done.ok, "{}", done.text);
+        // Idle once the call ended: the other session may take it.
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(console(&mut b).ok);
+    }
+
+    #[test]
+    fn an_oversized_line_is_refused_and_the_next_request_answered_in_step() {
+        use std::io::Write;
+        let s = server(Arc::new(Seen::default()));
+        let key = [5; 32];
+        let (cr, sw) = std::io::pipe().unwrap();
+        let (sr, mut cw) = std::io::pipe().unwrap();
+        let srv = s.clone();
+        let _t = std::thread::spawn(move || srv.serve(Conn::new(sr, sw), &key));
+        let writer = cw.try_clone().unwrap();
+        let mut c = Conn::new(cr, writer);
+        wire::client_handshake(&mut c, &key, &Hello::default()).unwrap();
+        let big = format!(
+            "{{\"op\":\"type\",\"args\":{{\"ref\":\"e2\",\"text\":\"{}\"}}}}\n",
+            "a".repeat(200_000)
+        );
+        cw.write_all(big.as_bytes()).unwrap();
+        let first: Reply = c.recv(REPLY_MAX).unwrap().unwrap();
+        assert!(
+            !first.ok && first.text.starts_with("bad request"),
+            "{}",
+            first.text
+        );
+        let second = console(&mut c);
+        assert!(
+            second.ok && second.text.starts_with("console"),
+            "{}",
+            second.text
+        );
+        // A line within the limit but over a field limit: refused, in step.
+        c.send(&Request::Type(crate::args::TypeArgs {
+            target: "e2".into(),
+            text: Some("a".repeat(3_000)),
+            ..Default::default()
+        }))
+        .unwrap();
+        let third: Reply = c.recv(REPLY_MAX).unwrap().unwrap();
+        assert!(third.text.contains("at most 2000"), "{}", third.text);
+        assert!(console(&mut c).ok);
     }
 
     #[test]

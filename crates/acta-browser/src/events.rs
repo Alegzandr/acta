@@ -67,6 +67,9 @@ pub enum Notice {
     Permission(String),
     HttpAuth(String),
     FileChooser,
+    /// A link to another application (`mailto:`, `ms-settings:`): never
+    /// launched.
+    ExternalApp(String),
 }
 
 #[derive(Default)]

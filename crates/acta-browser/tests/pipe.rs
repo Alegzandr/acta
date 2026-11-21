@@ -130,3 +130,28 @@ fn nobody_serving_means_no_app() {
         Err(ConnectError::NoApp)
     ));
 }
+
+#[test]
+fn the_next_instance_exists_before_a_client_is_served() {
+    let name = unique_name();
+    let key = [8u8; 32];
+    let server = serve(&name, key, 1);
+    let mut first = Client::connect(&name, &key, &Hello::default()).unwrap();
+    // The server is busy with the first client and accepts no other: the
+    // name still opens at once, with no retry.
+    let raw = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&name);
+    assert!(raw.is_ok(), "{raw:?}");
+    drop(raw);
+    assert_eq!(
+        first
+            .call(&Request::Console(ConsoleArgs::default()))
+            .unwrap()
+            .text,
+        "ok"
+    );
+    drop(first);
+    server.join().unwrap();
+}
