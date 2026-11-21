@@ -1,6 +1,6 @@
 //! Every string Acta itself puts on screen, in English and French
-//! (DESIGN.md 10). Code refers to a [`Key`]; the text lives in
-//! `catalogue.rs`, generated from the catalogue of DESIGN.md 10.4.
+//! (docs/design/copy.md 10). Code refers to a [`Key`]; the text lives in
+//! `catalogue.rs`, generated from the catalogue of docs/design/catalogue.md 10.4.
 //!
 //! Completeness is checked by the compiler: the `catalogue!` macro takes an
 //! `en` and an `fr` value for every key, and [`Key::messages`] is an
@@ -12,13 +12,16 @@
 // No screen shows a time, a count or a multi-key hint yet. These parts are
 // loaded and tested now so that the screens of M2 only reference them; the
 // allowances go as each gets its first caller.
-#[allow(dead_code, reason = "the time forms of DESIGN.md 10.2, used from M2")]
+#[allow(
+    dead_code,
+    reason = "the time forms of docs/design/copy.md 10.2, used from M2"
+)]
 pub mod time;
 
 use std::fmt::Write as _;
 
 /// Interface language. English is the default on a new install; Acta does
-/// not follow the OS language on its own (DESIGN.md 10).
+/// not follow the OS language on its own (docs/design/copy.md 10).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Locale {
     #[default]
@@ -78,11 +81,11 @@ const fn p_by(by: &'static str, one: &'static str, other: &'static str) -> Msg {
 /// the syntax, so a key cannot exist in one language only.
 macro_rules! catalogue {
     ($( $variant:ident $id:literal { en: $en:expr, fr: $fr:expr, } )*) => {
-        /// A string of the catalogue (DESIGN.md 10.4), named as there.
+        /// A string of the catalogue (docs/design/catalogue.md 10.4), named as there.
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
         #[allow(
             dead_code,
-            reason = "the whole catalogue of DESIGN.md 10.4 is loaded now; screens reference keys as they arrive"
+            reason = "the whole catalogue of docs/design/catalogue.md 10.4 is loaded now; screens reference keys as they arrive"
         )]
         pub enum Key {
             $( $variant, )*
@@ -184,7 +187,7 @@ fn fill(locale: Locale, template: &str, args: &[(&str, Arg)]) -> String {
 }
 
 /// A whole number with the locale's thousands separator: "1,000" or
-/// "1 000" with U+202F (DESIGN.md 10.2).
+/// "1 000" with U+202F (docs/design/copy.md 10.2).
 pub fn number(locale: Locale, n: u64) -> String {
     let separator = match locale {
         Locale::En => ",",
@@ -201,7 +204,7 @@ pub fn number(locale: Locale, n: u64) -> String {
     out
 }
 
-/// A percentage: "68%", or "68 %" with U+202F in French (DESIGN.md 10.2).
+/// A percentage: "68%", or "68 %" with U+202F in French (docs/design/copy.md 10.2).
 pub fn percent(locale: Locale, n: u64) -> String {
     match locale {
         Locale::En => format!("{n}%"),
@@ -210,13 +213,13 @@ pub fn percent(locale: Locale, n: u64) -> String {
 }
 
 #[allow(dead_code, reason = "no screen shows a tree count yet")]
-/// A count where space is short (tree, tabs): "99+" above 99 (DESIGN.md 7).
+/// A count where space is short (tree, tabs): "99+" above 99 (docs/design/copy.md 7).
 pub fn short_count(n: u64) -> String {
     if n > 99 { "99+".into() } else { n.to_string() }
 }
 
 /// A key of a shortcut hint, named for the platform and the language
-/// (DESIGN.md 5 kbd, 10.1).
+/// (docs/design/components.md 5 kbd, 10.1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[allow(dead_code, reason = "only Mod is shown so far, in the Search hint")]
 pub enum KeyName {
@@ -280,7 +283,7 @@ mod tests {
         }
     }
 
-    /// A cell of DESIGN.md 10.4 as the catalogue must hold it: notes for
+    /// A cell of docs/design/catalogue.md 10.4 as the catalogue must hold it: notes for
     /// the reader removed, the typography of 10.1 applied, "one · other"
     /// split into a plural.
     fn expected(key: &str, cell: &str, french: bool) -> Vec<String> {
@@ -340,11 +343,11 @@ mod tests {
 
     #[test]
     fn every_text_matches_design_md() {
-        const DESIGN_MD: &str = include_str!("../../../../DESIGN.md");
+        const DESIGN_MD: &str = include_str!("../../../../docs/design/catalogue.md");
         let section = DESIGN_MD
             .split("### 10.4 Copy catalogue")
             .nth(1)
-            .expect("DESIGN.md has 10.4");
+            .expect("docs/design/catalogue.md has 10.4");
         let rows = section
             .lines()
             .take_while(|line| !line.starts_with("Strings that exist"))
@@ -375,11 +378,11 @@ mod tests {
 
     #[test]
     fn every_key_of_design_md_is_in_the_table_and_nothing_else() {
-        const DESIGN_MD: &str = include_str!("../../../../DESIGN.md");
+        const DESIGN_MD: &str = include_str!("../../../../docs/design/catalogue.md");
         let section = DESIGN_MD
             .split("### 10.4 Copy catalogue")
             .nth(1)
-            .expect("DESIGN.md has 10.4");
+            .expect("docs/design/catalogue.md has 10.4");
         let documented: Vec<&str> = section
             .lines()
             .take_while(|line| !line.starts_with("Strings that exist"))

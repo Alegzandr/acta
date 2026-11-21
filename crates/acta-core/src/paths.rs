@@ -87,7 +87,7 @@ pub fn exported_cli_name(os: Os) -> &'static str {
 }
 
 /// Where the encrypted database, its key file and its snapshots live
-/// (ADR 0003), with `preferences.json` (settings only, DESIGN.md 4.7) and,
+/// (ADR 0003), with `preferences.json` (settings only, docs/design/layout.md 4.7) and,
 /// on Windows, the diagnostic log. Uninstall never deletes it, and the
 /// directories that do get deleted are proven to stay clear of it.
 ///

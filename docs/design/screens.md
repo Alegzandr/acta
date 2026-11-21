@@ -1,0 +1,498 @@
+# Acta design: key screens
+
+Part of the Acta design system. [DESIGN.md](../../DESIGN.md) is the index: direction, principles, the never-list and the review checklist. Section numbers are shared across all parts.
+
+## 8. Key screens
+
+Widths are for the default 1440 x 900 window. Every screen exists in both themes; the wireframes show structure, which is the same in both. Sidebars drawn in 8.2, 8.7 and 8.10 are excerpts from inside an expanded project node. `( )` is a status glyph, `[ ]` a control, `·` a separator rendered as 8 of space plus the next item, not a character.
+
+### 8.1 Main window, topic page
+
+```
++------------------------------------------------------------------------------------------------+
+| [=] [<] [>]  Acta / Terminal / Embed the terminal             [Search  Ctrl K] [o] [>_] - [] X | 36  titlebar
++----------------------+-------------------------------------------------------------------------+
+| v Acta               |                               32                                        |
+|     [i] Inbox      4 |        Embed the terminal bound to the project   <- type.title 24/30    |
+|     [k] Knowledge 55 |    12                                                                   |
+|     (o) Naming       |        Status    [(.) Active v]            <- properties block: rows 28,|
+|   v Core UI          |        Epic      Terminal                    label column as wide as its|
+|       (v) App shell  |        Folders   > [f] ~\dev\acta-wt\embed-terminal  +1   longest label |
+|       (.) Sidebar t..|        Id        T-42                      <- type.code, copies on Enter|
+|       ( ) Palette   *|        Updated   2 h ago by Claude Code                                 |
+|   v Terminal         |    24                                                                   |
+|      [(.) Embed th..]|        +--------------------------------------------------------+       |
+|       (=) Scrollback |        | Current state                                          |       |
+|       (-) Links      |        | Rendering and input work on Windows. Resize still      |       |
+|       3 closed       |        | drops the last row; fix is in progress.                |       |
+|   > Notes            |        +--------------------------------------------------------+       |
+| > Atlas              |    24   bg.raised, border.subtle, radius.md, padding 16, type.reading   |
+| > Field notes        |        Description                                  <- type.label       |
+|                      |        Run Claude Code inside Acta, in the project directory, so        |
+|                      |        the tracker and the agent share one window.                      |
+|                      |    32                                                                   |
+|                      |        Knowledge  3                                          [+]        |
+|                      |    4   [d] Resize protocol   How the grid reflows; read b..  [>] 2 h ago|
+|                      |        [m] ConPTY minimum    Needs Windows 10 1809 or later  [>] Mon    |
+|                      |        9 more from epic and project          <- ghost row, collapsed    |
+|                      |    32                                                                   |
+|                      |        Timeline            [All|Progress|Decisions|Discussion]          |
+|                      |    12  +--------------------------------------------------------+       |
+|                      |        | Add an entry...                                        |       |
+|                      |        +--------------------------------------------------------+       |
+|                      |    24                                                                   |
+|                      |        [>] Claude Code  Progress  2 h ago    <- square mark, mono name  |
+|                      |            Resize now reflows the grid; the last row is still cut       |
+|                      |            when the panel is under 12 rows.                             |
+|                      |    24                                                                   |
+|----------------------|        (A) Alexandre  Decision  Tue 14:05    <- circle mark, sans name  |
+|  [t] Trash           |            (.) Alexandre set status to Active  Tue 13:58  <- system     |
+|  [s] Settings        |                                                                         |
++----------------------+-------------------------------------------------------------------------+
+| [p] Acta   (v) Claude Code: ready                                                   Acta 0.4.1 | 24  status bar
++------------------------------------------------------------------------------------------------+
+  260 sidebar, bg.sunken        1180 page area, bg.base; content column 680 centred (250 each side)
+  rows 28, indent 16            [..] around a tree row = fill.selected; * = unread dot (accent, 6)
+```
+
+Annotations: one tab is open, so there is no tab bar. The tree lists every project; "Acta" is expanded because the open page belongs to it, "Atlas" and "Field notes" are folded. `[i]` is `inbox`, `[k]` is `library`, `[t]` `trash-2`, `[s]` `settings`, `[p]` `folder`; in the titlebar `[=]` is the sidebar toggle, `[o]` the chat toggle, `[>_]` the terminal toggle. Tree glyphs: `(o)` Draft, `( )` Planned, `(.)` Active, `(=)` Blocked, `(v)` Done, `(-)` Dropped. The page's location is in the titlebar breadcrumb and nowhere else; its title heads the page. `> [f]` is the folded working-folders row (5, 8.11), here as the value of the Folders property. The composer is one line (28 + padding) until focused, then becomes the multi-line editor. Scrolling: title and properties scroll with the content; nothing is sticky except the "new entries" button. In the status bar, `(v)` is the `circle-check` glyph of the ready state.
+
+### 8.2 Notes inbox
+
+```
++----------------------+-------------------------------------------------------------------------+
+|  [Inbox          4]  |                               32                                        |
+|                      |        Inbox                                         <- type.title      |
+|  (o) Naming          |    8   4 notes · Acta                                <- type.small      |
+|  v Core UI           |    24                                                                   |
+|    ...               |        +--------------------------------------------------------+       |
+|                      |        | Note for Acta                                          | 72    |
+|                      |        |                              Ctrl Enter to save  [Add] |       |
+|                      |        +--------------------------------------------------------+       |
+|                      |    24                                                                   |
+|                      |        [Open|Filed]                      [File with Claude Code]        |
+|                      |    12                                                                   |
+|                      |        +--------------------------------------------------------+       |
+|                      |        | Terminal should remember its width per project, not    |       |
+|                      |        | globally.                                              |       |
+|                      |        | 10 min ago                              [->] [e] [x]   |       |
+|                      |        +--------------------------------------------------------+       |
+|                      |    8                                                                    |
+|                      |        +--------------------------------------------------------+       |
+|                      |        | Idea: weekly digest of decisions across all topics.    |       |
+|                      |        | Yesterday 18:42                                        |       |
+|                      |        +--------------------------------------------------------+       |
++----------------------+-------------------------------------------------------------------------+
+```
+
+Annotations: the capture editor is focused when the inbox opens. Newest note first. Card actions appear on hover or focus only (shown on the first card): Make topic `T`, Edit `Enter`, Delete `Delete`. "File with Claude Code" is the single secondary button: it shows the terminal and runs the filing command there; resulting topics arrive as Draft with unread dots, and their notes move to Filed with links. With the Open filter empty the button is disabled. `J` / `K` move between cards.
+
+### 8.3 Command palette
+
+```
+                    |<------------------------- 640 ------------------------->|
+            96 from +---------------------------------------------------------+
+            window  | (s)  term                                               | 44  input, type.reading
+            top     +---------------------------------------------------------+
+                    | Topics                                                  | 28  group label
+                    |[(.) Embed the terminal        Acta / Terminal          ]| 32  selected: fill.selected
+                    | (=) Terminal scrollback       Acta / Terminal           | 32
+                    | (v) Terminal spike            Acta / Research           | 32
+                    | Commands                                                | 28
+                    |  >_ Toggle terminal                            Ctrl `   | 32
+                    |  >_ Move terminal to bottom                             | 32
+                    +---------------------------------------------------------+
+                    | Enter open   Ctrl Enter open in new tab       Esc close | 28  footer, type.small
+                    +---------------------------------------------------------+
+                      bg.overlay, border.default, radius.lg, shadow.overlay, no scrim
+```
+
+Annotations: empty query shows "Recent" (the last 5 topics) then the 5 most relevant commands for the current page. Group order is fixed (Topics, Knowledge, Commands, Projects) so results do not jump between keystrokes; within a group, ranking is match quality then recency. `Up` / `Down` wrap; `Tab` narrows to the group of the selected row (adds the scope chip); `Backspace` on an empty input removes the chip.
+
+### 8.4 Terminal tool window beside a topic
+
+```
++------------------------------------------------------------------------------------------------+
+| [=] [<] [>]  Acta / Terminal / Embed the terminal          [Search  Ctrl K] [o] [>_ on] - [] X | 36
++----------------------+-------------------------------------+-----------------------------------+
+| v Acta               |  32                                 | Terminal  on topic Embed..[r] [-] |
+|   v Terminal         |  Embed the terminal bound to        |-----------------------------------|
+|      [(.) Embed th..]|  the project                        |  > claude                         |
+|                      |  Status   [(.) Active v]            |                                   |
+|                      |  Epic     Terminal                  |  * Fixing the resize path in      |
+|                      |  Folders > [f] ~\…\embed-terminal +1|    crates/terminal/src/grid.rs    |
+|                      |  Id       T-42                      |                                   |
+|                      |  Updated  just now by Claude Code   |  * acta log "Resize fixed"        |
+|                      |  +-------------------------------+  |                                   |
+|                      |  | Current state                 |  |  > _                              |
+|                      |  | Resize is fixed on Windows.   |  |                                   |
+|                      |  +-------------------------------+  |                                   |
+|                      |  ^ remote-change highlight, once    |                                   |
++----------------------+-------------------------------------+-----------------------------------+
+| [p] Acta   (v) Claude Code: ready                                                   Acta 0.4.1 | 24
++------------------------------------------------------------------------------------------------+
+  260                    532 page (min 420), column fills     648 right dock = 80 cols, bg.sunken
+                         it with 32 side padding              header 28, then the grid, padding 12
+```
+
+Annotations: the terminal is a tool window in the right dock (4.5). Its header names what the session is on ("on topic Embed the terminal", truncated here) and holds Restart here `[r]` and hide `[-]`; the titlebar toggle shows `fill.selected` while it is visible. The divider is a resize handle. With the dock open the column is 468 wide, under the 520 threshold: the folder row's path is middle-truncated, and a row that carries a label or a not-found state takes its two-line form (8.11). The session starts in the primary working folder of the page it was opened from, with the additional folders passed along (8.11 shows what the tool window says when there is no folder or the folder is gone); when the session ends, the grid shows one line, "Session ended. Enter to restart.", in `text.tertiary`, and restarting uses the folders of the page open at that moment. The current-state update written by Claude Code appears in the page with the highlight while focus stays in the terminal.
+
+### 8.5 First run
+
+```
++------------------------------------------------------------------------------------------------+
+| Acta                                                                              - [] X       | 36
++------------------------------------------------------------------------------------------------+
+|                                        (no sidebar until a project exists)                     |
+|                                                                                                |
+|                96  Start with a project                              <- type.title             |
+|                12  A project is a folder you work on with Claude Code. Acta keeps its          |
+|                    topics, decisions and notes next to the work.     <- type.reading, 480 max  |
+|                24  [Choose a folder  Ctrl O]                         <- primary, 28            |
+|                32  Then                                              <- type.label             |
+|                 8  1  Connect Claude Code        acta setup          <- type.ui + type.code    |
+|                 4  2  Capture a first note       Ctrl N                                        |
+|                 4  3  Open the terminal          Ctrl `                                        |
+|                                                                                                |
++------------------------------------------------------------------------------------------------+
+  content column 680 centred; everything left-aligned inside it; no logo, no illustration
+```
+
+Annotations: the three steps are plain text rows in `text.secondary` (not a checklist to tick, not a wizard); they become available as soon as the project exists and disappear for good once the project has one topic. Choosing a folder creates the project named after the folder, attaches the folder as the project's primary working folder, and opens its inbox with the capture editor focused. Other empty states follow the same pattern at the top of their column: empty project ("No topics yet. Capture notes and let Claude Code file them, or start one yourself." [New topic]), empty epic, empty timeline, no search results.
+
+### 8.6 Topic page, knowledge section expanded
+
+```
+        Knowledge  3                                                           [+]     28  type.label + count
+     4  [d] Resize protocol    How the grid reflows; read before touching it   [>]  2 h ago   32
+        [m] ConPTY minimum     Needs Windows 10 1809 or later                  [>]  Mon       32  expanded:
+               ConPTY is missing before Windows 10 1809. Acta refuses to start the      <- type.reading,
+               terminal there and says why; do not add a winpty fallback.                  inset 32
+               Written by Claude Code Mon 16:20 · edited by Alexandre 10 min ago
+               [Edit] [History] [Move] [Delete]                                         <- ghost
+        [m] One session        One terminal per project by decision            (A)  Tue       32
+     8  From epic Terminal                                         <- type.small, tertiary
+        [d] Terminal research  What alacritty_terminal gives us and what not   (A)  12 Nov    32
+        [m] Shell detection  * Use COMSPEC on Windows, SHELL elsewhere         [>]  11 Nov    32
+     8  From project Acta
+        [d] Architecture       Crates, data flow, where things live            (A)  9 Nov     32
+        [m] Sample data        Sample and test data uses the name Alexandre    [>]  3 Nov     32
+    32
+        Timeline               [All|Progress|Decisions|Discussion]
+        |icon|<- title, max 40% ->|<- summary, fills, truncates ->|<- mark ->|<- time 72 ->|
+```
+
+Annotations: `[d]` is the `file-text` icon, `[m]` the `pin` icon; `[>]` last written by Claude Code, `(A)` by Alexandre; `*` is the unread dot. Own entries first, then nearest level. On epic and project pages the same section sits under the description and ends with the roll-up row ("31 more in the topics of this epic") instead of, or after, inherited groups; a project has nothing to inherit.
+
+### 8.7 Document reading view
+
+```
++----------------------+-------------------------------------------------------------------------+
+|  Inbox            4  |                               32                                        |
+|  v Terminal          |    32   (the breadcrumb is in the titlebar)                             |
+|   [(.) Embed the..]  |        Resize protocol                           <- type.title 24/30    |
+|    (=) Scrollback    |     8  How the grid reflows; read before touching it  <- reading, secondary |
+|                      |    12  Kind      Document                        <- properties block    |
+|                      |        Level     Topic Embed the terminal                               |
+|                      |        Id        K-7                                                    |
+|                      |        Updated   2 h ago by Claude Code                                 |
+|                      |    12  [Edit] [History] [...]                    <- ghost               |
+|                      |    24  ----------------------------------------------------------       |
+|                      |    24                                                                   |
+|                      |        Goals                                     <- h2, type.subtitle   |
+|                      |     8  The grid must reflow on every resize without losing the          |
+|                      |        scrollback position. Three cases matter:  <- type.document 16/26 |
+|                      |    16                                                                   |
+|                      |          -  Width shrinks: soft-wrapped lines rewrap.                   |
+|                      |          -  Height shrinks: rows move into scrollback.                  |
+|                      |    32                                                                   |
+|                      |        Sequence                                                         |
+|                      |     8  +--------------------------------------------------------+       |
+|                      |        | resize(cols, rows) -> pty.resize -> grid.reflow        | code  |
+|                      |        +--------------------------------------------------------+       |
+|                      |    16  Step        Owner      Budget                                    |
+|                      |        ---------------------------------------- <- border.subtle rows   |
+|                      |        Measure     view       1 ms                                      |
+|                      |        Reflow      grid       4 ms                                      |
++----------------------+-------------------------------------------------------------------------+
+  260                           column 680 centred; nothing in the margins; no outline column
+```
+
+Annotations: the tree keeps the owning topic selected. Edit turns this same page into the editor (title, summary and body become editable in place; a 44 Save bar appears at the bottom of the pane). History replaces everything under the rule with the revision list and the selected version. `Alt+Left` returns to the topic at its previous scroll position.
+
+### 8.8 Import preview
+
+```
+            +------------------------------------------------------------+
+            | Import "acta-2026-11-20.acta.json"                          |  type.heading
+            | Exported 20 Nov 2026 · format 1 · 4 projects                |  type.small
+         16 |                                                            |
+            |                    Created     Updated     Skipped         |  type.small, tertiary
+            | Projects                 1           0           3         |  rows 28, tnum,
+            | Epics                    2           1           9         |  zeros in tertiary
+            | Topics                   7           2          22         |
+            | Entries                 31           0         148         |
+            | Notes                    4           0           8         |
+            | Documents                2           1           6         |
+            | Memories                 9           2          31         |
+         16 |                                                            |
+            | Nothing here will be deleted. Skipped records are the same |  type.ui, secondary
+            | as, or older than, what Acta already has.                  |
+            | Show what changes                                          |  ghost
+         24 |                                        [Cancel]  [Import]  |
+            +------------------------------------------------------------+
+              520, bg.overlay, radius.lg, padding 24, over scrim; focus starts on Cancel
+```
+
+### 8.9 Key-loss recovery
+
+```
++------------------------------------------------------------------------------------------------+
+| Acta                                                                              - [] X       |
++------------------------------------------------------------------------------------------------+
+|                96  Acta cannot open its database                     <- type.title             |
+|                12  The database is on this computer and intact, but its key is missing         |
+|                    from Windows Credential Manager. This usually follows a system              |
+|                    reinstall, a new user profile or a move to another machine.                 |
+|                12  Acta has not changed the file:                    <- type.reading           |
+|                 4  C:\Users\Alexandre\AppData\Roaming\Acta\acta.db   <- type.code, selectable  |
+|                24  [Import an export...]  [Try again]                <- primary, secondary     |
+|                24  Without the key or an export, the content cannot be read. You can           |
+|                    start empty; the file is kept as acta.db.unreadable-2026-11-20.             |
+|                 8  Start empty                                       <- ghost                  |
++------------------------------------------------------------------------------------------------+
+  column 680 centred, left-aligned; no sidebar, no icon, no red; keychain name per platform
+```
+
+Annotations: the keychain is named as the platform names it (Windows Credential Manager, macOS Keychain, the Secret Service keyring; the `keychain.*` strings, whose French values carry their article). "Import an export..." leads to the normal import preview, where every row is Created. The sentence about what cannot be done is stated once, plainly, and is not softened.
+
+### 8.10 Knowledge base (project)
+
+```
++----------------------+-------------------------------------------------------------------------+
+|  Inbox            4  |                               32                                        |
+| [Knowledge      55]  |        Knowledge                                 <- type.title          |
+|                      |     8  Acta · 12 documents, 43 memories          <- type.small          |
+|  (o) Naming          |    24  +--------------------------------------------------------+       |
+|  v Core UI           |        | (s) Search knowledge                                   | 28    |
+|    ...               |        +--------------------------------------------------------+       |
+|  v Terminal          |    12  [Level: All v] [Kind: Memories v] [Author: Claude Code v]  Clear  |
+|    ...               |    24                                                                   |
+|                      |        Project Acta                                          14         |
+|                      |        [m] Sample data       Sample and test data uses th..  [>] 3 Nov  |
+|                      |        [m] Commit style      Imperative subject, no trailers [>] 2 Nov  |
+|                      |    16  Epic Terminal                                          6         |
+|                      |        [m] Shell detection * Use COMSPEC on Windows, SHEL..  [>] 11 Nov |
+|                      |    16  Topic Embed the terminal                               2         |
+|                      |        [m] ConPTY minimum    Needs Windows 10 1809 or later  [>] Mon    |
+|                      |               ConPTY is missing before Windows 10 1809. Acta refuses    |
+|                      |               to start the terminal there and says why.                 |
+|                      |               Written by Claude Code Mon 16:20                          |
+|                      |               [Edit] [History] [Move] [Delete]                          |
++----------------------+-------------------------------------------------------------------------+
+  260; Knowledge row selected     column 680 centred; groups widest level first; rows as in 8.6
+```
+
+Annotations: the view with two filters set (kind and author). Set filters show their value in `text.primary` weight 600. Group names link to the project, epic or topic. A memory unfolds in place, so the human can read, correct, move or delete what the agent recorded without leaving the list; a document row opens 8.7.
+
+### 8.11 Working folders
+
+The folder row at rest. It is the value of the Folders property, so the label "Folders" stands to its left (not drawn here). The cases:
+
+```
+        > [f] ~\dev\acta-wt\embed-terminal  +1                               28  own folders: no label
+
+        > [f] ~\dev\acta  +1  from epic Terminal                             28  inherited: label, name is a link
+
+        > [x] D:\work\acta  Not found on this computer  [Locate...]          28  primary missing: folder-x, warning
+
+        > [x] D:\work\acta  from epic Terminal  Not found on this computer  [Locate...]   inherited and missing
+
+        > [f] ~\dev\acta-wt\embed-terminal  +2  [x] 1 not found              28  additional missing: launch not blocked
+
+          [f] No working folder. The terminal will ask where to start.   [Set working folder...]
+        |chev|icon|<- path, type.code, middle-truncated, min 160 ->|12|count|12|<- label ->|12|<- state ->|
+```
+
+The same rows when the column is under 520 (the normal case with the terminal docked: 468). What follows the path and its count moves to a second line aligned with the path, and the row is 52:
+
+```
+        > [f] ~\dev\acta  +1                                         52
+              from epic Terminal
+
+        > [x] D:\work\acta                                           52
+              from epic Terminal  Not found on this computer  [Locate...]
+
+        > [f] ~\…\embed-terminal  +2                                 52
+              [x] 1 not found
+        |<------------------------ 468 ------------------------>|
+```
+
+Unfolded on a topic that has its own folders and includes its epic's:
+
+```
+        v Working folders  4                                                 28  type.label + count
+            [f] ~\dev\acta-wt\embed-terminal                        Primary  28  type.code, text.primary
+            [f] ~\dev\acta-docs                                              28  additional: text.secondary
+                (i) Also attached to topic Scrollback. A session started in this folder
+                    outside Acta opens on epic Terminal and is told about both topics.
+            [x] D:\work\design-assets    Not found on this computer  [Locate...]
+            [v] Also include inherited folders                               28  checkbox, checked
+         8  From epic Terminal                                 <- type.small, tertiary
+            [f] ~\dev\acta                                                   28  read-only here
+            [+ Add folder...]                                                28  ghost
+         8  Claude Code starts in the primary folder and may also read and edit the others.
+    24
+        +--------------------------------------------------------+
+        | Current state                                          |
+```
+
+Unfolded on a topic with nothing of its own:
+
+```
+        v Working folders  2
+         8  From epic Terminal
+            [f] ~\dev\acta                                          Primary
+            [f] ~\…\clients\alexandre\acta-design-assets
+            [Set folder for this topic...]
+         8  This topic uses the folders of epic Terminal. A folder set here replaces them
+            for this topic only.
+```
+
+The terminal pane when there is nothing to start in, and when the primary folder is gone:
+
+```
++-----------------------------------+      +-----------------------------------+
+| 12                                |      | 12                                |
+|  Where should Claude Code start?  |      |  The working folder was not found |  type.heading
+|  8                                |      |  8                                |
+|  Embed the terminal has no        |      |  Claude Code was not started.     |  type.reading,
+|  working folder, and neither has  |      |  This is the primary folder of    |  text.secondary
+|  its epic or its project.         |      |  epic Terminal, and it is not on  |
+| 16                                |      |  this computer:                   |
+|  [v] Save as the working folder   |      |  8                                |
+|      of project Acta              |      |  C:\Users\Alexandre\dev\acta      |  type.code,
+|  4   If not saved, it is used     |      |                                   |  selectable
+|      until Acta quits.            |      | 24                                |
+| 24                                |      |  [Locate folder...]  [Try again]  |  primary, secondary
+|  [Choose a folder...]             |      |                                   |
++-----------------------------------+      +-----------------------------------+
+  terminal surface (bg.sunken dark, bg.raised light), padding 12, text max 480, focus on the primary button
+```
+
+Annotations: `[f]` is `folder-open`, `[x]` is `folder-x` in `warning`, `(i)` is `info` 14, `[v]` a checked checkbox. In the first two blocks the rows are alternatives, not a list. The folded row always shows the primary effective folder, so "where will Claude Code start" is answered without unfolding. Inherited rows are never editable from below; their menu leads to the level that owns them. The terminal messages are the empty-state pattern on the terminal's surface, not dialogs: nothing was lost and nothing needs confirming, and the page stays usable beside them.
+
+### 8.12 Settings
+
+```
++----------------------+-------------------------------------------------------------------------+
+| v Acta               |                               32                                        |
+|     [i] Inbox      4 |        Settings                                  <- type.title          |
+|     ...              |    32                                                                   |
+|                      |        Appearance                                <- type.subtitle 20/28 |
+|                      |    8   Theme                              [System|Light|Dark]           |
+|                      |        System follows your computer's setting.   <- type.small, tertiary|
+|                      |        Language                                     [English v]         |
+|                      |        Changes Acta's own text. What you and Claude Code write          |
+|                      |        is never translated.                                             |
+|                      |        Terminal text size                              [- 13 +]         |
+|                      |    32                                                                   |
+|                      |        Claude Code                                                      |
+|                      |    8   (v) Claude Code found                               Done         |
+|                      |        (v) Plugin files written                            Done         |
+|                      |        (v) Plugin installed                                Done         |
+|                      |        (o) Permission rule added                        Missing         |
+|                      |        [Set up Claude Code]  Remove from Claude Code                    |
+|                      |    32                                                                   |
+|                      |        Data                                                             |
+|                      |    8   Export                                       [Export...]         |
+|                      |        Last export: 12 days ago                                         |
+|                      |        Import                                       [Import...]         |
+|----------------------|        Snapshots                    [Restore from snapshot...]          |
+|  [t] Trash           |        11 snapshots kept; the newest is from today, 09:12               |
+| [[s] Settings]       |        ...                                                              |
++----------------------+-------------------------------------------------------------------------+
+```
+
+Annotations: Settings is a page in the active tab; its sidebar row is selected. Sections in `type.subtitle`, setting rows of at least 44 with the description under the label and the control at the right. The fourth check is missing, so "Set up Claude Code" is the primary button. The Working folders, Chat and About sections follow below the fold. Nothing here has a Save button.
+
+### 8.13 Chat panel states
+
+```
++-------------------------------------+   +-------------------------------------+
+| Chat  claude.ai      [^] [r] [.] [-] |   | Chat  claude.ai      [^] [r] [.] [-] |  header 28
++-------------------------------------+   +-------------------------------------+
+| 16                                  |   | 16                                  |
+|  Chat with Claude beside your work  |   |  The chat panel needs WebView2      |  type.heading
+|  8                                  |   |  8                                  |
+|  This panel shows claude.ai, the    |   |  Microsoft's WebView2 runtime is    |  type.reading,
+|  website, in your system's web      |   |  not installed on this computer,    |  text.secondary
+|  view. You sign in with your own    |   |  so Acta cannot show claude.ai      |
+|  account, and Acta does not read    |   |  here. Everything else in Acta      |
+|  or change anything on the page.    |   |  works.                             |
+|  8                                  |   | 24                                  |
+|  Once started, the web view uses    |   |  [Open claude.ai in your browser]   |  primary
+|  about 400 MB of memory, also       |   |  Get WebView2   Try again           |  ghost
+|  while the panel is hidden.         |   |                                     |
+| 24                                  |   +-------------------------------------+
+|  [Open claude.ai here]              |   | The chat is hidden while this is    |  under an overlay:
+|  Open in your browser               |   | open.                               |  bg.sunken, one line
++-------------------------------------+   +-------------------------------------+
+  bg.sunken, padding 16, text max 480; live state: the web view fills everything under the header
+```
+
+Annotations: left, the panel before the web view exists; right, Windows without the WebView2 runtime, and under it the placeholder shown while an overlay is open. `[^]` Open in browser, `[r]` Reload, `[.]` the menu, `[-]` hide; their tooltips open upward. On Linux none of this exists: the command opens the browser.
+
+### 8.14 Epic page with its topic table
+
+```
+        Terminal                                                  <- type.title
+    12  Progress   3 of 7 topics done  [=====-------]             <- properties block
+        Folders    > [f] ~\dev\acta  +1  from project Acta
+        Id         E-3
+        Updated    2 h ago by Claude Code
+    24  Description
+        Everything that runs Claude Code inside Acta.
+    32  Knowledge  2                                          [+]
+        ...
+    32  [Open|All|Closed]  4 topics                           [+]   28  toolbar
+     8       Title                               Entries   Updated   28  header, type.small
+        ------------------------------------------------------------    border.subtle
+        (.)  Embed the terminal bound to the pr..     14   2 h ago   32
+        (=)  Terminal scrollback                 *     6   Mon       32  * unread dot
+        ( )  Links in terminal output                  0   12 Nov    32
+        (o)  Session restore                           1   9 Nov     32
+        |24 |<- title, fills, truncates ->|          |<- 56 ->|<- 72 ->|
+```
+
+Annotations: the epic's progress is computed (topics Done over topics not Dropped). The table shows open topics by default, in the tree's order; a project page shows the same table grouped by epic. Under 520 of column width the Entries column goes.
+
+### 8.15 Tab bar
+
+```
++----------------------+-------------------------------------------------------------------------+
+|                      | [(.) Embed the terminal.. x]  [d] Resize protocol     (=) Scrollback  * | 32
+|                      +-----------------------------+-------------------------------------------+
+|                      |                               32                                        |
+|                      |        Embed the terminal bound to the project                          |
++----------------------+-------------------------------------------------------------------------+
+  tab bar only with 2+ tabs; bg.sunken; active tab bg.base, joined to the page, close button shown;
+  tabs 120 to 220 wide: icon 14, title, then close on hover or the unread dot (*)
+```
+
+### 8.16 Updater window
+
+```
+            +--------------------------------------------------+
+            | 24                                               |
+            |  [A] Acta                         <- mark 24, type.ui-strong
+            | 16                                               |
+            |  Downloading update...            <- type.ui     |
+            | 12                                               |
+            |  [==================--------------------------]  |  4 high
+            |                                             42%  |  type.small, tnum
+            +--------------------------------------------------+
+              360 x 132, bg.base, border.default, no caption buttons; same in both themes
+```
+
+Annotations: shown only when the main window is not ready 300 ms after launch; closed in the frame the main window opens. "Checking for updates..." has no bar; "Restarting..." has a full one. There is no button.

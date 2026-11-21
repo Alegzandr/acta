@@ -88,7 +88,7 @@ pub fn locale(cx: &App) -> Locale {
 }
 
 /// Change the language: every window repaints in the new language at once,
-/// without a restart (DESIGN.md 10).
+/// without a restart (docs/design/copy.md 10).
 pub fn set_language(locale: Locale, cx: &mut App) {
     if current(cx).language == locale {
         return;

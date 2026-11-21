@@ -1,0 +1,36 @@
+# Acta design: record page parts
+
+Part of the Acta design system. [DESIGN.md](../../DESIGN.md) is the index: direction, principles, the never-list and the review checklist. Section numbers are shared across all parts.
+
+## 5. Components (continued): record page parts
+
+States, the focus ring and the controls used here (buttons, inputs, rows, menus, dialog, notice, empty state) are in [components.md](components.md).
+
+**Timeline entry**: a two-column block, gutter 20 + gap 12, then content.
+- Gutter: the author mark, 20 x 20, top-aligned with the header line. **Human**: circle, `fill.selected`, initial in 12px weight 600 `text.primary` ("A" for Alexandre). **Claude Code**: square with `radius.sm`, no fill, 1px `border.strong`, Lucide `chevron-right` 12 in `text.secondary` (a prompt mark).
+- Header (line 20): author name, then entry type, then time. Human name in `type.ui-strong`; "Claude Code" in `type.code` `text.primary`. Circle plus sans versus square plus mono is the at-a-glance distinction: shape and typeface, no colour, no badge. Type: icon 14 plus word in `type.small` `text.secondary`. Time: `type.small` `text.tertiary`, `tnum`, in the long form of 10.2 ("2 h ago", "Yesterday 18:42", "Tue 14:05", "12 Nov 2026"); tooltip gives the full local date and time.
+- Body: rendered Markdown, 4 below the header.
+- By type: **Progress** (`git-commit-horizontal`): plain. **Decision** (`signpost`): body and header sit in a 1px `border.default` box, `radius.md`, padding 12 x 16, and the word "Decision" is `text.primary` weight 600; decisions are the entries people come back for, so they are the only ones with an outline. **Discussion** (`message-square`): plain.
+- **System event** (status change, creation, moved): one line, no author mark, a status glyph 14 in the gutter, `type.small` `text.tertiary`: "Alexandre set status to Blocked - 2 h ago". Consecutive events within 5 minutes collapse into one line.
+- States: hover reveals a ghost `ellipsis` button at the top right (also `Shift+F10` / context-menu key on the focused entry) with Edit, Copy as Markdown, Change type, Delete; focused: ring around the entry; editing: body becomes the multi-line editor in place; newly arrived from another process: `accent.subtle` background fading out (see 6.5).
+
+**Current-state panel**: `bg.raised`, 1px `border.subtle`, `radius.md`, padding 16. Label row: "Current state" in `type.label` `text.secondary`, right-aligned meta "Updated 2 h ago by Claude Code" in `type.small` `text.tertiary`. Body `type.reading`, intended to stay under about 6 lines; over 12 lines it clamps with a "Show all" ghost button. Empty: placeholder text "Where does this stand? One or two sentences." in `text.tertiary`.
+
+**Note card**: `bg.raised`, 1px `border.subtle`, `radius.md`, padding 12 x 16. Body `type.reading`, clamped to 6 lines when not focused. Meta row (`type.small` `text.tertiary`): time, and for filed notes "Filed as" plus topic links. Hover or focus reveals ghost icon buttons: Make topic (`corner-down-right`), Edit (`pencil`), Delete (`trash-2`). Focused: focus ring. Filed: body in `text.secondary`.
+
+**Properties block** (under the title of every record page; the model's own fields, shown as a page's typed properties). Rows of 28, two columns, no box and no dividers; 12 under the title, 24 above the next section. Label: `type.ui` `text.tertiary`, in a column exactly as wide as the longest label of the block in the current language (never a fixed width; capped at 40% of the column, beyond which a label truncates with a tooltip). Gap 16. Value: `type.ui` `text.primary`. A value that can be changed is a ghost control (padding 0 x 8, shifted left by 8 so its text aligns with plain values; hover `fill.hover`); a value that cannot is plain text. The block is one stop when stepping through a page with `Up` / `Down`; `Enter` goes inside, `Up` / `Down` move between rows, `Enter` acts on the value, `Esc` leaves. The direct keys (`S` status, `M` move) act on the page's record from anywhere on the page, unless the focused element has its own meaning for the key: the focused element always wins. `M` on a focused knowledge row moves that entry, not the topic; on a folder row it does nothing; in a text field it types.
+
+| Page | Rows, in order |
+|---|---|
+| Topic | **Status**: the status indicator button. **Epic**: the epic's name, a link; `M` or the row's menu moves the topic; "None" in `text.tertiary` for a topic outside any epic. **Folders**: the working folders row. **Id**: "T-42" in `type.code` `text.secondary`, the short id Claude Code uses; activating it copies it and the value reads "Copied" for 1.5 s. **Updated**: "2 h ago by Claude Code" (time rules of the timeline; tooltip with the full date). |
+| Epic | **Progress**: "3 of 7 topics done" with a bar (120 x 4, `radius.sm`, track `fill.selected`, fill `text.secondary`): topics Done over all topics not Dropped. **Folders**. **Id**: "E-7". **Updated**. |
+| Project | **Progress** (same rule over the whole project). **Folders**. **Updated**. |
+| Document or memory | **Kind**: "Document" or "Memory" (menu: Change kind). **Level**: the owner, "Topic Embed the terminal", a link (`M` moves the entry). **Id**: "K-7". **Updated**: "2 h ago by Claude Code". |
+
+There are no user-defined properties, no dates to fill in and no empty rows to hide: every row is a field the model has for every record of that kind, so the agent and the human always see the same set.
+
+**Topic table** (the collection on epic and project pages; the last section, under Knowledge). A toolbar row (28): the filter as a segmented control, Open / All / Closed (default Open), the count in `type.small` `text.tertiary` ("7 topics"), and at the right a ghost `plus` button, "New topic" (`Mod+T`). A header row (28, `type.small` `text.tertiary`, 1px `border.subtle` under it): Status (24, no label), Title (fills), Entries (56, right-aligned), Updated (72, right-aligned, compact form of 10.2). Rows of 32, padding 0 x 8, `radius.sm`: status glyph 14, title `type.ui` `text.primary` truncated, the unread dot after the title, entry count and updated time in `type.small` `text.tertiary` with `tnum`. No lines between rows. Hover `fill.hover`; keyboard focus ring; the same keys as the tree (`Enter` open, `Mod+Enter` new tab, `S` status, `E` rename, `Alt+Up` / `Alt+Down` reorder, `Delete`). Closed topics render as in the tree (title `text.tertiary`).
+- Default order is the tree's order, the one the human arranged. Activating a column header sorts by it (`chevron-up` / `chevron-down` 12 after the label) and a ghost "Reset order" appears in the toolbar; while sorted, reordering by drag or key is off.
+- On a project page the table is grouped by epic: group rows of 28 (`type.label`, the epic's name as a link, "3 of 7 done" in `type.small` `text.tertiary` at the right), topics outside any epic first under "No epic". `Enter` on a group row folds it.
+- Under 520 of column width the Entries column is dropped. Empty: the existing empty states ("No topics yet. ..." with "New topic").
+- It is a table and only a table. A board was considered and left out (Direction).

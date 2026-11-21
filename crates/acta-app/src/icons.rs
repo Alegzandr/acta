@@ -1,5 +1,5 @@
 //! The icons DESIGN.md lists (Lucide, ISC), embedded as SVG with
-//! `stroke-width="1.5"` so strokes land at 1px at 16 (DESIGN.md 4.1), and
+//! `stroke-width="1.5"` so strokes land at 1px at 16 (docs/design/layout.md 4.1), and
 //! the app mark. The SVGs in `assets/icons/lucide` are copies of the Lucide
 //! files bundled in `gpui-kit-assets` 0.10.0 with only the stroke width
 //! changed; their licence ships from `scripts/licenses/third-party`.
@@ -57,7 +57,7 @@ icons! {
     Trash2 => "trash-2",
 }
 
-/// The app mark, shown in the updater window only (DESIGN.md 5).
+/// The app mark, shown in the updater window only (docs/design/components-app.md 5).
 pub const APP_MARK: &str = "acta.png";
 const APP_MARK_BYTES: &[u8] = include_bytes!("../../../assets/icons/acta.png");
 

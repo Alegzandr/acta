@@ -1,4 +1,4 @@
-//! Small pieces of DESIGN.md section 5 shared by several views.
+//! Small pieces of docs/design/components.md 5 shared by several views.
 
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
@@ -10,7 +10,7 @@ use crate::theme::{RADIUS_SM, Tokens};
 use crate::type_scale;
 
 /// Keyboard shortcut hint: each key in its own 18-high box, `type.small`
-/// with `tnum` in `text.tertiary`, 2 apart (DESIGN.md 5, kbd).
+/// with `tnum` in `text.tertiary`, 2 apart (docs/design/components.md 5, kbd).
 pub fn kbd(keys: &[&str], tokens: &Tokens) -> Div {
     div()
         .flex()
@@ -35,9 +35,9 @@ pub fn kbd(keys: &[&str], tokens: &Tokens) -> Div {
         }))
 }
 
-/// A ghost icon button (DESIGN.md 5, Button): `size` is 28, or 24 compact.
+/// A ghost icon button (docs/design/components.md 5, Button): `size` is 28, or 24 compact.
 /// `selected` is the active state of a tool-window toggle. In an inactive
-/// window its icon drops to `text.tertiary` (DESIGN.md 4.3).
+/// window its icon drops to `text.tertiary` (docs/design/layout.md 4.3).
 pub fn ghost_icon_button(
     id: &'static str,
     glyph: Icon,

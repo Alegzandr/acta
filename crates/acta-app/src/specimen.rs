@@ -3,7 +3,7 @@
 //! of the product and not reachable from the UI.
 //!
 //! It shows how GPUI renders the bundled faces, dark and light side by
-//! side: every sans role of DESIGN.md 3.2 on the four surfaces, the text
+//! side: every sans role of docs/design/typography.md 3.2 on the four surfaces, the text
 //! levels, the mono roles and the colour tokens.
 
 use gpui_kit::prelude::FluentBuilder as _;
@@ -350,7 +350,7 @@ impl Render for Specimen {
             .child(
                 caption(
                     format!(
-                        "Acta {}. Every role of DESIGN.md 3.2 at its size / line height and \
+                        "Acta {}. Every role of docs/design/typography.md 3.2 at its size / line height and \
                          weight, in {FONT_SANS} and {FONT_MONO}, in both themes whatever the \
                          Appearance setting.",
                         acta_core::VERSION

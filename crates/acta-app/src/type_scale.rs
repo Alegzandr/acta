@@ -1,4 +1,4 @@
-//! DESIGN.md section 3.2: the type roles. Text is always set through a role.
+//! docs/design/typography.md 3.2: the type roles. Text is always set through a role.
 //! No role asks for letter-spacing (the pinned GPUI has none).
 
 use std::sync::Arc;
@@ -55,7 +55,7 @@ pub const SANS_ROLES: [TypeRole; 9] = [
 ];
 
 /// Tabular figures (`tnum`), for digits that align or tick: timestamps,
-/// counts, ids, versions, shortcut hints (DESIGN.md 3.1).
+/// counts, ids, versions, shortcut hints (docs/design/typography.md 3.1).
 pub fn tabular() -> FontFeatures {
     FontFeatures(Arc::new(vec![("tnum".into(), 1)]))
 }

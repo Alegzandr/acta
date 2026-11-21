@@ -1,11 +1,11 @@
-//! DESIGN.md section 2.1, in one place. No other module contains a colour.
+//! docs/design/color.md 2.1, in one place. No other module contains a colour.
 //!
 //! [`Tokens`] is what Acta's own views read (`cx.global::<Tokens>()`).
 //! [`apply`] also writes the tokens into the gpui-kit `Theme`, so that any
 //! gpui-component widget starts from Acta's palette instead of its default
 //! (ADR 0001, decision 3).
 //!
-//! The Appearance setting (DESIGN.md 2) is System, Light or Dark. System
+//! The Appearance setting (docs/design/color.md 2) is System, Light or Dark. System
 //! follows the OS live: every window reports appearance changes to
 //! [`os_appearance_changed`]. Switching replaces the tokens and refreshes
 //! every window in the same frame; nothing animates.
@@ -20,7 +20,7 @@ pub const RADIUS_SM: f32 = 4.;
 pub const RADIUS_MD: f32 = 6.;
 pub const RADIUS_LG: f32 = 8.;
 
-/// Every colour token of DESIGN.md 2.1. Field names are the token names with
+/// Every colour token of docs/design/color.md 2.1. Field names are the token names with
 /// `.` and `-` replaced by `_`.
 #[derive(Clone, Debug)]
 pub struct Tokens {
@@ -188,7 +188,7 @@ impl Tokens {
     }
 }
 
-/// The Appearance setting of DESIGN.md 2. System is the default.
+/// The Appearance setting of docs/design/color.md 2. System is the default.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ThemeSetting {
     #[default]
@@ -222,7 +222,7 @@ impl Mode {
 }
 
 /// The mode a setting resolves to. `os` is `None` when the OS reports no
-/// preference; DESIGN.md 2 then asks for dark.
+/// preference; docs/design/color.md 2 then asks for dark.
 pub fn resolve(setting: ThemeSetting, os: Option<Mode>) -> Mode {
     match setting {
         ThemeSetting::Light => Mode::Light,
@@ -355,7 +355,7 @@ fn install(mode: Mode, cx: &mut App) {
 
 #[cfg(test)]
 mod tests {
-    //! The values are pinned to DESIGN.md itself: the token table of 2.1 is
+    //! The values are pinned to docs/design/color.md: the token table of 2.1 is
     //! read from the file and every row must match [`Tokens`], and the
     //! contrast table of 2.2 is reproduced from the values. Changing a colour
     //! in either place without the other fails here.
@@ -363,7 +363,7 @@ mod tests {
     use super::*;
     use gpui_kit::Rgba;
 
-    const DESIGN_MD: &str = include_str!("../../../DESIGN.md");
+    const DESIGN_MD: &str = include_str!("../../../docs/design/color.md");
 
     /// 8-bit sRGB channels of a colour, alpha ignored, as the renderer stores them.
     fn rgb8(color: Hsla) -> [u8; 3] {
@@ -371,7 +371,7 @@ mod tests {
         [r, g, b].map(|c| (c * 255.).round() as u8)
     }
 
-    /// `over` with its alpha composited on the opaque `under`. DESIGN.md 2.2
+    /// `over` with its alpha composited on the opaque `under`. docs/design/color.md 2.2
     /// measures its table on the exact blend; `rounded` gives the 8-bit
     /// value the renderer stores, which its rule about `text.tertiary` uses.
     fn blend(over: Hsla, under: Hsla) -> [f64; 3] {
@@ -410,7 +410,7 @@ mod tests {
     fn check(what: &str, actual: f64, documented: f64) {
         assert!(
             (actual - documented).abs() <= 0.006,
-            "{what}: measured {actual:.3}, DESIGN.md says {documented:.2}"
+            "{what}: measured {actual:.3}, color.md says {documented:.2}"
         );
     }
 
@@ -434,7 +434,7 @@ mod tests {
             .split("### 2.1 Tokens")
             .nth(1)
             .and_then(|rest| rest.split("###").next())
-            .expect("DESIGN.md has section 2.1");
+            .expect("docs/design/color.md has section 2.1");
         section
             .lines()
             .filter(|line| line.starts_with("| `"))
@@ -493,7 +493,7 @@ mod tests {
         for (name, _) in dark.named() {
             assert!(
                 name == "caption.close glyph" || rows.iter().any(|(t, _, _)| t == name),
-                "{name} is not in DESIGN.md 2.1"
+                "{name} is not in docs/design/color.md 2.1"
             );
         }
     }
@@ -501,7 +501,7 @@ mod tests {
     type Four = [f64; 4];
     type Three = [f64; 3];
 
-    /// DESIGN.md 2.2, every row, dark then light.
+    /// docs/design/color.md 2.2, every row, dark then light.
     #[test]
     fn contrast_reproduces_the_table_in_design_md() {
         for (t, dark) in [(Tokens::dark(), true), (Tokens::light(), false)] {
@@ -648,7 +648,7 @@ mod tests {
 
     #[test]
     fn tertiary_text_fails_on_a_selected_row_as_documented() {
-        // DESIGN.md 2.2: 3.73 over overlay in dark, 4.48 over sunken in light.
+        // docs/design/color.md 2.2: 3.73 over overlay in dark, 4.48 over sunken in light.
         let t = Tokens::dark();
         let measured = ratio(
             rgb8(t.text_tertiary),
