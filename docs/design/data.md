@@ -8,9 +8,12 @@ Nothing on screen is illustrative. Every value comes from the model of ADRs 0005
 
 | Element | Source |
 |---|---|
-| Tree: projects, epics, topics, order | The records and their stored position. Collapsed state is a preference (4.7). |
-| Inbox count | Notes of the project not yet filed. |
-| Knowledge count | Knowledge entries of the project at every level. |
+| Tree: projects, epics, topics, order | The records and their stored position, never sorted by status (4.2.1). Folded projects and epics and unfolded "N closed" groups are a preference (4.7). |
+| Tree: rows on the path, active project | Computed from the open page's project and epic (as the breadcrumb) and the active project (4.6). |
+| Tree: "N closed" | Count of Done and Dropped topics in the group. |
+| Tree: unread dot | The read markers of request 1: a topic or knowledge entry whose last write is by another process and is newer than its marker. Folded rows aggregate their topics; the Knowledge row aggregates the project's entries at every level. |
+| Inbox count | Notes of the project not yet filed. Shown in the tree only above 0. |
+| Knowledge count | Knowledge entries of the project at every level. Shown on the knowledge page, not in the tree (4.2.1). |
 | Status glyph and word | The topic's status (2.3). Epics and projects have no status of their own. |
 | Progress (epic, project, group row) | Topics Done divided by topics not Dropped, in that epic or project. Computed, never stored. |
 | Id (T-42, E-7, K-7) | The per-installation short ids of ADR 0005 and 0006. |

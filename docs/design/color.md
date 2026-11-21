@@ -65,6 +65,8 @@ Why verdigris: the semantic colours (red, amber, green) are all warm, so a warm 
 | `text.tertiary` on `fill.hover` over `sunken` / `base` (tree counts, folder row label) | 5.36 / 4.97 | 4.79 / 5.09 | 4.5 |
 | `warning` glyph on `fill.hover` over `base` (folder not found) | 5.99 | 5.27 | 3.0 (glyph) |
 | `accent` glyph on `fill.selected` over `sunken` (Active topic selected in the tree) | 5.81 | 4.54 | 3.0 (glyph) |
+| `accent` glyph on `fill.hover` over `sunken` (Active topic hovered in the tree) | 6.30 | 4.80 | 3.0 (glyph) |
+| `warning` glyph on `fill.hover` / `fill.selected` over `sunken` (Blocked topic hovered, selected in the tree) | 6.46 / 5.96 | 4.96 / 4.70 | 3.0 (glyph) |
 | `text.primary` on `accent.subtle` over `sunken` / `base` / `overlay` | 10.09 / 9.37 / 7.73 | 9.72 / 10.28 / 10.69 | 4.5 |
 | `text.primary` on `selection` over `base` | 6.99 | 8.34 | 4.5 |
 | `border.strong` vs `sunken` / `base` / `raised` / `overlay` | 4.60 / 4.30 / 3.88 / 3.53 | 3.20 / 3.40 / 3.55 / 3.55 | 3.0 (control boundary) |
@@ -90,7 +92,7 @@ Six statuses. Four are open, two are closed. The set answers exactly the questio
 | Done | Finished. | `circle-check` | `success` | no |
 | Dropped | Deliberately abandoned. Kept because "we decided not to" is memory the agent needs. | `circle-slash` | `text.tertiary` | no |
 
-No "In review", no priorities, no custom statuses in v1: each addition makes the agent's writes less predictable. Status never relies on colour: every status has a distinct glyph interior (dashes, empty, dot, bars, check, slash), the Status property of a topic page always shows glyph plus word, and the glyph has a tooltip and an accessible name with the word. Closed topics render their title in `text.tertiary` (no strikethrough) and collapse under a "3 closed" row at the end of their epic.
+No "In review", no priorities, no custom statuses in v1: each addition makes the agent's writes less predictable. Status never relies on colour: every status has a distinct glyph interior (dashes, empty, dot, bars, check, slash), the Status property of a topic page always shows glyph plus word, and the glyph has a tooltip and an accessible name with the word. Closed topics render their title in `text.tertiary` (no strikethrough) and collapse under a "3 closed" row at the end of their group. In lists (the tree, the topic table) a closed topic's glyph is `text.tertiary` too, whatever its status: a finished topic asks nothing of a reader scanning a list, so the colour of Done is kept for the places that state a status (the Status property, the status menu, tabs), and colour in a list is left to Active and Blocked (4.2.1). The shape still tells Done from Dropped.
 
 ### 2.4 Terminal palette
 

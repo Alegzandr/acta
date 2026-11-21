@@ -624,3 +624,14 @@ Strings that exist in the behaviour sections but are not in this table are a def
 ### 10.4.1 Keys of the workbench layout (4.8)
 
 Moved into 10.4 when 4.8 was implemented (M8), with the texts that replaced "Toggle sidebar", "Zoom tool window" and "Tabs and tool windows"; the commands that moved a tool window to a dock and widened or narrowed a pane left with them. `{view}` is always a view's name key (`view.projects`, `tree.inbox`, `tree.knowledge`, `terminal.title`, `chat.title`), never translated twice or inflected: the colon form keeps every sentence whole in French, where a view's gender would otherwise change the participle. `view.agent_browser` ("Agent browser", "Navigateur de l'agent") joined 10.4 with ADR 0010, with the `browser.*` keys of the Agent browser view (components-app.md 5).
+
+### 10.4.2 Keys of the tree (4.2.1), pending
+
+New with the tree's redesign (2026-11-21). They stay here, outside the table the tests read, until 4.2.1 is implemented; the implementing change moves them into 10.4 right after `tree.move_epic` (and `cmd.tree_collapse_all` after `cmd.new_project`) and adds them to `catalogue.rs` in the same commit. The ghost row reuses `topic.new` and the empty tree's button `cmd.new_project`. The Knowledge row's count is gone from the tree, so no key changes for it.
+
+| Key | English | French |
+|---|---|---|
+| `tree.unread` | New changes by Claude Code | Nouvelles modifications de Claude Code |
+| `tree.empty` | No projects yet. | Aucun projet pour l'instant. |
+| `tree.collapse_all` | Collapse all | Tout replier |
+| `cmd.tree_collapse_all` | Projects: Collapse all | Projets : tout replier |

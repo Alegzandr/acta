@@ -14,7 +14,7 @@ Widths are for the default 1440 x 900 window. Every screen exists in both themes
 +----------------------+-------------------------------------------------------------------------+
 | v Acta               |                               32                                        |
 |     [i] Inbox      4 |        Embed the terminal bound to the project   <- type.title 24/30    |
-|     [k] Knowledge 55 |    12                                                                   |
+|     [k] Knowledge    |    12                                                                   |
 |     (o) Naming       |        Status    [(.) Active v]            <- properties block: rows 28,|
 |   v Core UI          |        Epic      Terminal                    label column as wide as its|
 |       (v) App shell  |        Folders   > [f] ~\dev\acta-wt\embed-terminal  +1   longest label |
@@ -24,7 +24,7 @@ Widths are for the default 1440 x 900 window. Every screen exists in both themes
 |      [(.) Embed th..]|        +--------------------------------------------------------+       |
 |       (=) Scrollback |        | Current state                                          |       |
 |       (-) Links      |        | Rendering and input work on Windows. Resize still      |       |
-|       3 closed       |        | drops the last row; fix is in progress.                |       |
+|       > 3 closed     |        | drops the last row; fix is in progress.                |       |
 |   > Notes            |        +--------------------------------------------------------+       |
 | > Atlas              |    24   bg.raised, border.subtle, radius.lg, padding 16, type.reading   |
 | > Field notes        |        Description                                  <- type.label       |
@@ -55,7 +55,7 @@ Widths are for the default 1440 x 900 window. Every screen exists in both themes
   rows 28, indent 16            [..] around a tree row = fill.selected; * = unread dot (accent, 6)
 ```
 
-Annotations: one tab is open, so there is no tab bar. The tree lists every project; "Acta" is expanded because the open page belongs to it, "Atlas" and "Field notes" are folded. `[i]` is `inbox`, `[k]` is `library`, `[t]` `trash-2`, `[s]` `settings`, `[p]` `folder`; in the titlebar `[=]` is the sidebar toggle, `[o]` the chat toggle, `[>_]` the terminal toggle. Tree glyphs: `(o)` Draft, `( )` Planned, `(.)` Active, `(=)` Blocked, `(v)` Done, `(-)` Dropped. The page's location is in the titlebar breadcrumb and nowhere else; its title heads the page. `> [f]` is the folded working-folders row (5, 8.11), here as the value of the Folders property. The composer is one line (28 + padding) until focused, then becomes the multi-line editor. Scrolling: title and properties scroll with the content; nothing is sticky except the "new entries" button. In the status bar, `(v)` is the `circle-check` glyph of the ready state.
+Annotations: one tab is open, so there is no tab bar. The tree follows 4.2.1: it lists every project; "Acta" is expanded because the open page belongs to it, "Atlas" and "Field notes" are folded. `[i]` is `inbox`, `[k]` is `library`, `[t]` `trash-2`, `[s]` `settings`, `[p]` `folder`; in the titlebar `[=]` is the sidebar toggle, `[o]` the chat toggle, `[>_]` the terminal toggle. Tree glyphs: `(o)` Draft, `( )` Planned, `(.)` Active, `(=)` Blocked, `(v)` Done, `(-)` Dropped. The page's location is in the titlebar breadcrumb and nowhere else; its title heads the page. `> [f]` is the folded working-folders row (5, 8.11), here as the value of the Folders property. The composer is one line (28 + padding) until focused, then becomes the multi-line editor. Scrolling: title and properties scroll with the content; nothing is sticky except the "new entries" button. In the status bar, `(v)` is the `circle-check` glyph of the ready state.
 
 ### 8.2 Notes inbox
 
@@ -271,7 +271,7 @@ Annotations: the keychain is named as the platform names it (Windows Credential 
 ```
 +----------------------+-------------------------------------------------------------------------+
 |  Inbox            4  |                               32                                        |
-| [Knowledge      55]  |        Knowledge                                 <- type.title          |
+| [Knowledge        ]  |        Knowledge                                 <- type.title          |
 |                      |     8  Acta · 12 documents, 43 memories          <- type.small          |
 |  (o) Naming          |    24  +--------------------------------------------------------+       |
 |  v Core UI           |        | (s) Search knowledge                                   | 28    |
@@ -507,7 +507,7 @@ Annotations: shown only when the main window is not ready 300 ms after launch; c
 |----------------------|  project                            |-----------------------------------------|
 | v Acta               |  Status   [(.) Active v]            |  > claude                               |
 |    Inbox          4  |  Epic     Terminal                  |                                         |
-|    Knowledge     55  |  ...                                |                                         |
+|    Knowledge         |  ...                                |                                         |
 |  v Terminal          |                                     |                                         |
 |    [(.) Embed th..]  |                                     |                                         |
 |----------------------|                                     |                                         |
