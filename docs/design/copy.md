@@ -7,7 +7,7 @@ Part of the Acta design system. [DESIGN.md](../../DESIGN.md) is the index: direc
 Plain, specific, short. Acta talks like a careful colleague's notes: it names the object, says what happened and what to do next, and stops.
 
 - Sentence case. No exclamation marks, no "please", no "oops", "sorry", "successfully", "simply", no emoji.
-- Verb plus object for actions ("New topic", "Delete entry"); the same word for the same thing everywhere (topic, epic, project, entry, note, inbox, current state; never "task", "ticket", "card", "item", "log").
+- Verb plus object for actions ("New topic", "Delete entry"); the same word for the same thing everywhere (topic, epic, project, entry, note, inbox, current state, question, report to, person, file; never "task", "ticket", "card", "item", "log", and never "assignee", "stakeholder" or "contact" for a person, who is only asked or told).
 - The agent is always "Claude Code", never "AI", "the assistant" or "the bot". The human is their name ("Alexandre"), never "You" in attributions and "you" only in instructions.
 - Errors say what failed, why if known, and the next step. Never blame, never a bare code.
 - Numbers and times are exact and short: "3 open", "2 h ago", "12 Nov 2026". Counts above 99 show "99+".
@@ -48,7 +48,7 @@ The interface exists in English (the default on a new install) and in French. Th
 - A narrow no-break space (U+202F) before `;` `:` `!` `?` and `»` and after `«`; in the catalogue (10.4) an ordinary space is typed there and stands for U+202F. Quotation marks are « ». The apostrophe is the typographic one (’) in both languages; the table types `'` for legibility.
 - Numbers: U+202F as thousands separator ("1 000"), a comma for decimals, U+202F before `%` and before units ("68 %", "400 Mo").
 - A trailing ellipsis is the single character U+2026 in both languages, with no space before it; the table types three dots.
-- Vocabulary, fixed like the English one: projet, epic (masculine, plural epics), sujet, entrée, note, boîte de réception, état actuel, journal (the timeline), connaissances, document, mémoire, dossier de travail, corbeille, instantané (snapshot), onglet, paramètres, chat (the chat panel). Two words are kept apart on purpose: an entry has a **type** (Avancement, Décision, Discussion) and a knowledge entry has a **nature** (Document, Mémoire); "Discussion" is an entry type and never names the chat panel.
+- Vocabulary, fixed like the English one: projet, epic (masculine, plural epics), sujet, entrée, note, boîte de réception, état actuel, journal (the timeline), connaissances, document, mémoire, dossier de travail, corbeille, instantané (snapshot), onglet, paramètres, chat (the chat panel), question (feminine; En suspens, Répondue, Abandonnée), « Posée à », « À rapporter à », personne. A person is user text and in French always follows a colon (« Posée à : le service RH »), never a preposition, so no article contracts with it. Two words are kept apart on purpose: an entry has a **type** (Avancement, Décision, Discussion) and a knowledge entry has a **nature** (Document, Mémoire); "Discussion" is an entry type and never names the chat panel.
 - Deliberate choices, not oversights: "e-mail" (the form French software uses, rather than "courriel"), "plugin" (Claude Code's own word for what setup installs), "epic" and "chat" kept as loanwords. Statuses: Brouillon, Prévu, En cours, Bloqué, Terminé, Abandonné.
 - Key names on Windows and Linux: `Ctrl`, `Maj`, `Alt`, `Entrée`, `Échap`, `Suppr`, `Tab`. macOS glyphs do not change.
 
@@ -71,7 +71,7 @@ Both languages use the 24-hour clock and day-month-year order; neither follows t
 - **Absolute date, `{date}`**: "18 Nov 2026" / "18 nov. 2026", with no article; the French string supplies "le" or "du" itself. **Absolute date and time, `{datetime}`**: "18 Nov 2026, 09:12" / "18 nov. 2026 à 09:12". Used where exactness matters more than recency: versions, snapshots, export files.
 - **Full form** (tooltips only): "Tuesday 17 November 2026, 14:05" / "mardi 17 novembre 2026 à 14:05".
 - **Today with a time** exists only in the snapshot line of Settings and has its own strings: "today, 09:12" / "aujourd'hui à 09:12".
-- **Whole days** exist only for the age of the last export: "12 days ago" / "il y a 12 jours", "today" / "aujourd'hui".
+- **Whole days** exist only for the age of the last export ("12 days ago" / "il y a 12 jours", "today" / "aujourd'hui") and inside the Overview's sentences ("the oldest for 12 days" / "la plus ancienne depuis 12 jours"), counted in local calendar days as in 10.2.1.
 
 | What | English | French |
 |---|---|---|
@@ -86,7 +86,7 @@ The first of the month is "1er" in French, in the long and the compact forms ("l
 
 ### 10.2.1 Due dates
 
-Added 2026-11-21 with due dates (components-records.md 5, data.md 11 request 16). A due date is a **calendar day**, not a moment: it has no time and no time zone, and reads as the same day on every machine. Everything relative ("today", "overdue") is computed against **the local date of the machine doing the reading**, the app or the `acta` process, at the moment of reading. The app re-evaluates every relative form at local midnight, on resume from sleep and when the system clock or time zone changes, without moving anything else (the rows keep their place; only text and the overdue marks change). "N days" is the difference in calendar days between the two local dates, never 24-hour periods, so a daylight-saving change never makes a date off by one.
+Added 2026-11-21 with due dates (components-records.md 5, data.md 11 request 16). The date a question's answer is expected (components-questions.md 5) is the same kind of day and uses every form, threshold and parsing rule below; only its label differs ("Answer by"). A due date is a **calendar day**, not a moment: it has no time and no time zone, and reads as the same day on every machine. Everything relative ("today", "overdue") is computed against **the local date of the machine doing the reading**, the app or the `acta` process, at the moment of reading. The app re-evaluates every relative form at local midnight, on resume from sleep and when the system clock or time zone changes, without moving anything else (the rows keep their place; only text and the overdue marks change). "N days" is the difference in calendar days between the two local dates, never 24-hour periods, so a daylight-saving change never makes a date off by one.
 
 **Forms.**
 

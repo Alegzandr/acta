@@ -52,6 +52,10 @@ pub struct ClaudeOptions {
     /// `ACTA_LAUNCH`: an opaque token naming this terminal, so the app can
     /// match the session's presence row to it.
     pub token: Option<String>,
+    /// A first prompt Claude Code starts on (`/acta:triage`), passed as its
+    /// positional argument, last. Left out on the `cmd` shim path when
+    /// `cmd.exe` would interpret it.
+    pub prompt: Option<String>,
 }
 
 /// A launch of Claude Code, with the additional folders that were left out
@@ -142,7 +146,6 @@ pub fn build_claude_launch(
             left_out.push(folder.clone());
         }
     }
-
     let shim = matches!(program, ClaudeProgram::CmdShim { .. });
     if let Some(dir) = &options.plugin_dir
         && exists(dir)
@@ -161,6 +164,11 @@ pub fn build_claude_launch(
             claude_args.push(id.clone());
         }
         _ => {}
+    }
+    if let Some(prompt) = options.prompt.as_deref().filter(|p| !p.is_empty())
+        && !(shim && has_cmd_metachar(prompt))
+    {
+        claude_args.push(prompt.to_owned());
     }
 
     let mut env = vec![
@@ -582,6 +590,38 @@ mod tests {
             launch_spec_for_claude(&[], &focus(), &ClaudeOptions::default()),
             Err(LaunchError::NoFolder)
         );
+    }
+
+    #[test]
+    fn a_first_prompt_is_the_last_argument() {
+        let program = ClaudeProgram::Exe(PathBuf::from("claude"));
+        let folders = [alexandre("acta"), alexandre("docs")];
+        let triage = |prompt: &str| ClaudeOptions {
+            prompt: Some(prompt.into()),
+            conversation: Some(Conversation::New(
+                "019a7a6e-1c2d-7f00-8a00-0123456789ab".into(),
+            )),
+            ..ClaudeOptions::default()
+        };
+        let launch =
+            build_claude_launch(&program, &folders, &focus(), &triage("/acta:triage"), |_| true)
+                .unwrap();
+        // After every option, the conversation's included.
+        assert_eq!(
+            launch.spec.args.last().map(String::as_str),
+            Some("/acta:triage")
+        );
+        let shim = ClaudeProgram::CmdShim {
+            comspec: "cmd.exe".into(),
+            shim: PathBuf::from("C:\\npm\\claude.cmd"),
+        };
+        let launch =
+            build_claude_launch(&shim, &folders, &focus(), &triage("/acta:triage"), |_| true)
+                .unwrap();
+        assert!(launch.spec.args[3].ends_with(" \"/acta:triage\"\""));
+        let launch =
+            build_claude_launch(&shim, &folders, &focus(), &triage("a&b"), |_| true).unwrap();
+        assert!(!launch.spec.args[3].contains("a&b"), "left out");
     }
 
     #[test]

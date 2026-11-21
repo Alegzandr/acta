@@ -12,6 +12,7 @@
 //! other bindings out of the [`view::KEY_CONTEXT`] context (`!Terminal`).
 
 pub mod boxes;
+pub mod idle;
 pub mod keys;
 pub mod launch;
 pub mod mouse;

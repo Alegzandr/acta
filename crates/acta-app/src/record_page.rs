@@ -54,6 +54,12 @@ pub enum PageEvent {
     Located(acta_core::model::ProjectId),
     /// "Show terminal" on the Claude Code line: the project's terminal.
     ShowTerminal(acta_core::model::ProjectId),
+    /// Show the palette as a picker of these rows; the chosen one is
+    /// handed to the page's callback.
+    Pick(crate::palette::Picker, crate::palette::OnPick),
+    /// "File with Claude Code" (screens.md 8.2): run the triage command in
+    /// the project's terminal.
+    Triage(acta_core::model::ProjectId),
 }
 
 gpui_kit::actions!(
@@ -87,6 +93,10 @@ pub struct RecordPage {
     entry_menu: Option<EntryMenu>,
     /// An entry being edited in place, with its editor.
     entry_edit: Option<(EntryId, Entity<TextareaState>)>,
+    /// The page's scroll, and a newly opened entry editor to bring into
+    /// view once it is laid out (it may open near the bottom).
+    scroll: gpui_kit::ScrollHandle,
+    reveal_editor: std::rc::Rc<std::cell::Cell<bool>>,
     /// The knowledge section's New menu, with its highlighted row.
     kb_new_menu: Option<usize>,
     folders_open: bool,
@@ -171,6 +181,8 @@ impl RecordPage {
             status_menu: None,
             entry_menu: None,
             entry_edit: None,
+            scroll: gpui_kit::ScrollHandle::new(),
+            reveal_editor: Default::default(),
             kb_new_menu: None,
             folders_open: false,
             table_filter: table::Filter::Open,
@@ -616,6 +628,7 @@ impl RecordPage {
         );
         self._subs.push(sub);
         self.entry_edit = Some((id, state));
+        self.reveal_editor.set(true);
         cx.notify();
     }
 
@@ -1150,23 +1163,13 @@ impl RecordPage {
             (Icon::FolderOpen, t.text_secondary, t.text_primary)
         };
         let budget = paths_view::budget(220.);
-        let header = ui::focusable(div().id("folder-row"), t, false)
+        let mut line = div()
             .flex()
             .flex_row()
             .items_center()
             .gap(px(8.))
             .h(px(28.))
-            .px(px(8.))
-            .ml(px(-8.))
-            .rounded(px(RADIUS_SM))
-            .hover({
-                let hover = t.fill_hover;
-                move |s| s.bg(hover)
-            })
-            .on_click(cx.listener(|page, _, _, cx| {
-                page.folders_open = !page.folders_open;
-                cx.notify();
-            }))
+            .min_w_0()
             .child(icon(
                 if self.folders_open {
                     Icon::ChevronDown
@@ -1206,31 +1209,66 @@ impl RecordPage {
                             &[("n", Arg::Count(missing_extra as u64))],
                         )),
                 )
-            })
-            .children(origin)
-            .when(primary_missing, |this| {
-                let from = primary.from;
-                let path = primary.path.clone();
-                this.child(
-                    type_scale::SMALL
-                        .el()
-                        .text_color(t.text_secondary)
-                        .child(text(locale, Key::FoldersNotFound)),
-                )
-                .child(
-                    ui::button(
-                        "folder-locate",
-                        text(locale, Key::FoldersLocate),
-                        Variant::Ghost,
-                        false,
-                        t,
-                    )
-                    .on_click(cx.listener(move |page, _, _, cx| {
-                        cx.stop_propagation();
-                        page.locate(from, path.clone(), cx)
-                    })),
-                )
             });
+        // The label, then the not-found words and Locate: what follows the
+        // path, in that fixed order.
+        let mut tail: Vec<AnyElement> = origin.into_iter().map(|o| o.into_any_element()).collect();
+        if primary_missing {
+            let from = primary.from;
+            let path = primary.path.clone();
+            tail.push(
+                type_scale::SMALL
+                    .el()
+                    .text_color(t.text_secondary)
+                    .child(text(locale, Key::FoldersNotFound))
+                    .into_any_element(),
+            );
+            tail.push(
+                ui::button(
+                    "folder-locate",
+                    text(locale, Key::FoldersLocate),
+                    Variant::Ghost,
+                    false,
+                    t,
+                )
+                .on_click(cx.listener(move |page, _, _, cx| {
+                    cx.stop_propagation();
+                    page.locate(from, path.clone(), cx)
+                }))
+                .into_any_element(),
+            );
+        }
+        let two_line = ui::two_line_rows() && !tail.is_empty();
+        let header = ui::focusable(div().id("folder-row"), t, false)
+            .px(px(8.))
+            .ml(px(-8.))
+            .rounded(px(RADIUS_SM))
+            .hover({
+                let hover = t.fill_hover;
+                move |s| s.bg(hover)
+            })
+            .on_click(cx.listener(|page, _, _, cx| {
+                page.folders_open = !page.folders_open;
+                cx.notify();
+            }));
+        let header = if two_line {
+            // Under 520, 52 high: the second line starts under the path
+            // (chevron 16, icon 16, two gaps of 8).
+            header.flex().flex_col().h(px(52.)).child(line).child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(8.))
+                    .h(px(24.))
+                    .pl(px(48.))
+                    .min_w_0()
+                    .children(tail),
+            )
+        } else {
+            line = line.children(tail);
+            header.flex().child(line)
+        };
         if !self.folders_open {
             return header.into_any_element();
         }
@@ -1631,70 +1669,24 @@ impl RecordPage {
         let id = entry.id;
         let kind = entry.kind;
         let open = self.kb_open == Some(id);
-        let human = when::initial(&when::human_name(locale));
-        let row = ui::focusable(div().id(("kb-row", index)), t, false)
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(8.))
-            .h(px(32.))
-            .px(px(8.))
-            .mx(px(-8.))
-            .rounded(px(RADIUS_SM))
-            .hover({
-                let hover = t.fill_hover;
-                move |s| s.bg(hover)
-            })
-            .on_click(cx.listener(move |page, _, _, cx| match kind {
+        let unread = self.ws.read(cx).is_unread(acta_core::model::Record::Kb(id));
+        let row = crate::kb_page::kb_row(entry, None, unread, index, locale, t).on_click(
+            cx.listener(move |page, _, _, cx| match kind {
                 KbKind::Document => cx.emit(PageEvent::Open(Route::Kb(id))),
                 KbKind::Memory => {
                     page.kb_open = if page.kb_open == Some(id) {
                         None
                     } else {
+                        // Unfolded is shown: the dot goes.
+                        page.ws.update(cx, |ws, cx| {
+                            ws.mark_seen(acta_core::model::Record::Kb(id), cx)
+                        });
                         Some(id)
                     };
                     cx.notify();
                 }
-            }))
-            .child(icon(
-                if kind == KbKind::Document {
-                    Icon::FileText
-                } else {
-                    Icon::Pin
-                },
-                16.,
-                t.text_secondary,
-            ))
-            .child(
-                type_scale::UI
-                    .el()
-                    .flex_shrink_0()
-                    .max_w(gpui_kit::relative(0.4))
-                    .truncate()
-                    .text_color(t.text_primary)
-                    .child(entry.title.clone()),
-            )
-            .child(
-                type_scale::UI
-                    .el()
-                    .ml(px(4.))
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .text_color(t.text_secondary)
-                    .child(entry.summary.clone()),
-            )
-            .child(ui::author_mark(entry.updated_by, &human, t))
-            .child(
-                type_scale::SMALL
-                    .el()
-                    .w(px(72.))
-                    .flex_shrink_0()
-                    .text_right()
-                    .font_features(type_scale::tabular())
-                    .text_color(t.text_tertiary)
-                    .child(when::compact(locale, entry.updated_at)),
-            );
+            }),
+        );
         if !open {
             return row.into_any_element();
         }
@@ -2179,7 +2171,22 @@ impl RecordPage {
             .filter(|(id, _)| *id == entry.id)
             .map(|(_, editor)| editor.clone());
         let body: AnyElement = match editing {
-            Some(editor) => editor_box(&editor, locale, t, cx),
+            // Scrolled into view once laid out, by the least amount
+            // (an entry near the bottom opens its editor below the fold).
+            Some(editor) => {
+                let reveal = std::rc::Rc::clone(&self.reveal_editor);
+                let scroll = self.scroll.clone();
+                div()
+                    .relative()
+                    .child(editor_box(&editor, locale, t, cx))
+                    .child(ui::measure(move |bounds, window| {
+                        if reveal.replace(false) {
+                            ui::scroll_into_view(&scroll, bounds, ui::Reveal::Whole);
+                            window.refresh();
+                        }
+                    }))
+                    .into_any_element()
+            }
             None => {
                 markdown_view::short(("entry", index), entry.text.clone(), t).into_any_element()
             }
@@ -2928,6 +2935,7 @@ impl Render for RecordPage {
             }
         }
         ui::page_scroll("record-page")
+            .track_scroll(&self.scroll)
             .track_focus(&self.focus)
             .key_context("RecordPage")
             .on_action(cx.listener(|page, _: &OpenStatusMenu, window, cx| {

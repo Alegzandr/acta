@@ -8,6 +8,7 @@
 use std::collections::HashSet;
 
 use acta_core::model::{EpicId, ProjectId, ProjectTree, Status, TopicId, TopicSummary};
+use acta_core::store::Unread;
 
 use crate::route::Route;
 
@@ -122,6 +123,42 @@ impl Row {
             }
             _ => None,
         }
+    }
+}
+
+/// Whether a row shows the unread dot (interaction.md 6.5, rule 3): a
+/// topic Claude Code changed since it was last shown; a collapsed epic or
+/// project holding one (so the dot is never folded away); the Knowledge
+/// row of a project with an entry Claude Code changed.
+pub fn row_unread(row: &Row, projects: &[ProjectTree], unread: &Unread) -> bool {
+    if unread.topics.is_empty() && unread.kb.is_empty() {
+        return false;
+    }
+    match row {
+        Row::Topic { id, .. } => unread.topics.contains(id),
+        Row::Epic {
+            id,
+            expanded: false,
+            ..
+        } => projects
+            .iter()
+            .flat_map(|t| &t.epics)
+            .filter(|(e, _)| e.id == *id)
+            .flat_map(|(_, topics)| topics)
+            .any(|t| unread.topics.contains(&t.id)),
+        Row::Project {
+            id,
+            expanded: false,
+            ..
+        } => projects.iter().filter(|t| t.project.id == *id).any(|t| {
+            unread.project_has_kb(*id)
+                || t.loose_topics
+                    .iter()
+                    .chain(t.epics.iter().flat_map(|(_, topics)| topics))
+                    .any(|topic| unread.topics.contains(&topic.id))
+        }),
+        Row::Knowledge { project, .. } => unread.project_has_kb(*project),
+        _ => false,
     }
 }
 
@@ -596,6 +633,49 @@ pub mod sample {
 mod tests {
     use super::sample::acta;
     use super::*;
+
+    #[test]
+    fn the_unread_dot_follows_topics_folded_parents_and_knowledge() {
+        let projects = acta();
+        let unread = Unread {
+            topics: [TopicId(3)].into_iter().collect(),
+            kb: vec![(acta_core::model::KbId(9), ProjectId(1))],
+        };
+        let topic = |id| Row::Topic {
+            id: TopicId(id),
+            title: String::new(),
+            status: Status::Active,
+            depth: 2,
+        };
+        let epic = |expanded| Row::Epic {
+            id: EpicId(1),
+            project: ProjectId(1),
+            title: "Terminal".into(),
+            expanded,
+        };
+        let project = |id, expanded| Row::Project {
+            id: ProjectId(id),
+            title: String::new(),
+            expanded,
+        };
+        assert!(row_unread(&topic(3), &projects, &unread));
+        assert!(!row_unread(&topic(2), &projects, &unread));
+        assert!(row_unread(&epic(false), &projects, &unread), "folded");
+        assert!(
+            !row_unread(&epic(true), &projects, &unread),
+            "the topic shows it"
+        );
+        assert!(row_unread(&project(1, false), &projects, &unread));
+        assert!(!row_unread(&project(1, true), &projects, &unread));
+        assert!(!row_unread(&project(2, false), &projects, &unread));
+        let knowledge = |p| Row::Knowledge {
+            project: ProjectId(p),
+            count: 1,
+        };
+        assert!(row_unread(&knowledge(1), &projects, &unread));
+        assert!(!row_unread(&knowledge(2), &projects, &unread));
+        assert!(!row_unread(&topic(3), &projects, &Unread::default()));
+    }
 
     fn labels(rows: &[Row]) -> Vec<String> {
         rows.iter()

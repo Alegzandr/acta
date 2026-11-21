@@ -22,10 +22,16 @@ pub enum Command {
     NewDocument,
     NewMemory,
     ReviewMemories,
+    /// The open document's "Go to heading...", "Save as file...",
+    /// "Move to..." (components-knowledge.md 5).
+    GoHeading,
+    SaveFile,
+    KbMoveTo,
     SetStatus(Status),
     Back,
     Forward,
     Undo,
+    Redo,
     ToggleSidebar,
     ToggleRight,
     ToggleBottom,
@@ -103,6 +109,8 @@ pub struct Context {
     pub has_project: bool,
     pub on_topic: bool,
     pub on_record: bool,
+    /// A document or memory is open in its reading view.
+    pub on_doc: bool,
     pub can_back: bool,
     pub can_forward: bool,
     /// More than one tab is open; a closed tab can be reopened.
@@ -189,6 +197,9 @@ impl Command {
         out.push(Command::ChatBrowser);
         #[cfg(windows)]
         out.push(Command::ChatSignOut);
+        if ctx.on_doc {
+            out.extend([Command::GoHeading, Command::SaveFile, Command::KbMoveTo]);
+        }
         out.push(Command::NewProject);
         if ctx.can_back {
             out.push(Command::Back);
@@ -203,6 +214,7 @@ impl Command {
             out.push(Command::ReopenTab);
         }
         out.push(Command::Undo);
+        out.push(Command::Redo);
         // The workbench layout (4.8): the focused view's commands first,
         // then the areas, every other view, the page groups, recovery.
         if let Some(focused) = ctx.focused_view
@@ -290,9 +302,13 @@ impl Command {
             Command::NewDocument => Key::KbNewDocument,
             Command::NewMemory => Key::KbNewMemory,
             Command::ReviewMemories => Key::CmdKbReview,
+            Command::GoHeading => Key::CmdGoHeading,
+            Command::SaveFile => Key::CmdSaveFile,
+            Command::KbMoveTo => Key::KbMoveTo,
             Command::Back => Key::CmdBack,
             Command::Forward => Key::CmdForward,
             Command::Undo => Key::CmdUndo,
+            Command::Redo => Key::CmdRedo,
             Command::ToggleSidebar => Key::CmdToggleSidebar,
             Command::ToggleRight => Key::CmdToggleRight,
             Command::ToggleBottom => Key::CmdToggleBottom,
@@ -424,6 +440,8 @@ impl Command {
             Command::TerminalLarger => vec![KeyName::Ctrl.label(locale, macos), alt, "="],
             Command::TerminalSmaller => vec![KeyName::Ctrl.label(locale, macos), alt, "-"],
             Command::Undo => vec![m, "Z"],
+            Command::Redo => vec![m, shift, "Z"],
+            Command::GoHeading => vec![m, shift, "O"],
             Command::Back if macos => vec![m, "["],
             Command::Forward if macos => vec![m, "]"],
             Command::Back => vec![alt, "\u{2190}"],

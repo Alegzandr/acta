@@ -1429,6 +1429,9 @@ struct UndoStep {
 #[derive(Clone, Debug, Default)]
 pub struct UndoLog {
     steps: Vec<UndoStep>,
+    /// The layouts undone, newest last, for `Mod+Shift+Z`. A new change
+    /// clears them.
+    redo: Vec<UndoStep>,
 }
 
 impl UndoLog {
@@ -1436,6 +1439,7 @@ impl UndoLog {
     /// same `coalesce` key as the newest step, within a second of it
     /// (`(key, now in ms)`), joins that step.
     pub fn record(&mut self, before: Layout, seq: u64, coalesce: Option<(&'static str, u64)>) {
+        self.redo.clear();
         if let (Some((key, now)), Some(last)) = (coalesce, self.steps.last_mut())
             && let Some((last_key, at)) = last.coalesce
             && last_key == key
@@ -1454,14 +1458,38 @@ impl UndoLog {
         }
     }
 
-    /// The layout before the newest step, which leaves the log.
-    pub fn undo(&mut self) -> Option<Layout> {
-        self.steps.pop().map(|s| s.before)
+    /// The layout before the newest step, which leaves the log; `current`
+    /// (the layout the step left) becomes the newest redo, ordered `seq`.
+    pub fn undo(&mut self, current: Layout, seq: u64) -> Option<Layout> {
+        let step = self.steps.pop()?;
+        self.redo.push(UndoStep {
+            before: current,
+            seq,
+            coalesce: None,
+        });
+        Some(step.before)
+    }
+
+    /// The layout the newest undo took back; `current` becomes an undo
+    /// step again, ordered `seq`, without clearing the other redos.
+    pub fn redo(&mut self, current: Layout, seq: u64) -> Option<Layout> {
+        let step = self.redo.pop()?;
+        self.steps.push(UndoStep {
+            before: current,
+            seq,
+            coalesce: None,
+        });
+        Some(step.before)
     }
 
     /// The order of the newest step, to compare with the writes' undo.
     pub fn newest(&self) -> Option<u64> {
         self.steps.last().map(|s| s.seq)
+    }
+
+    /// The order of the newest redo, to compare with the writes' redo.
+    pub fn newest_redo(&self) -> Option<u64> {
+        self.redo.last().map(|s| s.seq)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -2086,17 +2114,44 @@ mod tests {
         );
         log.record(b.clone(), 5, Some(("grow", 13_000)));
         assert_eq!(log.newest(), Some(5));
-        assert_eq!(log.undo().map(|l| l.left.size), Some(300.));
-        assert_eq!(log.undo().map(|l| l.left.size), Some(300.));
-        assert_eq!(log.undo(), Some(a));
-        assert!(log.undo().is_none() && log.is_empty());
+        let now = base();
+        assert_eq!(log.undo(now.clone(), 6).map(|l| l.left.size), Some(300.));
+        assert_eq!(log.undo(now.clone(), 7).map(|l| l.left.size), Some(300.));
+        assert_eq!(log.undo(now.clone(), 8), Some(a));
+        assert!(log.undo(now.clone(), 9).is_none() && log.is_empty());
         for i in 0..60 {
             log.record(base(), i, None);
         }
         let mut n = 0;
-        while log.undo().is_some() {
+        while log.undo(base(), 100).is_some() {
             n += 1;
         }
         assert_eq!(n, UNDO_DEPTH);
+    }
+
+    #[test]
+    fn redo_puts_back_what_undo_took_and_a_new_change_clears_it() {
+        let mut log = UndoLog::default();
+        let a = base();
+        let mut b = a.clone();
+        b.left.size = 300.;
+        let mut c = b.clone();
+        c.left.size = 320.;
+        // a -> b -> c, then undo twice.
+        log.record(a.clone(), 1, None);
+        log.record(b.clone(), 2, None);
+        assert_eq!(log.undo(c.clone(), 3), Some(b.clone()));
+        assert_eq!(log.undo(b.clone(), 4), Some(a.clone()));
+        assert_eq!(log.newest_redo(), Some(4));
+        // Redo walks forward in order, and each redo is undoable again.
+        assert_eq!(log.redo(a.clone(), 5), Some(b.clone()));
+        assert_eq!(log.newest(), Some(5));
+        assert_eq!(log.newest_redo(), Some(3));
+        assert_eq!(log.redo(b.clone(), 6), Some(c.clone()));
+        assert!(log.redo(c.clone(), 7).is_none());
+        assert_eq!(log.undo(c.clone(), 8), Some(b.clone()));
+        // A new change drops what was left to redo.
+        log.record(b.clone(), 9, None);
+        assert!(log.newest_redo().is_none());
     }
 }

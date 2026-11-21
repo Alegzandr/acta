@@ -204,7 +204,9 @@ fn exports_cli(os: Os, portable: bool) -> bool {
 fn velopack_bootstrap() -> bool {
     // Before `run`, which removes the variable.
     let restarted = restarted_by_updater();
-    let app = VelopackApp::build();
+    // Velopack's startup apply shows its updater's native dialog; Acta
+    // applies a pending package itself, silently (update.rs).
+    let app = VelopackApp::build().set_auto_apply_on_startup(false);
     // Velopack only has these hooks on Windows. Elsewhere the export is done
     // by the check at every start, and there is no uninstall step to hook.
     #[cfg(windows)]
