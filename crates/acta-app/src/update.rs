@@ -205,6 +205,11 @@ impl Gate {
     pub fn claim_apply(&self) -> bool {
         self.claim(APPLY)
     }
+
+    /// The window has already been promised (a launch the updater started).
+    fn window_claimed(&self) -> bool {
+        self.0.load(Ordering::SeqCst) == WINDOW
+    }
 }
 
 /// Progress reports from the worker to the waiting launch.
@@ -392,7 +397,12 @@ fn work<F: Feed>(
     state: &Arc<LaunchState>,
 ) -> Result<Option<F::Update>, String> {
     let started = Instant::now();
-    if let Some((version, update)) = feed.pending() {
+    // A launch the updater started never applies (the relaunch-loop guard),
+    // so it skips the package on disk too and asks the feed: a newer
+    // release is downloaded and supersedes a package that failed to apply.
+    if !gate.window_claimed()
+        && let Some((version, update)) = feed.pending()
+    {
         // Downloaded by an earlier launch: no feed, no download.
         if !gate.claim_apply() {
             log::line(&format!(
@@ -681,9 +691,21 @@ mod tests {
         assert_eq!(feed.downloads.get(), 0);
         assert_eq!(state.status(), Status::Restarting);
         assert!(reports(&receiver).is_empty());
-        // Started by the updater (a failed apply): the relaunch-loop guard.
-        let result = work(&feed, &launch_gate(true), &sender, &state);
+    }
+
+    #[test]
+    fn a_launch_the_updater_started_skips_the_stuck_package_and_asks_the_feed() {
+        // The package on disk failed to apply; a newer release is out.
+        let feed = FakeFeed {
+            pending: true,
+            ..FakeFeed::default()
+        };
+        let (sender, receiver) = mpsc::channel();
+        let result = work(&feed, &launch_gate(true), &sender, &Arc::default());
+        // Downloaded for the next launch, never applied in this one.
         assert_eq!(result, Ok(None));
+        assert_eq!((feed.downloads.get(), feed.applies.get()), (1, 0));
+        assert_eq!(reports(&receiver), [Progress::Downloading]);
     }
 
     fn reports(receiver: &Receiver<Progress>) -> Vec<Progress> {
