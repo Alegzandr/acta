@@ -5,6 +5,7 @@
 pub mod agent;
 pub mod db;
 pub mod error;
+pub mod folder_identity;
 pub mod folder_path;
 mod fsutil;
 pub mod keys;
