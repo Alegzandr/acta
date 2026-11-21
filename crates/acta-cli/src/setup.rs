@@ -421,6 +421,7 @@ impl Setup<'_> {
                 },
             );
         } else {
+            record["statusline_opt_out"] = json!(true);
             steps.push(Step::new("status line", true, "skipped (--no-statusline)"));
         }
         if let Err(e) = self.save_record(&record) {
@@ -499,12 +500,20 @@ impl Setup<'_> {
                     .and_then(Value::as_str)
                     .map(str::to_owned)
             });
-        let wrapped = self.record()["statusline_original"].is_object();
+        let record = self.record();
+        let wrapped = record["statusline_original"].is_object();
+        let opted_out = record["statusline_opt_out"] == json!(true);
         steps.push(match current {
             Some(c) if c == ours && wrapped => {
                 Step::new("status line", true, "Acta's, after your own status line")
             }
             Some(c) if c == ours => Step::new("status line", true, "Acta's"),
+            _ if opted_out => Step::new("status line", true, "skipped (--no-statusline)"),
+            Some(c) if crate::statusline::is_acta_statusline(&c) => Step::new(
+                "status line",
+                false,
+                "Acta's from another install: run acta setup",
+            ),
             Some(_) => Step::new(
                 "status line",
                 false,
@@ -540,7 +549,16 @@ impl Setup<'_> {
                 Err(e) => steps.push(Step::new("marketplace", false, one_line(&e))),
             },
         }
-        if record["statusline_added"] == json!(true) {
+        let acta_line = read_settings(&self.settings_path())
+            .ok()
+            .flatten()
+            .and_then(|v| {
+                v.pointer("/statusLine/command")
+                    .and_then(Value::as_str)
+                    .map(crate::statusline::is_acta_statusline)
+            })
+            .unwrap_or(false);
+        if record["statusline_added"] == json!(true) || acta_line {
             let command = statusline_command(&self.exe);
             let mut r = record.clone();
             steps.push(
@@ -808,13 +826,18 @@ pub fn edit_status_line(
     let mut v = existing.clone().unwrap_or_else(|| json!({}));
     let obj = v.as_object_mut().expect("object");
     let current = obj.get("statusLine").cloned();
-    let is_ours = current
+    let current_command = current
         .as_ref()
         .and_then(|c| c.get("command"))
-        .and_then(Value::as_str)
-        == Some(command);
+        .and_then(Value::as_str);
+    // Any Acta status line is ours, wherever its `acta` lives (an older
+    // install, a moved data folder): it is rewritten, never kept as the
+    // user's own.
+    let is_ours = current_command.is_some_and(crate::statusline::is_acta_statusline);
     let detail = if add {
-        if is_ours {
+        record["statusline_opt_out"] = Value::Null;
+        if current_command == Some(command) {
+            record["statusline_added"] = json!(true);
             return Ok("already present");
         }
         let mut line = match &current {
@@ -824,12 +847,17 @@ pub fn edit_status_line(
         line["type"] = json!("command");
         line["command"] = json!(command);
         obj.insert("statusLine".into(), line);
-        record["statusline_original"] = current.clone().unwrap_or(Value::Null);
+        if !is_ours {
+            // The user's own status line (or none): kept whole.
+            record["statusline_original"] = current.clone().unwrap_or(Value::Null);
+        }
         record["statusline_added"] = json!(true);
         if record["created_settings"].is_null() {
             record["created_settings"] = json!(existing.is_none());
         }
-        if current.is_some() {
+        if is_ours {
+            "updated to this Acta"
+        } else if current.is_some() {
             "added after your own status line, which still shows first"
         } else {
             "added: plan usage is recorded"
@@ -1182,7 +1210,8 @@ mod tests {
         assert!(!s.settings_path().exists());
         let check = s.check();
         assert!(!check.iter().find(|x| x.name == "allow rule").unwrap().ok);
-        assert!(!check.iter().find(|x| x.name == "status line").unwrap().ok);
+        // The status line opt-out is recorded: skipped, not missing.
+        assert!(check.iter().find(|x| x.name == "status line").unwrap().ok);
         let json_out: Value = serde_json::from_str(&render_steps(&check, true)).unwrap();
         assert_eq!(json_out["ok"], false);
         assert_eq!(json_out["steps"].as_array().unwrap().len(), 7);
@@ -1241,6 +1270,68 @@ mod tests {
         let back: Value =
             serde_json::from_str(&fs::read_to_string(s.settings_path()).unwrap()).unwrap();
         assert_eq!(back, serde_json::from_str::<Value>(user).unwrap());
+    }
+
+    #[test]
+    fn an_acta_status_line_from_another_path_is_rewritten_never_kept_as_the_users() {
+        let tmp = tempfile::tempdir().unwrap();
+        let claude = FakeClaude::default();
+        let s = setup(tmp.path(), &claude);
+        let user =
+            json!({"statusLine": {"type": "command", "command": "~/.claude/alexandre-line.sh"}});
+        fs::create_dir_all(&s.claude_dir).unwrap();
+        fs::write(s.settings_path(), user.to_string()).unwrap();
+        assert!(s.install_with(false, true).iter().all(|x| x.ok));
+        // Another install's Acta command replaces ours in settings (an older
+        // path), then setup runs again from here.
+        let mut v: Value =
+            serde_json::from_str(&fs::read_to_string(s.settings_path()).unwrap()).unwrap();
+        v["statusLine"]["command"] = json!("C:/Old/Acta/bin/acta.exe statusline");
+        fs::write(s.settings_path(), v.to_string()).unwrap();
+        let line = s
+            .check()
+            .into_iter()
+            .find(|x| x.name == "status line")
+            .unwrap();
+        assert!(
+            !line.ok && line.detail.contains("another install"),
+            "{line:?}"
+        );
+        let again = s.install_with(false, true);
+        let line = again.iter().find(|x| x.name == "status line").unwrap();
+        assert_eq!(line.detail, "updated to this Acta");
+        // The user's original is still the recorded one, never an Acta command.
+        assert_eq!(
+            s.record()["statusline_original"]["command"],
+            "~/.claude/alexandre-line.sh"
+        );
+        assert!(s.remove().iter().all(|x| x.ok));
+        let back: Value =
+            serde_json::from_str(&fs::read_to_string(s.settings_path()).unwrap()).unwrap();
+        assert_eq!(back, user);
+    }
+
+    #[test]
+    fn the_status_line_opt_out_is_recorded_and_checked_as_done() {
+        let tmp = tempfile::tempdir().unwrap();
+        let claude = FakeClaude::default();
+        let s = setup(tmp.path(), &claude);
+        assert!(s.install_with(true, false).iter().all(|x| x.ok));
+        let line = s
+            .check()
+            .into_iter()
+            .find(|x| x.name == "status line")
+            .unwrap();
+        assert!(line.ok && line.detail.contains("skipped"), "{line:?}");
+        // Setup without the flag clears the opt-out and adds it.
+        assert!(s.install_with(true, true).iter().all(|x| x.ok));
+        assert_eq!(s.record()["statusline_opt_out"], Value::Null);
+        let line = s
+            .check()
+            .into_iter()
+            .find(|x| x.name == "status line")
+            .unwrap();
+        assert_eq!(line.detail, "Acta's");
     }
 
     #[test]
