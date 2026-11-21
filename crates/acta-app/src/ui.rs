@@ -560,6 +560,35 @@ thread_local! {
     /// page group (workbench.md 4.8.8). Set around a group's page by
     /// [`NarrowPage`].
     static PAGE_PADDING: std::cell::Cell<f32> = const { std::cell::Cell::new(32.) };
+    /// The width of the content column being laid out, set the same way
+    /// (unknown: as wide as can be).
+    static COLUMN_WIDTH: std::cell::Cell<f32> = const { std::cell::Cell::new(f32::MAX) };
+}
+
+/// Under this column width, knowledge rows and the folder row take their
+/// two-line, 52 high form (components-knowledge.md 5; components-folders.md
+/// 5; screens.md 8.4).
+pub const TWO_LINE_UNDER: f32 = 520.;
+
+/// Whether rows in a column `width` wide take their two-line form.
+pub fn two_line(width: f32) -> bool {
+    width < TWO_LINE_UNDER
+}
+
+/// Whether the rows of the column being laid out take their two-line form.
+pub fn two_line_rows() -> bool {
+    two_line(COLUMN_WIDTH.with(|w| w.get()))
+}
+
+/// The content column of a page group `group_width` wide: the group less
+/// its side padding, at most the Reading width.
+pub fn page_column_width(group_width: f32, narrow: bool) -> f32 {
+    column_width_in(group_width, narrow, column_max())
+}
+
+fn column_width_in(group_width: f32, narrow: bool, max: f32) -> f32 {
+    let padding = if narrow { 16. } else { 32. };
+    (group_width - 2. * padding).min(max)
 }
 
 /// The side padding of pages (docs/design/layout.md 4.2; 16 in a page
@@ -574,11 +603,22 @@ pub fn page_padding() -> f32 {
 pub struct NarrowPage {
     child: gpui_kit::AnyElement,
     narrow: bool,
+    column: f32,
 }
 
 impl NarrowPage {
     pub fn new(child: gpui_kit::AnyElement, narrow: bool) -> Self {
-        Self { child, narrow }
+        Self {
+            child,
+            narrow,
+            column: f32::MAX,
+        }
+    }
+
+    /// The width of the content column inside (for the two-line rows).
+    pub fn column(mut self, width: f32) -> Self {
+        self.column = width;
+        self
     }
 }
 
@@ -610,8 +650,10 @@ impl gpui_kit::Element for NarrowPage {
         cx: &mut gpui_kit::App,
     ) -> (gpui_kit::LayoutId, ()) {
         let before = PAGE_PADDING.with(|p| p.replace(if self.narrow { 16. } else { 32. }));
+        let column = COLUMN_WIDTH.with(|w| w.replace(self.column));
         let id = self.child.request_layout(window, cx);
         PAGE_PADDING.with(|p| p.set(before));
+        COLUMN_WIDTH.with(|w| w.set(column));
         (id, ())
     }
 
@@ -748,4 +790,22 @@ pub fn ghost_value(id: impl Into<ElementId>, tokens: &Tokens) -> Stateful<Div> {
         .rounded(px(RADIUS_SM))
         .text_color(tokens.text_primary)
         .hover(move |s| s.bg(hover))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rows_take_two_lines_in_a_column_under_520() {
+        // screens.md 8.4: at 880 with the terminal docked the column is
+        // 468, so the rows fold; a wide page keeps one line.
+        assert!(two_line(column_width_in(532., false, 720.)));
+        assert!(!two_line(column_width_in(1100., false, 720.)));
+        // The Reading width caps the column: Narrow (480) always folds.
+        assert!(two_line(column_width_in(1100., false, 480.)));
+        // A narrow group pads 16 a side.
+        assert_eq!(column_width_in(440., true, 720.), 408.);
+        assert!(!two_line(f32::MAX), "unknown width: one line");
+    }
 }

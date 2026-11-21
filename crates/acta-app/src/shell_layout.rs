@@ -2208,6 +2208,13 @@ impl Shell {
                     ViewId::Inbox => bench.inbox_view.clone().map(|v| v.into_any_element()),
                     _ => bench.knowledge_view.clone().map(|v| v.into_any_element()),
                 };
+                // A side area's width less the view's padding of 12 a side;
+                // the bottom panel is as wide as the window.
+                let column = match place {
+                    Place::Side(Side::Left | Side::Right) => bench.layout.area(place).size - 24.,
+                    _ => f32::MAX,
+                };
+                let page = page.map(|p| ui::NarrowPage::new(p, false).column(column));
                 div()
                     .id("view-page")
                     .track_focus(&focus)
@@ -2331,7 +2338,8 @@ impl Shell {
         };
         let header_h = if show_bar { TAB_BAR } else { 0. };
         // 4.8.8: under 452 of group width, pages pad 16 a side.
-        let narrow = geometry.borrow().page_widths[group.min(2)] < NARROW_GROUP;
+        let group_width = geometry.borrow().page_widths[group.min(2)];
+        let narrow = group_width < NARROW_GROUP;
         div()
             .id(("page-group", group))
             .track_focus(&focus)
@@ -2356,10 +2364,10 @@ impl Shell {
             .children(strip)
             .children(bulk)
             .child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .child(ui::NarrowPage::new(content, narrow)),
+                div().flex_1().min_h_0().child(
+                    ui::NarrowPage::new(content, narrow)
+                        .column(ui::page_column_width(group_width, narrow)),
+                ),
             )
             .into_any_element()
     }

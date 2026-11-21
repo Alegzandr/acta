@@ -74,8 +74,9 @@ fn owner_route(owner: Owner) -> Route {
 }
 
 /// A knowledge row: kind icon, title, summary (or excerpt), author mark,
-/// compact time (docs/design/components-knowledge.md 5).
-fn kb_row(
+/// compact time (docs/design/components-knowledge.md 5). Under a column of
+/// 520 the summary takes a second line and the row is 52.
+pub(crate) fn kb_row(
     entry: &KbSummary,
     excerpt: Option<&str>,
     unread: bool,
@@ -114,42 +115,33 @@ fn kb_row(
             .child(entry.summary.clone())
             .into_any_element(),
     };
-    ui::focusable(div().id(("kb-row", index)), t, false)
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap(px(8.))
-        .h(px(32.))
-        .px(px(8.))
-        .mx(px(-8.))
-        .rounded(px(RADIUS_SM))
-        .hover({
-            let hover = t.fill_hover;
-            move |s| s.bg(hover)
-        })
-        .child(icon(
-            match entry.kind {
-                KbKind::Document => Icon::FileText,
-                KbKind::Memory => Icon::Pin,
-            },
-            16.,
-            t.text_secondary,
-        ))
-        .child(
-            type_scale::UI
-                .el()
-                .flex_shrink_0()
-                .max_w(gpui_kit::relative(0.4))
-                .truncate()
-                .text_color(t.text_primary)
-                .child(entry.title.clone()),
-        )
-        // 12 between title and summary: the row's gap of 8 plus 4.
-        .child(div().ml(px(4.)).flex_1().min_w_0().flex().child(summary))
-        // The unread dot sits left of the author mark (5, Knowledge row).
-        .when(unread, |this| this.child(ui::unread_dot(t)))
-        .child(ui::author_mark(entry.updated_by, &human, t))
-        .child(
+    let two_line = ui::two_line_rows();
+    let kind = icon(
+        match entry.kind {
+            KbKind::Document => Icon::FileText,
+            KbKind::Memory => Icon::Pin,
+        },
+        16.,
+        t.text_secondary,
+    );
+    let title = type_scale::UI
+        .el()
+        .truncate()
+        .text_color(t.text_primary)
+        .child(entry.title.clone());
+    let title = if two_line {
+        title.flex_1().min_w_0()
+    } else {
+        title.flex_shrink_0().max_w(gpui_kit::relative(0.4))
+    };
+    // The unread dot sits left of the author mark (5, Knowledge row).
+    let trailing = || -> Vec<AnyElement> {
+        let mut out = Vec::new();
+        if unread {
+            out.push(ui::unread_dot(t).into_any_element());
+        }
+        out.push(ui::author_mark(entry.updated_by, &human, t).into_any_element());
+        out.push(
             type_scale::SMALL
                 .el()
                 .w(px(72.))
@@ -157,8 +149,49 @@ fn kb_row(
                 .text_right()
                 .font_features(type_scale::tabular())
                 .text_color(t.text_tertiary)
-                .child(when::compact(locale, entry.updated_at)),
-        )
+                .child(when::compact(locale, entry.updated_at))
+                .into_any_element(),
+        );
+        out
+    };
+    let row = ui::focusable(div().id(("kb-row", index)), t, false)
+        .px(px(8.))
+        .mx(px(-8.))
+        .rounded(px(RADIUS_SM))
+        .hover({
+            let hover = t.fill_hover;
+            move |s| s.bg(hover)
+        });
+    if two_line {
+        // The summary under the title, aligned with it (16 + 8).
+        row.flex()
+            .flex_col()
+            .justify_center()
+            .h(px(52.))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(8.))
+                    .h(px(24.))
+                    .child(kind)
+                    .child(title)
+                    .children(trailing()),
+            )
+            .child(div().flex().h(px(20.)).pl(px(24.)).min_w_0().child(summary))
+    } else {
+        row.flex()
+            .flex_row()
+            .items_center()
+            .gap(px(8.))
+            .h(px(32.))
+            .child(kind)
+            .child(title)
+            // 12 between title and summary: the row's gap of 8 plus 4.
+            .child(div().ml(px(4.)).flex_1().min_w_0().flex().child(summary))
+            .children(trailing())
+    }
 }
 
 // ---- knowledge base page ----
