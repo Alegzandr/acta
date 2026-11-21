@@ -2350,3 +2350,14 @@ fn set_due_writes_the_event_and_the_author() {
     let far = Date::from_days(crate::time::days_from_civil(2100, 1, 1));
     assert!(store.set_due(Owner::Topic(t), Some(far), H).is_err());
 }
+
+#[test]
+fn the_main_connection_has_a_16_mib_page_cache() {
+    let t = open();
+    let kib: i64 = t
+        .store
+        .conn
+        .pragma_query_value(None, "cache_size", |r| r.get(0))
+        .unwrap();
+    assert_eq!(kib, -16_384);
+}

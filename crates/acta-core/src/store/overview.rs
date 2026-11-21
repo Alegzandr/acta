@@ -964,8 +964,8 @@ mod tests {
     /// entries, 2,000 notes and 1,000 memories in at most 5 ms. Timed
     /// locally (`cargo test -p acta-core --release -- --ignored
     /// overview_timing --nocapture`), not asserted: a timing would be
-    /// flaky in CI. `ACTA_TIMING_CACHE_KIB` sets the page cache for the run
-    /// (SQLite's default is 2,000 KiB).
+    /// flaky in CI. `ACTA_TIMING_CACHE_KIB` overrides the store's page cache
+    /// for the run.
     #[test]
     #[ignore]
     fn overview_timing() {
