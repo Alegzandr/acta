@@ -198,6 +198,14 @@ impl Store {
         Ok(())
     }
 
+    // ---- session presence ----
+
+    /// A connection to the presence database beside this one, opened with
+    /// the same key (see [`crate::presence`]).
+    pub fn presence(&self) -> Result<crate::presence::Presence> {
+        crate::presence::Presence::open(&self.data_dir, &self.key).map_err(open_to_error)
+    }
+
     // ---- local values ----
 
     /// A value of this installation, kept in the encrypted database and never
@@ -357,7 +365,7 @@ impl std::ops::Deref for Write<'_> {
     }
 }
 
-fn open_to_error(e: OpenError) -> Error {
+pub(crate) fn open_to_error(e: OpenError) -> Error {
     match e {
         OpenError::Io(e) => Error::Io(e),
         OpenError::Db(e) => Error::Db(e),
