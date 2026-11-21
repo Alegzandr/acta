@@ -1396,14 +1396,23 @@ impl Shell {
 
     pub fn open_snapshots(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(bench) = self.bench() else { return };
-        let task = bench.ws.read(cx).db.run(cx, |store| store.snapshots());
+        // The list and each file's size, read off the UI thread.
+        let task = bench.ws.read(cx).db.run(cx, |store| {
+            let mut list = store.snapshots()?;
+            list.sort_by_key(|s| std::cmp::Reverse(s.taken_at));
+            let sizes = list
+                .iter()
+                .map(|s| std::fs::metadata(&s.path).map(|m| m.len()).unwrap_or(0))
+                .collect::<Vec<u64>>();
+            Ok((list, sizes))
+        });
         cx.spawn_in(window, async move |shell, cx| {
-            if let Ok(mut list) = task.await {
-                list.sort_by_key(|s| std::cmp::Reverse(s.taken_at));
+            if let Ok((list, sizes)) = task.await {
                 let _ = shell.update_in(cx, |shell, window, cx| {
                     shell.open_dialog(
                         DialogKind::Snapshots {
                             list,
+                            sizes,
                             selected: None,
                         },
                         window,
@@ -3100,7 +3109,12 @@ impl Render for Shell {
                 s.open_palette(Some(Group::Topics), None, w, cx)
             }))
             .on_action(cx.listener(|s, _: &SwitchProject, w, cx| {
-                s.open_palette(Some(Group::Projects), None, w, cx)
+                // First run (8.5): Mod+O is "Choose a folder".
+                if s.bare_titlebar() && matches!(s.content, Content::Workbench(_)) {
+                    s.new_project(w, cx);
+                } else {
+                    s.open_palette(Some(Group::Projects), None, w, cx)
+                }
             }))
             .on_action(
                 cx.listener(|s, _: &NewTopic, w, cx| s.run_command(Command::NewTopic, w, cx)),

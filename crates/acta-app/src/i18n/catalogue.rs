@@ -1842,8 +1842,8 @@ catalogue! {
         fr: t("Restaurer et redémarrer"),
     }
     SnapshotTitle "snapshot.title" {
-        en: t("Restore the snapshot from {date}?"),
-        fr: t("Restaurer l\u{2019}instantané du {date}\u{202f}?"),
+        en: t("Restore from snapshot"),
+        fr: t("Restaurer depuis un instantané"),
     }
     SnapshotBody "snapshot.body" {
         en: t("Acta will restart with its data as of {datetime}. Everything as it is now is saved as a snapshot first, so you can come back."),
@@ -1856,6 +1856,10 @@ catalogue! {
     SnapshotMigration "snapshot.migration" {
         en: t("The update to {version} could not convert the database. Acta put back the snapshot from just before; nothing was lost."),
         fr: t("La mise à jour vers {version} n\u{2019}a pas pu convertir la base de données. Acta a restauré l\u{2019}instantané pris juste avant\u{202f}; rien n\u{2019}a été perdu."),
+    }
+    SnapshotSize "snapshot.size" {
+        en: t("{size} MB"),
+        fr: t("{size} Mo"),
     }
     KeylossTitle "keyloss.title" {
         en: t("Acta cannot open its database"),

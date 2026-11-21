@@ -468,10 +468,11 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `snapshot.before_import` | Before import | Avant l'import |
 | `snapshot.before_restore` | Before restore | Avant la restauration |
 | `snapshot.confirm` | Restore and restart | Restaurer et redémarrer |
-| `snapshot.title` | Restore the snapshot from {date}? | Restaurer l'instantané du {date} ? |
+| `snapshot.title` | Restore from snapshot | Restaurer depuis un instantané |
 | `snapshot.body` | Acta will restart with its data as of {datetime}. Everything as it is now is saved as a snapshot first, so you can come back. | Acta redémarrera avec ses données du {datetime}. La situation actuelle est d'abord enregistrée dans un instantané : vous pourrez y revenir. |
 | `snapshot.restored` | Restored the snapshot from {datetime}. | Instantané du {datetime} restauré. |
 | `snapshot.migration` | The update to {version} could not convert the database. Acta put back the snapshot from just before; nothing was lost. | La mise à jour vers {version} n'a pas pu convertir la base de données. Acta a restauré l'instantané pris juste avant ; rien n'a été perdu. |
+| `snapshot.size` | {size} MB | {size} Mo |
 | `keyloss.title` | Acta cannot open its database | Acta ne peut pas ouvrir sa base de données |
 | `keyloss.body` | The database is on this computer and intact, but its key is missing from {keychain}. (`keychain.*`) This usually follows a system reinstall, a new user profile or a move to another machine. | La base de données est sur cet ordinateur et intacte, mais sa clé est absente {keychain}. Cela arrive généralement après une réinstallation du système, la création d'un nouveau profil utilisateur ou un changement de machine. |
 | `keyloss.body.m` | The database is on this computer and intact, but its key file is missing from Acta's data folder. This usually follows a restore from a backup that left it out, a new user profile or a move to another machine. | La base de données est sur cet ordinateur et intacte, mais son fichier de clé manque dans le dossier de données d'Acta. Cela suit en général une restauration de sauvegarde qui l'a omis, un nouveau profil utilisateur ou un changement de machine. |

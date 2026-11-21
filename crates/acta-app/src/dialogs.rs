@@ -46,6 +46,8 @@ pub enum Kind {
     },
     Snapshots {
         list: Vec<Snapshot>,
+        /// Each snapshot's file size in bytes, in list order.
+        sizes: Vec<u64>,
         selected: Option<usize>,
     },
     RestartTerminal,
@@ -80,6 +82,16 @@ impl Focusable for Dialog {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus.clone()
     }
+}
+
+/// A file size in megabytes with one decimal, in the language's number
+/// form: "12.4 MB", "12,4 Mo" (copy.md 10.2).
+pub fn size_mb(locale: Locale, bytes: u64) -> String {
+    let tenths = (bytes as f64 / 104_857.6).round() as u64;
+    let whole = number(locale, tenths / 10);
+    let sep = if locale == Locale::Fr { ',' } else { '.' };
+    let size = format!("{whole}{sep}{}", tenths % 10);
+    tr(locale, Key::SnapshotSize, &[("size", Arg::Text(&size))])
 }
 
 /// `acta-2026-11-21.acta.json`, the export's default name.
@@ -305,6 +317,7 @@ impl Dialog {
         let Kind::Snapshots {
             list,
             selected: Some(at),
+            ..
         } = &self.kind
         else {
             return;
@@ -554,7 +567,11 @@ impl Dialog {
                 ];
                 (title, body, buttons, 520.)
             }
-            Kind::Snapshots { list, selected } => {
+            Kind::Snapshots {
+                list,
+                sizes,
+                selected,
+            } => {
                 let selected = *selected;
                 let rows = list.iter().enumerate().map(|(i, s)| {
                     let is = selected == Some(i);
@@ -588,8 +605,16 @@ impl Dialog {
                         .child(
                             type_scale::UI
                                 .el()
+                                .flex_1()
                                 .text_color(t.text_secondary)
                                 .child(snapshot_label(locale, s.kind)),
+                        )
+                        .child(
+                            type_scale::SMALL
+                                .el()
+                                .font_features(type_scale::tabular())
+                                .text_color(t.text_tertiary)
+                                .child(size_mb(locale, sizes.get(i).copied().unwrap_or(0))),
                         )
                 });
                 let note = selected.and_then(|i| list.get(i)).map(|s| {
@@ -638,7 +663,7 @@ impl Dialog {
                     .into_any_element(),
                     confirm.into_any_element(),
                 ];
-                (text(locale, Key::CmdSnapshot), body, buttons, 520.)
+                (text(locale, Key::SnapshotTitle), body, buttons, 520.)
             }
             Kind::RestartTerminal => {
                 let body = type_scale::UI
@@ -800,6 +825,13 @@ mod tests {
         let real = store.import(&file, true).unwrap();
         assert_eq!(real.projects, report.projects);
         assert_eq!(real.notes, report.notes);
+    }
+
+    #[test]
+    fn sizes_read_in_megabytes_in_each_language() {
+        assert_eq!(size_mb(Locale::En, 13_002_342), "12.4 MB");
+        assert_eq!(size_mb(Locale::Fr, 13_002_342), "12,4 Mo");
+        assert_eq!(size_mb(Locale::En, 0), "0.0 MB");
     }
 
     #[test]

@@ -416,10 +416,12 @@ pub fn segment(
 
 /// The outline of a segmented control, holding its segments.
 pub fn segmented(tokens: &Tokens) -> Div {
+    // Sized to its segments, never stretched by a column (M7 S15).
     div()
         .flex()
         .flex_row()
-        .flex_shrink_0()
+        .flex_none()
+        .self_start()
         .h(px(28.))
         .rounded(px(RADIUS_SM))
         .border_1()
