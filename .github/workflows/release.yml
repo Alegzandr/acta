@@ -476,10 +476,18 @@ jobs:
             if [ "$served" != "sha256:$actual" ]; then
               fail "$feed downloaded with digest $actual, GitHub reports '$served'"
             fi
-            jq -r '.[] | select(.Type == "Full" or .Type == "Delta") | .RelativeFileName' \
+            # The feed format of vpk 1.2.161, nothing more: an unknown field could
+            # change what a client does without failing any check below.
+            if ! jq -e 'keys == ["Assets"] and (.Assets | type == "array" and length > 0)
+                and all(.Assets[]; keys == ["FileName", "PackageId", "SHA1", "SHA256", "Size", "Type", "Version"])' \
+                "feeds/$feed" > /dev/null; then
+              fail "$feed is not a list of assets with exactly the known fields"
+            fi
+            # Type and name together: a full package listed as a delta must fail.
+            jq -r '.[] | select(.Type == "Full" or .Type == "Delta") | "\(.Type) \(.RelativeFileName)"' \
               "$dir/assets.$channel.json" | tr -d '\r' | sort > packages.txt
-            if ! jq -r '.Assets[].FileName' "feeds/$feed" | sort | diff packages.txt -; then
-              fail "$feed does not list exactly the packages the $channel build made"
+            if ! jq -r '.Assets[] | "\(.Type) \(.FileName)"' "feeds/$feed" | sort | diff packages.txt -; then
+              fail "$feed does not list exactly the packages the $channel build made, with their types"
             fi
             if [ "$(jq '[.Assets[] | select(.Type == "Full")] | length' "feeds/$feed")" != 1 ]; then
               fail "$feed does not list exactly one full package"
