@@ -154,3 +154,43 @@ pub fn seed(store: &mut Store, folder: &Path) -> acta_core::Result<()> {
     store.create_project("Atlas", "", me)?;
     Ok(())
 }
+
+/// [`seed`], then the long tree of docs/design/layout.md 4.2.1 (an empty
+/// epic, a project of 140 topics with long titles) for captures of the tree.
+pub fn long(store: &mut Store, folder: &Path) -> acta_core::Result<()> {
+    if !store.projects()?.is_empty() {
+        return Ok(());
+    }
+    seed(store, folder)?;
+    let me = Author::Human;
+    let acta = store.projects()?[0].id;
+    store.create_epic(acta, "Storage", "", me)?;
+    let archive = store.create_project("Archive of Alexandre's experiments", "", me)?;
+    let epic = store.create_epic(
+        archive,
+        "Migrations and long-running background jobs",
+        "",
+        me,
+    )?;
+    let statuses = [
+        Status::Planned,
+        Status::Active,
+        Status::Draft,
+        Status::Blocked,
+        Status::Done,
+        Status::Dropped,
+    ];
+    for i in 0..140 {
+        store.create_topic(
+            NewTopic {
+                project: archive,
+                epic: (i % 2 == 0).then_some(epic),
+                title: format!("Experiment {i}: measure the reflow of very long titles"),
+                description: String::new(),
+                status: statuses[i % statuses.len()],
+            },
+            me,
+        )?;
+    }
+    Ok(())
+}

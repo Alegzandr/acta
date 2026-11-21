@@ -88,6 +88,8 @@ icons! {
     Square => "square",
     Play => "play",
     Bot => "bot",
+    Clock => "clock",
+    ClockAlert => "clock-alert",
 }
 
 /// The app mark, shown in the updater window only (docs/design/components-app.md 5).

@@ -3222,6 +3222,28 @@ impl Shell {
                     );
             }
             LayoutMenu::View(view) => {
+                // The Projects view's own item, above the view menu and a
+                // separator (layout.md 4.2.1, as the chat's, 4.8.4).
+                if view == ViewId::Projects {
+                    panel = panel
+                        .child(
+                            menu_row(
+                                "vm-collapse-all",
+                                text(locale, Key::TreeCollapseAll),
+                                false,
+                                None,
+                                true,
+                                &t,
+                            )
+                            .on_click(cx.listener(
+                                |shell, _, _, cx| {
+                                    shell.close_menu(cx);
+                                    shell.collapse_all(cx)
+                                },
+                            )),
+                        )
+                        .child(menu::separator(&t));
+                }
                 let place = layout.locate(Tab::View(view)).map(|s| s.place);
                 panel = move_items(panel, place, view, None, &t, locale, cx);
                 let can_split = layout.can_split_off(view);

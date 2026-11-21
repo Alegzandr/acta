@@ -15,6 +15,8 @@ pub enum Command {
     NewTopic,
     NewEpic,
     NewProject,
+    /// "Projects: Collapse all" (layout.md 4.2.1).
+    TreeCollapseAll,
     AddEntry,
     Capture,
     GoInbox,
@@ -201,6 +203,9 @@ impl Command {
             out.extend([Command::GoHeading, Command::SaveFile, Command::KbMoveTo]);
         }
         out.push(Command::NewProject);
+        if ctx.has_project {
+            out.push(Command::TreeCollapseAll);
+        }
         if ctx.can_back {
             out.push(Command::Back);
         }
@@ -295,6 +300,7 @@ impl Command {
             Command::NewTopic => Key::CmdNewTopic,
             Command::NewEpic => Key::CmdNewEpic,
             Command::NewProject => Key::CmdNewProject,
+            Command::TreeCollapseAll => Key::CmdTreeCollapseAll,
             Command::AddEntry => Key::CmdAddEntry,
             Command::Capture => Key::CmdCapture,
             Command::GoInbox => Key::CmdGoInbox,
@@ -492,6 +498,15 @@ mod tests {
         });
         assert!(topic.contains(&Command::SetStatus(Status::Blocked)));
         assert!(topic.contains(&Command::Back));
+        assert!(topic.contains(&Command::TreeCollapseAll));
+        assert!(
+            !none.contains(&Command::TreeCollapseAll),
+            "no project, no tree"
+        );
+        assert_eq!(
+            Command::TreeCollapseAll.label(Locale::En),
+            "Projects: Collapse all"
+        );
         assert!(!topic.contains(&Command::Forward));
     }
 
