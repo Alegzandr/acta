@@ -340,10 +340,11 @@ pub enum NoteFate {
 
 impl Note {
     pub fn fate(&self) -> NoteFate {
+        // `filed_at` decides: a target without it (an old import) is open.
         match (self.filed_at, self.filed_topic, self.filed_epic) {
-            (None, None, None) => NoteFate::Open,
-            (_, Some(t), _) => NoteFate::Topic(t),
-            (_, None, Some(e)) => NoteFate::Epic(e),
+            (None, _, _) => NoteFate::Open,
+            (Some(_), Some(t), _) => NoteFate::Topic(t),
+            (Some(_), None, Some(e)) => NoteFate::Epic(e),
             (Some(_), None, None) => NoteFate::Dismissed,
         }
     }

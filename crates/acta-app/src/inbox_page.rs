@@ -195,10 +195,14 @@ impl InboxPage {
 
     /// Back to the inbox. What filing created (topic, epic, entries) stays:
     /// it may already hold the human's refinements.
+    /// Undo files it again exactly as it was, if it is still open then.
     fn unfile(&mut self, id: NoteId, cx: &mut Context<Self>) {
+        let project = self.project;
         self.ws.update(cx, |ws, cx| {
-            ws.write(cx, Key::ErrorSave, move |store| {
-                store.unfile_note(id, Author::Human)
+            ws.write_undoable(cx, Some(project), None, move |store| {
+                let before = store.note(id)?;
+                store.unfile_note(id, Author::Human)?;
+                Ok((Undo::Refile(Box::new(before)), ()))
             })
             .detach();
         });

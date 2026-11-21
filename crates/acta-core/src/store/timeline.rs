@@ -311,78 +311,116 @@ impl Store {
         Ok(())
     }
 
-    /// Marks notes as turned into, or filed under, a topic of their project.
+    /// Marks open notes as turned into, or filed under, a topic of their
+    /// project.
     pub fn file_notes(&mut self, notes: &[NoteId], topic: TopicId, author: Author) -> Result<()> {
-        let project = super::records::read_topic(&self.conn, topic)?.project;
-        self.set_fate(notes, project, Some(topic.0), None, author)
-            .map_err(|e| match e {
-                Error::Invalid(id) => {
-                    Error::Invalid(format!("{id} belongs to another project than {topic}"))
-                }
-                other => other,
-            })
+        let tx = self.write()?;
+        let project = super::records::read_topic(&tx, topic)?.project;
+        set_fate(
+            &tx,
+            notes,
+            project,
+            &topic.to_string(),
+            Some(topic.0),
+            None,
+            author,
+        )?;
+        tx.commit()?;
+        Ok(())
     }
 
-    /// Marks notes as turned into an epic of their project.
+    /// Marks open notes as turned into an epic of their project.
     pub fn file_notes_in_epic(
         &mut self,
         notes: &[NoteId],
         epic: EpicId,
         author: Author,
     ) -> Result<()> {
-        let project = super::records::read_epic(&self.conn, epic)?.project;
-        self.set_fate(notes, project, None, Some(epic.0), author)
-            .map_err(|e| match e {
-                Error::Invalid(id) => {
-                    Error::Invalid(format!("{id} belongs to another project than {epic}"))
-                }
-                other => other,
-            })
+        let tx = self.write()?;
+        let project = super::records::read_epic(&tx, epic)?.project;
+        set_fate(
+            &tx,
+            notes,
+            project,
+            &epic.to_string(),
+            None,
+            Some(epic.0),
+            author,
+        )?;
+        tx.commit()?;
+        Ok(())
     }
 
-    /// Takes notes out of the inbox without filing them anywhere (duplicates,
-    /// done, noise). `unfile_note` brings one back.
+    /// Takes open notes out of the inbox without filing them anywhere
+    /// (duplicates, done, noise). `unfile_note` brings one back.
     pub fn dismiss_notes(&mut self, notes: &[NoteId], author: Author) -> Result<()> {
         let Some(first) = notes.first() else {
             return Ok(());
         };
-        let project = read_note(&self.conn, *first)?.project;
-        self.set_fate(notes, project, None, None, author)
-            .map_err(|e| match e {
-                Error::Invalid(id) => {
-                    Error::Invalid(format!("{id} belongs to another project than {first}"))
-                }
-                other => other,
-            })
-    }
-
-    /// One transaction: every note must be live and in `project`
-    /// (`Error::Invalid(<note id>)` otherwise), then all are stamped.
-    fn set_fate(
-        &mut self,
-        notes: &[NoteId],
-        project: ProjectId,
-        topic: Option<i64>,
-        epic: Option<i64>,
-        author: Author,
-    ) -> Result<()> {
         let tx = self.write()?;
-        for id in notes {
-            if read_note(&tx, *id)?.project != project {
-                return Err(Error::Invalid(id.to_string()));
-            }
-        }
-        let now = now_ms();
-        for id in notes {
-            tx.execute(
-                "UPDATE notes SET filed_topic_id = ?2, filed_epic_id = ?3, filed_at = ?4, filed_by = ?5,
-                        updated_at = ?4, updated_by = ?5 WHERE id = ?1",
-                params![id.0, topic, epic, now, author],
-            )?;
-        }
+        let project = read_note(&tx, *first)?.project;
+        set_fate(&tx, notes, project, &first.to_string(), None, None, author)?;
         tx.commit()?;
         Ok(())
     }
+
+    /// Sets a note's fate exactly as it was (the undo of putting it back in
+    /// the inbox): target, time and who filed it.
+    pub fn restore_note_fate(&mut self, id: NoteId, before: &Note, author: Author) -> Result<()> {
+        let tx = self.write()?;
+        read_note(&tx, id)?;
+        tx.execute(
+            "UPDATE notes SET filed_topic_id = ?2, filed_epic_id = ?3, filed_at = ?4, filed_by = ?5,
+                    updated_at = ?6, updated_by = ?7 WHERE id = ?1",
+            params![
+                id.0,
+                before.filed_topic.map(|t| t.0),
+                before.filed_epic.map(|e| e.0),
+                before.filed_at,
+                before.filed_by,
+                now_ms(),
+                author
+            ],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+}
+
+/// Inside the caller's transaction: every note must be live, in `project`
+/// and still open (read here, so a note filed by another process since the
+/// caller looked is refused), then all are stamped.
+fn set_fate(
+    tx: &rusqlite::Connection,
+    notes: &[NoteId],
+    project: ProjectId,
+    target: &str,
+    topic: Option<i64>,
+    epic: Option<i64>,
+    author: Author,
+) -> Result<()> {
+    for id in notes {
+        let note = read_note(tx, *id)?;
+        if note.project != project {
+            return Err(Error::Invalid(format!(
+                "{id} belongs to another project than {target}"
+            )));
+        }
+        if !note.is_open() {
+            return Err(Error::Invalid(format!(
+                "{id} is no longer in the inbox (filed or dismissed since)"
+            )));
+        }
+    }
+    let now = now_ms();
+    for id in notes {
+        tx.execute(
+            "UPDATE notes SET filed_topic_id = ?2, filed_epic_id = ?3, filed_at = ?4, filed_by = ?5,
+                    updated_at = ?4, updated_by = ?5 WHERE id = ?1",
+            params![id.0, topic, epic, now, author],
+        )?;
+    }
+    Ok(())
 }
 
 fn read_note(conn: &rusqlite::Connection, id: NoteId) -> Result<Note> {

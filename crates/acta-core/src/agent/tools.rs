@@ -642,6 +642,23 @@ impl Agent<'_> {
             if let Some(t) = &text {
                 check_len("note", t, limit::NOTE)?;
             }
+            if fate == Some(false) {
+                match note.fate() {
+                    NoteFate::Open => {}
+                    NoteFate::Dismissed => return Err(format!("{n} is already dismissed")),
+                    NoteFate::Topic(t) => {
+                        return Err(format!(
+                            "{n} is filed in {t}; put it back in the inbox first (status=\"open\")"
+                        ));
+                    }
+                    NoteFate::Epic(e) => {
+                        return Err(format!(
+                            "{n} is filed as {e}; put it back in the inbox first (status=\"open\")"
+                        ));
+                    }
+                }
+            }
+            let already_open = fate == Some(true) && note.is_open();
             let author = self.author();
             self.store
                 .atomically(|store| {
@@ -649,9 +666,9 @@ impl Agent<'_> {
                         store.update_note(n, t, author)?;
                     }
                     match fate {
-                        Some(true) => store.unfile_note(n, author),
+                        Some(true) if !already_open => store.unfile_note(n, author),
                         Some(false) => store.dismiss_notes(&[n], author),
-                        None => Ok(()),
+                        _ => Ok(()),
                     }
                 })
                 .map_err(err)?;
@@ -660,6 +677,12 @@ impl Agent<'_> {
                 fields.push("text");
             }
             match fate {
+                Some(true) if already_open => {
+                    if text.is_none() {
+                        return Ok(format!("{n} is already in the inbox; nothing changed"));
+                    }
+                    fields.push("already in the inbox");
+                }
                 Some(true) => fields.push("back in the inbox"),
                 Some(false) => fields.push("dismissed"),
                 None => {}
@@ -963,6 +986,35 @@ impl Agent<'_> {
         let mut plans = Vec::new();
         for (i, it) in a.items.iter().enumerate() {
             let what = format!("item {}", i + 1);
+            let allowed: &[&str] = match kinds[i].as_str() {
+                "topic" => &["title", "description", "epic", "from_notes"],
+                "epic" => &["title", "description", "from_notes"],
+                "note" => &["title", "description"],
+                "entry" => &["topic", "from_notes"],
+                _ => return Err(format!("{what}: kind must be topic, epic, note or entry")),
+            };
+            let given = [
+                ("title", !it.title.trim().is_empty()),
+                ("description", it.description.is_some()),
+                ("epic", it.epic.is_some()),
+                ("topic", it.topic.is_some()),
+                (
+                    "from_notes",
+                    it.from_notes.as_ref().is_some_and(|n| !n.is_empty()),
+                ),
+            ];
+            if let Some((field, _)) = given.iter().find(|(f, g)| *g && !allowed.contains(f)) {
+                let article = if matches!(kinds[i].as_str(), "epic" | "entry") {
+                    "an"
+                } else {
+                    "a"
+                };
+                return Err(format!(
+                    "{what}: {article} {} takes only {}, not {field}",
+                    kinds[i],
+                    allowed.join(", ")
+                ));
+            }
             let mut notes = Vec::new();
             for id in it.from_notes.iter().flatten() {
                 notes.push(self.open_note(id, &what, &mut seen)?.1);
@@ -1718,13 +1770,13 @@ fn quoted(text: &str, max: usize) -> String {
 
 /// An epic a planned topic goes into: an existing one, or an epic item of
 /// the same `create` call (by index).
-enum EpicRef {
+pub(super) enum EpicRef {
     Existing(EpicId),
     Item(usize),
 }
 
 /// One validated `create` item.
-enum Plan {
+pub(super) enum Plan {
     Topic {
         epic: Option<EpicRef>,
         title: String,
@@ -1747,7 +1799,7 @@ enum Plan {
 
 /// Writes validated plans (inside one transaction, see `Agent::create`);
 /// returns one ack and the notes it filed per item.
-fn apply_plans(
+pub(super) fn apply_plans(
     store: &mut Store,
     project: ProjectId,
     plans: Vec<Plan>,

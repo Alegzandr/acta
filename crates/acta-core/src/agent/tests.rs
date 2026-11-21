@@ -1455,6 +1455,7 @@ fn a_triage_with_one_bad_item_writes_nothing() {
             CreateArgs {
                 items: vec![CreateItem {
                     topic: Some("T-1".into()),
+                    title: String::new(),
                     ..item("entry", &[])
                 }],
                 ..Default::default()
@@ -1505,4 +1506,147 @@ fn notes_of_another_project_cannot_be_filed() {
         .unwrap_err();
     assert!(e.contains("another project"), "{e}");
     assert!(a.store.note(n).unwrap().is_open());
+}
+
+#[test]
+fn ignored_fields_and_later_epic_items_are_handled() {
+    let (mut ts, mut sess, p, _) = triage_seed();
+    let mut a = agent(&mut ts.store, &mut sess);
+    let e = a
+        .create(CreateArgs {
+            items: vec![CreateItem {
+                kind: "entry".into(),
+                title: "Ignored".into(),
+                topic: Some("T-1".into()),
+                from_notes: Some(vec!["N-1".into()]),
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .unwrap_err();
+    assert_eq!(
+        e,
+        "item 1: an entry takes only topic, from_notes, not title"
+    );
+    let e = a
+        .create(CreateArgs {
+            items: vec![CreateItem {
+                kind: "epic".into(),
+                title: "Sync".into(),
+                epic: Some("E-1".into()),
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .unwrap_err();
+    assert!(e.starts_with("item 1: an epic takes only"), "{e}");
+    // A topic may name an epic item that comes after it.
+    let ack = ok(
+        a.create(CreateArgs {
+            items: vec![
+                CreateItem {
+                    kind: "topic".into(),
+                    title: "Conflict handling".into(),
+                    epic: Some("@2".into()),
+                    from_notes: Some(vec!["N-2".into()]),
+                    ..Default::default()
+                },
+                CreateItem {
+                    kind: "epic".into(),
+                    title: "Sync".into(),
+                    from_notes: Some(vec!["N-1".into()]),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        }),
+        budget::CREATE,
+    );
+    assert_eq!(ack, "ok T-2 draft in E-2 (N-2) · E-2 (N-1)");
+    assert_eq!(
+        a.store.topic(TopicId(2)).unwrap().epic,
+        Some(crate::model::EpicId(2))
+    );
+    assert_eq!(a.store.epics(p).unwrap().len(), 2);
+}
+
+#[test]
+fn note_status_changes_say_what_they_did() {
+    let (mut ts, mut sess, _, t) = triage_seed();
+    let mut a = agent(&mut ts.store, &mut sess);
+    let status = |a: &mut Agent<'_>, n: &str, s: &str| {
+        a.update(UpdateArgs {
+            id: n.into(),
+            status: Some(s.into()),
+            ..Default::default()
+        })
+    };
+    assert_eq!(
+        status(&mut a, "N-1", "open").unwrap(),
+        "N-1 is already in the inbox; nothing changed"
+    );
+    ok(
+        a.create(CreateArgs {
+            items: vec![CreateItem {
+                kind: "entry".into(),
+                topic: Some(t.to_string()),
+                from_notes: Some(vec!["N-1".into()]),
+                ..Default::default()
+            }],
+            dismiss: Some(vec!["N-2".into()]),
+        }),
+        budget::CREATE,
+    );
+    let e = status(&mut a, "N-1", "dismissed").unwrap_err();
+    assert_eq!(
+        e,
+        "N-1 is filed in T-1; put it back in the inbox first (status=\"open\")"
+    );
+    assert_eq!(
+        status(&mut a, "N-2", "dismissed").unwrap_err(),
+        "N-2 is already dismissed"
+    );
+    assert_eq!(
+        status(&mut a, "N-1", "open").unwrap(),
+        "ok N-1 updated: back in the inbox"
+    );
+}
+
+/// What `create` validated can change before it writes (another process
+/// files a note): the write refuses, and nothing of the call is kept.
+#[test]
+fn a_write_failing_after_validation_rolls_the_whole_triage_back() {
+    use super::tools::{EpicRef, Plan, apply_plans};
+    use crate::model::{NoteId, PageReq};
+    let (mut ts, _, p, _) = triage_seed();
+    let mut human = Store::open(&ts.config()).unwrap();
+    // Validated as open by the agent, then filed by the human in the app.
+    human.dismiss_notes(&[NoteId(2)], Author::Human).unwrap();
+    let plans = vec![
+        Plan::Epic {
+            title: "Sync".into(),
+            description: String::new(),
+            notes: vec![NoteId(1)],
+        },
+        Plan::Topic {
+            epic: Some(EpicRef::Item(0)),
+            title: "Conflict handling".into(),
+            description: String::new(),
+            status: Status::Draft,
+            notes: vec![NoteId(2)],
+        },
+    ];
+    let e = ts
+        .store
+        .atomically(|s| apply_plans(s, p, plans, &[NoteId(3)], Author::Claude))
+        .unwrap_err();
+    assert!(
+        e.to_string().contains("N-2 is no longer in the inbox"),
+        "{e}"
+    );
+    let s = &ts.store;
+    assert_eq!(s.epics(p).unwrap().len(), 1);
+    assert!(s.note(NoteId(1)).unwrap().is_open());
+    assert!(s.note(NoteId(3)).unwrap().is_open());
+    assert_eq!(s.inbox(p, PageReq::first(10)).unwrap().total, 5);
 }
