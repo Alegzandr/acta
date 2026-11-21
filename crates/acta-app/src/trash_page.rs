@@ -150,8 +150,7 @@ impl TrashPage {
             &[("n", Arg::Count(days_left(item, now)))],
         );
         let place = self.project_title(item.project, cx);
-        div()
-            .id(("trash-row", index))
+        ui::focusable(div().id(("trash-row", index)), t, false)
             .flex()
             .flex_row()
             .items_center()

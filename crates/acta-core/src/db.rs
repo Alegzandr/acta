@@ -386,14 +386,32 @@ fn data_version(conn: &Connection) -> rusqlite::Result<i64> {
     conn.pragma_query_value(None, "data_version", |r| r.get(0))
 }
 
+/// The name an unreadable database is kept under, stamped to the second
+/// in UTC: `acta.unreadable-2026-11-21-063012.db`. The key-loss screen
+/// computes it once when it opens and shows it, and [`set_aside_unreadable`]
+/// uses that same name.
+pub fn unreadable_name(ms: i64) -> String {
+    let stamp = crate::time::file_stamp(ms);
+    format!(
+        "acta.unreadable-{}-{}-{}-{}.db",
+        &stamp[0..4],
+        &stamp[4..6],
+        &stamp[6..8],
+        &stamp[9..15]
+    )
+}
+
 /// Key-loss recovery (ADR 0006): moves an unreadable database aside, with
 /// its WAL and shared-memory files, so a new one can be created next to it
 /// and an export imported into it. Nothing is deleted; the returned path is
 /// the database file kept aside. Only on an explicit user action.
-pub fn set_aside_unreadable(data_dir: &Path) -> std::io::Result<PathBuf> {
-    let stamp = crate::time::file_stamp(crate::time::now_ms());
+pub fn set_aside_unreadable(data_dir: &Path, name: &str) -> std::io::Result<PathBuf> {
     let db = data_dir.join(DB_FILE);
-    let aside = data_dir.join(format!("acta.unreadable-{stamp}.db"));
+    let aside = data_dir.join(name);
+    // Never over a file kept earlier (`rename` replaces it on Unix).
+    if aside.exists() {
+        return Err(std::io::ErrorKind::AlreadyExists.into());
+    }
     fs::rename(&db, &aside)?;
     for suffix in ["-wal", "-shm"] {
         let from = PathBuf::from(format!("{}{suffix}", db.display()));

@@ -39,6 +39,56 @@ pub const HEIGHT: f32 = 36.;
 pub const TRAFFIC_LIGHT_INSET: f32 = 12.;
 const MACOS_CONTENT_START: f32 = 76.;
 const CONTENT_START: f32 = 12.;
+
+/// The app icon of the titlebar (layout.md 4.3; Windows and Linux): the
+/// hand-rendered bitmaps of `assets/icons/hicolor`, one per scale, so the
+/// 16 logical pixels are drawn from a bitmap of their device size and never
+/// from a downscaled large one.
+const ICON_16: &[u8] = include_bytes!("../../../assets/icons/hicolor/16x16/apps/acta.png");
+const ICON_24: &[u8] = include_bytes!("../../../assets/icons/hicolor/24x24/apps/acta.png");
+const ICON_32: &[u8] = include_bytes!("../../../assets/icons/hicolor/32x32/apps/acta.png");
+
+/// The bitmap for a scale factor: 16 at 1x, 24 at 1.5x, 32 at 2x and above.
+pub fn icon_size_for_scale(scale: f32) -> u32 {
+    if scale >= 1.75 {
+        32
+    } else if scale >= 1.25 {
+        24
+    } else {
+        16
+    }
+}
+
+fn app_icon_image(scale: f32) -> std::sync::Arc<gpui_kit::Image> {
+    use std::sync::{Arc, OnceLock};
+    static IMAGES: [OnceLock<Arc<gpui_kit::Image>>; 3] =
+        [OnceLock::new(), OnceLock::new(), OnceLock::new()];
+    let (slot, bytes) = match icon_size_for_scale(scale) {
+        32 => (&IMAGES[2], ICON_32),
+        24 => (&IMAGES[1], ICON_24),
+        _ => (&IMAGES[0], ICON_16),
+    };
+    slot.get_or_init(|| {
+        Arc::new(gpui_kit::Image::from_bytes(
+            gpui_kit::ImageFormat::Png,
+            bytes.to_vec(),
+        ))
+    })
+    .clone()
+}
+
+/// The 16 app icon, part of the drag region, with no hover state; at 60%
+/// opacity when the window is inactive, as the titlebar's text dims.
+fn app_icon(window: &Window) -> gpui_kit::AnyElement {
+    div()
+        .id("titlebar-app-icon")
+        .flex_shrink_0()
+        .size(px(16.))
+        .window_control_area(WindowControlArea::Drag)
+        .when(!window.is_window_active(), |this| this.opacity(0.6))
+        .child(gpui_kit::img(app_icon_image(window.scale_factor())).size(px(16.)))
+        .into_any_element()
+}
 const GLYPH: f32 = 10.;
 
 /// Size of the titlebar's icon buttons: compact on macOS (docs/design/layout.md 4.1).
@@ -218,10 +268,16 @@ pub fn render(
         .collect()
     };
 
+    // First run, key loss and open failed (screens.md 8.5, 8.9): only the
+    // name and the window controls.
+    let bare = shell.bare_titlebar();
     let button = |id, glyph, selected, disabled| {
         ui::ghost_icon_button(id, glyph, BUTTON, selected, disabled, active, &tokens)
     };
 
+    // Windows and Linux show the app icon first; macOS has its traffic
+    // lights there and no icon.
+    let show_icon = !macos;
     let leading = div()
         .flex()
         .flex_row()
@@ -229,6 +285,9 @@ pub fn render(
         .items_center()
         .gap(px(4.))
         .pl(px(content_start))
+        .when(show_icon, |this| {
+            this.child(app_icon(window)).child(div().w(px(4.)))
+        })
         .child(
             button(
                 "titlebar-sidebar",
@@ -264,7 +323,11 @@ pub fn render(
         .min_w_0()
         .h_full()
         .items_center()
-        .pl(px(8.))
+        .pl(px(if bare && !show_icon {
+            content_start
+        } else {
+            8.
+        }))
         .window_control_area(WindowControlArea::Drag)
         .when(!windows, |this| {
             // Windows moves and zooms the window itself from the drag
@@ -373,9 +436,19 @@ pub fn render(
         .bg(tokens.bg_sunken)
         .border_b_1()
         .border_color(tokens.border_subtle)
-        .child(leading)
+        .when(!bare, |this| this.child(leading))
+        .when(bare && show_icon, |this| {
+            this.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .h_full()
+                    .pl(px(content_start))
+                    .child(app_icon(window)),
+            )
+        })
         .child(drag_area)
-        .child(trailing)
+        .when(!bare, |this| this.child(trailing))
         .children(
             controls
                 .into_iter()
@@ -441,4 +514,17 @@ fn breadcrumb(
             };
     }
     row
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_app_icon_bitmap_follows_the_scale() {
+        assert_eq!(icon_size_for_scale(1.0), 16);
+        assert_eq!(icon_size_for_scale(1.25), 24);
+        assert_eq!(icon_size_for_scale(1.5), 24);
+        assert_eq!(icon_size_for_scale(2.0), 32);
+    }
 }

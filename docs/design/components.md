@@ -4,7 +4,7 @@ Part of the Acta design system. [DESIGN.md](../../DESIGN.md) is the index: direc
 
 ## 5. Components
 
-States are listed as default / hover / pressed / focus / disabled unless noted. **Focus** always means: a 2px `focus.ring` outline, offset 1px outside the control's edge, same radius plus 1, shown only for keyboard focus (not after a click). Rows show focus as the ring inset by 1px.
+States are listed as default / hover / pressed / focus / disabled unless noted. **Focus** always means: a 2px `focus.ring` band drawn just inside the control's edge, same radius, shown only for keyboard focus (not after a click); it takes no layout space and no clipping parent can cut it. On a primary button a 1px `bg.base` band sits inside the ring so it reads against the accent fill. Rows show focus the same way. Controls that own a focus handle and sit in open space (the theme and language controls of Settings) draw it 1px outside their edge instead, radius plus 1. (M7: GPUI paints shadows under a transparent control, so an outside ring on any control would need a wrapper around every button; the inside band keeps the ring visible everywhere.)
 
 **Button** (height 28, padding 0 x 12, `radius.sm`, `type.ui`, optional 16 icon with gap 8; icon-only is 28 x 28, or 24 x 24 compact)
 
@@ -49,7 +49,7 @@ Destructive actions outside a dialog are ghost buttons or menu items with `dange
 
 **Scrollbar**: overlay, 8 wide track with no fill, thumb 4 wide (8 when hovered or dragged), fully rounded, `border.strong` at 50% opacity (100% hovered), minimum length 32. Appears while scrolling or when the pointer is within 12 of the edge, hides 800 ms after. Never takes layout space.
 
-**Resize handle**: the 1px `border.subtle` divider between panes with an invisible 8 hit area centred on it. Hover for 150 ms or drag: the line becomes 2px `accent` and the cursor changes to the resize cursor. Dragging resizes live, every frame, clamped to the pane limits; double-click restores the default. Keyboard: palette commands "Widen sidebar", "Narrow sidebar", "Widen terminal", "Narrow terminal" (steps of 40).
+**Resize handle**: the 1px `border.subtle` divider between panes with an invisible 8 hit area that lies over the line and the pane before it (the sidebar for its handle, the page for the docks'), so the pane after it, such as the chat's web view, never covers it. Hover or drag: the line becomes 2px `accent` and the cursor changes to the resize cursor (no hover delay in v1). Dragging resizes live, every frame, clamped to the pane limits; double-click restores the default. Keyboard: palette commands "Widen sidebar", "Narrow sidebar", "Widen terminal", "Narrow terminal" (steps of 40).
 
 **Keyboard shortcut hint (kbd)**: each key in its own box: height 18, min width 18, padding 0 x 4, `radius.sm`, 1px `border.default`, `type.small` with `tnum`, `text.tertiary`, gap 2 between keys (the sans, not the mono, which lacks the key glyphs). macOS shows glyphs (`⌘ ⇧ ⌥ ⌃ ↵`), Windows and Linux show words (`Ctrl`, `Shift`, `Alt`, `Enter`). Inside a primary button the hint has no border and uses `text.on-accent` at weight 400.
 

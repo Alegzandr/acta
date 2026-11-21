@@ -26,7 +26,11 @@ pub enum Command {
     Forward,
     Undo,
     ToggleSidebar,
+    WidenSidebar,
+    NarrowSidebar,
     ToggleTerminal,
+    WidenTerminal,
+    NarrowTerminal,
     // The chat panel exists on Windows only (ADR 0009); elsewhere the one
     // chat command opens claude.ai in the browser.
     #[cfg(windows)]
@@ -49,6 +53,10 @@ pub enum Command {
     Trash,
     Snapshot,
     Settings,
+    Shortcuts,
+    CloseTab,
+    CloseOtherTabs,
+    ReopenTab,
     Theme(crate::theme::ThemeSetting),
     Language(Locale),
 }
@@ -64,6 +72,9 @@ pub struct Context {
     /// The chat panel is in the bottom dock.
     #[cfg(windows)]
     pub chat_bottom: bool,
+    /// More than one tab is open; a closed tab can be reopened.
+    pub tabs: bool,
+    pub closed_tab: bool,
 }
 
 impl Command {
@@ -97,6 +108,8 @@ impl Command {
             out.extend([
                 Command::SetFolder,
                 Command::ToggleTerminal,
+                Command::WidenTerminal,
+                Command::NarrowTerminal,
                 Command::RestartTerminal,
                 Command::TerminalLarger,
                 Command::TerminalSmaller,
@@ -123,14 +136,23 @@ impl Command {
         if ctx.can_forward {
             out.push(Command::Forward);
         }
+        if ctx.tabs {
+            out.extend([Command::CloseTab, Command::CloseOtherTabs]);
+        }
+        if ctx.closed_tab {
+            out.push(Command::ReopenTab);
+        }
         out.extend([
             Command::Undo,
             Command::ToggleSidebar,
+            Command::WidenSidebar,
+            Command::NarrowSidebar,
             Command::Export,
             Command::Import,
             Command::Trash,
             Command::Snapshot,
             Command::Settings,
+            Command::Shortcuts,
             Command::Theme(ThemeSetting::System),
             Command::Theme(ThemeSetting::Light),
             Command::Theme(ThemeSetting::Dark),
@@ -160,6 +182,10 @@ impl Command {
             Command::Undo => Key::CmdUndo,
             Command::ToggleSidebar => Key::CmdToggleSidebar,
             Command::ToggleTerminal => Key::CmdToggleTerminal,
+            Command::WidenSidebar => Key::CmdWidenSidebar,
+            Command::NarrowSidebar => Key::CmdNarrowSidebar,
+            Command::WidenTerminal => Key::CmdWidenTerminal,
+            Command::NarrowTerminal => Key::CmdNarrowTerminal,
             #[cfg(windows)]
             Command::ToggleChat => Key::CmdToggleChat,
             #[cfg(windows)]
@@ -180,6 +206,10 @@ impl Command {
             Command::Trash => Key::CmdTrash,
             Command::Snapshot => Key::CmdSnapshot,
             Command::Settings => Key::CmdSettings,
+            Command::Shortcuts => Key::CmdShortcuts,
+            Command::CloseTab => Key::TabClose,
+            Command::CloseOtherTabs => Key::TabCloseOthers,
+            Command::ReopenTab => Key::TabReopen,
             Command::SetStatus(status) => {
                 let name = text(locale, crate::ui::status_key(status));
                 return tr(locale, Key::CmdSetStatus, &[("status", Arg::Text(&name))]);
@@ -229,6 +259,14 @@ impl Command {
             #[cfg(not(windows))]
             Command::ChatBrowser => vec![m, shift, "H"],
             Command::Settings => vec![m, ","],
+            Command::Shortcuts => vec![m, "/"],
+            Command::CloseTab => vec![m, "W"],
+            // components-app.md 5, Settings: never Ctrl+- (Claude Code's
+            // undo); Ctrl+Alt on Windows and Linux, Cmd+Shift on macOS.
+            Command::TerminalLarger if macos => vec![m, shift, "="],
+            Command::TerminalSmaller if macos => vec![m, shift, "-"],
+            Command::TerminalLarger => vec![KeyName::Ctrl.label(locale, macos), alt, "="],
+            Command::TerminalSmaller => vec![KeyName::Ctrl.label(locale, macos), alt, "-"],
             Command::Undo => vec![m, "Z"],
             Command::Back if macos => vec![m, "["],
             Command::Forward if macos => vec![m, "]"],

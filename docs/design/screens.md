@@ -258,7 +258,7 @@ Annotations: the tree keeps the owning topic selected. Edit turns this same page
 |                 4  C:\Users\Alexandre\AppData\Roaming\Acta\acta.db   <- type.code, selectable  |
 |                24  [Import an export...]  [Try again]                <- primary, secondary     |
 |                24  Without the key or an export, the content cannot be read. You can           |
-|                    start empty; the file is kept as acta.db.unreadable-2026-11-20.             |
+|                    start empty; the file is kept as acta.unreadable-2026-11-20-091200.db       |
 |                 8  Start empty                                       <- ghost                  |
 +------------------------------------------------------------------------------------------------+
   column 680 centred, left-aligned; no sidebar, no icon, no red; keychain name per platform

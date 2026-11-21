@@ -113,8 +113,7 @@ fn kb_row(
             .child(entry.summary.clone())
             .into_any_element(),
     };
-    div()
-        .id(("kb-row", index))
+    ui::focusable(div().id(("kb-row", index)), t, false)
         .flex()
         .flex_row()
         .items_center()
@@ -143,8 +142,8 @@ fn kb_row(
                 .text_color(t.text_primary)
                 .child(entry.title.clone()),
         )
-        .child(div().w(px(4.)))
-        .child(summary)
+        // 12 between title and summary: the row's gap of 8 plus 4.
+        .child(div().ml(px(4.)).flex_1().min_w_0().flex().child(summary))
         .child(ui::author_mark(entry.updated_by, &human, t))
         .child(
             type_scale::SMALL
@@ -714,6 +713,8 @@ pub struct DocPage {
     /// shown beside the editor.
     conflict: Option<KbEntry>,
     show_theirs: bool,
+    /// The `ellipsis` menu of the reading view is open.
+    doc_menu: bool,
     seen_revision: u64,
     _load: Task<()>,
     _subs: Vec<Subscription>,
@@ -722,6 +723,22 @@ pub struct DocPage {
 impl EventEmitter<PageEvent> for DocPage {}
 
 impl DocPage {
+    #[cfg(windows)]
+    /// The ellipsis menu is open (the chat's web view hides under it).
+    pub fn menu_open(&self) -> bool {
+        self.doc_menu
+    }
+
+    /// The entry's owner and title, once loaded (the breadcrumb, and the
+    /// tree row it selects). A draft has its owner and no title yet.
+    pub fn located(&self) -> Option<(Owner, Option<String>)> {
+        match (&self.entry, &self.draft) {
+            (Some(entry), _) => Some((entry.owner, Some(entry.title.clone()))),
+            (None, Some(draft)) => Some((draft.owner, None)),
+            _ => None,
+        }
+    }
+
     pub fn open(ws: Entity<Workspace>, id: KbId, cx: &mut Context<Self>) -> Self {
         let mut page = Self::blank(ws, Some(id), None, cx);
         page.reload(cx);
@@ -772,6 +789,7 @@ impl DocPage {
             project,
             saving: false,
             conflict: None,
+            doc_menu: false,
             show_theirs: false,
             seen_revision: 0,
             _load: Task::ready(()),
@@ -1372,7 +1390,7 @@ impl Render for DocPage {
                 text(locale, Key::PropId),
                 text(locale, Key::PropUpdated),
             ];
-            let width = ui::label_width(&labels.iter().map(String::as_str).collect::<Vec<_>>());
+            let width = ui::label_width(&labels.iter().map(String::as_str).collect::<Vec<_>>(), cx);
             let macos = cfg!(target_os = "macos");
             let _ = macos;
             column = column
@@ -1472,14 +1490,62 @@ impl Render for DocPage {
                             })),
                         )
                         .child(
-                            ui::button(
-                                "doc-delete",
-                                text(locale, Key::CommonDelete),
-                                Variant::Ghost,
-                                false,
-                                &t,
-                            )
-                            .on_click(cx.listener(|page, _, _, cx| page.delete(cx))),
+                            // components-knowledge.md 5: Delete lives in the
+                            // ellipsis menu, last and in danger. Go to heading,
+                            // Save as file and Move are not built yet.
+                            div()
+                                .child(
+                                    ui::ghost_icon_button(
+                                        "doc-more",
+                                        Icon::Ellipsis,
+                                        28.,
+                                        self.doc_menu,
+                                        false,
+                                        true,
+                                        &t,
+                                    )
+                                    .on_click(cx.listener(
+                                        |page, _, _, cx| {
+                                            page.doc_menu = !page.doc_menu;
+                                            cx.notify();
+                                        },
+                                    )),
+                                )
+                                .when(self.doc_menu, |this| {
+                                    this.child(
+                                        gpui_kit::deferred(
+                                            gpui_kit::anchored()
+                                                .offset(gpui_kit::point(px(0.), px(32.)))
+                                                .child(
+                                                    menu::panel("doc-menu", &t)
+                                                        .on_mouse_down_out(cx.listener(
+                                                            |page, _, _, cx| {
+                                                                page.doc_menu = false;
+                                                                cx.notify();
+                                                            },
+                                                        ))
+                                                        .child(
+                                                            menu::item(
+                                                                "doc-delete",
+                                                                None,
+                                                                text(locale, Key::CommonDelete),
+                                                                None,
+                                                                false,
+                                                                &t,
+                                                            )
+                                                            .text_color(t.danger)
+                                                            .on_click(cx.listener(
+                                                                |page, _, _, cx| {
+                                                                    page.doc_menu = false;
+                                                                    page.delete(cx)
+                                                                },
+                                                            )),
+                                                        ),
+                                                ),
+                                        )
+                                        .with_priority(1),
+                                    )
+                                }),
                         ),
                 )
                 .child(div().mt(px(24.)).h(px(1.)).bg(t.border_subtle))

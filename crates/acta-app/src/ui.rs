@@ -3,14 +3,101 @@
 use acta_core::model::{Author, Status};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    Div, ElementId, FontWeight, Hsla, InteractiveElement, IntoElement, ParentElement, SharedString,
-    Stateful, StatefulInteractiveElement, Styled, Svg, div, px,
+    BoxShadow, Div, ElementId, FocusHandle, FontWeight, Hsla, InteractiveElement, IntoElement,
+    ParentElement, SharedString, Stateful, StatefulInteractiveElement, Styled, Svg, div, px,
+    transparent_black,
 };
 
 use crate::i18n::Key;
 use crate::icons::{Icon, icon};
 use crate::theme::{RADIUS_MD, RADIUS_SM, Tokens};
 use crate::type_scale;
+
+/// The keyboard focus ring of docs/design/components.md 5, drawn inside
+/// the element's edge: a 2px `focus.ring` band, so it takes no layout
+/// space and is never clipped by a parent. `gap` adds a 1px band of
+/// `bg.base` inside it, for a control whose own fill is the accent.
+pub fn ring_shadow(t: &Tokens, gap: bool) -> Vec<BoxShadow> {
+    let ring = gpui_kit::BoxShadow::new(px(0.), px(0.), t.focus_ring)
+        .spread_radius(px(2.))
+        .inset();
+    if gap {
+        let under = gpui_kit::BoxShadow::new(px(0.), px(0.), t.bg_base)
+            .spread_radius(px(3.))
+            .inset();
+        vec![under, ring]
+    } else {
+        vec![ring]
+    }
+}
+
+/// Make a control a tab stop that shows the focus ring for keyboard focus
+/// only (not after a click). `Enter` and `Space` activate it like a click.
+pub fn focusable<E: StatefulInteractiveElement + Styled>(el: E, t: &Tokens, gap: bool) -> E {
+    let ring = ring_shadow(t, gap);
+    el.tab_index(0).focus_visible(move |s| s.shadow(ring))
+}
+
+/// The focus ring around a control that tracks its own focus handle (the
+/// settings controls): 2px `focus.ring`, 1px outside the control's edge,
+/// radius plus 1 outside it, shown for keyboard focus only. It takes no
+/// layout space.
+pub fn focus_ring(
+    id: &'static str,
+    handle: &FocusHandle,
+    radius: f32,
+    t: &Tokens,
+) -> Stateful<Div> {
+    let ring = t.focus_ring;
+    div()
+        .id(id)
+        .track_focus(handle)
+        .tab_index(0)
+        .m(px(-3.))
+        .p(px(1.))
+        .border_2()
+        .border_color(transparent_black())
+        .rounded(px(radius + 3.))
+        .focus_visible(move |style| style.border_color(ring))
+}
+
+/// A one-line tooltip (docs/design/components.md 5, Tooltip): `bg.overlay`,
+/// 1px `border.default`, `radius.md`, `shadow.overlay`, padding 4 x 8,
+/// `type.small` `text.primary`. Built with [`tip`].
+pub struct Tip(SharedString);
+
+impl gpui_kit::Render for Tip {
+    fn render(
+        &mut self,
+        _: &mut gpui_kit::Window,
+        cx: &mut gpui_kit::Context<Self>,
+    ) -> impl IntoElement {
+        let t = cx.global::<Tokens>();
+        type_scale::SMALL
+            .el()
+            .px(px(8.))
+            .py(px(4.))
+            .bg(t.bg_overlay)
+            .border_1()
+            .border_color(t.border_default)
+            .rounded(px(RADIUS_MD))
+            .shadow(vec![t.shadow_overlay()])
+            .text_color(t.text_primary)
+            .child(self.0.clone())
+    }
+}
+
+/// The builder `.tooltip()` takes, for a tooltip reading `text`.
+pub fn tip(
+    text: impl Into<SharedString>,
+) -> impl Fn(&mut gpui_kit::Window, &mut gpui_kit::App) -> gpui_kit::AnyView + 'static {
+    let text = text.into();
+    move |_, cx| {
+        use gpui_kit::AppContext as _;
+        let text = text.clone();
+        cx.new(|_| Tip(text)).into()
+    }
+}
 
 /// Keyboard shortcut hint: each key in its own 18-high box, `type.small`
 /// with `tnum` in `text.tertiary`, 2 apart (docs/design/components.md 5, kbd).
@@ -34,6 +121,29 @@ pub fn kbd(keys: &[&str], tokens: &Tokens) -> Div {
                 .border_1()
                 .border_color(tokens.border_default)
                 .text_color(tokens.text_tertiary)
+                .child(key.to_string())
+        }))
+}
+
+/// The kbd hint inside a primary button (components.md 5, kbd): no border,
+/// `text.on-accent` at weight 400.
+pub fn kbd_on_accent(keys: &[&str], tokens: &Tokens) -> Div {
+    div()
+        .flex()
+        .flex_row()
+        .flex_shrink_0()
+        .gap(px(2.))
+        .children(keys.iter().map(|key| {
+            type_scale::SMALL
+                .el()
+                .font_features(type_scale::tabular())
+                .h(px(18.))
+                .min_w(px(18.))
+                .px(px(4.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_color(tokens.text_on_accent)
                 .child(key.to_string())
         }))
 }
@@ -64,7 +174,7 @@ pub fn ghost_icon_button(
     let glyph = icon(glyph, 16., color).when(!disabled, |this| {
         this.group_hover(id.clone(), move |style| style.text_color(primary))
     });
-    div()
+    let el = div()
         .id(id.clone())
         .group(id)
         .flex()
@@ -78,14 +188,19 @@ pub fn ghost_icon_button(
             this.hover(move |style| style.bg(hover))
                 .active(move |style| style.bg(pressed))
         })
-        .child(glyph)
+        .child(glyph);
+    if disabled {
+        el
+    } else {
+        focusable(el, tokens, false)
+    }
 }
 
 /// A ghost control as tall as its bar, padding 0 x 8 (status bar items).
 /// `id` is also the hover group, for an icon that follows the label.
 pub fn bar_item(id: &'static str, tokens: &Tokens) -> Stateful<Div> {
     let (hover, text) = (tokens.fill_hover, tokens.text_secondary);
-    div()
+    let el = div()
         .id(id)
         .group(id)
         .flex()
@@ -94,7 +209,8 @@ pub fn bar_item(id: &'static str, tokens: &Tokens) -> Stateful<Div> {
         .gap(px(8.))
         .h_full()
         .px(px(8.))
-        .hover(move |style| style.bg(hover).text_color(text))
+        .hover(move |style| style.bg(hover).text_color(text));
+    focusable(el, tokens, false)
 }
 
 /// The glyph of a topic status (docs/design/color.md 2.3): a distinct
@@ -169,6 +285,11 @@ pub fn button(
         .px(px(12.))
         .rounded(px(RADIUS_SM))
         .child(label.into());
+    let base = if disabled {
+        base
+    } else {
+        focusable(base, t, variant == Variant::Primary)
+    };
     match (variant, disabled) {
         (Variant::Primary, false) => {
             let (hover, pressed) = (t.accent_hover, t.accent_pressed);
@@ -277,8 +398,8 @@ pub fn segment(
         type_scale::UI
     };
     let hover = tokens.fill_hover;
-    role.el()
-        .id(id.into())
+    let el = role.el().id(id.into());
+    focusable(el, tokens, false)
         .flex()
         .items_center()
         .h_full()
@@ -295,10 +416,12 @@ pub fn segment(
 
 /// The outline of a segmented control, holding its segments.
 pub fn segmented(tokens: &Tokens) -> Div {
+    // Sized to its segments, never stretched by a column (M7 S15).
     div()
         .flex()
         .flex_row()
-        .flex_shrink_0()
+        .flex_none()
+        .self_start()
         .h(px(28.))
         .rounded(px(RADIUS_SM))
         .border_1()
@@ -352,6 +475,7 @@ pub fn property(
                 .el()
                 .flex_shrink_0()
                 .w(px(label_width))
+                .max_w(gpui_kit::relative(0.4))
                 .h(px(28.))
                 .flex()
                 .items_center()
@@ -371,20 +495,33 @@ pub fn property(
 }
 
 /// The label column of a properties block: as wide as its longest label in
-/// the current language (Inter at 13 averages about 0.53 em per character
-/// in labels), capped at 40% of the column.
-pub fn label_width(labels: &[&str]) -> f32 {
-    let longest = labels.iter().map(|l| l.chars().count()).max().unwrap_or(0) as f32;
-    (longest * 13. * 0.56).ceil().min(COLUMN_MAX * 0.4)
+/// the current language, measured in `type.ui` with the font's own
+/// advances. The 40% cap is applied against the actual column by
+/// [`property`].
+pub fn label_width(labels: &[&str], cx: &gpui_kit::App) -> f32 {
+    let system = cx.text_system();
+    let font = system.resolve_font(&gpui_kit::font(type_scale::UI.family()));
+    let size = px(type_scale::UI.size);
+    let width = |label: &str| -> f32 {
+        label
+            .chars()
+            .map(|ch| {
+                system
+                    .advance(font, size, ch)
+                    .map(|a| f32::from(a.width))
+                    .unwrap_or(type_scale::UI.size * 0.6)
+            })
+            .sum()
+    };
+    labels.iter().map(|l| width(l)).fold(0., f32::max).ceil() + 1.
 }
 
 /// A ghost value in the properties block: padding 0 x 8, shifted left by 8
 /// so its text aligns with plain values.
 pub fn ghost_value(id: impl Into<ElementId>, tokens: &Tokens) -> Stateful<Div> {
     let hover = tokens.fill_hover;
-    type_scale::UI
-        .el()
-        .id(id.into())
+    let el = type_scale::UI.el().id(id.into());
+    focusable(el, tokens, false)
         .flex()
         .flex_row()
         .items_center()

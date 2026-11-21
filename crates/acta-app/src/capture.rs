@@ -7,13 +7,14 @@ use acta_core::model::{Author, ProjectId};
 use gpui_kit::component::input::{Escape, InputEvent, Textarea, TextareaState};
 use gpui_kit::{
     AppContext, Context, Entity, EventEmitter, InteractiveElement, IntoElement, ParentElement,
-    Render, Styled, Subscription, Window, div, px,
+    Render, StatefulInteractiveElement, Styled, Subscription, Window, div, px,
 };
 
-use crate::i18n::{Arg, Key, tr};
+use crate::i18n::{Arg, Key, KeyName, text, tr};
 use crate::settings;
 use crate::theme::{RADIUS_LG, RADIUS_SM, Tokens};
 use crate::type_scale;
+use crate::ui;
 use crate::workspace::Workspace;
 
 pub enum CaptureEvent {
@@ -105,6 +106,13 @@ impl Capture {
 impl Render for Capture {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.global::<Tokens>().clone();
+        let locale = settings::locale(cx);
+        let macos = cfg!(target_os = "macos");
+        let keys = format!(
+            "{}+{}",
+            KeyName::Mod.label(locale, macos),
+            KeyName::Enter.label(locale, macos)
+        );
         let width = (window.viewport_size().width - px(48.)).min(px(640.));
         div()
             .id("capture")
@@ -138,9 +146,38 @@ impl Render for Capture {
                 ),
             )
             .child(
-                type_scale::READING
-                    .el()
-                    .child(Textarea::new(&self.editor).appearance(false)),
+                type_scale::READING.el().child(
+                    Textarea::new(&self.editor)
+                        .appearance(false)
+                        .text_size(px(type_scale::READING.size))
+                        .line_height(px(type_scale::READING.line)),
+                ),
+            )
+            .child(
+                // The editor's footer (components.md 5, Multi-line editor):
+                // the save hint and the primary button.
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .justify_end()
+                    .gap(px(8.))
+                    .h(px(28.))
+                    .child(type_scale::SMALL.el().text_color(t.text_tertiary).child(tr(
+                        locale,
+                        Key::ComposerHint,
+                        &[("keys", Arg::Text(&keys))],
+                    )))
+                    .child(
+                        ui::button(
+                            "capture-add",
+                            text(locale, Key::ComposerAdd),
+                            ui::Variant::Primary,
+                            false,
+                            &t,
+                        )
+                        .on_click(cx.listener(|capture, _, window, cx| capture.save(window, cx))),
+                    ),
             )
     }
 }

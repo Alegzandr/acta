@@ -44,6 +44,9 @@ pub enum Opened {
     /// file is never touched.
     KeyLoss {
         db: PathBuf,
+        /// A key was found but does not open the file (damaged, or the key
+        /// of another database), rather than no key at all.
+        unreadable: bool,
     },
     /// Anything else: no data directory, a key store that failed, a damaged
     /// file after a failed migration. Logged by kind; the window shows the
@@ -75,9 +78,19 @@ pub fn open(config: Option<StoreConfig>) -> Opened {
     let db = config.data_dir.join(acta_core::store::DB_FILE);
     match Store::open(&config) {
         Ok(store) => Opened::Ready(store),
-        Err(OpenError::KeyMissing { db, .. } | OpenError::KeyWrongOrCorrupt { db }) => {
-            crate::log::line("store: the database exists but cannot be decrypted");
-            Opened::KeyLoss { db }
+        Err(OpenError::KeyMissing { db, .. }) => {
+            crate::log::line("store: the database exists and its key is missing");
+            Opened::KeyLoss {
+                db,
+                unreadable: false,
+            }
+        }
+        Err(OpenError::KeyWrongOrCorrupt { db }) => {
+            crate::log::line("store: the database cannot be read with its key");
+            Opened::KeyLoss {
+                db,
+                unreadable: true,
+            }
         }
         Err(err) => {
             crate::log::line(&format!("store: could not open: {}", open_error_kind(&err)));
@@ -147,7 +160,10 @@ mod tests {
         let before = std::fs::read(&db_path).unwrap();
         temp.keys.forget();
         match open(Some(config)) {
-            Opened::KeyLoss { db } => assert_eq!(db, db_path),
+            Opened::KeyLoss { db, unreadable } => {
+                assert_eq!(db, db_path);
+                assert!(!unreadable, "a missing key is not a damaged file");
+            }
             _ => panic!("expected key loss"),
         }
         assert_eq!(std::fs::read(&db_path).unwrap(), before);

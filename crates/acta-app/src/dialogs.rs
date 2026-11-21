@@ -46,9 +46,13 @@ pub enum Kind {
     },
     Snapshots {
         list: Vec<Snapshot>,
+        /// Each snapshot's file size in bytes, in list order.
+        sizes: Vec<u64>,
         selected: Option<usize>,
     },
     RestartTerminal,
+    /// "Remove Acta from Claude Code?" (Settings, Claude Code).
+    RemoveSetup,
     #[cfg(windows)]
     /// "Sign out and clear chat data?" (components-app.md 5, Chat panel).
     ChatSignOut,
@@ -60,6 +64,8 @@ pub enum DialogEvent {
     Recover(Arc<ExportFile>),
     /// The terminal restart was confirmed.
     RestartTerminal,
+    /// Removing Acta from Claude Code was confirmed.
+    RemoveSetup,
     #[cfg(windows)]
     /// Deleting the chat panel's profile was confirmed.
     ChatSignOut,
@@ -70,6 +76,8 @@ pub struct Dialog {
     ws: Option<Entity<Workspace>>,
     pub kind: Kind,
     focus: FocusHandle,
+    /// Cancel (or Close): the safe button, focused when the dialog opens.
+    safe: FocusHandle,
 }
 
 impl EventEmitter<DialogEvent> for Dialog {}
@@ -78,6 +86,16 @@ impl Focusable for Dialog {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus.clone()
     }
+}
+
+/// A file size in megabytes with one decimal, in the language's number
+/// form: "12.4 MB", "12,4 Mo" (copy.md 10.2).
+pub fn size_mb(locale: Locale, bytes: u64) -> String {
+    let tenths = (bytes as f64 / 104_857.6).round() as u64;
+    let whole = number(locale, tenths / 10);
+    let sep = if locale == Locale::Fr { ',' } else { '.' };
+    let size = format!("{whole}{sep}{}", tenths % 10);
+    tr(locale, Key::SnapshotSize, &[("size", Arg::Text(&size))])
 }
 
 /// `acta-2026-11-21.acta.json`, the export's default name.
@@ -191,8 +209,15 @@ impl Dialog {
         cx: &mut Context<Self>,
     ) -> Self {
         let focus = cx.focus_handle();
-        window.focus(&focus, cx);
-        Self { ws, kind, focus }
+        // components.md 5, Dialog: focus starts on the safe button.
+        let safe = cx.focus_handle().tab_index(0).tab_stop(true);
+        window.focus(&safe, cx);
+        Self {
+            ws,
+            kind,
+            focus,
+            safe,
+        }
     }
 
     fn close(&mut self, cx: &mut Context<Self>) {
@@ -296,6 +321,7 @@ impl Dialog {
         let Kind::Snapshots {
             list,
             selected: Some(at),
+            ..
         } = &self.kind
         else {
             return;
@@ -382,6 +408,7 @@ impl Dialog {
                         false,
                         t,
                     )
+                    .track_focus(&self.safe)
                     .on_click(cx.listener(|d, _, _, cx| d.close(cx)))
                     .into_any_element(),
                     ui::button(
@@ -511,6 +538,7 @@ impl Dialog {
                         false,
                         t,
                     )
+                    .track_focus(&self.safe)
                     .on_click(cx.listener(|d, _, _, cx| d.close(cx)))
                     .into_any_element(),
                     ui::button(
@@ -537,12 +565,17 @@ impl Dialog {
                         false,
                         t,
                     )
+                    .track_focus(&self.safe)
                     .on_click(cx.listener(|d, _, _, cx| d.close(cx)))
                     .into_any_element(),
                 ];
                 (title, body, buttons, 520.)
             }
-            Kind::Snapshots { list, selected } => {
+            Kind::Snapshots {
+                list,
+                sizes,
+                selected,
+            } => {
                 let selected = *selected;
                 let rows = list.iter().enumerate().map(|(i, s)| {
                     let is = selected == Some(i);
@@ -576,8 +609,16 @@ impl Dialog {
                         .child(
                             type_scale::UI
                                 .el()
+                                .flex_1()
                                 .text_color(t.text_secondary)
                                 .child(snapshot_label(locale, s.kind)),
+                        )
+                        .child(
+                            type_scale::SMALL
+                                .el()
+                                .font_features(type_scale::tabular())
+                                .text_color(t.text_tertiary)
+                                .child(size_mb(locale, sizes.get(i).copied().unwrap_or(0))),
                         )
                 });
                 let note = selected.and_then(|i| list.get(i)).map(|s| {
@@ -621,11 +662,12 @@ impl Dialog {
                         false,
                         t,
                     )
+                    .track_focus(&self.safe)
                     .on_click(cx.listener(|d, _, _, cx| d.close(cx)))
                     .into_any_element(),
                     confirm.into_any_element(),
                 ];
-                (text(locale, Key::CmdSnapshot), body, buttons, 520.)
+                (text(locale, Key::SnapshotTitle), body, buttons, 520.)
             }
             Kind::RestartTerminal => {
                 let body = type_scale::UI
@@ -641,6 +683,7 @@ impl Dialog {
                         false,
                         t,
                     )
+                    .track_focus(&self.safe)
                     .on_click(cx.listener(|d, _, _, cx| d.close(cx)))
                     .into_any_element(),
                     ui::button(
@@ -654,6 +697,35 @@ impl Dialog {
                     .into_any_element(),
                 ];
                 (text(locale, Key::TerminalRestartTitle), body, buttons, 440.)
+            }
+            Kind::RemoveSetup => {
+                let body = type_scale::UI
+                    .el()
+                    .text_color(t.text_secondary)
+                    .child(text(locale, Key::SettingsRemoveBody))
+                    .into_any_element();
+                let buttons = vec![
+                    ui::button(
+                        "dialog-cancel",
+                        text(locale, Key::CommonCancel),
+                        Variant::Secondary,
+                        false,
+                        t,
+                    )
+                    .track_focus(&self.safe)
+                    .on_click(cx.listener(|d, _, _, cx| d.close(cx)))
+                    .into_any_element(),
+                    ui::button(
+                        "remove-setup-confirm",
+                        text(locale, Key::SettingsRemoveConfirm),
+                        Variant::Primary,
+                        false,
+                        t,
+                    )
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(DialogEvent::RemoveSetup)))
+                    .into_any_element(),
+                ];
+                (text(locale, Key::SettingsRemoveTitle), body, buttons, 440.)
             }
             #[cfg(windows)]
             Kind::ChatSignOut => {
@@ -670,6 +742,7 @@ impl Dialog {
                         false,
                         t,
                     )
+                    .track_focus(&self.safe)
                     .on_click(cx.listener(|d, _, _, cx| d.close(cx)))
                     .into_any_element(),
                     ui::button(
@@ -785,6 +858,13 @@ mod tests {
         let real = store.import(&file, true).unwrap();
         assert_eq!(real.projects, report.projects);
         assert_eq!(real.notes, report.notes);
+    }
+
+    #[test]
+    fn sizes_read_in_megabytes_in_each_language() {
+        assert_eq!(size_mb(Locale::En, 13_002_342), "12.4 MB");
+        assert_eq!(size_mb(Locale::Fr, 13_002_342), "12,4 Mo");
+        assert_eq!(size_mb(Locale::En, 0), "0.0 MB");
     }
 
     #[test]

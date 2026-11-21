@@ -17,6 +17,8 @@ pub enum Route {
     Kb(KbId),
     Trash,
     Settings,
+    /// The Keyboard shortcuts page (components-app.md 5).
+    Shortcuts,
 }
 
 impl Route {
@@ -32,6 +34,7 @@ impl Route {
             Route::Knowledge(id) => format!("knowledge:{id}"),
             Route::Trash => "trash".into(),
             Route::Settings => "settings".into(),
+            Route::Shortcuts => "shortcuts".into(),
         }
     }
 
@@ -45,6 +48,7 @@ impl Route {
         match key {
             "trash" => return Some(Route::Trash),
             "settings" => return Some(Route::Settings),
+            "shortcuts" => return Some(Route::Shortcuts),
             _ => {}
         }
         let (prefix, _) = key.split_once('-')?;
@@ -77,6 +81,14 @@ pub struct History {
 const MAX_HISTORY: usize = 100;
 
 impl History {
+    /// A new tab's history, on `route`.
+    pub fn at(route: Route) -> History {
+        History {
+            current: Some(route),
+            ..History::default()
+        }
+    }
+
     pub fn current(&self) -> Option<Route> {
         self.current
     }
@@ -199,5 +211,16 @@ mod tests {
             steps += 1;
         }
         assert_eq!(steps, MAX_HISTORY);
+    }
+
+    #[test]
+    fn a_new_tab_starts_on_its_page_with_no_history() {
+        let h = History::at(Route::Settings);
+        assert_eq!(h.current(), Some(Route::Settings));
+        assert!(!h.can_go_back() && !h.can_go_forward());
+        assert_eq!(
+            Route::parse(&Route::Shortcuts.key()),
+            Some(Route::Shortcuts)
+        );
     }
 }

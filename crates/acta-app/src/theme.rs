@@ -304,7 +304,8 @@ fn install(mode: Mode, cx: &mut App) {
         let c = &mut theme.colors;
         c.background = t.bg_base;
         c.foreground = t.text_primary;
-        c.muted = t.bg_raised;
+        // typography.md 3.3: code (inline and blocks) sits on bg.sunken.
+        c.muted = t.bg_sunken;
         c.muted_foreground = t.text_tertiary;
         c.border = t.border_subtle;
         c.input = t.border_strong;

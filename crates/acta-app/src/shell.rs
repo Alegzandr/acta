@@ -20,10 +20,11 @@ use acta_core::store::ExportFile;
 use gpui_kit::component::window_border;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, AnyView, App, AppContext, Bounds, Context, Entity, FocusHandle, Focusable,
-    InteractiveElement, IntoElement, KeyBinding, ParentElement, PathPromptOptions, Render,
-    SharedString, StatefulInteractiveElement, Styled, Subscription, Task, TitlebarOptions, Window,
-    WindowBounds, WindowDecorations, WindowOptions, actions, deferred, div, point, px, size,
+    AnyElement, AnyView, App, AppContext, Bounds, Context, DragMoveEvent, Entity, FocusHandle,
+    Focusable, InteractiveElement, IntoElement, KeyBinding, ParentElement, PathPromptOptions,
+    Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Task, TitlebarOptions,
+    Window, WindowBounds, WindowDecorations, WindowOptions, actions, deferred, div, point, px,
+    size,
 };
 
 use crate::capture::{Capture, CaptureEvent};
@@ -31,6 +32,7 @@ use crate::capture::{Capture, CaptureEvent};
 use crate::chat::Kept;
 #[cfg(windows)]
 use crate::chat_panel::{ChatEvent, ChatPanel, Dock};
+use crate::claude_setup;
 use crate::commands::{self, Command};
 use crate::db::{self, Db, Opened};
 use crate::dialogs::{Dialog, DialogEvent, Kind as DialogKind};
@@ -42,6 +44,7 @@ use crate::kb_model::Filters;
 use crate::kb_page::{DocPage, Draft, KnowledgePage};
 use crate::palette::{CreateKind, Palette, PaletteEvent, Setup};
 use crate::palette_model::{Group, Target};
+use crate::panes;
 use crate::record_page::{EditTitle, OpenStatusMenu, PageEvent, RecordPage};
 use crate::route::{History, Route};
 use crate::settings;
@@ -62,8 +65,6 @@ pub const CLAUDE_HOME: &str = "https://claude.ai/";
 /// docs/design/layout.md 4.2: default 1440 x 900, minimum 880 x 560.
 pub const DEFAULT_SIZE: (f32, f32) = (1440., 900.);
 pub const MIN_SIZE: (f32, f32) = (880., 560.);
-/// docs/design/layout.md 4.2: the sidebar is 260 wide.
-const SIDEBAR_WIDTH: f32 = 260.;
 /// docs/design/layout.md 4.6: the status bar is 24 high.
 const STATUS_BAR_HEIGHT: f32 = 24.;
 /// docs/design/components.md 5, Toast: 6 s.
@@ -141,8 +142,41 @@ actions!(
         RestoreSnapshot,
         /// "Open trash".
         OpenTrash,
+        /// `Esc` in the sidebar shown over the page: dismiss it.
+        DismissSidebar,
+        /// `Mod+/`, palette "Keyboard shortcuts".
+        OpenShortcuts,
+        /// Settings: "Remove from Claude Code" (confirmed, 6.4).
+        RemoveClaudeSetup,
+        /// `Mod+W`, palette "Close tab" (layout.md 4.4).
+        CloseTab,
+        /// `Ctrl+Tab` / `Ctrl+Shift+Tab`.
+        NextTab,
+        PreviousTab,
+        /// `Mod+Enter` on a tree row: open it in a new tab.
+        TreeOpenTab,
     ]
 );
+
+/// The active project as the status bar reports it (layout.md 4.6).
+#[derive(Clone, Debug)]
+struct ProjectFacts {
+    project: ProjectId,
+    has_folder: bool,
+    /// The topic Claude Code wrote to last, and when.
+    last: Option<(String, i64)>,
+}
+
+/// What a resize handle drags (docs/design/components.md 5, Resize handle).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Handle {
+    Sidebar,
+    Right,
+    Bottom,
+}
+
+/// The value of a resize drag.
+struct ResizeDrag(Handle);
 
 /// The keys of the workbench (docs/design/interaction.md 6.1). Bindings
 /// that must not reach past a focused terminal carry `!Terminal`; the ones
@@ -168,6 +202,26 @@ fn key_bindings() -> Vec<KeyBinding> {
     let mut out = vec![
         KeyBinding::new(m("cmd-b", "ctrl-b"), ToggleSidebar, app),
         KeyBinding::new(m("cmd-,", "ctrl-,"), OpenSettings, app),
+        KeyBinding::new(m("cmd-/", "ctrl-/"), OpenShortcuts, app),
+        // Mod+W only outside editors until drafts survive a closed tab.
+        KeyBinding::new(m("cmd-w", "ctrl-w"), CloseTab, plain),
+        // interaction.md 6.1: Ctrl+Tab is kept from the terminal too (its
+        // key routing hands it to the app).
+        KeyBinding::new("ctrl-tab", NextTab, None),
+        KeyBinding::new("ctrl-shift-tab", PreviousTab, None),
+        // The terminal text size from anywhere (settings 5); inside the
+        // terminal its own key routing does it.
+        KeyBinding::new(
+            m("cmd-shift-=", "ctrl-alt-="),
+            acta_terminal::view::IncreaseTextSize,
+            Some("!Terminal"),
+        ),
+        KeyBinding::new(
+            m("cmd-shift--", "ctrl-alt--"),
+            acta_terminal::view::DecreaseTextSize,
+            Some("!Terminal"),
+        ),
+        KeyBinding::new(m("cmd-enter", "ctrl-enter"), TreeOpenTab, Some("Tree")),
         KeyBinding::new("tab", FocusNext, plain),
         KeyBinding::new("shift-tab", FocusPrevious, plain),
         KeyBinding::new(m("cmd-k", "ctrl-k"), OpenPalette, app),
@@ -204,6 +258,7 @@ fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("alt-down", TreeMoveDown, Some("Tree")),
         KeyBinding::new("home", TreeHome, Some("Tree")),
         KeyBinding::new("end", TreeEnd, Some("Tree")),
+        KeyBinding::new("escape", DismissSidebar, Some("Tree")),
     ];
     // interaction.md 6.1: only Windows has a chat panel to focus.
     if cfg!(windows) {
@@ -243,6 +298,7 @@ enum PageView {
     Knowledge(Entity<KnowledgePage>),
     Doc(Entity<DocPage>),
     Trash(Entity<TrashPage>),
+    Shortcuts(Entity<crate::shortcuts_page::ShortcutsPage>),
 }
 
 impl PageView {
@@ -255,6 +311,7 @@ impl PageView {
             PageView::Knowledge(v) => v.clone().into(),
             PageView::Doc(v) => v.clone().into(),
             PageView::Trash(v) => v.clone().into(),
+            PageView::Shortcuts(v) => v.clone().into(),
         }
     }
 }
@@ -267,7 +324,14 @@ enum Overlay {
 
 struct Bench {
     ws: Entity<Workspace>,
+    /// The active tab's history (layout.md 4.4).
     history: History,
+    /// Every tab's history, in order; the active one's entry is refreshed
+    /// from `history` whenever tabs change.
+    tabs: Vec<History>,
+    active_tab: usize,
+    /// Closed tabs, most recent last ("Reopen closed tab").
+    closed_tabs: Vec<History>,
     page: PageView,
     settings: Entity<SettingsPage>,
     folds: Folds,
@@ -275,6 +339,9 @@ struct Bench {
     tree_focus: FocusHandle,
     page_focus: FocusHandle,
     active_project: Option<ProjectId>,
+    /// Where the next "New topic" goes when it was asked for from a tree
+    /// row's `plus` (that project, and that epic if any).
+    create_in: Option<(ProjectId, Option<EpicId>)>,
     recent: Vec<TopicId>,
     overlay: Option<Overlay>,
     /// Where focus returns when the overlay closes.
@@ -299,6 +366,12 @@ enum Content {
     /// The database exists and no key Acta has opens it (8.9).
     KeyLoss {
         db: PathBuf,
+        /// A key was found and does not open the file (B5 of the M7
+        /// review): the body says the file may be damaged.
+        unreadable: bool,
+        /// The name the file would be kept under, fixed when the screen
+        /// opens so that what it says is what "Start empty" does.
+        kept: String,
         /// The import preview, before anything is set aside.
         dialog: Option<Entity<Dialog>>,
     },
@@ -316,6 +389,23 @@ pub struct Shell {
     content: Content,
     start: Start,
     sidebar_visible: bool,
+    /// Pane sizes (layout.md 4.2, 4.5), from the preferences and the
+    /// resize handles.
+    sizes: panes::Sizes,
+    /// The handle being dragged; its size goes to the preferences once
+    /// the drag ends.
+    resizing: Option<Handle>,
+    /// Whether the sidebar fitted beside the page in the last frame
+    /// (layout.md 4.2, narrow behaviour).
+    sidebar_fits: bool,
+    /// `Mod+B` while the sidebar is auto-hidden: it shows over the page.
+    sidebar_overlay: bool,
+    /// What the status bar says about the active project (layout.md 4.6):
+    /// read off the UI thread when the project or the data changes.
+    facts: Option<ProjectFacts>,
+    facts_key: Option<(ProjectId, u64)>,
+    _facts: Task<()>,
+    _activation: Subscription,
     focus: FocusHandle,
     /// A press on the titlebar that has not moved yet (macOS and Linux,
     /// where the app starts the window move itself).
@@ -346,10 +436,26 @@ impl Shell {
         // not raise or activate the window.
         window.focus(&focus, cx);
         let sidebar_visible = start.sidebar || !settings::current(cx).sidebar_hidden;
+        let sizes = panes::Sizes::from_prefs(settings::current(cx));
+        // layout.md 4.6: the setup is checked again when the window
+        // regains focus.
+        let activation = cx.observe_window_activation(window, |shell, window, cx| {
+            if window.is_window_active() && matches!(shell.content, Content::Workbench(_)) {
+                claude_setup::refresh_if_stale(cx);
+            }
+        });
         Self {
             content,
             start,
             sidebar_visible,
+            sizes,
+            resizing: None,
+            sidebar_fits: true,
+            sidebar_overlay: false,
+            facts: None,
+            facts_key: None,
+            _facts: Task::ready(()),
+            _activation: activation,
             focus,
             titlebar_should_move: false,
             _appearance: appearance,
@@ -371,7 +477,7 @@ impl Shell {
             let _ = shell.update_in(cx, |shell, window, cx| {
                 match opened {
                     Opened::Ready(store) => shell.start_workbench(Db::new(store), window, cx),
-                    Opened::KeyLoss { db } => shell.content = Content::KeyLoss { db, dialog: None },
+                    Opened::KeyLoss { db, unreadable } => shell.content = key_loss(db, unreadable),
                     Opened::Failed { db } => shell.content = Content::OpenFailed { db },
                 }
                 cx.notify();
@@ -411,6 +517,9 @@ impl Shell {
         let bench = Bench {
             ws,
             history: History::default(),
+            tabs: vec![History::default()],
+            active_tab: 0,
+            closed_tabs: Vec::new(),
             page: PageView::FirstRun(first_run),
             settings: settings_page,
             folds,
@@ -418,6 +527,7 @@ impl Shell {
             tree_focus: cx.focus_handle(),
             page_focus: cx.focus_handle(),
             active_project: None,
+            create_in: None,
             recent: Vec::new(),
             overlay: None,
             return_focus: None,
@@ -433,6 +543,8 @@ impl Shell {
             _page_sub: Some(first_run_sub),
         };
         self.content = Content::Workbench(Box::new(bench));
+        // layout.md 4.6: the setup is checked at launch.
+        claude_setup::refresh(cx);
         // The first page waits for the tree (first reload).
     }
 
@@ -468,7 +580,30 @@ impl Shell {
         let on_first_run = matches!(bench.page, PageView::FirstRun(_));
         let started = bench.history.current().is_some();
         if !started {
-            let saved = settings::current(cx).page.as_deref().and_then(Route::parse);
+            // layout.md 4.4: tabs are restored at launch.
+            let prefs = settings::current(cx).clone();
+            // Keys are paired with their index first, so a key that no
+            // longer parses does not shift which tab was active.
+            let pairs: Vec<(usize, History)> = prefs
+                .tabs
+                .iter()
+                .enumerate()
+                .filter_map(|(i, k)| Route::parse(k).map(|r| (i, History::at(r))))
+                .collect();
+            let active = pairs
+                .iter()
+                .position(|(i, _)| *i == prefs.active_tab)
+                .unwrap_or(0);
+            let restored: Vec<History> = pairs.into_iter().map(|(_, h)| h).collect();
+            if restored.len() >= 2 && has_projects && start.page != Page::Settings {
+                bench.history = restored[active].clone();
+                bench.tabs = restored;
+                bench.active_tab = active;
+            }
+            let saved = bench
+                .history
+                .current()
+                .or_else(|| prefs.page.as_deref().and_then(Route::parse));
             let route = if start.page == Page::Settings {
                 Some(Route::Settings)
             } else if has_projects {
@@ -558,16 +693,113 @@ impl Shell {
         )
     }
 
+    /// Whether the sidebar is on screen, beside the page or over it.
     pub fn sidebar_visible(&self) -> bool {
-        self.sidebar_visible
+        if self.sidebar_fits {
+            self.sidebar_visible
+        } else {
+            self.sidebar_overlay
+        }
     }
 
+    /// `Mod+B`: show or hide the sidebar. While it is auto-hidden because
+    /// the window is too narrow, it shows over the page instead (4.2).
     pub fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
-        if matches!(self.content, Content::Workbench(_)) {
+        if !matches!(self.content, Content::Workbench(_)) {
+            return;
+        }
+        if self.sidebar_fits {
             self.sidebar_visible = !self.sidebar_visible;
             let hidden = !self.sidebar_visible;
             settings::change(cx, |prefs| prefs.sidebar_hidden = hidden);
+        } else {
+            self.sidebar_overlay = !self.sidebar_overlay;
+        }
+        cx.notify();
+    }
+
+    /// Dismiss the sidebar shown over the page and return to the page.
+    fn dismiss_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.sidebar_overlay {
+            self.sidebar_overlay = false;
+            self.focus_page(window, cx);
             cx.notify();
+        }
+    }
+
+    // ---- pane sizes ----
+
+    /// A resize handle moved to `position` (window coordinates).
+    fn resize(
+        &mut self,
+        handle: Handle,
+        position: gpui_kit::Point<gpui_kit::Pixels>,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        let viewport = window.viewport_size();
+        let (x, y) = (f32::from(position.x), f32::from(position.y));
+        match handle {
+            Handle::Sidebar => self.sizes.sidebar = panes::sidebar_width(x),
+            Handle::Right => {
+                let width = (f32::from(viewport.width) - x).max(panes::DOCK_MIN);
+                if self.terminal_visible() {
+                    self.sizes.terminal = width;
+                } else {
+                    self.sizes.chat = width;
+                }
+            }
+            Handle::Bottom => {
+                self.sizes.bottom =
+                    (f32::from(viewport.height) - STATUS_BAR_HEIGHT - y).max(panes::BOTTOM_MIN)
+            }
+        }
+        self.resizing = Some(handle);
+        cx.notify();
+    }
+
+    /// Double-click on a handle: the default size again.
+    fn reset_size(&mut self, handle: Handle, cx: &mut Context<Self>) {
+        let d = panes::Sizes::default();
+        match handle {
+            Handle::Sidebar => self.sizes.sidebar = d.sidebar,
+            Handle::Right if self.terminal_visible() => self.sizes.terminal = d.terminal,
+            Handle::Right => self.sizes.chat = d.chat,
+            Handle::Bottom => self.sizes.bottom = d.bottom,
+        }
+        self.save_sizes(cx);
+    }
+
+    /// "Widen sidebar", "Narrow terminal" and the like: steps of 40.
+    fn step_size(&mut self, handle: Handle, by: f32, cx: &mut Context<Self>) {
+        match handle {
+            Handle::Sidebar => {
+                self.sizes.sidebar = panes::sidebar_width(self.sizes.sidebar + by);
+                if !self.sidebar_visible {
+                    self.toggle_sidebar(cx);
+                }
+            }
+            Handle::Right | Handle::Bottom => {
+                self.sizes.terminal = (self.sizes.terminal + by).max(panes::DOCK_MIN)
+            }
+        }
+        self.save_sizes(cx);
+    }
+
+    fn save_sizes(&mut self, cx: &mut Context<Self>) {
+        self.resizing = None;
+        let sizes = self.sizes;
+        settings::change(cx, |prefs| sizes.to_prefs(prefs));
+        cx.notify();
+    }
+
+    /// The titlebar shows only the name and the window controls: first
+    /// run, key loss, open failed (screens.md 8.5, 8.9).
+    pub fn bare_titlebar(&self) -> bool {
+        match &self.content {
+            Content::Workbench(bench) => matches!(bench.page, PageView::FirstRun(_)),
+            Content::Specimen(_) => false,
+            _ => true,
         }
     }
 
@@ -614,6 +846,8 @@ impl Shell {
     }
 
     fn show(&mut self, route: Route, window: &mut Window, cx: &mut Context<Self>) {
+        // Opening something dismisses the sidebar shown over the page.
+        self.sidebar_overlay = false;
         let Some(bench) = self.bench() else { return };
         let ws = bench.ws.clone();
         let (page, sub): (PageView, Option<Subscription>) = match route {
@@ -644,6 +878,10 @@ impl Shell {
                 let Some(bench) = self.bench() else { return };
                 (PageView::Settings(bench.settings.clone()), None)
             }
+            Route::Shortcuts => {
+                let page = cx.new(|cx| crate::shortcuts_page::ShortcutsPage::new(window, cx));
+                (PageView::Shortcuts(page), None)
+            }
         };
         let Some(bench) = self.bench() else { return };
         bench.page = page;
@@ -658,11 +896,16 @@ impl Shell {
             Route::Epic(id) => {
                 tree::locate_epic(&projects, id).and_then(|l| l.project.map(|p| p.0))
             }
-            Route::Kb(_) | Route::Trash | Route::Settings => None,
+            Route::Kb(_) | Route::Trash | Route::Settings | Route::Shortcuts => None,
         };
         if let Some(project) = project {
             bench.active_project = Some(project);
             bench.folds.expand(&project.to_string());
+        } else if bench.active_project.is_none() {
+            // A page of no project opened first (Settings, Trash at
+            // launch): the first project in the tree, so the status bar
+            // and the project commands have one (layout.md 4.6).
+            bench.active_project = projects.first().map(|t| t.project.id);
         }
         if let Route::Topic(id) = route {
             bench.recent.retain(|t| *t != id);
@@ -705,12 +948,11 @@ impl Shell {
             PageEvent::NewKb(draft) => self.new_kb_draft(*draft, window, cx),
             PageEvent::Located(project) => {
                 let project = *project;
-                if let Some(bench) = self.bench()
-                    && bench.active_project != Some(project)
-                {
+                if let Some(bench) = self.bench() {
                     bench.active_project = Some(project);
-                    cx.notify();
                 }
+                // The breadcrumb and the tree now know the entry's owner.
+                cx.notify();
             }
         }
     }
@@ -752,8 +994,25 @@ impl Shell {
         let mut closed: Vec<String> = bench.folds.closed_shown.iter().cloned().collect();
         collapsed.sort();
         closed.sort();
+        bench.tabs[bench.active_tab] = bench.history.clone();
+        let (tabs, active_tab) = if bench.tabs.len() >= 2 {
+            (
+                bench
+                    .tabs
+                    .iter()
+                    .filter_map(|h| h.current().map(Route::key))
+                    .collect::<Vec<_>>(),
+                bench.active_tab,
+            )
+        } else {
+            (Vec::new(), 0)
+        };
         let current = settings::current(cx);
-        if current.page == page && current.collapsed == collapsed && current.closed_shown == closed
+        if current.page == page
+            && current.collapsed == collapsed
+            && current.closed_shown == closed
+            && current.tabs == tabs
+            && current.active_tab == active_tab
         {
             return;
         }
@@ -761,7 +1020,247 @@ impl Shell {
             prefs.page = page;
             prefs.collapsed = collapsed;
             prefs.closed_shown = closed;
+            prefs.tabs = tabs;
+            prefs.active_tab = active_tab;
         });
+    }
+
+    // ---- tabs (layout.md 4.4) ----
+
+    /// Open `route` in a new tab, or focus the tab that already shows it.
+    fn open_in_tab(&mut self, route: Route, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(bench) = self.bench() else { return };
+        bench.tabs[bench.active_tab] = bench.history.clone();
+        if let Some(at) = bench.tabs.iter().position(|h| h.current() == Some(route)) {
+            self.switch_tab(at, window, cx);
+            return;
+        }
+        bench.tabs.push(History::at(route));
+        let at = bench.tabs.len() - 1;
+        self.switch_tab(at, window, cx);
+    }
+
+    fn switch_tab(&mut self, at: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(bench) = self.bench() else { return };
+        if at >= bench.tabs.len() {
+            return;
+        }
+        bench.tabs[bench.active_tab] = bench.history.clone();
+        bench.active_tab = at;
+        bench.history = bench.tabs[at].clone();
+        if let Some(route) = bench.history.current() {
+            self.show(route, window, cx);
+        }
+        cx.notify();
+    }
+
+    /// Close tab `at`; the last remaining tab cannot be closed.
+    fn close_tab(&mut self, at: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(bench) = self.bench() else { return };
+        if bench.tabs.len() <= 1 || at >= bench.tabs.len() {
+            return;
+        }
+        bench.tabs[bench.active_tab] = bench.history.clone();
+        let closed = bench.tabs.remove(at);
+        bench.closed_tabs.push(closed);
+        let was_active = at == bench.active_tab;
+        if at < bench.active_tab || bench.active_tab >= bench.tabs.len() {
+            bench.active_tab = bench.active_tab.saturating_sub(1);
+        }
+        bench.history = bench.tabs[bench.active_tab].clone();
+        if was_active && let Some(route) = bench.history.current() {
+            self.show(route, window, cx);
+        } else {
+            self.save_layout(cx);
+        }
+        cx.notify();
+    }
+
+    fn close_other_tabs(&mut self, cx: &mut Context<Self>) {
+        let Some(bench) = self.bench() else { return };
+        bench.tabs[bench.active_tab] = bench.history.clone();
+        let keep = bench.tabs.remove(bench.active_tab);
+        bench.closed_tabs.append(&mut bench.tabs);
+        bench.tabs = vec![keep];
+        bench.active_tab = 0;
+        self.save_layout(cx);
+        cx.notify();
+    }
+
+    fn reopen_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(bench) = self.bench() else { return };
+        let Some(history) = bench.closed_tabs.pop() else {
+            return;
+        };
+        bench.tabs[bench.active_tab] = bench.history.clone();
+        bench.tabs.push(history);
+        let at = bench.tabs.len() - 1;
+        self.switch_tab(at, window, cx);
+    }
+
+    /// `Ctrl+Tab` / `Ctrl+Shift+Tab`, wrapping.
+    fn cycle_tab(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(bench) = self.bench() else { return };
+        let n = bench.tabs.len();
+        if n < 2 {
+            return;
+        }
+        let at = if forward {
+            (bench.active_tab + 1) % n
+        } else {
+            (bench.active_tab + n - 1) % n
+        };
+        self.switch_tab(at, window, cx);
+    }
+
+    /// A tab's icon and title (layout.md 4.4).
+    fn tab_label(&self, route: Route, locale: Locale, cx: &App) -> (Icon, Option<Status>, String) {
+        let Content::Workbench(bench) = &self.content else {
+            return (Icon::FileText, None, String::new());
+        };
+        let projects = &bench.ws.read(cx).projects;
+        match route {
+            Route::Topic(id) => {
+                let topic = projects
+                    .iter()
+                    .flat_map(|p| {
+                        p.loose_topics
+                            .iter()
+                            .chain(p.epics.iter().flat_map(|(_, t)| t))
+                    })
+                    .find(|t| t.id == id);
+                match topic {
+                    Some(t) => (Icon::Circle, Some(t.status), t.title.clone()),
+                    None => (Icon::Circle, None, id.to_string()),
+                }
+            }
+            Route::Epic(id) => (
+                Icon::Layers,
+                None,
+                tree::locate_epic(projects, id)
+                    .and_then(|l| l.epic.map(|e| e.1))
+                    .unwrap_or_else(|| id.to_string()),
+            ),
+            Route::Project(id) => (
+                Icon::Folder,
+                None,
+                tree::locate_project(projects, id)
+                    .and_then(|l| l.project.map(|p| p.1))
+                    .unwrap_or_else(|| id.to_string()),
+            ),
+            Route::Kb(id) => {
+                let title = match &bench.page {
+                    PageView::Doc(page) if bench.history.current() == Some(route) => {
+                        page.read(cx).located().and_then(|(_, t)| t)
+                    }
+                    _ => None,
+                };
+                (
+                    Icon::FileText,
+                    None,
+                    title.unwrap_or_else(|| id.to_string()),
+                )
+            }
+            Route::Inbox(_) => (Icon::Inbox, None, text(locale, Key::TreeInbox)),
+            Route::Knowledge(_) => (Icon::Library, None, text(locale, Key::TreeKnowledge)),
+            Route::Trash => (Icon::Trash2, None, text(locale, Key::TreeTrash)),
+            Route::Settings => (Icon::Settings, None, text(locale, Key::TreeSettings)),
+            Route::Shortcuts => (Icon::Settings, None, text(locale, Key::CmdShortcuts)),
+        }
+    }
+
+    /// The tab bar (layout.md 4.4): 32 high, `bg.sunken`, only with two or
+    /// more tabs, across the page area.
+    fn tab_bar(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let t = cx.global::<Tokens>().clone();
+        let locale = settings::locale(cx);
+        let (routes, active) = match &self.content {
+            Content::Workbench(bench) if bench.tabs.len() >= 2 => {
+                let mut tabs = bench.tabs.clone();
+                tabs[bench.active_tab] = bench.history.clone();
+                (
+                    tabs.iter().map(|h| h.current()).collect::<Vec<_>>(),
+                    bench.active_tab,
+                )
+            }
+            _ => return None,
+        };
+        let mut bar = div()
+            .id("tab-bar")
+            .flex()
+            .flex_row()
+            .flex_shrink_0()
+            .h(px(32.))
+            .w_full()
+            .overflow_x_scroll()
+            .bg(t.bg_sunken)
+            .border_b_1()
+            .border_color(t.border_subtle);
+        for (i, route) in routes.into_iter().enumerate() {
+            let Some(route) = route else { continue };
+            let (glyph, status, title) = self.tab_label(route, locale, cx);
+            let is_active = i == active;
+            let group = SharedString::from(format!("tab-{i}"));
+            let hover = t.fill_hover;
+            let leading = match status {
+                Some(status) => ui::status_glyph(status, 14., &t),
+                None => icon(glyph, 14., t.text_secondary),
+            };
+            let close = ui::ghost_icon_button(
+                format!("tab-close-{i}"),
+                Icon::X,
+                16.,
+                false,
+                false,
+                true,
+                &t,
+            )
+            .when(!is_active, |this| {
+                this.invisible().group_hover(group.clone(), |s| s.visible())
+            })
+            .on_click(cx.listener(move |shell, _, window, cx| {
+                cx.stop_propagation();
+                shell.close_tab(i, window, cx)
+            }));
+            bar = bar.child(
+                ui::focusable(div().id(("tab", i)), &t, false)
+                    .group(group)
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(8.))
+                    .h_full()
+                    .px(px(12.))
+                    .min_w(px(120.))
+                    .max_w(px(220.))
+                    .flex_shrink(1.)
+                    .when(is_active, |this| this.bg(t.bg_base))
+                    .when(!is_active, |this| this.hover(move |s| s.bg(hover)))
+                    .on_click(
+                        cx.listener(move |shell, _, window, cx| shell.switch_tab(i, window, cx)),
+                    )
+                    .on_mouse_down(
+                        gpui_kit::MouseButton::Middle,
+                        cx.listener(move |shell, _, window, cx| shell.close_tab(i, window, cx)),
+                    )
+                    .child(leading)
+                    .child(
+                        type_scale::UI
+                            .el()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_color(if is_active {
+                                t.text_primary
+                            } else {
+                                t.text_secondary
+                            })
+                            .child(title),
+                    )
+                    .child(close),
+            );
+        }
+        Some(bar.into_any_element())
     }
 
     fn focus_page(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -841,6 +1340,8 @@ impl Shell {
                 on_record: matches!(bench.page, PageView::Record(_)),
                 can_back: bench.history.can_go_back(),
                 can_forward: bench.history.can_go_forward(),
+                tabs: bench.tabs.len() > 1,
+                closed_tab: !bench.closed_tabs.is_empty(),
                 #[cfg(windows)]
                 chat_bottom: bench.chat.read(cx).dock == Dock::Bottom,
             },
@@ -872,15 +1373,25 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         match event {
-            PaletteEvent::Dismiss => self.close_overlay(window, cx),
-            PaletteEvent::Run(target) => {
-                let target = target.clone();
+            PaletteEvent::Dismiss => {
+                if let Some(bench) = self.bench() {
+                    bench.create_in = None;
+                }
+                self.close_overlay(window, cx)
+            }
+            PaletteEvent::Run(target, new_tab) => {
+                let (target, new_tab) = (target.clone(), *new_tab);
                 self.close_overlay(window, cx);
-                match target {
-                    Target::Topic(id, _) => self.navigate(Route::Topic(id), true, window, cx),
-                    Target::Project(id) => self.navigate(Route::Project(id), true, window, cx),
-                    Target::Kb(id, _) => self.navigate(Route::Kb(id), true, window, cx),
-                    Target::Command(command) => self.run_command(command, window, cx),
+                let route = match target {
+                    Target::Topic(id, _) => Route::Topic(id),
+                    Target::Project(id) => Route::Project(id),
+                    Target::Kb(id, _) => Route::Kb(id),
+                    Target::Command(command) => return self.run_command(command, window, cx),
+                };
+                if new_tab {
+                    self.open_in_tab(route, window, cx);
+                } else {
+                    self.navigate(route, true, window, cx);
                 }
             }
             PaletteEvent::Create(kind, title) => {
@@ -900,9 +1411,14 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let epic = self.current_epic(cx);
+        let mut epic = self.current_epic(cx);
         let Some(bench) = self.bench() else { return };
-        let Some(project) = bench.active_project else {
+        let mut project = bench.active_project;
+        if let Some((p, e)) = bench.create_in.take() {
+            project = Some(p);
+            epic = e;
+        }
+        let Some(project) = project else {
             return;
         };
         let ws = bench.ws.clone();
@@ -1008,6 +1524,10 @@ impl Shell {
             Command::Forward => self.forward(window, cx),
             Command::Undo => self.undo(cx),
             Command::ToggleSidebar => self.toggle_sidebar(cx),
+            Command::WidenSidebar => self.step_size(Handle::Sidebar, panes::STEP, cx),
+            Command::NarrowSidebar => self.step_size(Handle::Sidebar, -panes::STEP, cx),
+            Command::WidenTerminal => self.step_size(Handle::Right, panes::STEP, cx),
+            Command::NarrowTerminal => self.step_size(Handle::Right, -panes::STEP, cx),
             Command::ToggleTerminal => self.toggle_terminal(window, cx),
             #[cfg(windows)]
             Command::ToggleChat => self.toggle_chat(window, cx),
@@ -1031,6 +1551,14 @@ impl Shell {
             Command::Trash => self.navigate(Route::Trash, true, window, cx),
             Command::Snapshot => self.open_snapshots(window, cx),
             Command::Settings => self.open_settings(window, cx),
+            Command::Shortcuts => self.navigate(Route::Shortcuts, true, window, cx),
+            Command::CloseTab => {
+                if let Some(at) = self.bench().map(|b| b.active_tab) {
+                    self.close_tab(at, window, cx)
+                }
+            }
+            Command::CloseOtherTabs => self.close_other_tabs(cx),
+            Command::ReopenTab => self.reopen_tab(window, cx),
             Command::Theme(setting) => settings::set_theme(setting, cx),
             Command::Language(locale) => settings::set_language(locale, cx),
         }
@@ -1098,6 +1626,10 @@ impl Shell {
                 DialogEvent::RestartTerminal => {
                     shell.close_overlay(window, cx);
                     shell.do_restart_terminal(window, cx);
+                }
+                DialogEvent::RemoveSetup => {
+                    shell.close_overlay(window, cx);
+                    claude_setup::run_remove(cx);
                 }
                 #[cfg(windows)]
                 DialogEvent::ChatSignOut => {
@@ -1224,14 +1756,23 @@ impl Shell {
 
     pub fn open_snapshots(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(bench) = self.bench() else { return };
-        let task = bench.ws.read(cx).db.run(cx, |store| store.snapshots());
+        // The list and each file's size, read off the UI thread.
+        let task = bench.ws.read(cx).db.run(cx, |store| {
+            let mut list = store.snapshots()?;
+            list.sort_by_key(|s| std::cmp::Reverse(s.taken_at));
+            let sizes = list
+                .iter()
+                .map(|s| std::fs::metadata(&s.path).map(|m| m.len()).unwrap_or(0))
+                .collect::<Vec<u64>>();
+            Ok((list, sizes))
+        });
         cx.spawn_in(window, async move |shell, cx| {
-            if let Ok(mut list) = task.await {
-                list.sort_by_key(|s| std::cmp::Reverse(s.taken_at));
+            if let Ok((list, sizes)) = task.await {
                 let _ = shell.update_in(cx, |shell, window, cx| {
                     shell.open_dialog(
                         DialogKind::Snapshots {
                             list,
+                            sizes,
                             selected: None,
                         },
                         window,
@@ -1381,12 +1922,9 @@ impl Shell {
             Kept::Focus(1) => Box::new(FocusSidebar),
             Kept::Focus(2) => Box::new(FocusPage),
             Kept::Focus(3) => Box::new(FocusTerminal),
-            Kept::Focus(_)
-            | Kept::NextTab
-            | Kept::PreviousTab
-            | Kept::NextPane
-            | Kept::PreviousPane
-            | Kept::ZoomToolWindow => return,
+            Kept::NextTab => Box::new(NextTab),
+            Kept::PreviousTab => Box::new(PreviousTab),
+            Kept::Focus(_) | Kept::NextPane | Kept::PreviousPane | Kept::ZoomToolWindow => return,
         };
         // The keyboard comes back to the GPUI window before the action
         // runs, so that what it focuses receives the next keys.
@@ -1458,6 +1996,7 @@ impl Shell {
     /// Whether a GPUI layer that can overlap the chat is open
     /// (components-app.md 5: palette, quick capture, dialog, menu).
     fn chat_covered(&mut self, cx: &mut Context<Self>) -> bool {
+        let sidebar_over = self.sidebar_overlay && !self.sidebar_fits;
         let Some(bench) = self.bench() else {
             return false;
         };
@@ -1465,9 +2004,10 @@ impl Shell {
             PageView::Record(page) => page.read(cx).menu_open(),
             PageView::Knowledge(page) => page.read(cx).menu_open(),
             PageView::Settings(page) => page.read(cx).menu_open(),
+            PageView::Doc(page) => page.read(cx).menu_open(),
             _ => false,
         };
-        bench.overlay.is_some() || page_menu || bench.chat.read(cx).menu_open()
+        sidebar_over || bench.overlay.is_some() || page_menu || bench.chat.read(cx).menu_open()
     }
 
     /// macOS and Linux: no panel, claude.ai opens in the browser
@@ -1659,7 +2199,7 @@ impl Shell {
         cx.notify();
     }
 
-    fn sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn sidebar(&mut self, width: f32, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let tokens = cx.global::<Tokens>().clone();
         let t = &tokens;
         let locale = settings::locale(cx);
@@ -1667,7 +2207,17 @@ impl Shell {
         let Some(bench) = self.bench() else {
             return div().into_any_element();
         };
-        let current = bench.history.current();
+        let mut current = bench.history.current();
+        // A document or memory selects its owner's row (components-knowledge.md 5).
+        if let (Some(Route::Kb(_)), PageView::Doc(page)) = (current, &bench.page)
+            && let Some((owner, _)) = page.read(cx).located()
+        {
+            current = Some(match owner {
+                Owner::Project(id) => Route::Project(id),
+                Owner::Epic(id) => Route::Epic(id),
+                Owner::Topic(id) => Route::Topic(id),
+            });
+        }
         let cursor = bench.cursor;
         let tree_focus = bench.tree_focus.clone();
         let tree_focused = tree_focus.is_focused(window);
@@ -1713,11 +2263,9 @@ impl Shell {
             .flex()
             .flex_col()
             .flex_shrink_0()
-            .w(px(SIDEBAR_WIDTH))
+            .w(px(width))
             .h_full()
             .bg(t.bg_sunken)
-            .border_r_1()
-            .border_color(t.border_subtle)
             .child(
                 div()
                     .id("tree")
@@ -1753,13 +2301,90 @@ impl Shell {
                         cx.listener(|s, _: &TreeHome, w, cx| s.tree_key(TreeKey::Home, w, cx)),
                     )
                     .on_action(cx.listener(|s, _: &TreeEnd, w, cx| s.tree_key(TreeKey::End, w, cx)))
+                    .on_action(cx.listener(|s, _: &DismissSidebar, w, cx| s.dismiss_sidebar(w, cx)))
+                    .on_action(cx.listener(|s, _: &TreeOpenTab, w, cx| {
+                        let rows = s.rows(cx);
+                        let route = s
+                            .bench()
+                            .and_then(|b| rows.get(b.cursor))
+                            .and_then(Row::route);
+                        if let Some(route) = route {
+                            s.open_in_tab(route, w, cx);
+                        }
+                    }))
                     .children(items),
             )
             .child(pinned)
             .into_any_element()
     }
 
+    /// Read again what the status bar says about the active project when
+    /// the project or the data changed.
+    fn refresh_facts(&mut self, cx: &mut Context<Self>) {
+        let Some(bench) = self.bench() else { return };
+        let Some(project) = bench.active_project else {
+            return;
+        };
+        let ws = bench.ws.read(cx);
+        let key = (project, ws.revision);
+        if self.facts_key == Some(key) {
+            return;
+        }
+        let task = ws.db.run(cx, move |store| {
+            let has_folder = !store.folders(Owner::Project(project))?.is_empty();
+            let last = store
+                .last_claude_write(project)?
+                .map(|(_, title, at)| (title, at));
+            Ok(ProjectFacts {
+                project,
+                has_folder,
+                last,
+            })
+        });
+        self.facts_key = Some(key);
+        self._facts = cx.spawn(async move |shell, cx| {
+            if let Ok(facts) = task.await {
+                let _ = shell.update(cx, |shell, cx| {
+                    shell.facts = Some(facts);
+                    cx.notify();
+                });
+            }
+        });
+    }
+
+    /// "Set working folder..." from the status bar: the folder picker, then
+    /// the folder becomes the active project's primary one. Undoable.
+    fn set_project_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(bench) = self.bench() else { return };
+        let Some(project) = bench.active_project else {
+            return;
+        };
+        let ws = bench.ws.clone();
+        let locale = settings::locale(cx);
+        let chosen = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some(text(locale, Key::FoldersPicker).into()),
+        });
+        cx.spawn_in(window, async move |_, cx| {
+            let Ok(Ok(Some(mut paths))) = chosen.await else {
+                return;
+            };
+            let Some(path) = paths.pop() else { return };
+            ws.update(cx, |ws, cx| {
+                ws.undoable(cx, Some(project), None, move |store| {
+                    let id = store.add_folder(Owner::Project(project), &path, Author::Human)?;
+                    store.reorder(Record::Folder(id), 0, Author::Human)?;
+                    Ok((crate::workspace::Undo::Delete(Record::Folder(id)), ()))
+                });
+            });
+        })
+        .detach();
+    }
+
     fn status_bar(&mut self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        self.refresh_facts(cx);
         let tokens = cx.global::<Tokens>().clone();
         let locale = settings::locale(cx);
         let version = tr(
@@ -1767,6 +2392,7 @@ impl Shell {
             Key::StatusbarVersion,
             &[("version", Arg::Text(acta_core::VERSION))],
         );
+        let active = self.bench().and_then(|bench| bench.active_project);
         let project = self.bench().and_then(|bench| {
             let id = bench.active_project?;
             bench
@@ -1777,6 +2403,51 @@ impl Shell {
                 .find(|t| t.project.id == id)
                 .map(|t| t.project.title.clone())
         });
+        let facts = self.facts.clone().filter(|f| Some(f.project) == active);
+        let check = claude_setup::state(cx).and_then(|s| s.check);
+        let status = claude_setup::status(check, facts.as_ref().map(|f| f.has_folder));
+        let (glyph, glyph_color, key) = match status {
+            claude_setup::Status::NotSetUp => (
+                Icon::CircleDashed,
+                tokens.text_tertiary,
+                Key::StatusbarNotSetUp,
+            ),
+            claude_setup::Status::NotFound => (
+                Icon::CircleSlash,
+                tokens.text_tertiary,
+                Key::StatusbarNotFound,
+            ),
+            claude_setup::Status::NoFolder => {
+                (Icon::Circle, tokens.text_secondary, Key::StatusbarNoFolder)
+            }
+            claude_setup::Status::Ready => (
+                Icon::CircleCheck,
+                tokens.text_secondary,
+                Key::StatusbarReady,
+            ),
+        };
+        let last_wrote = (status == claude_setup::Status::Ready)
+            .then(|| facts.and_then(|f| f.last))
+            .flatten()
+            .map(|(topic, at)| {
+                let when = crate::when::long_alone(locale, at);
+                tr(
+                    locale,
+                    Key::StatusbarLastWrote,
+                    &[("when", Arg::Text(&when)), ("topic", Arg::Text(&topic))],
+                )
+            });
+        let claude_item = ui::bar_item("status-claude", &tokens)
+            .child(icon(glyph, 14., glyph_color))
+            .child(type_scale::SMALL.el().child(text(locale, key)))
+            .when_some(last_wrote, |this, tip| this.tooltip(ui::tip(tip)))
+            .on_click(cx.listener(move |shell, _, window, cx| {
+                if status == claude_setup::Status::NoFolder {
+                    shell.set_project_folder(window, cx);
+                } else {
+                    shell.open_settings(window, cx);
+                }
+            }));
         div()
             .flex()
             .flex_row()
@@ -1802,30 +2473,39 @@ impl Shell {
                                 shell.open_palette(Some(Group::Projects), None, window, cx)
                             }))
                     }))
+                    .child(claude_item),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .h_full()
+                    .when(settings::updated_this_session(cx), |this| {
+                        // components.md 5, Update indicator: "Updated to
+                        // 0.4.1" for the first session on a new version,
+                        // opening the release notes; no dot.
+                        this.child(
+                            ui::bar_item("status-updated", &tokens)
+                                .child(type_scale::SMALL.el().child(tr(
+                                    locale,
+                                    Key::UpdateDone,
+                                    &[("version", Arg::Text(acta_core::VERSION))],
+                                )))
+                                .on_click(|_, _, cx| cx.open_url(crate::settings_page::RELEASES)),
+                        )
+                    })
                     .child(
-                        // The setup check of ADR 0005 is M3; until then the
-                        // status reports setup only (layout.md 4.6).
-                        ui::bar_item("status-claude", &tokens)
-                            .child(icon(Icon::CircleDashed, 14., tokens.text_tertiary))
+                        ui::bar_item("status-version", &tokens)
                             .child(
                                 type_scale::SMALL
                                     .el()
-                                    .child(text(locale, Key::StatusbarNotSetUp)),
+                                    .font_features(type_scale::tabular())
+                                    .child(version),
                             )
                             .on_click(
                                 cx.listener(|shell, _, window, cx| shell.open_settings(window, cx)),
                             ),
                     ),
-            )
-            .child(
-                ui::bar_item("status-version", &tokens)
-                    .child(
-                        type_scale::SMALL
-                            .el()
-                            .font_features(type_scale::tabular())
-                            .child(version),
-                    )
-                    .on_click(cx.listener(|shell, _, window, cx| shell.open_settings(window, cx))),
             )
     }
 
@@ -1894,17 +2574,36 @@ impl Shell {
                 .into_iter()
                 .chain([crumb(text(locale, Key::TreeKnowledge), None)])
                 .collect(),
-            (Some(Route::Kb(_)), _) => bench
-                .active_project
-                .and_then(project_crumb)
-                .into_iter()
-                .chain([crumb(
-                    text(locale, Key::TreeKnowledge),
-                    bench.active_project.map(Route::Knowledge),
-                )])
-                .collect(),
+            // A document or memory: its owner's place as links, then the
+            // entry itself (layout.md 4.3).
+            (Some(Route::Kb(_)), PageView::Doc(page)) => {
+                let Some((owner, title)) = page.read(cx).located() else {
+                    return Vec::new();
+                };
+                let mut out = Vec::new();
+                match owner {
+                    Owner::Project(id) => out.extend(project_crumb(id)),
+                    Owner::Epic(id) => {
+                        if let Some(at) = tree::locate_epic(&projects, id) {
+                            out.extend(at.project.map(|(p, n)| crumb(n, Some(Route::Project(p)))));
+                            out.extend(at.epic.map(|(e, n)| crumb(n, Some(Route::Epic(e)))));
+                        }
+                    }
+                    Owner::Topic(id) => {
+                        if let Some(at) = tree::locate_topic(&projects, id) {
+                            out.extend(at.project.map(|(p, n)| crumb(n, Some(Route::Project(p)))));
+                            out.extend(at.epic.map(|(e, n)| crumb(n, Some(Route::Epic(e)))));
+                            out.extend(at.topic.map(|(t, n)| crumb(n, Some(Route::Topic(t)))));
+                        }
+                    }
+                }
+                out.extend(title.map(|t| crumb(t, None)));
+                out
+            }
+            (Some(Route::Kb(_)), _) => Vec::new(),
             (Some(Route::Trash), _) => vec![crumb(text(locale, Key::TreeTrash), None)],
             (Some(Route::Settings), _) => vec![crumb(text(locale, Key::TreeSettings), None)],
+            (Some(Route::Shortcuts), _) => vec![crumb(text(locale, Key::CmdShortcuts), None)],
         }
     }
 
@@ -1914,7 +2613,13 @@ impl Shell {
 
     // ---- key loss ----
 
-    fn key_loss(&mut self, db: PathBuf, cx: &mut Context<Self>) -> AnyElement {
+    fn key_loss(
+        &mut self,
+        db: PathBuf,
+        unreadable: bool,
+        kept: String,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let t = cx.global::<Tokens>().clone();
         let locale = settings::locale(cx);
         let keychain = text(
@@ -1927,14 +2632,12 @@ impl Shell {
                 Key::KeychainL
             },
         );
-        let kept = format!(
-            "acta.unreadable-{}.db",
-            acta_core::time::file_stamp(acta_core::time::now_ms())
-        );
         let path = db.to_string_lossy().into_owned();
         // macOS keeps the key in a file in the data folder (ADR 0003), so
         // its copy names the file, not a keychain.
-        let body = if cfg!(target_os = "macos") {
+        let body = if unreadable {
+            text(locale, Key::KeylossBodyUnreadable)
+        } else if cfg!(target_os = "macos") {
             text(locale, Key::KeylossBodyM)
         } else {
             tr(
@@ -2049,8 +2752,12 @@ impl Shell {
     ) {
         let Some(config) = db::config() else { return };
         let dir = config.data_dir.clone();
+        let kept = match &self.content {
+            Content::KeyLoss { kept, .. } => kept.clone(),
+            _ => acta_core::db::unreadable_name(acta_core::time::now_ms()),
+        };
         let opening = cx.background_spawn(async move {
-            if let Err(err) = acta_core::db::set_aside_unreadable(&dir) {
+            if let Err(err) = acta_core::db::set_aside_unreadable(&dir, &kept) {
                 crate::log::line(&format!(
                     "key loss: could not set the file aside: {:?}",
                     err.kind()
@@ -2101,7 +2808,7 @@ impl Shell {
                             shell.show_toast(toast, cx);
                         }
                     }
-                    Opened::KeyLoss { db } => shell.content = Content::KeyLoss { db, dialog: None },
+                    Opened::KeyLoss { db, unreadable } => shell.content = key_loss(db, unreadable),
                     Opened::Failed { db } => shell.content = Content::OpenFailed { db },
                 }
                 cx.notify();
@@ -2148,22 +2855,37 @@ impl Shell {
                             .child(db.to_string_lossy().into_owned())
                     }))
                     .child(
-                        div().mt(px(24.)).flex().child(
-                            ui::button(
-                                "openfail-retry",
-                                text(locale, Key::CommonTryAgain),
-                                Variant::Secondary,
-                                false,
-                                &t,
+                        div()
+                            .mt(px(24.))
+                            .flex()
+                            .flex_row()
+                            .gap(px(8.))
+                            .child(
+                                ui::button(
+                                    "openfail-retry",
+                                    text(locale, Key::CommonTryAgain),
+                                    Variant::Secondary,
+                                    false,
+                                    &t,
+                                )
+                                .on_click(cx.listener(
+                                    |shell, _, window, cx| {
+                                        shell.content = Content::Opening;
+                                        shell.open_store(window, cx);
+                                        cx.notify();
+                                    },
+                                )),
                             )
-                            .on_click(cx.listener(
-                                |shell, _, window, cx| {
-                                    shell.content = Content::Opening;
-                                    shell.open_store(window, cx);
-                                    cx.notify();
-                                },
-                            )),
-                        ),
+                            .children(crate::log::path().map(|log| {
+                                ui::button(
+                                    "openfail-log",
+                                    text(locale, Key::OpenfailShowLog),
+                                    Variant::Ghost,
+                                    false,
+                                    &t,
+                                )
+                                .on_click(move |_, _, cx| cx.reveal_path(log))
+                            })),
                     ),
             )
             .into_any_element()
@@ -2253,6 +2975,138 @@ impl Shell {
         )
     }
 
+    /// The workbench between the titlebar and the status bar: sidebar,
+    /// page, docks and their resize handles, sized so that panes give way
+    /// sidebar first (layout.md 4.2, narrow behaviour).
+    fn workbench_body(
+        &mut self,
+        outlined: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let t = cx.global::<Tokens>().clone();
+        let viewport = window.viewport_size();
+        let frame = if outlined { 2. } else { 0. };
+        let width = f32::from(viewport.width) - frame;
+        let body_height = f32::from(viewport.height) - frame - titlebar::HEIGHT - STATUS_BAR_HEIGHT;
+        let first_run = matches!(self.bench().map(|b| &b.page), Some(PageView::FirstRun(_)));
+        let bulk = self.bulk_notice(cx);
+        let toast = self.toast_element(cx);
+        let tab_bar = self.tab_bar(cx);
+        let (right_chat, bottom) = self.chat_docks(window, cx);
+        let terminal = self.terminal_visible();
+        let right_wanted = if terminal {
+            Some(self.sizes.terminal)
+        } else if right_chat.is_some() {
+            Some(self.sizes.chat)
+        } else {
+            None
+        };
+        let dock_width = right_wanted.map(|w| panes::dock_width(w, width));
+        let sidebar_width = self.sizes.sidebar;
+        let fits = first_run || panes::sidebar_fits(sidebar_width, dock_width.unwrap_or(0.), width);
+        if fits != self.sidebar_fits {
+            self.sidebar_fits = fits;
+            if fits {
+                self.sidebar_overlay = false;
+            }
+        }
+        let inline_sidebar = (self.sidebar_visible && fits && !first_run)
+            .then(|| self.sidebar(sidebar_width, window, cx));
+        let overlay_sidebar = (self.sidebar_overlay && !fits && !first_run).then(|| {
+            let el = self.sidebar(panes::SIDEBAR_DEFAULT, window, cx);
+            deferred(
+                div()
+                    .id("sidebar-overlay")
+                    .occlude()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .h_full()
+                    .border_r_1()
+                    .border_color(t.border_default)
+                    .shadow(vec![t.shadow_overlay()])
+                    .on_mouse_down_out(
+                        cx.listener(|shell, _, window, cx| shell.dismiss_sidebar(window, cx)),
+                    )
+                    .child(el),
+            )
+            .with_priority(1)
+            .into_any_element()
+        });
+        let resizing = self.resizing;
+        let bench = self.bench().expect("workbench");
+        let page_view = bench.page.view();
+        let page_focus = bench.page_focus.clone();
+        let right: Option<AnyElement> = if bench.dock_visible {
+            Some(bench.dock.clone().into_any_element())
+        } else {
+            right_chat
+        };
+        let page = div()
+            .id("page-area")
+            .track_focus(&page_focus)
+            .relative()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_w_0()
+            .min_h_0()
+            .children(tab_bar)
+            .children(bulk)
+            .child(div().flex_1().min_h_0().child(page_view))
+            .children(toast);
+        // The bottom dock sits under the page area only.
+        let bottom = bottom.map(|dock| {
+            let height = panes::bottom_height(self.sizes.bottom, body_height);
+            div()
+                .flex()
+                .flex_col()
+                .w_full()
+                .flex_shrink_0()
+                .child(resize_handle(Handle::Bottom, resizing, &t, cx))
+                .child(div().h(px(height)).w_full().child(dock))
+        });
+        let column = div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_w(px(panes::PAGE_MIN.min(width)))
+            .h_full()
+            .child(page)
+            .children(bottom);
+        let right = right.map(|dock| {
+            let width = dock_width.unwrap_or(panes::DOCK_DEFAULT);
+            div()
+                .flex()
+                .flex_row()
+                .h_full()
+                .flex_shrink_0()
+                .child(resize_handle(Handle::Right, resizing, &t, cx))
+                .child(div().w(px(width)).h_full().child(dock))
+        });
+        let sidebar = inline_sidebar.map(|el| {
+            div()
+                .flex()
+                .flex_row()
+                .h_full()
+                .flex_shrink_0()
+                .child(el)
+                .child(resize_handle(Handle::Sidebar, resizing, &t, cx))
+        });
+        div()
+            .relative()
+            .flex()
+            .flex_row()
+            .flex_1()
+            .min_h_0()
+            .w_full()
+            .children(sidebar)
+            .child(column)
+            .children(right)
+            .children(overlay_sidebar)
+            .into_any_element()
+    }
     fn bulk_notice(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let t = cx.global::<Tokens>().clone();
         let locale = settings::locale(cx);
@@ -2305,6 +3159,17 @@ impl Shell {
                 )
                 .into_any_element(),
         )
+    }
+}
+
+/// The key-loss screen for `db`, with the name the file would be kept
+/// under fixed now (screens.md 8.9).
+fn key_loss(db: PathBuf, unreadable: bool) -> Content {
+    Content::KeyLoss {
+        db,
+        unreadable,
+        kept: acta_core::db::unreadable_name(acta_core::time::now_ms()),
+        dialog: None,
     }
 }
 
@@ -2393,7 +3258,7 @@ fn tree_row(
         .rounded(px(RADIUS_SM))
         .when(selected, |this| this.bg(t.fill_selected))
         .when(!selected, |this| this.hover(move |s| s.bg(hover)))
-        .when(cursor, |this| this.border_2().border_color(t.focus_ring));
+        .when(cursor, |this| this.shadow(ui::ring_shadow(t, false)));
     let chevron = |expanded: bool, key: String, cx: &mut Context<Shell>| {
         div()
             .id(SharedString::from(format!("tree-fold-{index}")))
@@ -2431,6 +3296,32 @@ fn tree_row(
             })
             .child(short_count(n.max(0) as u64))
     };
+    // components.md 5, list / tree row: hover on a project or epic row
+    // reveals a compact ghost `plus`, "New topic" there.
+    let plus = |project: ProjectId, epic: Option<EpicId>, cx: &mut Context<Shell>| {
+        div()
+            .invisible()
+            .group_hover(id.clone(), |s| s.visible())
+            .child(
+                ui::ghost_icon_button(
+                    format!("tree-plus-{index}"),
+                    Icon::Plus,
+                    24.,
+                    false,
+                    false,
+                    true,
+                    t,
+                )
+                .tooltip(ui::tip(text(locale, Key::TopicNew)))
+                .on_click(cx.listener(move |shell, _, window, cx| {
+                    cx.stop_propagation();
+                    if let Some(bench) = shell.bench() {
+                        bench.create_in = Some((project, epic));
+                    }
+                    shell.open_palette(None, Some(CreateKind::Topic), window, cx);
+                })),
+            )
+    };
     el = match row {
         Row::Project {
             title: name,
@@ -2438,7 +3329,8 @@ fn tree_row(
             id: pid,
         } => el
             .child(chevron(*expanded, pid.to_string(), cx))
-            .child(title(type_scale::UI_STRONG, name.clone(), t.text_primary)),
+            .child(title(type_scale::UI_STRONG, name.clone(), t.text_primary))
+            .child(plus(*pid, None, cx)),
         Row::Inbox { count: n, .. } => el
             .child(icon(Icon::Inbox, 16., rest))
             .child(title(
@@ -2467,10 +3359,11 @@ fn tree_row(
             title: name,
             expanded,
             id: eid,
-            ..
+            project,
         } => el
             .child(chevron(*expanded, eid.to_string(), cx))
-            .child(title(type_scale::LABEL, name.clone(), rest)),
+            .child(title(type_scale::LABEL, name.clone(), rest))
+            .child(plus(*project, Some(*eid), cx)),
         Row::Topic {
             title: name,
             status,
@@ -2508,12 +3401,24 @@ fn tree_row(
         }
     };
     if let Some(route) = row.route() {
-        el = el.on_click(cx.listener(move |shell, _, window, cx| {
-            if let Some(bench) = shell.bench() {
-                bench.cursor = index;
-            }
-            shell.navigate(route, true, window, cx)
-        }));
+        // Mod+click or a middle click opens the row in a new tab (4.4).
+        el = el
+            .on_click(
+                cx.listener(move |shell, event: &gpui_kit::ClickEvent, window, cx| {
+                    if let Some(bench) = shell.bench() {
+                        bench.cursor = index;
+                    }
+                    if event.modifiers().secondary(cx) {
+                        shell.open_in_tab(route, window, cx)
+                    } else {
+                        shell.navigate(route, true, window, cx)
+                    }
+                }),
+            )
+            .on_mouse_down(
+                gpui_kit::MouseButton::Middle,
+                cx.listener(move |shell, _, window, cx| shell.open_in_tab(route, window, cx)),
+            );
     }
     el.into_any_element()
 }
@@ -2581,13 +3486,19 @@ impl Render for Shell {
 
         let body: AnyElement = match &self.content {
             Content::Opening => div().flex_1().into_any_element(),
-            Content::KeyLoss { db, dialog } => {
-                let (db, dialog) = (db.clone(), dialog.clone());
+            Content::KeyLoss {
+                db,
+                unreadable,
+                kept,
+                dialog,
+            } => {
+                let (db, unreadable, kept, dialog) =
+                    (db.clone(), *unreadable, kept.clone(), dialog.clone());
                 div()
                     .relative()
                     .flex_1()
                     .min_h_0()
-                    .child(self.key_loss(db, cx))
+                    .child(self.key_loss(db, unreadable, kept, cx))
                     .children(dialog.map(|d| deferred(d).into_any_element()))
                     .into_any_element()
             }
@@ -2605,56 +3516,12 @@ impl Render for Shell {
                 .w_full()
                 .child(view.clone())
                 .into_any_element(),
-            Content::Workbench(_) => {
-                let first_run =
-                    matches!(self.bench().map(|b| &b.page), Some(PageView::FirstRun(_)));
-                let sidebar =
-                    (self.sidebar_visible && !first_run).then(|| self.sidebar(window, cx));
-                let bulk = self.bulk_notice(cx);
-                let toast = self.toast_element(cx);
-                let (right_chat, bottom) = self.chat_docks(window, cx);
-                let bench = self.bench().expect("workbench");
-                let page_view = bench.page.view();
-                let page_focus = bench.page_focus.clone();
-                let right: Option<AnyElement> = if bench.dock_visible {
-                    Some(bench.dock.clone().into_any_element())
-                } else {
-                    right_chat
-                };
-                let page = div()
-                    .id("page-area")
-                    .track_focus(&page_focus)
-                    .relative()
-                    .flex()
-                    .flex_col()
-                    .flex_1()
-                    .min_w(px(420.))
-                    .h_full()
-                    .children(bulk)
-                    .child(div().flex_1().min_h_0().child(page_view))
-                    .children(toast);
-                // The bottom dock sits under the page area only.
-                let column = div()
-                    .flex()
-                    .flex_col()
-                    .flex_1()
-                    .min_w(px(420.))
-                    .h_full()
-                    .child(page)
-                    .children(bottom);
-                div()
-                    .relative()
-                    .flex()
-                    .flex_row()
-                    .flex_1()
-                    .min_h_0()
-                    .w_full()
-                    .children(sidebar)
-                    .child(column)
-                    .children(right)
-                    .into_any_element()
-            }
+            Content::Workbench(_) => self.workbench_body(outlined, window, cx),
         };
+        // A drag that ended: its size goes to the preferences.
+        if self.resizing.is_some() && !cx.has_active_drag() {
+            self.save_sizes(cx);
+        }
         let status_bar = is_bench.then(|| self.status_bar(cx));
         let overlay = self.overlay_element();
 
@@ -2667,6 +3534,17 @@ impl Render for Shell {
             .on_action(
                 cx.listener(|shell, _: &OpenSettings, window, cx| shell.open_settings(window, cx)),
             )
+            .on_action(cx.listener(|shell, _: &OpenShortcuts, window, cx| {
+                shell.navigate(Route::Shortcuts, true, window, cx)
+            }))
+            .on_action(
+                cx.listener(|s, _: &CloseTab, w, cx| s.run_command(Command::CloseTab, w, cx)),
+            )
+            .on_action(cx.listener(|s, _: &RemoveClaudeSetup, w, cx| {
+                s.open_dialog(DialogKind::RemoveSetup, w, cx)
+            }))
+            .on_action(cx.listener(|s, _: &NextTab, w, cx| s.cycle_tab(true, w, cx)))
+            .on_action(cx.listener(|s, _: &PreviousTab, w, cx| s.cycle_tab(false, w, cx)))
             .on_action(|_: &FocusNext, window, cx| window.focus_next(cx))
             .on_action(|_: &FocusPrevious, window, cx| window.focus_prev(cx))
             .on_action(cx.listener(|s, _: &OpenPalette, w, cx| s.open_palette(None, None, w, cx)))
@@ -2674,7 +3552,12 @@ impl Render for Shell {
                 s.open_palette(Some(Group::Topics), None, w, cx)
             }))
             .on_action(cx.listener(|s, _: &SwitchProject, w, cx| {
-                s.open_palette(Some(Group::Projects), None, w, cx)
+                // First run (8.5): Mod+O is "Choose a folder".
+                if s.bare_titlebar() && matches!(s.content, Content::Workbench(_)) {
+                    s.new_project(w, cx);
+                } else {
+                    s.open_palette(Some(Group::Projects), None, w, cx)
+                }
             }))
             .on_action(
                 cx.listener(|s, _: &NewTopic, w, cx| s.run_command(Command::NewTopic, w, cx)),
@@ -2708,10 +3591,18 @@ impl Render for Shell {
             .on_action(cx.listener(|s, _: &FocusSidebar, w, cx| {
                 if let Some(bench) = s.bench() {
                     let handle = bench.tree_focus.clone();
-                    s.sidebar_visible = true;
+                    if s.sidebar_fits {
+                        s.sidebar_visible = true;
+                    } else {
+                        s.sidebar_overlay = true;
+                    }
                     w.focus(&handle, cx);
                     cx.notify();
                 }
+            }))
+            .on_drag_move(cx.listener(|s, e: &DragMoveEvent<ResizeDrag>, w, cx| {
+                let handle = e.drag(cx).0;
+                s.resize(handle, e.event.position, w, cx)
             }))
             .on_action(cx.listener(|s, _: &FocusPage, w, cx| s.focus_page(w, cx)))
             .on_action(cx.listener(|s, _: &FocusTerminal, w, cx| {
@@ -2753,6 +3644,80 @@ impl Render for Shell {
             frame.into_any_element()
         }
     }
+}
+
+/// A resize handle (docs/design/components.md 5): the 1px `border.subtle`
+/// divider between two panes, with an 8 hit area that lies over the pane
+/// painted before it, so the pane after it never covers the hit area.
+/// Hovered or dragged, the line becomes 2px `accent`; double-click restores
+/// the default size.
+fn resize_handle(
+    handle: Handle,
+    resizing: Option<Handle>,
+    t: &Tokens,
+    cx: &mut Context<Shell>,
+) -> gpui_kit::Div {
+    let vertical = handle != Handle::Bottom;
+    let id: &'static str = match handle {
+        Handle::Sidebar => "resize-sidebar",
+        Handle::Right => "resize-right",
+        Handle::Bottom => "resize-bottom",
+    };
+    let accent = t.accent;
+    let reach = panes::HANDLE_HIT - 1.;
+    let line = div()
+        .absolute()
+        .map(|this| {
+            if vertical {
+                this.top_0().bottom_0().right_0().w(px(2.))
+            } else {
+                this.left_0().right_0().bottom_0().h(px(2.))
+            }
+        })
+        .when(resizing == Some(handle), |this| this.bg(accent))
+        .group_hover(id, move |s| s.bg(accent));
+    let hit = div()
+        .id(id)
+        .group(id)
+        .absolute()
+        .map(|this| {
+            if vertical {
+                this.top_0()
+                    .bottom_0()
+                    .left(px(-reach))
+                    .w(px(panes::HANDLE_HIT))
+                    .cursor(gpui_kit::CursorStyle::ResizeLeftRight)
+            } else {
+                this.left_0()
+                    .right_0()
+                    .top(px(-reach))
+                    .h(px(panes::HANDLE_HIT))
+                    .cursor(gpui_kit::CursorStyle::ResizeUpDown)
+            }
+        })
+        .on_drag(ResizeDrag(handle), |_, _, _, cx| {
+            cx.new(|_| gpui_kit::EmptyView)
+        })
+        .on_click(
+            cx.listener(move |shell, event: &gpui_kit::ClickEvent, _, cx| {
+                if event.click_count() >= 2 {
+                    shell.reset_size(handle, cx);
+                }
+            }),
+        )
+        .child(line);
+    div()
+        .relative()
+        .flex_shrink_0()
+        .map(|this| {
+            if vertical {
+                this.w(px(1.)).h_full()
+            } else {
+                this.h(px(1.)).w_full()
+            }
+        })
+        .bg(t.border_subtle)
+        .child(hit)
 }
 
 /// A chat in the right dock gives way to the terminal shown there.

@@ -105,6 +105,10 @@ pub enum EventKind {
     State,
     /// Restored from the trash.
     Restored,
+    /// An entry was edited in place: old holds its previous type and text
+    /// (`{"kind":"progress","text":"..."}`), new the entry's number, so
+    /// no wording is lost.
+    Edited,
 }
 
 /// Level a knowledge entry or a folder is attached to.

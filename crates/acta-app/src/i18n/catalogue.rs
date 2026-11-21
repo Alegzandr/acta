@@ -257,6 +257,10 @@ catalogue! {
         en: p_by("total", "{done} of {total} topic done", "{done} of {total} topics done"),
         fr: p_by("done", "{done} sujet terminé sur {total}", "{done} sujets terminés sur {total}"),
     }
+    ProgressNone "progress.none" {
+        en: t("No topics yet"),
+        fr: t("Aucun sujet"),
+    }
     KindDocument "kind.document" {
         en: t("Document"),
         fr: t("Document"),
@@ -305,6 +309,14 @@ catalogue! {
         en: t("What is this topic about, and what does done look like?"),
         fr: t("De quoi s\u{2019}agit-il, et à quoi verra-t-on que c\u{2019}est terminé\u{202f}?"),
     }
+    DescriptionPlaceholderEpic "description.placeholder.epic" {
+        en: t("What is this epic about?"),
+        fr: t("De quoi parle cet epic\u{202f}?"),
+    }
+    DescriptionPlaceholderProject "description.placeholder.project" {
+        en: t("What is this project about?"),
+        fr: t("De quoi parle ce projet\u{202f}?"),
+    }
     TimelineAll "timeline.all" {
         en: t("All"),
         fr: t("Tout"),
@@ -352,6 +364,14 @@ catalogue! {
     EntryChangeType "entry.change_type" {
         en: t("Change type"),
         fr: t("Changer le type"),
+    }
+    EntryEdited "entry.edited" {
+        en: t("edited"),
+        fr: t("modifiée"),
+    }
+    EntryEditedBy "entry.edited_by" {
+        en: t("edited by {name}"),
+        fr: t("modifiée par {name}"),
     }
     ConflictNotice "conflict.notice" {
         en: t("Claude Code changed this while you were editing."),
@@ -416,6 +436,10 @@ catalogue! {
     TopicEmptyProject "topic.empty_project" {
         en: t("No topics yet. Capture notes and let Claude Code file them, or start one yourself."),
         fr: t("Aucun sujet pour l\u{2019}instant. Saisissez des notes et laissez Claude Code les classer, ou créez-en un vous-même."),
+    }
+    TopicEmptyHeading "topic.empty.heading" {
+        en: t("No topics yet"),
+        fr: t("Aucun sujet pour l’instant"),
     }
     ErrorSaveEntry "error.save_entry" {
         en: t("Could not save the entry. The database is locked by another process."),
@@ -509,6 +533,10 @@ catalogue! {
         en: t("Inbox is empty. Notes you capture land here until they become topics."),
         fr: t("La boîte de réception est vide. Les notes que vous saisissez arrivent ici jusqu\u{2019}à devenir des sujets."),
     }
+    InboxFiledEmpty "inbox.filed_empty" {
+        en: t("No filed notes yet. Notes that become topics or entries are listed here."),
+        fr: t("Aucune note classée pour l’instant. Les notes devenues des sujets ou des entrées sont listées ici."),
+    }
     KbNewDocument "kb.new_document" {
         en: t("New document"),
         fr: t("Nouveau document"),
@@ -545,6 +573,10 @@ catalogue! {
         en: t("{n} more from epic and project"),
         fr: p("{n} autre hérité de l\u{2019}epic et du projet", "{n} autres hérités de l\u{2019}epic et du projet"),
     }
+    KbMoreInheritedProject "kb.more_inherited.project" {
+        en: t("{n} more from project {name}"),
+        fr: p("{n} autre hérité du projet {name}", "{n} autres hérités du projet {name}"),
+    }
     KbMoreEpic "kb.more_epic" {
         en: t("{n} more in the topics of this epic"),
         fr: t("{n} de plus dans les sujets de cet epic"),
@@ -556,6 +588,14 @@ catalogue! {
     KbEmpty "kb.empty" {
         en: t("Nothing here yet. Documents and memories for this topic appear here."),
         fr: t("Rien ici pour l\u{2019}instant. Les documents et mémoires de ce sujet apparaîtront ici."),
+    }
+    KbEmptyEpic "kb.empty.epic" {
+        en: t("Nothing here yet. Documents and memories for this epic appear here."),
+        fr: t("Rien ici pour l’instant. Les documents et mémoires de cet epic apparaîtront ici."),
+    }
+    KbEmptyProject "kb.empty.project" {
+        en: t("Nothing here yet. Documents and memories for this project appear here."),
+        fr: t("Rien ici pour l’instant. Les documents et mémoires de ce projet apparaîtront ici."),
     }
     KbSummaryMemory "kb.summary.memory" {
         en: t("One line: the fact, in short"),
@@ -1525,6 +1565,18 @@ catalogue! {
         en: t("Setup installs Acta\u{2019}s plugin in Claude Code and adds one permission line to ~/.claude/settings.json. Remove undoes both."),
         fr: t("La configuration installe le plugin d\u{2019}Acta dans Claude Code et ajoute une ligne d\u{2019}autorisation à ~/.claude/settings.json. Retirer annule les deux."),
     }
+    SettingsRemoveTitle "settings.remove.title" {
+        en: t("Remove Acta from Claude Code?"),
+        fr: t("Retirer Acta de Claude Code\u{202f}?"),
+    }
+    SettingsRemoveBody "settings.remove.body" {
+        en: t("This uninstalls Acta’s plugin and takes out the permission line setup added to ~/.claude/settings.json. Your projects stay in Acta."),
+        fr: t("Cela désinstalle le plugin d’Acta et retire la ligne d’autorisation ajoutée par la configuration à ~/.claude/settings.json. Vos projets restent dans Acta."),
+    }
+    SettingsRemoveConfirm "settings.remove.confirm" {
+        en: t("Remove"),
+        fr: t("Retirer"),
+    }
     SettingsData "settings.data" {
         en: t("Data"),
         fr: t("Données"),
@@ -1544,6 +1596,10 @@ catalogue! {
     SettingsSnapshotsOlder "settings.snapshots.older" {
         en: p("{n} snapshot kept; the newest is from {datetime}", "{n} snapshots kept; the newest is from {datetime}"),
         fr: p("{n} instantané conservé\u{202f}; le plus récent date du {datetime}", "{n} instantanés conservés\u{202f}; le plus récent date du {datetime}"),
+    }
+    SettingsSnapshots "settings.snapshots" {
+        en: t("Snapshots"),
+        fr: t("Instantanés"),
     }
     SettingsTrashCount "settings.trash_count" {
         en: p("{n} item", "{n} items"),
@@ -1568,6 +1624,10 @@ catalogue! {
     SettingsLicences "settings.licences" {
         en: t("Licences"),
         fr: t("Licences"),
+    }
+    SettingsLicencesHint "settings.licences.hint" {
+        en: t("Inter and JetBrains Mono under the SIL Open Font License, Lucide under ISC."),
+        fr: t("Inter et JetBrains Mono sous licence SIL Open Font License, Lucide sous licence ISC."),
     }
     StatusbarNotSetUp "statusbar.not_set_up" {
         en: t("Claude Code: not set up"),
@@ -1802,8 +1862,8 @@ catalogue! {
         fr: t("Restaurer et redémarrer"),
     }
     SnapshotTitle "snapshot.title" {
-        en: t("Restore the snapshot from {date}?"),
-        fr: t("Restaurer l\u{2019}instantané du {date}\u{202f}?"),
+        en: t("Restore from snapshot"),
+        fr: t("Restaurer depuis un instantané"),
     }
     SnapshotBody "snapshot.body" {
         en: t("Acta will restart with its data as of {datetime}. Everything as it is now is saved as a snapshot first, so you can come back."),
@@ -1817,6 +1877,10 @@ catalogue! {
         en: t("The update to {version} could not convert the database. Acta put back the snapshot from just before; nothing was lost."),
         fr: t("La mise à jour vers {version} n\u{2019}a pas pu convertir la base de données. Acta a restauré l\u{2019}instantané pris juste avant\u{202f}; rien n\u{2019}a été perdu."),
     }
+    SnapshotSize "snapshot.size" {
+        en: t("{size} MB"),
+        fr: t("{size} Mo"),
+    }
     KeylossTitle "keyloss.title" {
         en: t("Acta cannot open its database"),
         fr: t("Acta ne peut pas ouvrir sa base de données"),
@@ -1828,6 +1892,10 @@ catalogue! {
     KeylossBodyM "keyloss.body.m" {
         en: t("The database is on this computer and intact, but its key file is missing from Acta\u{2019}s data folder. This usually follows a restore from a backup that left it out, a new user profile or a move to another machine."),
         fr: t("La base de données est sur cet ordinateur et intacte, mais son fichier de clé manque dans le dossier de données d\u{2019}Acta. Cela suit en général une restauration de sauvegarde qui l\u{2019}a omis, un nouveau profil utilisateur ou un changement de machine."),
+    }
+    KeylossBodyUnreadable "keyloss.body.unreadable" {
+        en: t("Acta found its key, but the database cannot be read with it: the file may be damaged, or the key belongs to another database. This can follow a disk error or a copy of the file from another computer."),
+        fr: t("Acta a trouvé sa clé, mais elle ne permet pas de lire la base de données\u{202f}: le fichier est peut-être endommagé, ou la clé appartient à une autre base. Cela peut suivre une erreur de disque ou une copie du fichier depuis un autre ordinateur."),
     }
     KeychainW "keychain.w" {
         en: t("Windows Credential Manager"),
@@ -1868,6 +1936,10 @@ catalogue! {
     OpenfailNodir "openfail.nodir" {
         en: t("Acta could not find where to keep its data on this computer."),
         fr: t("Acta ne trouve pas où conserver ses données sur cet ordinateur."),
+    }
+    OpenfailShowLog "openfail.show_log" {
+        en: t("Show the log"),
+        fr: t("Afficher le journal"),
     }
     FirstrunTitle "firstrun.title" {
         en: t("Start with a project"),

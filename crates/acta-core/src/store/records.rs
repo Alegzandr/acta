@@ -260,6 +260,26 @@ impl Store {
         read_topic(&self.conn, id)
     }
 
+    /// The topic of `project` that Claude Code wrote to last, with the time
+    /// of that write (the status bar's "Last wrote 2 min ago in ...").
+    pub fn last_claude_write(&self, project: ProjectId) -> Result<Option<(TopicId, String, i64)>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT t.id, t.title, max(w.at) AS last FROM (
+                     SELECT topic_id AS tid, created_at AS at FROM entries
+                     WHERE author = ?2 AND deleted_at IS NULL
+                     UNION ALL
+                     SELECT id, updated_at FROM topics WHERE updated_by = ?2
+                 ) w JOIN topics t ON t.id = w.tid
+                 WHERE t.project_id = ?1 AND t.deleted_at IS NULL
+                 GROUP BY t.id ORDER BY last DESC, t.id DESC LIMIT 1",
+                params![project.0, Author::Claude],
+                |r| Ok((TopicId(r.get(0)?), r.get(1)?, r.get(2)?)),
+            )
+            .optional()?)
+    }
+
     /// Edits a topic. Status changes, moves and state replacements are
     /// recorded as system entries in its timeline (request 10).
     pub fn update_topic(&mut self, id: TopicId, patch: TopicPatch, author: Author) -> Result<()> {

@@ -72,6 +72,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `prop.kind` | Kind | Nature |
 | `prop.level` | Level | Niveau |
 | `prop.progress.value` | {done} of {total} topic done · {done} of {total} topics done (form chosen by {total}) | {done} sujet terminé sur {total} · {done} sujets terminés sur {total} (form chosen by {done}) |
+| `progress.none` | No topics yet | Aucun sujet |
 | `kind.document` | Document | Document |
 | `kind.memory` | Memory | Mémoire |
 | `level.project` | Project {name} | Projet {name} |
@@ -84,6 +85,8 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `state.updated` | Updated {when} by {author} | Modifié {when} par {author} |
 | `state.placeholder` | Where does this stand? One or two sentences. | Où en est-on ? Une ou deux phrases. |
 | `description.placeholder` | What is this topic about, and what does done look like? | De quoi s'agit-il, et à quoi verra-t-on que c'est terminé ? |
+| `description.placeholder.epic` | What is this epic about? | De quoi parle cet epic ? |
+| `description.placeholder.project` | What is this project about? | De quoi parle ce projet ? |
 | `timeline.all` | All | Tout |
 | `entry.progress` | Progress | Avancement |
 | `entry.decision` | Decision | Décision |
@@ -96,6 +99,8 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `timeline.empty` | No entries yet. Add one, or let Claude Code log progress as it works. | Aucune entrée pour l'instant. Ajoutez-en une, ou laissez Claude Code consigner l'avancement au fil du travail. |
 | `entry.copy_markdown` | Copy as Markdown | Copier en Markdown |
 | `entry.change_type` | Change type | Changer le type |
+| `entry.edited` | edited | modifiée |
+| `entry.edited_by` | edited by {name} | modifiée par {name} |
 | `conflict.notice` | Claude Code changed this while you were editing. | Claude Code a modifié ceci pendant que vous écriviez. |
 | `conflict.theirs` | Show theirs | Voir sa version |
 | `conflict.mine` | Keep mine | Garder la mienne |
@@ -112,6 +117,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `project.deleted` | Project deleted. | Projet supprimé. |
 | `topic.restored` | Topic restored. | Sujet restauré. |
 | `topic.empty_project` | No topics yet. Capture notes and let Claude Code file them, or start one yourself. | Aucun sujet pour l'instant. Saisissez des notes et laissez Claude Code les classer, ou créez-en un vous-même. |
+| `topic.empty.heading` | No topics yet | Aucun sujet pour l'instant |
 | `error.save_entry` | Could not save the entry. The database is locked by another process. | Impossible d'enregistrer l'entrée. La base de données est verrouillée par un autre processus. |
 | `error.save` | Could not save the change. Try again. | Impossible d'enregistrer la modification. Réessayez. |
 | `undo.changed` | Not undone: it was changed since. | Non annulé : cela a été modifié depuis. |
@@ -135,6 +141,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `inbox.by_claude` | by Claude Code | par Claude Code |
 | `inbox.make_topic` | Make topic | Créer un sujet |
 | `inbox.empty` | Inbox is empty. Notes you capture land here until they become topics. | La boîte de réception est vide. Les notes que vous saisissez arrivent ici jusqu'à devenir des sujets. |
+| `inbox.filed_empty` | No filed notes yet. Notes that become topics or entries are listed here. | Aucune note classée pour l'instant. Les notes devenues des sujets ou des entrées sont listées ici. |
 | `kb.new_document` | New document | Nouveau document |
 | `kb.new_memory` | New memory | Nouvelle mémoire |
 | `kb.written.document` | Written by {author} {when} | Écrit par {author} {when} |
@@ -144,9 +151,12 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `kb.from_epic` | From epic {name} | De l'epic {name} |
 | `kb.from_project` | From project {name} | Du projet {name} |
 | `kb.more_inherited` | {n} more from epic and project | {n} autre hérité de l'epic et du projet · {n} autres hérités de l'epic et du projet |
+| `kb.more_inherited.project` | {n} more from project {name} | {n} autre hérité du projet {name} · {n} autres hérités du projet {name} |
 | `kb.more_epic` | {n} more in the topics of this epic | {n} de plus dans les sujets de cet epic |
 | `kb.more_project` | {n} more in this project's epics and topics | {n} de plus dans les epics et sujets de ce projet |
 | `kb.empty` | Nothing here yet. Documents and memories for this topic appear here. | Rien ici pour l'instant. Les documents et mémoires de ce sujet apparaîtront ici. |
+| `kb.empty.epic` | Nothing here yet. Documents and memories for this epic appear here. | Rien ici pour l'instant. Les documents et mémoires de cet epic apparaîtront ici. |
+| `kb.empty.project` | Nothing here yet. Documents and memories for this project appear here. | Rien ici pour l'instant. Les documents et mémoires de ce projet apparaîtront ici. |
 | `kb.summary.memory` | One line: the fact, in short | Une ligne : le fait, en bref |
 | `kb.summary.document` | One line: what this is and when to read it | Une ligne : ce que c'est et quand le lire |
 | `kb.show_history` | Show history | Afficher l'historique |
@@ -389,17 +399,22 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `settings.setup_again` | Run setup again | Relancer la configuration |
 | `settings.setup_remove` | Remove from Claude Code | Retirer de Claude Code |
 | `settings.setup.hint` | Setup installs Acta's plugin in Claude Code and adds one permission line to ~/.claude/settings.json. Remove undoes both. | La configuration installe le plugin d'Acta dans Claude Code et ajoute une ligne d'autorisation à ~/.claude/settings.json. Retirer annule les deux. |
+| `settings.remove.title` | Remove Acta from Claude Code? | Retirer Acta de Claude Code ? |
+| `settings.remove.body` | This uninstalls Acta's plugin and takes out the permission line setup added to ~/.claude/settings.json. Your projects stay in Acta. | Cela désinstalle le plugin d'Acta et retire la ligne d'autorisation ajoutée par la configuration à ~/.claude/settings.json. Vos projets restent dans Acta. |
+| `settings.remove.confirm` | Remove | Retirer |
 | `settings.data` | Data | Données |
 | `settings.export.last` | Last export: {days} (`time.days` or `time.today_word`) | Dernier export : {days} |
 | `settings.export.never` | Never exported | Jamais exporté |
 | `settings.snapshots.today` | {n} snapshot kept; the newest is from today, {time} · {n} snapshots kept; the newest is from today, {time} | {n} instantané conservé ; le plus récent date d'aujourd'hui à {time} · {n} instantanés conservés ; le plus récent date d'aujourd'hui à {time} |
 | `settings.snapshots.older` | {n} snapshot kept; the newest is from {datetime} · {n} snapshots kept; the newest is from {datetime} | {n} instantané conservé ; le plus récent date du {datetime} · {n} instantanés conservés ; le plus récent date du {datetime} |
+| `settings.snapshots` | Snapshots | Instantanés |
 | `settings.trash_count` | {n} item · {n} items | {n} élément · {n} éléments |
 | `settings.database` | Database | Base de données |
 | `settings.chat` | Chat | Chat |
 | `settings.about` | About | À propos |
 | `settings.release_notes` | Release notes | Notes de version |
 | `settings.licences` | Licences | Licences |
+| `settings.licences.hint` | Inter and JetBrains Mono under the SIL Open Font License, Lucide under ISC. | Inter et JetBrains Mono sous licence SIL Open Font License, Lucide sous licence ISC. |
 | `statusbar.not_set_up` | Claude Code: not set up | Claude Code : non configuré |
 | `statusbar.not_found` | Claude Code: not found | Claude Code : introuvable |
 | `statusbar.no_folder` | Claude Code: no folder for this project | Claude Code : aucun dossier pour ce projet |
@@ -458,13 +473,15 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `snapshot.before_import` | Before import | Avant l'import |
 | `snapshot.before_restore` | Before restore | Avant la restauration |
 | `snapshot.confirm` | Restore and restart | Restaurer et redémarrer |
-| `snapshot.title` | Restore the snapshot from {date}? | Restaurer l'instantané du {date} ? |
+| `snapshot.title` | Restore from snapshot | Restaurer depuis un instantané |
 | `snapshot.body` | Acta will restart with its data as of {datetime}. Everything as it is now is saved as a snapshot first, so you can come back. | Acta redémarrera avec ses données du {datetime}. La situation actuelle est d'abord enregistrée dans un instantané : vous pourrez y revenir. |
 | `snapshot.restored` | Restored the snapshot from {datetime}. | Instantané du {datetime} restauré. |
 | `snapshot.migration` | The update to {version} could not convert the database. Acta put back the snapshot from just before; nothing was lost. | La mise à jour vers {version} n'a pas pu convertir la base de données. Acta a restauré l'instantané pris juste avant ; rien n'a été perdu. |
+| `snapshot.size` | {size} MB | {size} Mo |
 | `keyloss.title` | Acta cannot open its database | Acta ne peut pas ouvrir sa base de données |
 | `keyloss.body` | The database is on this computer and intact, but its key is missing from {keychain}. (`keychain.*`) This usually follows a system reinstall, a new user profile or a move to another machine. | La base de données est sur cet ordinateur et intacte, mais sa clé est absente {keychain}. Cela arrive généralement après une réinstallation du système, la création d'un nouveau profil utilisateur ou un changement de machine. |
 | `keyloss.body.m` | The database is on this computer and intact, but its key file is missing from Acta's data folder. This usually follows a restore from a backup that left it out, a new user profile or a move to another machine. | La base de données est sur cet ordinateur et intacte, mais son fichier de clé manque dans le dossier de données d'Acta. Cela suit en général une restauration de sauvegarde qui l'a omis, un nouveau profil utilisateur ou un changement de machine. |
+| `keyloss.body.unreadable` | Acta found its key, but the database cannot be read with it: the file may be damaged, or the key belongs to another database. This can follow a disk error or a copy of the file from another computer. | Acta a trouvé sa clé, mais elle ne permet pas de lire la base de données : le fichier est peut-être endommagé, ou la clé appartient à une autre base. Cela peut suivre une erreur de disque ou une copie du fichier depuis un autre ordinateur. |
 | `keychain.w` | Windows Credential Manager | du Gestionnaire d'identification Windows |
 | `keychain.m` | the macOS Keychain | du trousseau macOS |
 | `keychain.l` | the Secret Service keyring | du service Secret Service |
@@ -475,6 +492,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `openfail.title` | Acta could not open its database | Acta n'a pas pu ouvrir sa base de données |
 | `openfail.body` | Something on this computer kept Acta from reading its data. Nothing was changed. Try again; if it keeps failing, the log in the data folder says what failed. | Quelque chose sur cet ordinateur empêche Acta de lire ses données. Rien n'a été modifié. Réessayez ; si l'échec se répète, le journal du dossier de données indique la cause. |
 | `openfail.nodir` | Acta could not find where to keep its data on this computer. | Acta ne trouve pas où conserver ses données sur cet ordinateur. |
+| `openfail.show_log` | Show the log | Afficher le journal |
 | `firstrun.title` | Start with a project | Commencez par un projet |
 | `firstrun.body` | A project is a folder you work on with Claude Code. Acta keeps its topics, decisions and notes next to the work. | Un projet est un dossier sur lequel vous travaillez avec Claude Code. Acta garde ses sujets, ses décisions et ses notes à côté du travail. |
 | `firstrun.choose` | Choose a folder | Choisir un dossier |

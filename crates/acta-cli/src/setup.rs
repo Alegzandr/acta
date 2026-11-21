@@ -17,6 +17,11 @@ pub const PLUGIN: &str = "acta";
 pub const PLUGIN_ID: &str = "acta@acta";
 pub const SERVER: &str = "acta";
 pub const ALLOW_RULE: &str = "mcp__plugin_acta_acta__*";
+/// How a failure to start the `claude` CLI begins: the check reports
+/// Claude Code as not found rather than as a setup step to do.
+const NOT_RUN: &str = "cannot run claude";
+/// How long one call to the `claude` CLI may take.
+const CLAUDE_LIMIT: std::time::Duration = std::time::Duration::from_secs(60);
 /// What setup did that `--remove` must undo; kept in the plugin directory.
 const RECORD: &str = "setup-record.json";
 
@@ -43,16 +48,14 @@ pub struct RealClaude {
 impl ClaudeCli for RealClaude {
     fn run(&self, args: &[&str]) -> Result<String, String> {
         let mut cmd = std::process::Command::new(claude_program());
-        cmd.args(args).stdin(std::process::Stdio::null());
+        cmd.args(args);
         if let Some(d) = &self.config_dir {
             cmd.env("CLAUDE_CONFIG_DIR", d);
         }
-        let out = cmd.output().map_err(|e| {
-            format!(
-                "cannot run claude ({}): is Claude Code installed?",
-                e.kind()
-            )
-        })?;
+        // A `claude` that hangs is killed rather than waited on forever.
+        let out = acta_core::process::output_within(&mut cmd, CLAUDE_LIMIT)
+            .map_err(|e| format!("{NOT_RUN} ({}): is Claude Code installed?", e.kind()))?
+            .ok_or_else(|| format!("claude did not answer within {} s", CLAUDE_LIMIT.as_secs()))?;
         let text = String::from_utf8_lossy(&out.stdout).into_owned();
         if out.status.success() {
             Ok(text)
@@ -376,7 +379,18 @@ impl Setup<'_> {
     pub fn check(&self) -> Vec<Step> {
         let exe_ok = self.exe.is_file();
         let files_ok = self.files_current();
+        let market = self.marketplace_state();
+        let found = !matches!(&market, Err(e) if e.starts_with(NOT_RUN));
         let mut steps = vec![
+            Step::new(
+                "claude",
+                found,
+                if found {
+                    "found"
+                } else {
+                    "not found: install Claude Code"
+                },
+            ),
             Step::new(
                 "executable",
                 exe_ok,
@@ -402,7 +416,7 @@ impl Setup<'_> {
             Ok(Reg::Absent) => (false, no.to_owned()),
             Err(e) => (false, one_line(&e)),
         };
-        let (ok, d) = state(self.marketplace_state(), "added", "not added");
+        let (ok, d) = state(market, "added", "not added");
         steps.push(Step::new("marketplace", ok, d));
         let (ok, d) = state(self.plugin_state(), "installed", "not installed");
         steps.push(Step::new("plugin", ok, d));
@@ -738,7 +752,7 @@ mod tests {
         }
     }
 
-    fn setup<'a>(dir: &Path, claude: &'a FakeClaude) -> Setup<'a> {
+    fn setup<'a>(dir: &Path, claude: &'a dyn ClaudeCli) -> Setup<'a> {
         let exe = dir.join("bin").join("acta.exe");
         fs::create_dir_all(exe.parent().unwrap()).unwrap();
         fs::write(&exe, "").unwrap();
@@ -911,7 +925,24 @@ mod tests {
         assert!(!check.iter().find(|x| x.name == "allow rule").unwrap().ok);
         let json_out: Value = serde_json::from_str(&render_steps(&check, true)).unwrap();
         assert_eq!(json_out["ok"], false);
-        assert_eq!(json_out["steps"].as_array().unwrap().len(), 5);
+        assert_eq!(json_out["steps"].as_array().unwrap().len(), 6);
+    }
+
+    #[test]
+    fn a_missing_claude_command_is_reported_as_not_found() {
+        struct NoClaude;
+        impl ClaudeCli for NoClaude {
+            fn run(&self, _: &[&str]) -> Result<String, String> {
+                Err(format!("{NOT_RUN} (NotFound): is Claude Code installed?"))
+            }
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let s = setup(tmp.path(), &NoClaude);
+        let check = s.check();
+        assert_eq!(check[0].name, "claude");
+        assert!(!check[0].ok);
+        let fake = FakeClaude::default();
+        assert!(setup(tmp.path(), &fake).check()[0].ok);
     }
 
     #[test]

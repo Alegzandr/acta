@@ -7,7 +7,7 @@
 
 use acta_core::model::{Author, Note, NoteFate, NoteId, PageReq, ProjectId, Record, Status};
 use acta_core::store::NewTopic;
-use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
+use gpui_kit::component::input::{Escape, InputEvent, Textarea, TextareaState};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, AppContext, Context, Entity, EventEmitter, InteractiveElement, IntoElement,
@@ -54,6 +54,8 @@ pub struct InboxPage {
     total_open: i64,
     show_filed: bool,
     capture: Entity<TextareaState>,
+    /// A note being edited in place, with its editor.
+    editing: Option<(NoteId, Entity<TextareaState>)>,
     seen_revision: u64,
     _load: Task<()>,
     _subs: Vec<Subscription>,
@@ -118,6 +120,7 @@ impl InboxPage {
             total_open: 0,
             show_filed: false,
             capture,
+            editing: None,
             seen_revision: 0,
             _load: Task::ready(()),
             _subs: subs,
@@ -182,6 +185,48 @@ impl InboxPage {
             }
         })
         .detach();
+    }
+
+    /// Edit (note card, 5): the body becomes the editor in place;
+    /// `Mod+Enter` saves, `Esc` cancels.
+    fn edit(&mut self, note: &Note, window: &mut Window, cx: &mut Context<Self>) {
+        let id = note.id;
+        let state = cx.new(|cx| {
+            TextareaState::new(window, cx)
+                .auto_grow(3, 16)
+                .default_value(note.text.clone())
+        });
+        state.update(cx, |state, cx| state.focus(window, cx));
+        let sub = cx.subscribe_in(
+            &state,
+            window,
+            move |page, editor, event: &InputEvent, _, cx| {
+                if let InputEvent::PressEnter {
+                    secondary: true, ..
+                } = event
+                {
+                    let text = editor.read(cx).value().trim().to_owned();
+                    if text.is_empty() {
+                        return;
+                    }
+                    page.editing = None;
+                    let project = Some(page.project);
+                    // Undoable: the text before is put back (Undo::Note).
+                    page.ws.update(cx, |ws, cx| {
+                        ws.undoable(cx, project, None, move |store| {
+                            let back = store.note(id)?.text;
+                            store.update_note(id, &text, Author::Human)?;
+                            let expect = store.note(id)?.text;
+                            Ok((Undo::Note { id, back, expect }, ()))
+                        });
+                    });
+                    cx.notify();
+                }
+            },
+        );
+        self._subs.push(sub);
+        self.editing = Some((id, state));
+        cx.notify();
     }
 
     fn delete(&mut self, id: NoteId, cx: &mut Context<Self>) {
@@ -258,6 +303,7 @@ impl InboxPage {
         let group = SharedString::from(format!("note-{index}"));
         let id = note.id;
         let for_topic = note.clone();
+        let for_edit = note.clone();
         let mut meta = div()
             .flex()
             .flex_row()
@@ -290,14 +336,14 @@ impl InboxPage {
                         .child(text(locale, Key::InboxFiledAs)),
                 )
                 .child(
-                    div()
+                    type_scale::SMALL
+                        .el()
                         .id(("note-target", index))
                         .min_w_0()
                         .overflow_hidden()
                         .text_ellipsis()
                         .whitespace_nowrap()
                         .text_color(t.accent)
-                        .text_size(px(12.))
                         .cursor_pointer()
                         .on_click(cx.listener(move |_, _, _, cx| cx.emit(PageEvent::Open(route))))
                         .child(label),
@@ -355,6 +401,18 @@ impl InboxPage {
             })
             .child(
                 ui::ghost_icon_button(
+                    format!("note-edit-{index}"),
+                    Icon::Pencil,
+                    24.,
+                    false,
+                    false,
+                    true,
+                    t,
+                )
+                .on_click(cx.listener(move |page, _, window, cx| page.edit(&for_edit, window, cx))),
+            )
+            .child(
+                ui::ghost_icon_button(
                     format!("note-delete-{index}"),
                     Icon::Trash2,
                     24.,
@@ -365,8 +423,7 @@ impl InboxPage {
                 )
                 .on_click(cx.listener(move |page, _, _, cx| page.delete(id, cx))),
             );
-        div()
-            .id(("note", index))
+        ui::focusable(div().id(("note", index)), t, false)
             .group(group)
             .flex()
             .flex_col()
@@ -377,8 +434,21 @@ impl InboxPage {
             .bg(t.bg_raised)
             .border_1()
             .border_color(t.border_subtle)
-            .child(
-                div()
+            .child(match self.editing.as_ref().filter(|(e, _)| *e == id) {
+                Some((_, editor)) => type_scale::READING
+                    .el()
+                    .on_action(cx.listener(|page, _: &Escape, _, cx| {
+                        page.editing = None;
+                        cx.notify();
+                    }))
+                    .child(
+                        Textarea::new(editor)
+                            .appearance(false)
+                            .text_size(px(type_scale::READING.size))
+                            .line_height(px(type_scale::READING.line)),
+                    )
+                    .into_any_element(),
+                None => div()
                     .max_h(px(144.))
                     .overflow_hidden()
                     .text_color(if filed {
@@ -390,8 +460,9 @@ impl InboxPage {
                         ("note-body", index),
                         note.text.clone(),
                         t,
-                    )),
-            )
+                    ))
+                    .into_any_element(),
+            })
             .child(meta.child(div().flex_1()).child(actions))
             .into_any_element()
     }
@@ -444,9 +515,12 @@ impl Render for InboxPage {
             .px(px(16.))
             .py(px(12.))
             .child(
-                type_scale::READING
-                    .el()
-                    .child(Textarea::new(&self.capture).appearance(false)),
+                type_scale::READING.el().child(
+                    Textarea::new(&self.capture)
+                        .appearance(false)
+                        .text_size(px(type_scale::READING.size))
+                        .line_height(px(type_scale::READING.line)),
+                ),
             )
             .child(
                 div()
@@ -479,13 +553,20 @@ impl Render for InboxPage {
             self.notes.iter().map(|n| (n.clone(), None)).collect()
         };
         let mut list = div().flex().flex_col().gap(px(8.)).mt(px(12.));
-        if shown.is_empty() && !self.show_filed {
+        if shown.is_empty() {
             list = list.child(
                 type_scale::READING
                     .el()
                     .max_w(px(480.))
                     .text_color(t.text_secondary)
-                    .child(text(locale, Key::InboxEmpty)),
+                    .child(text(
+                        locale,
+                        if self.show_filed {
+                            Key::InboxFiledEmpty
+                        } else {
+                            Key::InboxEmpty
+                        },
+                    )),
             );
         }
         for (i, (note, title)) in shown.iter().enumerate() {

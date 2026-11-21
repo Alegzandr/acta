@@ -58,6 +58,12 @@ pub fn item(
         .children(trailing)
 }
 
+/// The 1px `border.default` line before a destructive item, 4 above and
+/// below.
+pub fn separator(tokens: &Tokens) -> Div {
+    div().my(px(4.)).h(px(1.)).bg(tokens.border_default)
+}
+
 /// A check mark for the current value.
 pub fn check(tokens: &Tokens) -> AnyElement {
     icon(Icon::Check, 16., tokens.text_secondary).into_any_element()
