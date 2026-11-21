@@ -113,8 +113,8 @@ gh attestation verify Acta-win-x64-Setup.exe --repo Alegzandr/acta
 
 Then on a machine with the previous version installed: start Acta, it restarts as the
 new version within a few seconds (an ordinary start may wait up to about 7 seconds for
-the window: 2 for the check, 5 for the download). On a clean machine: run the install one-liner from the
-README. Both are what the update end-to-end workflow below does on GitHub's runners.
+the window: 2 for the check, 5 for the download). On a clean machine: run the install one-liner from
+`docs/install.md`. Both are what the update end-to-end workflow below does on GitHub's runners.
 
 ## Update end to end
 
@@ -292,10 +292,10 @@ First tag (`v0.1.0`):
       `~/.local/share/icons/hicolor/512x512/apps`.
 - [ ] On macOS and Linux `~/.local/bin/acta` exists after the first start and runs;
       an unrelated `acta` already there is left untouched.
-- [ ] The log is where the README says on each system, and a Windows uninstall leaves
+- [ ] The log is where `docs/install.md` says on each system, and a Windows uninstall leaves
       `%LOCALAPPDATA%\ActaData` in place.
-- [ ] A `Setup.exe` downloaded with a browser shows SmartScreen as the README says; a
-      zip downloaded with a browser on macOS is blocked as the README says.
+- [ ] A `Setup.exe` downloaded with a browser shows SmartScreen as `docs/install.md` says; a
+      zip downloaded with a browser on macOS is blocked as `docs/install.md` says.
 
 Second tag (`v0.1.1`):
 
