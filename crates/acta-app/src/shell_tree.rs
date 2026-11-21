@@ -241,6 +241,10 @@ impl Shell {
         // pointer input never draws (interaction.md 6.2).
         let ring = tree_focus.is_focused(window) && window.last_input_was_keyboard();
         let menu = bench.tree_menu;
+        let tree_due = bench
+            .tree_due
+            .as_ref()
+            .map(|d| (d.row, d.anchor.clone(), d.picker.clone()));
         let renaming = bench.rename.as_ref().map(|r| (r.key, r.state.clone()));
         let active_project = bench.active_project;
         let menu_items = self.menu_items(&rows, cx);
@@ -298,6 +302,20 @@ impl Shell {
                     _ => None,
                 };
                 tree_menu(&menu_items, m, status, locale, t, cx)
+            });
+            let menu = menu.or_else(|| {
+                let (_, anchor, picker) = tree_due.as_ref().filter(|(row, _, _)| *row == key)?;
+                // Anchored to the row's title (components-records.md 5).
+                Some(
+                    div()
+                        .ml(px(24.))
+                        .w(px(1.))
+                        .h(px(tree::ROW))
+                        .relative()
+                        .child(anchor.measure())
+                        .children(anchor.below(picker.clone().into_any_element()))
+                        .into_any_element(),
+                )
             });
             let edit = renaming
                 .as_ref()
@@ -653,7 +671,18 @@ fn tree_row(
     // The one signal of the trailing slot (4.2.1), in a 16 box with its
     // tooltip.
     let session = session_here(row, locale, t, cx);
-    let signal = tree::signal(session.is_some(), look.unread, tree::row_due(row));
+    let today = crate::due::today(cx);
+    let signal = tree::signal(session.is_some(), look.unread, tree::row_due(row, today));
+    // The sentence form of copy.md 10.2.1 ("Overdue by 3 days, due 18 Nov
+    // 2026", "Due today").
+    let due_tip = || {
+        tree::row_due_date(row)
+            .map(|day| {
+                let state = acta_core::date::due_state(Some(day), today, true);
+                crate::due::sentence(locale, day, state)
+            })
+            .unwrap_or_default()
+    };
     let signal_el = signal.map(|signal| {
         let (glyph, tip): (AnyElement, String) = match (signal, &session) {
             (Signal::Session, Some((color, tip))) => {
@@ -664,19 +693,17 @@ fn tree_row(
                 busy_dot(t).into_any_element(),
                 text(locale, Key::TreeUnread),
             ),
-            // The hook for due dates (tree::row_due): the tooltip is the
-            // sentence form of copy.md 10.2.1 once dates exist.
             (Signal::Due(Due::Overdue), _) => (
                 icon(Icon::ClockAlert, 14., t.text_secondary)
                     .group_hover(id.clone(), move |s| s.text_color(primary))
                     .into_any_element(),
-                String::new(),
+                due_tip(),
             ),
             (Signal::Due(Due::Today), _) => (
                 icon(Icon::Clock, 14., lift(t.text_tertiary))
                     .group_hover(id.clone(), move |s| s.text_color(primary))
                     .into_any_element(),
-                String::new(),
+                due_tip(),
             ),
         };
         div()
@@ -736,6 +763,7 @@ fn tree_row(
             title: name,
             expanded,
             id: pid,
+            ..
         } => el
             .child(fold(*expanded, pid.to_string(), cx))
             .child(title(
@@ -751,6 +779,7 @@ fn tree_row(
             expanded,
             id: eid,
             project,
+            ..
         } => el
             .child(fold(*expanded, eid.to_string(), cx))
             .child(title(

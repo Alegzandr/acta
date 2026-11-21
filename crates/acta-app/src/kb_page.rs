@@ -216,6 +216,9 @@ pub struct KnowledgePage {
     /// Shown as the Knowledge view (workbench.md 4.8.3): no title, no
     /// meta line, following the active project.
     as_view: bool,
+    /// The Overview's chip "Not updated for 90 days" (components-records.md
+    /// 5): only these memories, oldest first; `None` without the chip.
+    stale: Option<Vec<KbId>>,
     seen_revision: u64,
     _load: Task<()>,
     _search: Task<()>,
@@ -239,6 +242,24 @@ impl KnowledgePage {
         cx: &mut Context<Self>,
     ) -> Self {
         Self::build(ws, project, filters, false, window, cx)
+    }
+
+    /// The Overview's memory line: Kind Memories with the chip "Not
+    /// updated for 90 days", oldest first. The chip is not saved (4.7).
+    pub fn new_stale(
+        ws: Entity<Workspace>,
+        project: ProjectId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let filters = Filters {
+            kind: Some(KbKind::Memory),
+            ..Filters::default()
+        };
+        let mut page = Self::build(ws, project, filters, false, window, cx);
+        page.stale = Some(Vec::new());
+        page.reload(cx);
+        page
     }
 
     /// Knowledge as a view of a side area or the bottom panel.
@@ -287,6 +308,7 @@ impl KnowledgePage {
             menu: None,
             open_memory: None,
             as_view,
+            stale: None,
             seen_revision: 0,
             _load: Task::ready(()),
             _search: Task::ready(()),
@@ -298,22 +320,86 @@ impl KnowledgePage {
 
     fn reload(&mut self, cx: &mut Context<Self>) {
         let project = self.project;
+        let stale = self.stale.is_some();
+        let today = crate::due::today(cx);
         let task = self.ws.read(cx).db.run(cx, move |store| {
-            store.kb_rollup(
+            let entries = store.kb_rollup(
                 Owner::Project(project),
                 &KbFilter::default(),
                 PageReq::first(PageReq::MAX_LIMIT),
-            )
+            )?;
+            // The chip's list is the Overview's own query.
+            let stale = if stale {
+                let items = store.overview_list(
+                    acta_core::store::Scope::Project(project),
+                    acta_core::store::OverviewFilter::StaleMemories,
+                    today,
+                    acta_core::date::Zone::system(),
+                )?;
+                Some(
+                    items
+                        .into_iter()
+                        .filter_map(|i| match i.record {
+                            Record::Kb(id) => Some(id),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>(),
+                )
+            } else {
+                None
+            };
+            Ok((entries, stale))
         });
         self._load = cx.spawn(async move |page, cx| {
             let loaded = task.await;
             let _ = page.update(cx, |page, cx| {
-                if let Ok(entries) = loaded {
+                if let Ok((entries, stale)) = loaded {
                     page.entries = entries.items;
+                    if page.stale.is_some() {
+                        page.stale = stale;
+                    }
                 }
                 cx.notify();
             });
         });
+    }
+
+    /// The filter chip "Not updated for 90 days" (components-records.md 5,
+    /// Filter chip): after the dropdowns; its `x` or `Backspace` clears it.
+    fn render_stale_chip(&self, locale: Locale, t: &Tokens, cx: &mut Context<Self>) -> AnyElement {
+        ui::focusable(div().id("kb-chip"), t, false)
+            .flex()
+            .flex_row()
+            .flex_none()
+            .items_center()
+            .gap(px(4.))
+            .h(px(24.))
+            .pl(px(8.))
+            .pr(px(4.))
+            .rounded(px(RADIUS_SM))
+            .bg(t.fill_selected)
+            .on_key_down(cx.listener(|page, event: &gpui_kit::KeyDownEvent, _, cx| {
+                if event.keystroke.key == "backspace" {
+                    page.stale = None;
+                    cx.stop_propagation();
+                    cx.notify();
+                }
+            }))
+            .child(
+                type_scale::UI
+                    .el()
+                    .text_color(t.text_primary)
+                    .child(text(locale, Key::FilterStaleMemories)),
+            )
+            .child(
+                ui::ghost_icon_button("kb-chip-clear", Icon::X, 16., false, false, true, t)
+                    .tooltip(ui::tip(text(locale, Key::FilterClear)))
+                    .on_click(cx.listener(|page, _, _, cx| {
+                        page.stale = None;
+                        cx.notify();
+                    })),
+            )
+            .into_any_element()
     }
 
     fn run_search(&mut self, cx: &mut Context<Self>) {
@@ -532,12 +618,20 @@ impl Render for KnowledgePage {
                 })
                 .filter(|(e, _)| self.filters.keeps(e))
                 .collect(),
-            None => self
-                .entries
-                .iter()
-                .filter(|e| self.filters.keeps(e))
-                .map(|e| (e.clone(), None))
-                .collect(),
+            None => match &self.stale {
+                Some(ids) => ids
+                    .iter()
+                    .filter_map(|id| self.entries.iter().find(|e| e.id == *id))
+                    .filter(|e| self.filters.keeps(e))
+                    .map(|e| (e.clone(), None))
+                    .collect(),
+                None => self
+                    .entries
+                    .iter()
+                    .filter(|e| self.filters.keeps(e))
+                    .map(|e| (e.clone(), None))
+                    .collect(),
+            },
         };
         let names: Vec<(Owner, String)> = {
             let ws = self.ws.read(cx);
@@ -594,11 +688,16 @@ impl Render for KnowledgePage {
                 .mt(px(12.))
                 .flex()
                 .flex_row()
+                // The chip wraps under the dropdowns in a narrow column.
+                .flex_wrap()
                 .items_center()
                 .gap(px(8.))
                 .child(self.filter_button(FilterMenu::Level, locale, &t, cx))
                 .child(self.filter_button(FilterMenu::Kind, locale, &t, cx))
                 .child(self.filter_button(FilterMenu::Author, locale, &t, cx))
+                .when(self.stale.is_some(), |this| {
+                    this.child(self.render_stale_chip(locale, &t, cx))
+                })
                 .when(!self.filters.is_default(), |this| {
                     this.child(
                         ui::button(
@@ -610,6 +709,7 @@ impl Render for KnowledgePage {
                         )
                         .on_click(cx.listener(|page, _, _, cx| {
                             page.filters = Filters::default();
+                            page.stale = None;
                             cx.notify();
                         })),
                     )

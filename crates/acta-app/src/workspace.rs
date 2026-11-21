@@ -73,6 +73,12 @@ pub enum Undo {
         back: String,
         expect: String,
     },
+    /// A due date set, changed or cleared (`None`: no date).
+    Due {
+        owner: Owner,
+        back: Option<acta_core::date::Date>,
+        expect: Option<acta_core::date::Date>,
+    },
     /// A page's active folder chosen (`None`: the default rule).
     ActiveFolder {
         owner: Owner,
@@ -151,6 +157,7 @@ impl Undo {
             Undo::EpicTitle { id, expect, .. } => store.epic(*id)?.title == *expect,
             Undo::TopicEpic { id, expect, .. } => store.topic(*id)?.epic == *expect,
             Undo::ProjectTitle { id, expect, .. } => store.project(*id)?.title == *expect,
+            Undo::Due { owner, expect, .. } => due_on(store, *owner)? == *expect,
             Undo::ActiveFolder { owner, expect, .. } => active_pointer(store, *owner)? == *expect,
             Undo::FolderPath { id, expect, .. } => store.folder(*id)?.path == *expect,
             Undo::KbRevision { id, expect, .. } => store.kb_entry(*id)?.rev == *expect,
@@ -261,6 +268,18 @@ impl Undo {
                     id: *id,
                     back: expect.clone(),
                     expect: store.project(*id)?.title,
+                }
+            }
+            Undo::Due {
+                owner,
+                back,
+                expect,
+            } => {
+                store.set_due(*owner, *back, me)?;
+                Undo::Due {
+                    owner: *owner,
+                    back: *expect,
+                    expect: *back,
                 }
             }
             Undo::ActiveFolder {
@@ -820,6 +839,31 @@ impl Workspace {
         });
     }
 
+    /// Set, change or clear the due date of a project, epic or topic
+    /// (components-records.md 5, Writes): one undo step, no toast; the
+    /// store writes the system event. The undo holds the date read in the
+    /// same transaction.
+    pub fn set_due(
+        &mut self,
+        owner: Owner,
+        due: Option<acta_core::date::Date>,
+        cx: &mut Context<Self>,
+    ) {
+        let project = self.project_of(owner);
+        self.undoable(cx, project, None, move |store| {
+            let back = due_on(store, owner)?;
+            store.set_due(owner, due, Author::Human)?;
+            Ok((
+                Undo::Due {
+                    owner,
+                    back,
+                    expect: due,
+                },
+                (),
+            ))
+        });
+    }
+
     /// Rename a project, epic or topic (the page title, the tree's inline
     /// edit), undoably.
     pub fn rename(
@@ -1228,6 +1272,15 @@ pub fn project_of(ws: &gpui_kit::Entity<Workspace>, owner: Owner, cx: &App) -> O
 }
 
 /// The active folder a page chose, `None` when it follows the default rule.
+/// The due date of a project, epic or topic as stored.
+pub fn due_on(store: &Store, owner: Owner) -> acta_core::Result<Option<acta_core::date::Date>> {
+    Ok(match owner {
+        Owner::Project(id) => store.project(id)?.due_on,
+        Owner::Epic(id) => store.epic(id)?.due_on,
+        Owner::Topic(id) => store.topic(id)?.due_on,
+    })
+}
+
 pub fn active_pointer(store: &Store, owner: Owner) -> acta_core::Result<Option<FolderId>> {
     Ok(match owner {
         Owner::Project(id) => store.project(id)?.active_folder,
@@ -1386,6 +1439,32 @@ mod tests {
             .set_active_folder(owner, Some(folders[0]), Author::Human)
             .unwrap();
         assert!(step.apply(store).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_due_date_is_undone_and_redone_and_never_over_claude_code() {
+        use acta_core::date::Date;
+        let mut temp = temp_store();
+        let store = &mut temp.store;
+        let (project, id) = topic(store);
+        let day = Date::parse_iso("2026-12-15");
+        for owner in [Owner::Topic(id), Owner::Project(project)] {
+            store.set_due(owner, day, Author::Human).unwrap();
+            let step = Undo::Due {
+                owner,
+                back: None,
+                expect: day,
+            };
+            let redo = step.apply(store).unwrap().expect("undone");
+            assert_eq!(due_on(store, owner).unwrap(), None);
+            assert!(redo.apply(store).unwrap().is_some());
+            assert_eq!(due_on(store, owner).unwrap(), day);
+            // Claude Code changed it since: the undo is skipped.
+            let later = Date::parse_iso("2026-12-20");
+            store.set_due(owner, later, Author::Claude).unwrap();
+            assert!(step.apply(store).unwrap().is_none());
+            assert_eq!(due_on(store, owner).unwrap(), later);
+        }
     }
 
     #[test]

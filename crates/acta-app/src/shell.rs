@@ -41,6 +41,7 @@ use crate::claude_setup;
 use crate::commands::{self, Command};
 use crate::db::{self, Db, Opened};
 use crate::dialogs::{Dialog, DialogEvent, Kind as DialogKind};
+use crate::due_picker::{AnchorBounds, DuePicker, DuePickerEvent};
 use crate::first_run::{FirstRun, FirstRunEvent};
 use crate::i18n::{Arg, Key, Locale, text, tr};
 use crate::icons::{Icon, icon};
@@ -50,7 +51,7 @@ use crate::kb_page::{DocPage, Draft, KnowledgePage};
 use crate::layout::{Direction, Layout, Place, Side, Tab, TabId, ViewAction, ViewId};
 use crate::palette::{CreateKind, Palette, PaletteEvent, Setup};
 use crate::palette_model::{Group, Target};
-use crate::record_page::{EditTitle, OpenStatusMenu, PageEvent, RecordPage};
+use crate::record_page::{EditTitle, OpenDuePicker, OpenStatusMenu, PageEvent, RecordPage};
 use crate::route::{History, Route};
 use crate::settings;
 use crate::settings_page::SettingsPage;
@@ -288,6 +289,7 @@ fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new(m("cmd-3", "ctrl-3"), FocusTerminal, None),
         KeyBinding::new(m("cmd-shift-h", "ctrl-shift-h"), ToggleChat, None),
         KeyBinding::new("s", OpenStatusMenu, Some("RecordPage && !Input")),
+        KeyBinding::new("d", OpenDuePicker, Some("RecordPage && !Input")),
         KeyBinding::new("e", EditTitle, Some("RecordPage && !Input")),
         KeyBinding::new("f2", EditTitle, Some("RecordPage && !Input")),
         KeyBinding::new("escape", crate::dialogs::CancelDialog, Some("Dialog")),
@@ -308,6 +310,7 @@ fn key_bindings() -> Vec<KeyBinding> {
         // run when the sidebar is not shown).
         KeyBinding::new("escape", DismissSidebar, Some("Workbench && !Terminal")),
     ];
+    out.extend(crate::due_picker::bindings());
     // interaction.md 6.1: only Windows has a chat panel to focus.
     if cfg!(windows) {
         out.push(KeyBinding::new(m("cmd-4", "ctrl-4"), FocusChat, None));
@@ -373,6 +376,15 @@ struct TreeMenu {
     highlight: usize,
 }
 
+/// The due date picker opened on a tree row (`D`, "Set due date...").
+struct TreeDue {
+    row: RowKey,
+    owner: Owner,
+    picker: Entity<DuePicker>,
+    anchor: AnchorBounds,
+    _sub: Subscription,
+}
+
 /// A tree row being renamed in place.
 #[derive(Clone)]
 struct Rename {
@@ -428,6 +440,8 @@ struct Bench {
     tree: tree_ui::TreeState,
     /// The tree's open menu (`Shift+F10`, `S`, `M`).
     tree_menu: Option<TreeMenu>,
+    /// The due date picker on a tree row (`D`).
+    tree_due: Option<TreeDue>,
     /// The row being renamed in place.
     rename: Option<Rename>,
     /// Type-ahead: what was typed, and when the last key came.
@@ -666,6 +680,7 @@ impl Shell {
             cursor: tree::Cursor::default(),
             tree: tree_ui::TreeState::default(),
             tree_menu: None,
+            tree_due: None,
             rename: None,
             find: (String::new(), None),
             tree_focus: cx.focus_handle(),
@@ -820,14 +835,83 @@ impl Shell {
         let _ = (window, cx);
     }
 
+    /// The due date and Overview surfaces of `dev_overlay`.
+    fn dev_due(&mut self, which: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let input = std::env::var("ACTA_DEV_DUE_INPUT").unwrap_or_default();
+        match which {
+            "due-tree" => {
+                let rows = self.rows(cx);
+                let route = self.tree_route(cx);
+                if let Some(bench) = self.bench()
+                    && !rows.is_empty()
+                {
+                    if let Some(route) = route {
+                        bench.cursor.put(&rows, route);
+                    }
+                    let row = rows[bench.cursor.index(&rows)].clone();
+                    self.open_tree_due(&row, window, cx);
+                }
+            }
+            "due-row" => self.with_record(
+                cx,
+                |page, window, cx| page.dev_due_on_first_row(window, cx),
+                window,
+            ),
+            "chip-blocked" | "chip-idle" | "chip-stale" => {
+                use acta_core::store::OverviewFilter;
+                let filter = match which {
+                    "chip-idle" => OverviewFilter::Idle,
+                    "chip-stale" => OverviewFilter::StaleMemories,
+                    _ => OverviewFilter::Blocked,
+                };
+                self.with_record(cx, |page, _, cx| page.show_filter(filter, cx), window);
+            }
+            _ => {
+                let enter = which == "due-picker-enter";
+                self.with_record(
+                    cx,
+                    |page, window, cx| {
+                        page.open_due_picker(false, window, cx);
+                        page.dev_type_due(&input, enter, window, cx);
+                    },
+                    window,
+                );
+            }
+        }
+    }
+
     /// Debug builds: `ACTA_DEV_OVERLAY=palette|capture|terminal|chat|chat-palette|browser|browser-palette|export|snapshots`
     /// opens that surface at launch, so captures need no input.
     fn dev_overlay(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !cfg!(debug_assertions) {
             return;
         }
+        // `ACTA_DEV_ROUTE=E-2` (a route key) opens that page first.
+        if let Ok(key) = std::env::var("ACTA_DEV_ROUTE")
+            && let Some(route) = Route::parse(&key)
+        {
+            self.navigate(route, true, window, cx);
+        }
         match std::env::var("ACTA_DEV_OVERLAY").as_deref() {
             Ok("palette") => self.open_palette(None, None, window, cx),
+            // Due dates and the Overview (components-records.md 5), once
+            // the page has loaded: the picker, with `ACTA_DEV_DUE_INPUT`
+            // typed into it (`due-picker-enter` also presses Enter); the
+            // picker on the tree's cursor row; the table with a chip.
+            Ok(
+                which @ ("due-picker" | "due-picker-enter" | "due-tree" | "chip-blocked"
+                | "chip-idle" | "chip-stale" | "due-row"),
+            ) => {
+                let which = which.to_owned();
+                cx.spawn_in(window, async move |shell, cx| {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(1500))
+                        .await;
+                    let _ =
+                        shell.update_in(cx, |shell, window, cx| shell.dev_due(&which, window, cx));
+                })
+                .detach();
+            }
             Ok("capture") => self.open_capture(window, cx),
             Ok("terminal") => self.view_action(ViewId::Terminal, ViewAction::Show, window, cx),
             // Shown without taking the keyboard, for captures.
@@ -1278,7 +1362,30 @@ impl Shell {
                 cx.notify();
             }
             PageEvent::ShowTerminal(project) => self.show_session_terminal(*project, window, cx),
+            PageEvent::StaleMemories(project) => self.open_stale_memories(*project, window, cx),
         }
+    }
+
+    /// The Overview's memory line: the knowledge page, Kind Memories, with
+    /// the chip "Not updated for 90 days".
+    pub(super) fn open_stale_memories(
+        &mut self,
+        project: ProjectId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(bench) = self.bench() {
+            bench.history.open(Route::Knowledge(project));
+        }
+        let Some(bench) = self.bench() else { return };
+        let (ws, tab) = (bench.ws.clone(), bench.current);
+        let page = cx.new(|cx| KnowledgePage::new_stale(ws, project, window, cx));
+        let sub = Self::page_events(&page, tab, window, cx);
+        if let Some(bench) = self.bench() {
+            bench.page = PageView::Knowledge(page);
+            bench._page_sub = Some(sub);
+        }
+        cx.notify();
     }
 
     fn new_kb_draft(&mut self, draft: Draft, window: &mut Window, cx: &mut Context<Self>) {
@@ -1650,7 +1757,8 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let context = self.command_context(window, cx);
+        let mut context = self.command_context(window, cx);
+        context.due = self.due_target(window, cx).map(|(_, _, due)| due.is_some());
         let Some(bench) = self.bench() else { return };
         bench.on_pick = None;
         let ws = bench.ws.read(cx);
@@ -1710,6 +1818,11 @@ impl Shell {
             can_split_right: self.can_split_page(Direction::Row, window),
             can_split_down: self.can_split_page(Direction::Column, window),
             layout_undo: !bench.layout_undo.is_empty(),
+            due: None,
+            overview: match &bench.page {
+                PageView::Record(page) => page.read(cx).overview_state(cx),
+                _ => None,
+            },
         }
     }
 
@@ -1907,6 +2020,33 @@ impl Shell {
                     bench.ws.update(cx, |ws, cx| ws.set_status(id, status, cx));
                 }
             }
+            Command::SetDue => match self.due_target(window, cx) {
+                Some((true, _, _)) => {
+                    let rows = self.rows(cx);
+                    if let Some(bench) = self.bench() {
+                        let row = rows[bench.cursor.index(&rows)].clone();
+                        self.open_tree_due(&row, window, cx);
+                    }
+                }
+                Some((false, _, _)) => self.with_record(
+                    cx,
+                    |page, window, cx| page.open_due_here(true, window, cx),
+                    window,
+                ),
+                None => {}
+            },
+            Command::ClearDue => {
+                if let Some((_, owner, _)) = self.due_target(window, cx)
+                    && let Some(bench) = self.bench()
+                {
+                    bench.ws.update(cx, |ws, cx| ws.set_due(owner, None, cx));
+                }
+            }
+            Command::Show(filter) => self.show_overview_list(filter, window, cx),
+            Command::OverviewMore | Command::OverviewLess => {
+                let open = command == Command::OverviewMore;
+                self.with_record(cx, |page, _, cx| page.set_overview_open(open, cx), window)
+            }
             Command::Back => self.back(window, cx),
             Command::Forward => self.forward(window, cx),
             Command::Undo => self.undo(window, cx),
@@ -1970,6 +2110,29 @@ impl Shell {
                 cx.refresh_windows();
             }
         }
+    }
+
+    /// A palette command of the Overview: on the open project or epic page,
+    /// else on the active project's page, opened for it.
+    fn show_overview_list(
+        &mut self,
+        filter: acta_core::store::OverviewFilter,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let on_scope = self.bench().is_some_and(|b| {
+            matches!(
+                b.history.current(),
+                Some(Route::Project(_)) | Some(Route::Epic(_))
+            )
+        });
+        if !on_scope {
+            let Some(project) = self.bench().and_then(|b| b.active_project) else {
+                return;
+            };
+            self.navigate(Route::Project(project), true, window, cx);
+        }
+        self.with_record(cx, |page, _, cx| page.show_filter(filter, cx), window);
     }
 
     fn with_record(
@@ -2938,6 +3101,7 @@ impl Shell {
             tree::Letter::Down => self.tree_key(TreeKey::Down, window, cx),
             tree::Letter::Status => self.open_tree_menu(MenuKind::Status, &rows, cx),
             tree::Letter::Move => self.open_tree_menu(MenuKind::Epics, &rows, cx),
+            tree::Letter::Due => self.open_tree_due(&row, window, cx),
             tree::Letter::Rename => self.start_rename(&row, window, cx),
             tree::Letter::Preview => match (row.route(), &row) {
                 (Some(route), _) => {
@@ -3012,6 +3176,111 @@ impl Shell {
             bench.tree_menu = None;
         }
         cx.notify();
+    }
+
+    /// The record of a tree row the due date commands act on, with its
+    /// date as stored.
+    fn due_of_row(&self, row: &Row, cx: &App) -> Option<(Owner, Option<acta_core::date::Date>)> {
+        let Content::Workbench(bench) = &self.content else {
+            return None;
+        };
+        let projects = &bench.ws.read(cx).projects;
+        match row {
+            Row::Project { id, .. } => projects
+                .iter()
+                .find(|t| t.project.id == *id)
+                .map(|t| (Owner::Project(*id), t.project.due_on)),
+            Row::Epic { id, .. } => projects
+                .iter()
+                .flat_map(|t| &t.epics)
+                .find(|(e, _)| e.id == *id)
+                .map(|(e, _)| (Owner::Epic(*id), e.due_on)),
+            Row::Topic { id, .. } => projects
+                .iter()
+                .flat_map(|t| {
+                    t.loose_topics
+                        .iter()
+                        .chain(t.epics.iter().flat_map(|e| &e.1))
+                })
+                .find(|t| t.id == *id)
+                .map(|t| (Owner::Topic(*id), t.due_on)),
+            _ => None,
+        }
+    }
+
+    /// `D` on a project, epic or topic row: the due date picker anchored
+    /// to the row's title.
+    fn open_tree_due(&mut self, row: &Row, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((owner, current)) = self.due_of_row(row, cx) else {
+            return;
+        };
+        let today = crate::due::today(cx);
+        let picker = cx.new(|cx| DuePicker::new(today, current, window, cx));
+        let sub = cx.subscribe_in(
+            &picker,
+            window,
+            |shell, _, event: &DuePickerEvent, window, cx| {
+                let DuePickerEvent::Done(outcome) = *event;
+                shell.close_tree_due(outcome, window, cx);
+            },
+        );
+        let Some(bench) = self.bench() else { return };
+        bench.tree_menu = None;
+        bench.tree_due = Some(TreeDue {
+            row: row.key(),
+            owner,
+            picker,
+            anchor: AnchorBounds::default(),
+            _sub: sub,
+        });
+        cx.notify();
+    }
+
+    /// The tree's picker closed: write what it set, focus back on the tree.
+    fn close_tree_due(
+        &mut self,
+        outcome: crate::due::Outcome,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(bench) = self.bench() else { return };
+        let Some(due) = bench.tree_due.take() else {
+            return;
+        };
+        if let crate::due::Outcome::Set(date) = outcome {
+            bench
+                .ws
+                .update(cx, |ws, cx| ws.set_due(due.owner, date, cx));
+        }
+        let focus = bench.tree_focus.clone();
+        window.focus(&focus, cx);
+        cx.notify();
+    }
+
+    /// Where "Set due date..." and "Clear due date" act (interaction.md
+    /// 6.1): the tree row under the keyboard cursor while the tree has
+    /// focus, else the open project, epic or topic page. `true` in the
+    /// first field: the tree row.
+    fn due_target(
+        &mut self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Option<(bool, Owner, Option<acta_core::date::Date>)> {
+        let rows = self.rows(cx);
+        let bench = self.bench()?;
+        if bench.tree_focus.contains_focused(window, cx) && !rows.is_empty() {
+            let row = rows[bench.cursor.index(&rows)].clone();
+            if let Some((owner, due)) = self.due_of_row(&row, cx) {
+                return Some((true, owner, due));
+            }
+        }
+        let bench = self.bench()?;
+        if let PageView::Record(page) = &bench.page
+            && let Some((owner, due)) = page.read(cx).due_target(window)
+        {
+            return Some((false, owner, due));
+        }
+        None
     }
 
     fn close_tree_menu(&mut self, cx: &mut Context<Self>) -> bool {
@@ -4065,11 +4334,13 @@ fn key_loss(db: PathBuf, unreadable: bool) -> Content {
 fn seed_if_asked(store: &mut acta_core::Store) {
     let seed = std::env::var("ACTA_DEV_SEED").unwrap_or_default();
     if cfg!(debug_assertions)
-        && (seed == "1" || seed == "bare" || seed == "long")
+        && (seed == "1" || seed == "bare" || seed == "long" || seed == "due")
         && let Some(dir) = crate::launch_dir()
         && let Err(err) = match seed.as_str() {
             "bare" => crate::dev_seed::bare(store, &dir),
             "long" => crate::dev_seed::long(store, &dir),
+            #[cfg(debug_assertions)]
+            "due" => crate::dev_seed::due(store, &dir),
             _ => crate::dev_seed::seed(store, &dir),
         }
     {

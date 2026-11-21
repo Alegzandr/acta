@@ -155,6 +155,100 @@ pub fn seed(store: &mut Store, folder: &Path) -> acta_core::Result<()> {
     Ok(())
 }
 
+/// [`seed`] with due dates and an Overview to show (components-records.md
+/// 5, screens.md 8.14 and 8.20), relative to today: overdue topics (one
+/// also written by Claude Code, one blocked), one due today, one in 2 days,
+/// one in 30 days, a done topic with a past date, epics with dates, an
+/// active topic idle for 12 days, an inbox 12 days old, a memory not
+/// updated for 100 days; and a calm project, "Field notes".
+#[cfg(debug_assertions)]
+pub fn due(store: &mut Store, folder: &Path) -> acta_core::Result<()> {
+    use acta_core::date::Zone;
+    use acta_core::model::Record;
+    if !store.projects()?.is_empty() {
+        return Ok(());
+    }
+    seed(store, folder)?;
+    let me = Author::Human;
+    let today = Zone::system().today();
+    let tree = store.tree(store.projects()?[0].id)?;
+    let acta = tree.project.id;
+    let find = |title: &str| {
+        tree.loose_topics
+            .iter()
+            .chain(tree.epics.iter().flat_map(|(_, t)| t))
+            .find(|t| t.title == title)
+            .map(|t| t.id)
+    };
+    let dates = [
+        ("Naming", -3),
+        ("Sidebar tree", 0),
+        ("Command palette", 2),
+        ("App shell", -10),
+        ("Embed the terminal bound to the project", -3),
+        ("Terminal scrollback", -1),
+        ("Links in terminal output", 30),
+    ];
+    for (title, days) in dates {
+        if let Some(id) = find(title) {
+            // Claude Code dates the embed topic: it stays unread.
+            let by = if title.starts_with("Embed") {
+                Author::Claude
+            } else {
+                me
+            };
+            store.set_due(Owner::Topic(id), Some(today.add_days(days)), by)?;
+        }
+    }
+    for (epic, _) in &tree.epics {
+        let days = if epic.title == "Terminal" { 27 } else { -2 };
+        store.set_due(Owner::Epic(epic.id), Some(today.add_days(days)), me)?;
+    }
+    let idle = store.create_topic(
+        NewTopic {
+            project: acta,
+            epic: None,
+            title: "Release checklist".into(),
+            description: String::new(),
+            status: Status::Active,
+        },
+        me,
+    )?;
+    store.dev_backdate(Record::Topic(idle), 12)?;
+    let inbox = store
+        .inbox(acta, acta_core::model::PageReq::first(10))?
+        .items;
+    for (n, note) in inbox.into_iter().enumerate() {
+        store.dev_backdate(Record::Note(note.id), if n == 0 { 12 } else { 3 })?;
+    }
+    let memory = store.kb_create(
+        NewKb {
+            owner: Owner::Project(acta),
+            kind: KbKind::Memory,
+            title: "Old build note".into(),
+            summary: "Builds used to need a native Perl".into(),
+            body: "Alexandre's machine needs a native Perl for vendored OpenSSL.".into(),
+            from_file: false,
+        },
+        Author::Claude,
+    )?;
+    store.dev_backdate(Record::Kb(memory), 100)?;
+    let calm = store.create_project("Field notes", "", me)?;
+    for title in ["Interview Alexandre's team", "Sort the photos"] {
+        store.create_topic(
+            NewTopic {
+                project: calm,
+                epic: None,
+                title: title.into(),
+                description: String::new(),
+                status: Status::Planned,
+            },
+            me,
+        )?;
+    }
+    Ok(())
+}
+
 /// [`seed`], then the long tree of docs/design/layout.md 4.2.1 (an empty
 /// epic, a project of 140 topics with long titles) for captures of the tree.
 pub fn long(store: &mut Store, folder: &Path) -> acta_core::Result<()> {

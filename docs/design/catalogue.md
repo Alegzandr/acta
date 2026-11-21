@@ -69,6 +69,8 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `status.done` | Done | Terminé |
 | `status.dropped` | Dropped | Abandonné |
 | `event.status` | {author} set status to {status} | {author} a passé le statut à « {status} » |
+| `event.due_set` | {author} set the due date to {date} | {author} a fixé l'échéance au {date} |
+| `event.due_cleared` | {author} cleared the due date | {author} a supprimé l'échéance |
 | `prop.status` | Status | Statut |
 | `prop.epic` | Epic | Epic |
 | `prop.folders` | Folders | Dossiers |
@@ -77,6 +79,23 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `prop.progress` | Progress | Avancement |
 | `prop.kind` | Kind | Nature |
 | `prop.level` | Level | Niveau |
+| `prop.due` | Due | Échéance |
+| `due.none` | None | Aucune |
+| `due.today` | Today | Aujourd'hui |
+| `due.tomorrow` | Tomorrow | Demain |
+| `due.in_days` | In {n} day · In {n} days | Dans {n} jour · Dans {n} jours |
+| `due.overdue` | Overdue by {n} day · Overdue by {n} days | En retard de {n} jour · En retard de {n} jours |
+| `due.tip.today` | Due today | Échéance aujourd'hui |
+| `due.tip.tomorrow` | Due tomorrow | Échéance demain |
+| `due.tip.in_days` | Due {date}, in {n} day · Due {date}, in {n} days | Échéance le {date}, dans {n} jour · Échéance le {date}, dans {n} jours |
+| `due.tip.overdue` | Overdue by {n} day, due {date} · Overdue by {n} days, due {date} | En retard de {n} jour, échéance le {date} · En retard de {n} jours, échéance le {date} |
+| `due.tip.date` | Due {date} | Échéance le {date} |
+| `due.picker.placeholder` | fri, in 3d, 15/12, 2026-12-15 | ven., dans 3 j, 15/12, 2026-12-15 |
+| `due.picker.invalid` | Not a date. Try fri, in 3d, 15/12 or 2026-12-15. | Date non reconnue. Essayez ven., dans 3 j, 15/12 ou 2026-12-15. |
+| `due.picker.range` | Choose a date between 2000 and 2099. | Choisissez une date entre 2000 et 2099. |
+| `due.picker.none` | No due date | Aucune échéance |
+| `due.picker.prev` | Previous month | Mois précédent |
+| `due.picker.next` | Next month | Mois suivant |
 | `prop.progress.value` | {done} of {total} topic done · {done} of {total} topics done (form chosen by {total}) | {done} sujet terminé sur {total} · {done} sujets terminés sur {total} (form chosen by {done}) |
 | `progress.none` | No topics yet | Aucun sujet |
 | `kind.document` | Document | Document |
@@ -87,6 +106,24 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `section.state` | Current state | État actuel |
 | `section.description` | Description | Description |
 | `section.knowledge` | Knowledge | Connaissances |
+| `overview.title` | Overview | Vue d'ensemble |
+| `overview.clear` | Nothing needs attention. | Rien ne demande votre attention. |
+| `overview.more` | More | Plus |
+| `overview.less` | Less | Moins |
+| `overview.attention` | Needs attention | À traiter |
+| `overview.blocked` | {n} blocked topic · {n} blocked topics | {n} sujet bloqué · {n} sujets bloqués |
+| `overview.overdue` | {n} overdue topic · {n} overdue topics | {n} sujet en retard · {n} sujets en retard |
+| `overview.idle` | {n} active topic with no activity for 7 days · {n} active topics with no activity for 7 days | {n} sujet actif sans activité depuis 7 jours · {n} sujets actifs sans activité depuis 7 jours |
+| `overview.inbox` | {n} note in the inbox for {days} days · {n} notes in the inbox, the oldest for {days} days | {n} note dans la boîte de réception depuis {days} jours · {n} notes dans la boîte de réception, la plus ancienne depuis {days} jours |
+| `overview.week` | Last 7 days | 7 derniers jours |
+| `overview.week.done` | {n} topic done · {n} topics done | {n} sujet terminé · {n} sujets terminés |
+| `overview.week.decisions` | {n} decision · {n} decisions | {n} décision · {n} décisions |
+| `overview.week.new` | {n} new topic · {n} new topics | {n} nouveau sujet · {n} nouveaux sujets |
+| `overview.week.none` | Nothing done, decided or opened in the last 7 days. Last activity {when}. | Rien de terminé, décidé ni ouvert ces 7 derniers jours. Dernière activité {when}. |
+| `overview.epics` | Epics | Epics |
+| `overview.epics.more` | {n} more epic · {n} more epics | {n} autre epic · {n} autres epics |
+| `overview.epics.complete` | {n} complete epic · {n} complete epics | {n} epic terminé · {n} epics terminés |
+| `overview.memories` | {n} memory not updated for 90 days · {n} memories not updated for 90 days | {n} mémoire non mise à jour depuis 90 jours · {n} mémoires non mises à jour depuis 90 jours |
 | `section.timeline` | Timeline | Journal |
 | `state.updated` | Updated {when} by {author} | Modifié {when} par {author} |
 | `state.placeholder` | Where does this stand? One or two sentences. | Où en est-on ? Une ou deux phrases. |
@@ -136,6 +173,16 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `table.entries` | Entries | Entrées |
 | `table.updated` | Updated | Modifié |
 | `table.reset` | Reset order | Rétablir l'ordre |
+| `table.due` | Due | Échéance |
+| `table.filter.overdue` | Overdue | En retard |
+| `table.filter.week` | Next 7 days | 7 prochains jours |
+| `filter.blocked` | Blocked | Bloqués |
+| `filter.idle` | No activity for 7 days | Sans activité depuis 7 jours |
+| `filter.done_week` | Done in the last 7 days | Terminés ces 7 derniers jours |
+| `filter.decided_week` | Decided in the last 7 days | Décidés ces 7 derniers jours |
+| `filter.created_week` | Created in the last 7 days | Créés ces 7 derniers jours |
+| `filter.stale_memories` | Not updated for 90 days | Non mises à jour depuis 90 jours |
+| `filter.clear` | Clear filter | Effacer le filtre |
 | `table.group_progress` | {done} of {total} done | {done} sur {total} terminé · {done} sur {total} terminés (form chosen by {done}) |
 | `inbox.count` | {n} note · {n} notes | {n} note · {n} notes |
 | `inbox.placeholder` | Note for {project} | Note pour {project} |
@@ -350,12 +397,22 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `cmd.new_topic` | New topic | Nouveau sujet |
 | `cmd.add_entry` | Add entry | Ajouter une entrée |
 | `cmd.go_inbox` | Go to inbox | Aller à la boîte de réception |
+| `cmd.show_blocked` | Show blocked topics | Afficher les sujets bloqués |
+| `cmd.show_idle` | Show topics with no activity | Afficher les sujets sans activité |
+| `cmd.show_done_week` | Show topics done in the last 7 days | Afficher les sujets terminés ces 7 derniers jours |
+| `cmd.show_decided_week` | Show topics with a decision in the last 7 days | Afficher les sujets avec une décision ces 7 derniers jours |
+| `cmd.show_created_week` | Show topics created in the last 7 days | Afficher les sujets créés ces 7 derniers jours |
+| `cmd.show_stale_memories` | Show memories not updated for 90 days | Afficher les mémoires non mises à jour depuis 90 jours |
+| `cmd.overview_more` | Overview: Show more | Vue d'ensemble : afficher plus |
+| `cmd.overview_less` | Overview: Show less | Vue d'ensemble : afficher moins |
 | `cmd.back` | Back | Précédent |
 | `cmd.forward` | Forward | Suivant |
 | `cmd.undo` | Undo | Annuler |
 | `cmd.redo` | Redo | Rétablir |
 | `cmd.zoom` | Maximize focused area | Agrandir au maximum la zone active |
 | `cmd.set_status` | Set status: {status} | Définir le statut : {status} |
+| `cmd.due_set` | Set due date... | Définir l'échéance... |
+| `cmd.due_clear` | Clear due date | Effacer l'échéance |
 | `cmd.settings` | Open settings | Ouvrir les paramètres |
 | `cmd.theme` | Theme: {value} | Thème : {value} |
 | `cmd.text_size` | Text size: {value} | Taille du texte : {value} |
@@ -776,80 +833,13 @@ New with ADR 0011 (2026-11-21). They stay here, outside the table the tests read
 
 The checkbox of `settings.auto_commit` reuses `folders.commit.as_user`. `{branch}` is the default branch's name as git has it, never translated; `{key}` is a settings key (`attribution`, `env`), never translated.
 
-### 10.4.4 Keys of due dates, pending
+### 10.4.4 Keys of due dates (10.2.1)
 
-New with due dates (2026-11-21; components-records.md 5, layout.md 4.2.1, copy.md 10.2.1, data.md 11 request 16). They stay here, outside the table the tests read, until due dates are implemented; the implementing change moves them into 10.4 and adds them to `catalogue.rs` in the same commit: `prop.due` after `prop.level`, the `due.*` keys right after it, `event.due_*` after `event.status`, `table.due` and `table.filter.*` after `table.reset`, `cmd.due_*` after `cmd.set_status`. Month and weekday names and the compact form are formats of 10.2.1, not keys. In French, *échéance* is feminine ("Aucune"), and `{date}` takes "le" or "au" from the string (10.2).
+Moved into 10.4 when due dates were implemented: `prop.due` after `prop.level`, the `due.*` keys right after it, `event.due_*` after `event.status`, `table.due` and `table.filter.overdue`, `table.filter.week` after `table.reset`, `cmd.due_*` after `cmd.set_status`. Month and weekday names and the compact form are formats of 10.2.1, not keys. In French, *échéance* is feminine ("Aucune"), and `{date}` takes "le" or "au" from the string (10.2). `due.in_days` and `due.tip.in_days` are used from 2 days ahead (today and tomorrow have their own keys), so their singular forms only serve the plural rule. `due.tip.date` is the tooltip of a date on a closed record, which is never "overdue". The picker's Clear button reuses `common.clear`. Agent-facing text (`due 11-27 (6d)`, `overdue 3d`) is protocol, English only, and not in this catalogue (10).
 
-| Key | English | French |
-|---|---|---|
-| `prop.due` | Due | Échéance |
-| `due.none` | None | Aucune |
-| `due.today` | Today | Aujourd'hui |
-| `due.tomorrow` | Tomorrow | Demain |
-| `due.in_days` | In {n} day · In {n} days | Dans {n} jour · Dans {n} jours |
-| `due.overdue` | Overdue by {n} day · Overdue by {n} days | En retard de {n} jour · En retard de {n} jours |
-| `due.tip.today` | Due today | Échéance aujourd'hui |
-| `due.tip.tomorrow` | Due tomorrow | Échéance demain |
-| `due.tip.in_days` | Due {date}, in {n} day · Due {date}, in {n} days | Échéance le {date}, dans {n} jour · Échéance le {date}, dans {n} jours |
-| `due.tip.overdue` | Overdue by {n} day, due {date} · Overdue by {n} days, due {date} | En retard de {n} jour, échéance le {date} · En retard de {n} jours, échéance le {date} |
-| `due.tip.date` | Due {date} | Échéance le {date} |
-| `due.picker.placeholder` | fri, in 3d, 15/12, 2026-12-15 | ven., dans 3 j, 15/12, 2026-12-15 |
-| `due.picker.invalid` | Not a date. Try fri, in 3d, 15/12 or 2026-12-15. | Date non reconnue. Essayez ven., dans 3 j, 15/12 ou 2026-12-15. |
-| `due.picker.range` | Choose a date between 2000 and 2099. | Choisissez une date entre 2000 et 2099. |
-| `due.picker.none` | No due date | Aucune échéance |
-| `due.picker.prev` | Previous month | Mois précédent |
-| `due.picker.next` | Next month | Mois suivant |
-| `event.due_set` | {author} set the due date to {date} | {author} a fixé l'échéance au {date} |
-| `event.due_cleared` | {author} cleared the due date | {author} a supprimé l'échéance |
-| `table.due` | Due | Échéance |
-| `table.filter.overdue` | Overdue | En retard |
-| `table.filter.week` | Next 7 days | 7 prochains jours |
-| `cmd.due_set` | Set due date... | Définir l'échéance... |
-| `cmd.due_clear` | Clear due date | Effacer l'échéance |
+### 10.4.5 Keys of the Overview (components-records.md 5)
 
-`due.in_days` and `due.tip.in_days` are used from 2 days ahead (today and tomorrow have their own keys), so their singular forms only serve the plural rule. `due.tip.date` is the tooltip of a date on a closed record, which is never "overdue". The picker's Clear button reuses `common.clear`. Agent-facing text (`due 11-27 (6d)`, `overdue 3d`) is protocol, English only, and not in this catalogue (10).
-
-### 10.4.5 Keys of the Overview, pending
-
-New with the Overview (2026-11-21; components-records.md 5, screens.md 8.20, data.md 11 request 17). They stay here, outside the table the tests read, until the Overview is implemented; the implementing change moves them into 10.4 and adds them to `catalogue.rs` in the same commit: `overview.*` after `section.knowledge`, `filter.*` after `table.filter.*` (10.4.4), `cmd.show_*` and `cmd.overview_*` after `cmd.go_inbox`. Reused, not duplicated: "No epic" is `tree.no_epic`, the Knowledge block label is `section.knowledge`. Every `{n}` and `{days}` takes `tnum`; `{days}` is always 7 or more, so its sentences are written in the plural; `{when}` is the long form of 10.2 and the French brings its own preposition ("Dernière activité mardi à 14:05", "Dernière activité le 12 nov. 2026"). Memories are feminine in French (*mémoire*), topics masculine (*sujet*), epics masculine (*epic*).
-
-| Key | English | French |
-|---|---|---|
-| `overview.title` | Overview | Vue d'ensemble |
-| `overview.clear` | Nothing needs attention. | Rien ne demande votre attention. |
-| `overview.more` | More | Plus |
-| `overview.less` | Less | Moins |
-| `overview.attention` | Needs attention | À traiter |
-| `overview.blocked` | {n} blocked topic · {n} blocked topics | {n} sujet bloqué · {n} sujets bloqués |
-| `overview.overdue` | {n} overdue topic · {n} overdue topics | {n} sujet en retard · {n} sujets en retard |
-| `overview.idle` | {n} active topic with no activity for 7 days · {n} active topics with no activity for 7 days | {n} sujet actif sans activité depuis 7 jours · {n} sujets actifs sans activité depuis 7 jours |
-| `overview.inbox` | {n} note in the inbox for {days} days · {n} notes in the inbox, the oldest for {days} days | {n} note dans la boîte de réception depuis {days} jours · {n} notes dans la boîte de réception, la plus ancienne depuis {days} jours |
-| `overview.week` | Last 7 days | 7 derniers jours |
-| `overview.week.done` | {n} topic done · {n} topics done | {n} sujet terminé · {n} sujets terminés |
-| `overview.week.decisions` | {n} decision · {n} decisions | {n} décision · {n} décisions |
-| `overview.week.new` | {n} new topic · {n} new topics | {n} nouveau sujet · {n} nouveaux sujets |
-| `overview.week.none` | Nothing done, decided or opened in the last 7 days. Last activity {when}. | Rien de terminé, décidé ni ouvert ces 7 derniers jours. Dernière activité {when}. |
-| `overview.epics` | Epics | Epics |
-| `overview.epics.more` | {n} more epic · {n} more epics | {n} autre epic · {n} autres epics |
-| `overview.epics.complete` | {n} complete epic · {n} complete epics | {n} epic terminé · {n} epics terminés |
-| `overview.memories` | {n} memory not updated for 90 days · {n} memories not updated for 90 days | {n} mémoire non mise à jour depuis 90 jours · {n} mémoires non mises à jour depuis 90 jours |
-| `filter.blocked` | Blocked | Bloqués |
-| `filter.idle` | No activity for 7 days | Sans activité depuis 7 jours |
-| `filter.done_week` | Done in the last 7 days | Terminés ces 7 derniers jours |
-| `filter.decided_week` | Decided in the last 7 days | Décidés ces 7 derniers jours |
-| `filter.created_week` | Created in the last 7 days | Créés ces 7 derniers jours |
-| `filter.stale_memories` | Not updated for 90 days | Non mises à jour depuis 90 jours |
-| `filter.clear` | Clear filter | Effacer le filtre |
-| `cmd.show_blocked` | Show blocked topics | Afficher les sujets bloqués |
-| `cmd.show_idle` | Show topics with no activity | Afficher les sujets sans activité |
-| `cmd.show_done_week` | Show topics done in the last 7 days | Afficher les sujets terminés ces 7 derniers jours |
-| `cmd.show_decided_week` | Show topics with a decision in the last 7 days | Afficher les sujets avec une décision ces 7 derniers jours |
-| `cmd.show_created_week` | Show topics created in the last 7 days | Afficher les sujets créés ces 7 derniers jours |
-| `cmd.show_stale_memories` | Show memories not updated for 90 days | Afficher les mémoires non mises à jour depuis 90 jours |
-| `cmd.overview_more` | Overview: Show more | Vue d'ensemble : afficher plus |
-| `cmd.overview_less` | Overview: Show less | Vue d'ensemble : afficher moins |
-
-`overview.inbox` is chosen by `{n}`; with one note, "the oldest" would be wrong, so the singular form names that note's age directly. `filter.decided_week` lists topics, so "Décidés" agrees with *sujets*. Agent-facing text (`Attention: blocked T-12 ...`, `· no activity 12d`) is protocol, English only, and not in this catalogue (10).
+Moved into 10.4 when the Overview was implemented: `overview.*` after `section.knowledge`, `filter.*` after `table.filter.week`, `cmd.show_*` and `cmd.overview_*` after `cmd.go_inbox`. Reused, not duplicated: "No epic" is `tree.no_epic`, the Knowledge block label is `section.knowledge`. Every `{n}` and `{days}` takes `tnum`; `{days}` is always 7 or more, so its sentences are written in the plural; `{when}` is the long form of 10.2 and the French brings its own preposition ("Dernière activité mardi à 14:05", "Dernière activité le 12 nov. 2026"). Memories are feminine in French (*mémoire*), topics masculine (*sujet*), epics masculine (*epic*). `overview.inbox` is chosen by `{n}`; with one note, "the oldest" would be wrong, so the singular form names that note's age directly. `filter.decided_week` lists topics, so "Décidés" agrees with *sujets*. Agent-facing text (`Attention: blocked T-12 ...`, `· no activity 12d`) is protocol, English only, and not in this catalogue (10).
 
 ### 10.4.6 Keys of questions and people, pending
 
