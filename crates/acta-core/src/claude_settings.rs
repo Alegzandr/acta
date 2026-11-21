@@ -12,11 +12,15 @@
 //! the repository's `info/exclude`; a file tracked by git is never written.
 //!
 //! The ledger also keeps the folder's commit settings as last applied:
-//! they are what the `pre-git` guard enforces, in step with the rules.
+//! The store's folder columns (`commit_mode`, `commit_as_user`,
+//! `commit_on_default`) are the source of a folder's commit settings; the
+//! ledger records only what was written. [`set_commit`], [`sync_path`] and
+//! [`sync_all`] bring the files in line with the columns.
 
 use crate::agent::git;
 use crate::folder_path;
 use crate::git_cmd;
+use crate::model::{Author, Folder, FolderId};
 use crate::paths::Os;
 use crate::store::{AUTO_MEMORY_PREFIX, Store};
 use serde::{Deserialize, Serialize};
@@ -43,38 +47,24 @@ const DENY: [&str; 4] = [
 ];
 const PUSH_ENV: [(&str, &str); 2] = [("GIT_TERMINAL_PROMPT", "0"), ("GCM_INTERACTIVE", "never")];
 
-/// A folder's commit mode (ADR 0011, section 3).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum CommitMode {
-    #[default]
-    Manual,
-    /// Commit automatically.
-    Commit,
-    /// Commit and push automatically.
-    Push,
-}
+pub use crate::model::CommitMode;
+
+/// Local value: the Settings default of "Commit in my name, without
+/// Co-Authored-By Claude" (`"1"` on; off when absent, as on a new install).
+pub const AS_USER_DEFAULT_KEY: &str = "commit.as_user_default";
 
 impl CommitMode {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            CommitMode::Manual => "manual",
-            CommitMode::Commit => "commit",
-            CommitMode::Push => "push",
-        }
-    }
-
-    pub fn parse(s: &str) -> Option<CommitMode> {
-        match s {
-            "manual" => Some(CommitMode::Manual),
-            "commit" => Some(CommitMode::Commit),
-            "push" => Some(CommitMode::Push),
-            _ => None,
-        }
-    }
-
     pub fn automatic(self) -> bool {
         self != CommitMode::Manual
+    }
+
+    /// Manual < Commit < Push.
+    fn rank(self) -> u8 {
+        match self {
+            CommitMode::Manual => 0,
+            CommitMode::Commit => 1,
+            CommitMode::Push => 2,
+        }
     }
 }
 
@@ -266,26 +256,179 @@ pub fn migrate_auto_memory_markers(store: &mut Store) -> crate::Result<usize> {
     Ok(markers.len())
 }
 
-/// The commit settings that apply in `dir`: those of the deepest folder
-/// with a ledger containing it. Read by the `pre-git` guard.
-pub fn commit_settings_for(
-    store: &Store,
-    dir: &str,
-) -> crate::Result<Option<(String, CommitSettings)>> {
-    let mut best: Option<(usize, String, CommitSettings)> = None;
-    for (key, text) in store.local_values(LEDGER_PREFIX)? {
-        let folder = &key[LEDGER_PREFIX.len()..];
-        let Some(depth) = folder_path::contains(Os::CURRENT, folder, dir) else {
-            continue;
-        };
-        let Ok(ledger) = serde_json::from_str::<Ledger>(&text) else {
-            continue;
-        };
-        if best.as_ref().is_none_or(|(d, _, _)| depth > *d) {
-            best = Some((depth, folder.to_owned(), ledger.commit.unwrap_or_default()));
+/// The attached folder containing a directory, with its commit settings.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FolderCommit {
+    /// The folder's stored path.
+    pub path: String,
+    /// Its display name: the name given in Acta, else the last segment.
+    pub name: String,
+    pub settings: CommitSettings,
+}
+
+/// Whether "Commit in my name" is on by default (Settings > Claude Code).
+pub fn as_user_default(store: &Store) -> crate::Result<bool> {
+    Ok(store.local_value(AS_USER_DEFAULT_KEY)?.as_deref() == Some("1"))
+}
+
+/// Sets the Settings default, then brings every folder that follows it in
+/// line. Returns the folders written and those left as they were.
+pub fn set_as_user_default(store: &mut Store, on: bool) -> crate::Result<(usize, usize)> {
+    store.set_local_value(AS_USER_DEFAULT_KEY, on.then_some("1"))?;
+    sync_all(store)
+}
+
+/// The settings the folders at one path give, from the store's columns.
+/// One path attached at several levels has one settings file: the
+/// strictest wins (the lowest mode; each option only when all have it).
+fn settings_of(folders: &[Folder], as_user_default: bool) -> CommitSettings {
+    let Some(mode) = folders
+        .iter()
+        .map(|f| f.commit_mode)
+        .min_by_key(|m| m.rank())
+    else {
+        return CommitSettings::default();
+    };
+    if !mode.automatic() {
+        return CommitSettings::default();
+    }
+    CommitSettings {
+        mode,
+        as_user: folders
+            .iter()
+            .all(|f| f.commit_as_user.unwrap_or(as_user_default)),
+        on_default: folders.iter().all(|f| f.commit_on_default),
+    }
+}
+
+/// The live folders attached at exactly `path`.
+fn folders_at(store: &Store, path: &str) -> crate::Result<Vec<Folder>> {
+    Ok(store
+        .all_folders()?
+        .into_iter()
+        .filter(|f| f.stamp.deleted_at.is_none() && folder_path::same(Os::CURRENT, &f.path, path))
+        .collect())
+}
+
+/// The commit settings that apply in `dir` (stored form): those of the
+/// deepest attached folder containing it, from the store's columns. Read
+/// by the `pre-git` guard. `None` outside every attached folder.
+pub fn commit_settings_for(store: &Store, dir: &str) -> crate::Result<Option<FolderCommit>> {
+    let all: Vec<Folder> = store
+        .all_folders()?
+        .into_iter()
+        .filter(|f| f.stamp.deleted_at.is_none())
+        .collect();
+    let Some(best) = all
+        .iter()
+        .filter_map(|f| folder_path::contains(Os::CURRENT, &f.path, dir).map(|d| (d, f)))
+        .max_by_key(|(d, _)| *d)
+        .map(|(_, f)| f.path.clone())
+    else {
+        return Ok(None);
+    };
+    let here: Vec<Folder> = all
+        .into_iter()
+        .filter(|f| folder_path::same(Os::CURRENT, &f.path, &best))
+        .collect();
+    let name = here
+        .iter()
+        .map(|f| f.name.trim())
+        .find(|n| !n.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| {
+            best.rsplit(['/', '\\'])
+                .find(|s| !s.is_empty())
+                .unwrap_or(&best)
+                .to_owned()
+        });
+    let settings = settings_of(&here, as_user_default(store)?);
+    Ok(Some(FolderCommit {
+        path: best,
+        name,
+        settings,
+    }))
+}
+
+/// Sets a folder's commit settings in the store (refused for Claude Code,
+/// as the store refuses it), then writes its Claude Code settings.
+pub fn set_commit(
+    store: &mut Store,
+    id: FolderId,
+    mode: CommitMode,
+    as_user: Option<bool>,
+    on_default: bool,
+    author: Author,
+) -> Result<Outcome, String> {
+    store
+        .set_commit_settings(id, mode, as_user, on_default, author)
+        .map_err(|e| e.to_string())?;
+    let path = store.folder(id).map_err(|e| e.to_string())?.path;
+    sync_path(store, Path::new(&path))
+}
+
+/// Brings one folder's Claude Code settings in line with the store's
+/// columns. A folder not on this computer is left for when it is found.
+pub fn sync_path(store: &mut Store, path: &Path) -> Result<Outcome, String> {
+    let here = folders_at(store, &path.to_string_lossy()).map_err(|e| e.to_string())?;
+    let default = as_user_default(store).map_err(|e| e.to_string())?;
+    let settings = settings_of(&here, default);
+    let recorded = read_ledger(store, path)
+        .map_err(|e| e.to_string())?
+        .and_then(|l| l.commit)
+        .unwrap_or_default();
+    if !path.is_dir() || recorded == settings {
+        return Ok(Outcome::default());
+    }
+    apply(
+        store,
+        path,
+        Wanted {
+            auto_memory_off: None,
+            commit: Some(settings),
+        },
+    )
+}
+
+/// Brings every folder in line with the columns (after an import, a
+/// changed Settings default): folders whose recorded settings differ are
+/// written, and a ledger left at a path no folder has any more is taken
+/// out. Returns the folders written and those left as they were.
+pub fn sync_all(store: &mut Store) -> crate::Result<(usize, usize)> {
+    migrate_auto_memory_markers(store)?;
+    let mut paths: Vec<String> = Vec::new();
+    for f in store.all_folders()? {
+        if f.stamp.deleted_at.is_none()
+            && !paths
+                .iter()
+                .any(|p| folder_path::same(Os::CURRENT, p, &f.path))
+        {
+            paths.push(f.path);
         }
     }
-    Ok(best.map(|(_, f, c)| (f, c)))
+    let (mut written, mut kept) = (0, 0);
+    for p in &paths {
+        match sync_path(store, Path::new(p)) {
+            Ok(o) if o.changed() => written += 1,
+            Ok(_) => {}
+            Err(_) => kept += 1,
+        }
+    }
+    let orphans: Vec<PathBuf> = store
+        .local_values(LEDGER_PREFIX)?
+        .into_iter()
+        .map(|(k, _)| k[LEDGER_PREFIX.len()..].to_owned())
+        .filter(|l| !paths.iter().any(|p| folder_path::same(Os::CURRENT, p, l)))
+        .map(PathBuf::from)
+        .collect();
+    for o in orphans {
+        match remove(store, &o)? {
+            Restore::Restored => written += 1,
+            Restore::Kept => kept += 1,
+            Restore::NotNeeded => {}
+        }
+    }
+    Ok((written, kept))
 }
 
 /// Brings the folder's local settings to what Acta wants. `folder` is the

@@ -226,10 +226,9 @@ fn a_tracked_file_is_never_written() {
         fs::read_to_string(r.join(LOCAL_SETTINGS)).unwrap(),
         "{\"model\": \"haiku\"}\n"
     );
-    // The settings are still recorded: the guard applies them.
-    let dir = r.to_string_lossy().into_owned();
+    // What was applied is still recorded (nothing was written).
     assert_eq!(
-        commit_settings_for(s, &dir).unwrap().unwrap().1.mode,
+        read_ledger(s, &r).unwrap().unwrap().commit.unwrap().mode,
         CommitMode::Push
     );
     apply(s, &r, mode(CommitMode::Manual, false)).unwrap();
@@ -321,32 +320,156 @@ fn auto_memory_markers_move_into_the_ledger() {
     assert!(!f.join(LOCAL_SETTINGS).exists(), "Acta created it: gone");
 }
 
+/// A project with one folder attached at `path`, returned with its id.
+fn attach(s: &mut Store, path: &Path) -> crate::model::FolderId {
+    let p = match s.projects().unwrap().first() {
+        Some(p) => p.id,
+        None => s.create_project("Acta", "", Author::Human).unwrap(),
+    };
+    s.add_folder(crate::model::Owner::Project(p), path, Author::Human)
+        .unwrap()
+}
+
+fn stored(p: &Path) -> String {
+    folder_path::canonical(p).unwrap()
+}
+
 #[test]
-fn the_deepest_ledger_decides_the_commit_settings() {
+fn the_columns_decide_and_the_deepest_folder_wins() {
     let mut t = open();
     let tmp = tempfile::tempdir().unwrap();
     let s = &mut t.store;
     let outer = tmp.path().join("acta");
     let inner = outer.join("crates");
     fs::create_dir_all(&inner).unwrap();
-    apply(s, &outer, mode(CommitMode::Push, false)).unwrap();
-    apply(
-        s,
-        &inner,
-        Wanted {
-            auto_memory_off: Some(true),
-            commit: None,
-        },
-    )
-    .unwrap();
+    let o = attach(s, &outer);
+    attach(s, &inner);
+    set_commit(s, o, CommitMode::Push, None, false, Author::Human).unwrap();
     let at = |s: &Store, p: &Path| {
-        commit_settings_for(s, &p.to_string_lossy())
+        commit_settings_for(s, &stored(p))
             .unwrap()
-            .map(|(_, c)| c.mode)
+            .map(|f| (f.settings.mode, f.name))
     };
-    assert_eq!(at(s, &outer.join("docs")), Some(CommitMode::Push));
-    assert_eq!(at(s, &inner.join("x")), Some(CommitMode::Manual));
+    assert_eq!(at(s, &outer), Some((CommitMode::Push, "acta".into())));
+    assert_eq!(at(s, &inner), Some((CommitMode::Manual, "crates".into())));
     assert_eq!(at(s, tmp.path()), None);
+    // A name given in Acta is the display name.
+    s.set_folder_name(o, "Acta app", Author::Human).unwrap();
+    assert_eq!(at(s, &outer).unwrap().1, "Acta app");
+    // The ledger alone decides nothing.
+    apply(s, &inner, mode(CommitMode::Push, false)).unwrap();
+    assert_eq!(at(s, &inner).unwrap().0, CommitMode::Manual);
+}
+
+#[test]
+fn set_commit_writes_the_file_and_is_refused_for_claude() {
+    let mut t = open();
+    let tmp = tempfile::tempdir().unwrap();
+    let s = &mut t.store;
+    let f = tmp.path().join("r");
+    fs::create_dir_all(&f).unwrap();
+    let id = attach(s, &f);
+    let f = PathBuf::from(stored(&f));
+    assert!(set_commit(s, id, CommitMode::Push, None, false, Author::Claude).is_err());
+    assert!(!f.join(LOCAL_SETTINGS).exists());
+    set_commit(s, id, CommitMode::Commit, Some(true), false, Author::Human).unwrap();
+    let mut want = commit_json();
+    want["attribution"] = json!({"commit": "", "pr": "", "sessionUrl": false});
+    assert_eq!(read(&f), want);
+    // In line already: nothing to do.
+    assert_eq!(sync_path(s, &f).unwrap(), Outcome::default());
+    assert_eq!(sync_all(s).unwrap(), (0, 0));
+    // "Commit in my name" left to the Settings default.
+    set_commit(s, id, CommitMode::Commit, None, false, Author::Human).unwrap();
+    assert!(read(&f).get("attribution").is_none());
+    assert_eq!(set_as_user_default(s, true).unwrap(), (1, 0));
+    assert!(read(&f).get("attribution").is_some());
+    set_commit(s, id, CommitMode::Manual, None, false, Author::Human).unwrap();
+    assert!(!f.join(".claude").exists());
+}
+
+#[test]
+fn one_path_at_two_levels_takes_the_strictest() {
+    let mut t = open();
+    let tmp = tempfile::tempdir().unwrap();
+    let s = &mut t.store;
+    let f = tmp.path().join("r");
+    fs::create_dir_all(&f).unwrap();
+    let p = attach(s, &f);
+    let project = s.projects().unwrap()[0].id;
+    let topic = s
+        .create_topic(
+            crate::store::NewTopic {
+                project,
+                epic: None,
+                title: "Alexandre's topic".into(),
+                description: String::new(),
+                status: crate::model::Status::Draft,
+            },
+            Author::Human,
+        )
+        .unwrap();
+    let t2 = s
+        .add_folder(crate::model::Owner::Topic(topic), &f, Author::Human)
+        .unwrap();
+    set_commit(s, p, CommitMode::Push, Some(true), true, Author::Human).unwrap();
+    set_commit(s, t2, CommitMode::Commit, Some(false), true, Author::Human).unwrap();
+    let got = commit_settings_for(s, &stored(&f))
+        .unwrap()
+        .unwrap()
+        .settings;
+    assert_eq!(
+        got,
+        CommitSettings {
+            mode: CommitMode::Commit,
+            as_user: false,
+            on_default: true
+        }
+    );
+    assert_eq!(read(&PathBuf::from(stored(&f))), commit_json());
+}
+
+#[test]
+fn an_import_and_a_locate_bring_the_files_in_line() {
+    let mut a = open();
+    let tmp = tempfile::tempdir().unwrap();
+    let f = tmp.path().join("r");
+    fs::create_dir_all(&f).unwrap();
+    let id = attach(&mut a.store, &f);
+    a.store
+        .set_commit_settings(id, CommitMode::Commit, Some(false), false, Author::Human)
+        .unwrap();
+    assert!(
+        !f.join(LOCAL_SETTINGS).exists(),
+        "the columns alone write nothing"
+    );
+    let file = a.store.export(None).unwrap();
+
+    // Another database imports it: the folder exists here, so it is written.
+    let mut b = open();
+    b.store.import(&file, false).unwrap();
+    assert_eq!(read(&PathBuf::from(stored(&f))), commit_json());
+    // A Claude Code import changes no commit settings and writes nothing new.
+    let mut c = open();
+    c.store.import_by(&file, false, Author::Claude).unwrap();
+    let cid = c.store.all_folders().unwrap()[0].id;
+    assert_eq!(c.store.folder(cid).unwrap().commit_mode, CommitMode::Manual);
+
+    // Locate: a folder set to commit while not found is written once found.
+    let mut d = open();
+    let gone = tmp.path().join("gone");
+    fs::create_dir_all(&gone).unwrap();
+    let did = attach(&mut d.store, &gone);
+    fs::remove_dir(&gone).unwrap();
+    d.store
+        .set_commit_settings(did, CommitMode::Push, Some(false), false, Author::Human)
+        .unwrap();
+    assert!(sync_path(&mut d.store, &gone).unwrap() == Outcome::default());
+    let found = tmp.path().join("found");
+    fs::create_dir_all(&found).unwrap();
+    d.store.set_folder_path(did, &found, Author::Human).unwrap();
+    let v = read(&PathBuf::from(stored(&found)));
+    assert_eq!(v["permissions"]["allow"][2], "Bash(git push)");
 }
 
 #[test]

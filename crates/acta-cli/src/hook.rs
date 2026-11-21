@@ -119,31 +119,20 @@ fn pre_git(command: &str, cwd: &Path, session: &Path, opener: &Opener) -> Option
     git_guard::check(command, &cx).map(|r| git_guard::deny_json(&r))
 }
 
-/// The attached folder containing `dir`, with its commit settings (Manual
-/// unless Acta recorded others for exactly that folder) and git state.
+/// The attached folder containing `dir`, with its commit settings (from
+/// the store's columns) and git state.
 fn place(store: &acta_core::Store, dir: &Path) -> git_guard::Place {
     use git_guard::Place;
-    let Ok(found) = store.resolve_folder(dir) else {
-        return Place::Unreadable;
-    };
-    let Some(found) = found else {
-        return Place::Unlinked;
-    };
-    let settings = match claude_settings::commit_settings_for(store, &found.folder) {
-        Ok(Some((f, s))) if folder_path::same(Os::CURRENT, &f, &found.folder) => s,
-        Ok(_) => Default::default(),
-        Err(_) => return Place::Unreadable,
-    };
-    let name = found
-        .folder
-        .rsplit(['/', '\\'])
-        .find(|s| !s.is_empty())
-        .unwrap_or("this folder")
-        .to_owned();
-    Place::Folder {
-        name,
-        settings,
-        git: acta_core::agent::git::inspect(dir).map(Box::new),
+    let stored = folder_path::canonical(dir)
+        .unwrap_or_else(|_| folder_path::normalize(Os::CURRENT, &dir.to_string_lossy()));
+    match claude_settings::commit_settings_for(store, &stored) {
+        Err(_) => Place::Unreadable,
+        Ok(None) => Place::Unlinked,
+        Ok(Some(f)) => Place::Folder {
+            name: f.name,
+            settings: f.settings,
+            git: acta_core::agent::git::inspect(dir).map(Box::new),
+        },
     }
 }
 

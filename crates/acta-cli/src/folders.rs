@@ -4,7 +4,7 @@
 //! user only: refused when Claude Code runs it.
 
 use acta_core::agent::git;
-use acta_core::claude_settings::{self, CommitMode, CommitSettings, LOCAL_SETTINGS, Wanted};
+use acta_core::claude_settings::{self, CommitMode, LOCAL_SETTINGS};
 use acta_core::folder_path;
 use acta_core::model::Author;
 use acta_core::paths::Os;
@@ -37,28 +37,36 @@ pub fn commit(
     };
     let stored =
         folder_path::canonical(&path).map_err(|e| format!("cannot use this folder: {e}"))?;
-    let attached = store
+    let ids: Vec<_> = store
         .all_folders()
         .map_err(|e| e.to_string())?
-        .iter()
-        .any(|f| f.stamp.deleted_at.is_none() && folder_path::same(Os::CURRENT, &f.path, &stored));
-    if !attached {
+        .into_iter()
+        .filter(|f| {
+            f.stamp.deleted_at.is_none() && folder_path::same(Os::CURRENT, &f.path, &stored)
+        })
+        .map(|f| f.id)
+        .collect();
+    if ids.is_empty() {
         return Err("this folder is not attached; run acta link first".into());
     }
     let info = git::inspect(Path::new(&stored));
     if mode.automatic() && info.is_none() {
         return Err("commit modes apply to folders in a git repository".into());
     }
-    let settings = CommitSettings {
-        mode,
-        as_user: a.as_me && mode.automatic(),
-        on_default: a.on_default && mode.automatic(),
-    };
-    let wanted = Wanted {
-        auto_memory_off: None,
-        commit: Some(settings),
-    };
-    let o = claude_settings::apply(store, Path::new(&stored), wanted)?;
+    // The store's columns are the source: every level the folder is
+    // attached at gets the same settings, then the file follows them.
+    let as_user = a.as_me.then_some(true);
+    let on_default = a.on_default && mode.automatic();
+    for id in ids {
+        store
+            .set_commit_settings(id, mode, as_user, on_default, author)
+            .map_err(|e| e.to_string())?;
+    }
+    let o = claude_settings::sync_path(store, Path::new(&stored))?;
+    let settings = claude_settings::commit_settings_for(store, &stored)
+        .map_err(|e| e.to_string())?
+        .map(|f| f.settings)
+        .unwrap_or_default();
     let mut msg = format!(
         "ok {stored}: {}",
         match mode {

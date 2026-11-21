@@ -327,6 +327,8 @@ impl Store {
         carry_path_keys(&tx, id, &old, &stored)?;
         tx.commit()?;
         let _ = self.refresh_link_index();
+        // Found again: its Claude Code settings are written now.
+        let _ = crate::claude_settings::sync_path(self, Path::new(&stored));
         self.remember_identity(id, &stored);
         Ok(())
     }
@@ -380,6 +382,9 @@ impl Store {
         }
         tx.commit()?;
         let _ = self.refresh_link_index();
+        for (_, path) in changes {
+            let _ = crate::claude_settings::sync_path(self, Path::new(path));
+        }
         Ok(())
     }
 
@@ -526,6 +531,9 @@ impl Store {
         }
         tx.commit()?;
         let _ = self.refresh_link_index();
+        for (_, _, path) in &changes {
+            let _ = crate::claude_settings::sync_path(self, Path::new(path));
+        }
         Ok(changes.into_iter().map(|(id, _, _)| id).collect())
     }
 

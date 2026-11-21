@@ -552,6 +552,9 @@ impl Store {
         let report = merge(&tx, file, author)?;
         tx.commit()?;
         let _ = self.refresh_link_index();
+        // Commit settings and paths may have changed: Claude Code's
+        // settings follow the columns (ADR 0011, Export).
+        let _ = crate::claude_settings::sync_all(self);
         Ok(report)
     }
 }
