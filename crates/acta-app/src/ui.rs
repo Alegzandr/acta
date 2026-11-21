@@ -546,8 +546,94 @@ pub fn column() -> Div {
         .flex_col()
 }
 
+thread_local! {
+    /// The side padding of the page being laid out: 32, or 16 in a narrow
+    /// page group (workbench.md 4.8.8). Set around a group's page by
+    /// [`NarrowPage`].
+    static PAGE_PADDING: std::cell::Cell<f32> = const { std::cell::Cell::new(32.) };
+}
+
+/// The side padding of pages (docs/design/layout.md 4.2; 16 in a page
+/// group under 452 wide, workbench.md 4.8.8).
+pub fn page_padding() -> f32 {
+    PAGE_PADDING.with(|p| p.get())
+}
+
+/// The page of a group, laid out with the side padding its group's width
+/// allows: pages render while they are laid out, so the padding is set
+/// around that and put back after.
+pub struct NarrowPage {
+    child: gpui_kit::AnyElement,
+    narrow: bool,
+}
+
+impl NarrowPage {
+    pub fn new(child: gpui_kit::AnyElement, narrow: bool) -> Self {
+        Self { child, narrow }
+    }
+}
+
+impl gpui_kit::IntoElement for NarrowPage {
+    type Element = Self;
+
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+impl gpui_kit::Element for NarrowPage {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&gpui_kit::GlobalElementId>,
+        _: Option<&gpui_kit::InspectorElementId>,
+        window: &mut gpui_kit::Window,
+        cx: &mut gpui_kit::App,
+    ) -> (gpui_kit::LayoutId, ()) {
+        let before = PAGE_PADDING.with(|p| p.replace(if self.narrow { 16. } else { 32. }));
+        let id = self.child.request_layout(window, cx);
+        PAGE_PADDING.with(|p| p.set(before));
+        (id, ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&gpui_kit::GlobalElementId>,
+        _: Option<&gpui_kit::InspectorElementId>,
+        _: gpui_kit::Bounds<gpui_kit::Pixels>,
+        _: &mut (),
+        window: &mut gpui_kit::Window,
+        cx: &mut gpui_kit::App,
+    ) {
+        self.child.prepaint(window, cx);
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&gpui_kit::GlobalElementId>,
+        _: Option<&gpui_kit::InspectorElementId>,
+        _: gpui_kit::Bounds<gpui_kit::Pixels>,
+        _: &mut (),
+        _: &mut (),
+        window: &mut gpui_kit::Window,
+        cx: &mut gpui_kit::App,
+    ) {
+        self.child.paint(window, cx);
+    }
+}
+
 /// The scrolling page area that centres the column, with 32 of side
-/// padding (docs/design/layout.md 4.2).
+/// padding (docs/design/layout.md 4.2), 16 in a narrow page group.
 pub fn page_scroll(id: impl Into<ElementId>) -> Stateful<Div> {
     div()
         .id(id.into())
@@ -556,7 +642,7 @@ pub fn page_scroll(id: impl Into<ElementId>) -> Stateful<Div> {
         .flex()
         .flex_col()
         .items_center()
-        .px(px(32.))
+        .px(px(page_padding()))
 }
 
 /// A view's scrolling content in a side area or the bottom panel

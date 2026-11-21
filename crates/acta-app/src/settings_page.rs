@@ -480,7 +480,7 @@ impl Render for SettingsPage {
             .flex()
             .flex_col()
             .items_center()
-            .px(px(32.))
+            .px(px(ui::page_padding()))
             .child(
                 div()
                     .w_full()

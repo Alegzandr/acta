@@ -44,6 +44,8 @@ const TAB_BAR: f32 = 32.;
 const VIEW_STRIP: f32 = 28.;
 /// 4.8.7: a press becomes a drag after 4 of movement.
 const DRAG_START: f32 = 4.;
+/// 4.8.8: under 452 of group width, pages drop their side padding to 16.
+const NARROW_GROUP: f32 = 452.;
 /// 4.8.10: the sidebar shown over the page keeps 48 of the window free.
 const OVERLAY_GAP: f32 = 48.;
 
@@ -56,6 +58,8 @@ pub(super) struct Geometry {
     tabs: HashMap<(PlaceKey, usize, usize), Rect>,
     areas: HashMap<PlaceKey, Rect>,
     body: Rect,
+    /// Each page group's width in the frame before, for its padding.
+    page_widths: [f32; 3],
 }
 
 /// `Place` as a map key (it is `Hash`, but a tuple keeps the code short).
@@ -72,6 +76,12 @@ fn place_key(place: Place) -> PlaceKey {
 
 impl Geometry {
     fn clear(&mut self) {
+        for (g, w) in self.page_widths.iter_mut().enumerate() {
+            *w = self
+                .groups
+                .get(&(place_key(Place::Page), g))
+                .map_or(f32::MAX, |r| r.w);
+        }
         self.groups.clear();
         self.headers.clear();
         self.tabs.clear();
@@ -1909,6 +1919,41 @@ impl Shell {
         .on_click(cx.listener(move |shell, _, window, cx| {
             shell.activate_tab(place, group, index, window, cx)
         }))
+        // 4.8.4: `Left` / `Right` move between view tabs, `Shift+F10` or
+        // the menu key opens the view menu; `Enter` and `Space` click.
+        .on_key_down(
+            cx.listener(move |shell, e: &gpui_kit::KeyDownEvent, window, cx| {
+                let k = &e.keystroke;
+                match k.key.as_str() {
+                    "left" if !k.modifiers.modified() => window.focus_prev(cx),
+                    "right" if !k.modifiers.modified() => window.focus_next(cx),
+                    "f10" if k.modifiers.shift => {
+                        let at = shell.bench().and_then(|b| {
+                            b.ui.geometry
+                                .borrow()
+                                .tabs
+                                .get(&(key, group, index))
+                                .copied()
+                        });
+                        let (x, y) = at.map_or((0., 0.), |r| (r.x, r.bottom()));
+                        shell.open_menu(LayoutMenu::View(view), x, y, cx);
+                    }
+                    "menu" => {
+                        let at = shell.bench().and_then(|b| {
+                            b.ui.geometry
+                                .borrow()
+                                .tabs
+                                .get(&(key, group, index))
+                                .copied()
+                        });
+                        let (x, y) = at.map_or((0., 0.), |r| (r.x, r.bottom()));
+                        shell.open_menu(LayoutMenu::View(view), x, y, cx);
+                    }
+                    _ => return,
+                }
+                cx.stop_propagation();
+            }),
+        )
         .into_any_element()
     }
 
@@ -2133,6 +2178,8 @@ impl Shell {
             None => (div().into_any_element(), None),
         };
         let header_h = if show_bar { TAB_BAR } else { 0. };
+        // 4.8.8: under 452 of group width, pages pad 16 a side.
+        let narrow = geometry.borrow().page_widths[group.min(2)] < NARROW_GROUP;
         div()
             .id(("page-group", group))
             .track_focus(&focus)
@@ -2156,7 +2203,12 @@ impl Shell {
             .children(bar)
             .children(strip)
             .children(bulk)
-            .child(div().flex_1().min_h_0().child(content))
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .child(ui::NarrowPage::new(content, narrow)),
+            )
             .into_any_element()
     }
 
