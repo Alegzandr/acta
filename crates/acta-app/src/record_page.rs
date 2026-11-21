@@ -815,10 +815,25 @@ impl RecordPage {
         });
     }
 
+    /// Makes a folder the page's active folder (ADR 0011): one undoable
+    /// write, the folder's position unchanged.
     fn make_primary(&mut self, id: acta_core::model::FolderId, cx: &mut Context<Self>) {
+        let owner = self.owner;
         let project = self.project_id();
-        self.ws
-            .update(cx, |ws, cx| ws.reorder(Record::Folder(id), 0, project, cx));
+        self.ws.update(cx, |ws, cx| {
+            ws.undoable(cx, project, None, move |store| {
+                let back = crate::workspace::active_pointer(store, owner)?;
+                store.set_active_folder(owner, Some(id), Author::Human)?;
+                Ok((
+                    Undo::ActiveFolder {
+                        owner,
+                        back,
+                        expect: Some(id),
+                    },
+                    (),
+                ))
+            });
+        });
     }
 
     // ---- keys ----

@@ -73,6 +73,12 @@ pub enum Undo {
         back: String,
         expect: String,
     },
+    /// A page's active folder chosen (`None`: the default rule).
+    ActiveFolder {
+        owner: Owner,
+        back: Option<FolderId>,
+        expect: Option<FolderId>,
+    },
     /// A folder set or located: put the old path back as stored.
     FolderPath {
         id: FolderId,
@@ -145,6 +151,7 @@ impl Undo {
             Undo::EpicTitle { id, expect, .. } => store.epic(*id)?.title == *expect,
             Undo::TopicEpic { id, expect, .. } => store.topic(*id)?.epic == *expect,
             Undo::ProjectTitle { id, expect, .. } => store.project(*id)?.title == *expect,
+            Undo::ActiveFolder { owner, expect, .. } => active_pointer(store, *owner)? == *expect,
             Undo::FolderPath { id, expect, .. } => store.folder(*id)?.path == *expect,
             Undo::KbRevision { id, expect, .. } => store.kb_entry(*id)?.rev == *expect,
             Undo::KbOwner { id, expect, .. } => store.kb_entry(*id)?.owner == *expect,
@@ -254,6 +261,18 @@ impl Undo {
                     id: *id,
                     back: expect.clone(),
                     expect: store.project(*id)?.title,
+                }
+            }
+            Undo::ActiveFolder {
+                owner,
+                back,
+                expect,
+            } => {
+                store.set_active_folder(*owner, *back, me)?;
+                Undo::ActiveFolder {
+                    owner: *owner,
+                    back: *expect,
+                    expect: *back,
                 }
             }
             Undo::FolderPath { id, back, expect } => {
@@ -1208,6 +1227,15 @@ pub fn project_of(ws: &gpui_kit::Entity<Workspace>, owner: Owner, cx: &App) -> O
     ws.read(cx).project_of(owner)
 }
 
+/// The active folder a page chose, `None` when it follows the default rule.
+pub fn active_pointer(store: &Store, owner: Owner) -> acta_core::Result<Option<FolderId>> {
+    Ok(match owner {
+        Owner::Project(id) => store.project(id)?.active_folder,
+        Owner::Epic(id) => store.epic(id)?.active_folder,
+        Owner::Topic(id) => store.topic(id)?.active_folder,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1322,6 +1350,42 @@ mod tests {
                 .is_some()
         );
         assert!(store.topic(id).is_ok());
+    }
+
+    #[test]
+    fn choosing_an_active_folder_is_undone_and_redone() {
+        let mut temp = temp_store();
+        let dir = tempfile::tempdir().unwrap();
+        let store = &mut temp.store;
+        let (project, id) = topic(store);
+        let owner = Owner::Topic(id);
+        let mut folders = Vec::new();
+        for name in ["acta", "docs"] {
+            let path = dir.path().join(name);
+            std::fs::create_dir(&path).unwrap();
+            folders.push(
+                store
+                    .add_folder(Owner::Project(project), &path, Author::Human)
+                    .unwrap(),
+            );
+        }
+        store
+            .set_active_folder(owner, Some(folders[1]), Author::Human)
+            .unwrap();
+        let step = Undo::ActiveFolder {
+            owner,
+            back: None,
+            expect: Some(folders[1]),
+        };
+        let redo = step.apply(store).unwrap().expect("undone");
+        assert_eq!(active_pointer(store, owner).unwrap(), None);
+        assert!(redo.apply(store).unwrap().is_some());
+        assert_eq!(active_pointer(store, owner).unwrap(), Some(folders[1]));
+        // Changed since: the undo is skipped.
+        store
+            .set_active_folder(owner, Some(folders[0]), Author::Human)
+            .unwrap();
+        assert!(step.apply(store).unwrap().is_none());
     }
 
     #[test]
