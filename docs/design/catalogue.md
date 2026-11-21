@@ -139,6 +139,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `inbox.by_claude` | by Claude Code | par Claude Code |
 | `inbox.make_topic` | Make topic | Créer un sujet |
 | `inbox.empty` | Inbox is empty. Notes you capture land here until they become topics. | La boîte de réception est vide. Les notes que vous saisissez arrivent ici jusqu'à devenir des sujets. |
+| `inbox.filed_empty` | No filed notes yet. Notes that become topics or entries are listed here. | Aucune note classée pour l'instant. Les notes devenues des sujets ou des entrées sont listées ici. |
 | `kb.new_document` | New document | Nouveau document |
 | `kb.new_memory` | New memory | Nouvelle mémoire |
 | `kb.written.document` | Written by {author} {when} | Écrit par {author} {when} |

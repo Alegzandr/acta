@@ -525,6 +525,10 @@ catalogue! {
         en: t("Inbox is empty. Notes you capture land here until they become topics."),
         fr: t("La boîte de réception est vide. Les notes que vous saisissez arrivent ici jusqu\u{2019}à devenir des sujets."),
     }
+    InboxFiledEmpty "inbox.filed_empty" {
+        en: t("No filed notes yet. Notes that become topics or entries are listed here."),
+        fr: t("Aucune note classée pour l’instant. Les notes devenues des sujets ou des entrées sont listées ici."),
+    }
     KbNewDocument "kb.new_document" {
         en: t("New document"),
         fr: t("Nouveau document"),
