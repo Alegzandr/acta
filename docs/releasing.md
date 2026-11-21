@@ -242,7 +242,8 @@ item is ticked.
 First push (`ci.yml`):
 
 - [ ] `shellcheck` and the `PSScriptAnalyzer` module are present on `ubuntu-24.04`, and
-      the lint job passes.
+      the lint job passes. Seen: the image ships shellcheck 0.9.0 (apt), which reports
+      SC2015 on `[ a ] && [ b ] || c` where 0.11.0 does not. Lint locally with 0.9.0.
 - [ ] clippy, tests and the build pass on the three systems; the Linux package list in
       `scripts/ci/linux-deps.sh` is complete.
 - [ ] The GUI stays up for 10 seconds under Xvfb with lavapipe (the step is not

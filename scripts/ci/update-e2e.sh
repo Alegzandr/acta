@@ -286,8 +286,9 @@ cmd_update() {
     restart=$(first_line 1 "$to" "update: started by the updater")
     [ -n "$available" ] || fail "the log has no '$from: update: $to available'"
     [ -n "$downloaded" ] || fail "the log has no '$from: update: $to downloaded'"
-    [ "$available" -lt "$downloaded" ] && [ "$downloaded" -lt "$restart" ] ||
+    if ! { [ "$available" -lt "$downloaded" ] && [ "$downloaded" -lt "$restart" ]; }; then
         fail "the update lines are out of order (available $available, downloaded $downloaded, restart $restart)"
+    fi
     echo "ok: log shows $from finding $to (line $available), downloading it (line $downloaded), $to restarted by the updater (line $restart)"
 
     # Still up a little later: the new version did not crash after the restart.
