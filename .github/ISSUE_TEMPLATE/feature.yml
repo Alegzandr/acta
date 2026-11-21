@@ -1,0 +1,20 @@
+name: Idea or feature request
+description: Something Acta should do, or do differently.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do
+      description: The situation and the need, before any solution.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like
+      description: How you picture it working. Check PLAN.md first; it may already be planned.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you do today instead
