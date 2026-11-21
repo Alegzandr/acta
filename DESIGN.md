@@ -44,9 +44,9 @@ Load only the part a task needs. Section numbers are global: "4.7" or "DESIGN 4.
 |---|---|---|
 | [color.md](docs/design/color.md) | 2 | Themes, the colour token table (2.1), measured contrast (2.2), topic statuses (2.3), terminal palette (2.4). |
 | [typography.md](docs/design/typography.md) | 3 | Families (3.1), the type scale and roles (3.2), long-form text and documents (3.3). |
-| [layout.md](docs/design/layout.md) | 4 | Spacing, heights, radii, icons (4.1); app shell (4.2), titlebar (4.3), tabs (4.4), tool windows (4.5), status bar (4.6), `preferences.json` (4.7). |
+| [layout.md](docs/design/layout.md) | 4 | Spacing, heights, radii, icons (4.1); app shell (4.2), the Projects tree: structure, signals, reveal, long trees, empty states (4.2.1), titlebar (4.3), tabs (4.4), tool windows (4.5), status bar (4.6), `preferences.json` (4.7). |
 | [workbench.md](docs/design/workbench.md) | 4.8 | Workbench layout: areas, views, area header and view tabs, showing and hiding, resizing, moving views by drag and drop and by command, page groups, web views during drags, narrow windows, recovering the layout, persistence, defaults and Reset layout. |
-| [components.md](docs/design/components.md) | 5 | States and focus ring; button, inputs, editors, list / tree row, status indicator, segmented control, slash menu, notice, checkbox, palette, menus, tooltip, toast, dialog, empty state, scrollbar, resize handle, kbd, update indicator. |
+| [components.md](docs/design/components.md) | 5 | States and focus ring; button, inputs, editors, list row, tree row (kinds, states, drag, sticky project row), status indicator, segmented control, slash menu, notice, checkbox, palette, menus, tooltip, toast, dialog, empty state, scrollbar, resize handle, kbd, update indicator. |
 | [components-records.md](docs/design/components-records.md) | 5 | Timeline entry, current-state panel, note card, properties block, topic table. |
 | [components-knowledge.md](docs/design/components-knowledge.md) | 5 | Knowledge section, knowledge base page, document reading view and editor, history. |
 | [components-folders.md](docs/design/components-folders.md) | 5 | Working folders: rows, inheritance, not found and repair, picker, paths, terminal launch. |
@@ -65,7 +65,7 @@ Run against every screen, in dark and in light, in English and in French. One fa
 
 **Tokens and type**
 - [ ] Every colour is a token from 2.1; no literal hex, no ad hoc alpha, no opacity on text to fake a text level.
-- [ ] `accent` appears only on: focus, selection marker, the single primary action, links, Active, unread, cursor. Count accent elements at rest: three or fewer.
+- [ ] `accent` appears only on: focus, selection marker, the single primary action, links, Active, unread, cursor. Count accent elements at rest: three or fewer (in a list, the Active glyphs count as one element and the unread dots as one, since each is one signal repeated).
 - [ ] Every text style is a role from 3.2; only weights 400 and 600; no uppercase; nothing under 12px.
 - [ ] Digits that align or update use `tnum`.
 - [ ] Reading text is within the content column (the Reading width setting) and left-aligned.
@@ -100,6 +100,16 @@ Run against every screen, in dark and in light, in English and in French. One fa
 - [ ] No view can be lost: hiding an area keeps its views' toggles; an area left empty hides; a preferences file naming a view twice or an unknown place loads with every view placed once.
 - [ ] Web views (chat, agent browser) are hidden with their placeholder line for the whole of a drag, return at their new bounds without reloading, and never cover a resize handle or a drop zone.
 - [ ] Keyboard: every move has a palette command and a view-menu item; `F6` / `Shift+F6` visit every shown area and group in order; every toggle key works from the page, and the kept keys of 6.1 from the terminal and the chat.
+
+**Tree** (4.2.1, run with 0 projects, an empty epic, and a project of 140 topics at 260 and at 200 wide)
+- [ ] Order under a project: Inbox, Knowledge, 4 of space, topics in no epic, epics; "N closed" last in each group; 8 of space after an expanded project only; stored order, never sorted by status.
+- [ ] Weight marks structure only: projects and epics 600, every other row 400 in every state, the selected row included; no row has an icon, colour or badge the table of 5 (Tree row) does not give it.
+- [ ] Where am I: the open page's row is selected and in view after every way of opening a page (pointer away from the tree); its project and epic rows are `text.primary`, every other project and epic row `text.secondary`.
+- [ ] Colour in the tree is only: Active glyph and unread dot (`accent`), Blocked glyph (`warning`), the drop line and target; closed topics are `text.tertiary` glyph and title; nothing tertiary on a selected row.
+- [ ] One trailing item per row at most; only the unread dot rolls up into folded rows, and folding never hides one; only Inbox shows a count, and only above 0; the `plus` appears on hover of project and epic rows without moving their title.
+- [ ] Long tree: the sticky project row names the project of the rows under it; truncated titles have the title tooltip; Collapse all is in the view menu and the palette; scrolling, folding and remote changes hold the next frame with 10,000 topics.
+- [ ] Drag: every move by drag has its key (`Alt+Up` / `Alt+Down`, `M`); the insertion line or target shows exactly where the row lands; `Esc` cancels; a drop is one `Mod+Z` step, with no toast.
+- [ ] Empty: no project shows "No projects yet." and "New project..."; an expanded empty epic shows the "New topic" ghost row; nothing else is added for emptiness.
 
 **Behaviour**
 - [ ] Feedback on the next frame; nothing in the "never animates" list animates; budgets in 6.3 hold with 10,000 topics.
