@@ -13,6 +13,14 @@
 use gpui_kit::component::{Theme, ThemeMode};
 use gpui_kit::{App, BoxShadow, Global, Hsla, WindowAppearance, point, px, rgb};
 
+/// The sans of docs/design/typography.md 3.1: the platform's own UI face
+/// where it renders best, the bundled Inter elsewhere. On Windows 10, which
+/// lacks Segoe UI Variable, GPUI falls back to Segoe UI, metric-compatible.
+#[cfg(target_os = "windows")]
+pub const FONT_SANS: &str = "Segoe UI Variable Text";
+#[cfg(target_os = "macos")]
+pub const FONT_SANS: &str = ".SystemUIFont";
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 pub const FONT_SANS: &str = "Inter";
 pub const FONT_MONO: &str = "JetBrains Mono NL";
 
@@ -293,7 +301,7 @@ fn install(mode: Mode, cx: &mut App) {
     Theme::change(theme_mode, None, cx);
     Theme::update(cx, |theme| {
         theme.font_family = FONT_SANS.into();
-        theme.font_size = px(13.);
+        theme.font_size = px(crate::type_scale::UI.size);
         theme.mono_font_family = FONT_MONO.into();
         theme.mono_font_size = px(13.);
         theme.radius = px(RADIUS_SM);

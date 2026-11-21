@@ -42,8 +42,8 @@ pub const SUBTITLE: TypeRole = sans("type.subtitle", 20., 28., FontWeight::SEMIB
 pub const HEADING: TypeRole = sans("type.heading", 16., 24., FontWeight::SEMIBOLD);
 pub const READING: TypeRole = sans("type.reading", 15., 24., FontWeight::NORMAL);
 pub const DOCUMENT: TypeRole = sans("type.document", 16., 26., FontWeight::NORMAL);
-pub const UI: TypeRole = sans("type.ui", 13., 20., FontWeight::NORMAL);
-pub const UI_STRONG: TypeRole = sans("type.ui-strong", 13., 20., FontWeight::SEMIBOLD);
+pub const UI: TypeRole = sans("type.ui", 14., 20., FontWeight::NORMAL);
+pub const UI_STRONG: TypeRole = sans("type.ui-strong", 14., 20., FontWeight::SEMIBOLD);
 pub const SMALL: TypeRole = sans("type.small", 12., 16., FontWeight::NORMAL);
 pub const LABEL: TypeRole = sans("type.label", 12., 16., FontWeight::SEMIBOLD);
 pub const CODE: TypeRole = mono("type.code", 13., 20.);
@@ -111,8 +111,8 @@ mod tests {
             (HEADING, 16., 24.),
             (READING, 15., 24.),
             (DOCUMENT, 16., 26.),
-            (UI, 13., 20.),
-            (UI_STRONG, 13., 20.),
+            (UI, 14., 20.),
+            (UI_STRONG, 14., 20.),
             (SMALL, 12., 16.),
             (LABEL, 12., 16.),
             (CODE, 13., 20.),

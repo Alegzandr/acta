@@ -6,18 +6,18 @@ Part of the Acta design system. [DESIGN.md](../../DESIGN.md) is the index: direc
 
 ### 3.1 Families
 
-| Role | Family | Files bundled | License |
+| Role | Family | Source | License |
 |---|---|---|---|
-| UI and reading | **Inter** 4.1 (Rasmus Andersson) | `Inter-Regular.ttf`, `Inter-Italic.ttf`, `Inter-SemiBold.ttf`, `Inter-SemiBoldItalic.ttf`: the static, hinted TTFs from `extras/ttf/` of the 4.1 release (412, 417, 420 and 424 KB; 1.67 MB in all) | SIL OFL 1.1 |
-| Code and terminal | **JetBrains Mono NL** (no-ligature build of JetBrains Mono) | `JetBrainsMonoNL-Regular.ttf`, `-Italic.ttf`, `-Bold.ttf` (already bundled) | SIL OFL 1.1 |
+| UI and reading, Windows | **Segoe UI Variable Text** (falls back to Segoe UI on Windows 10, which is metric-compatible) | The system font, not bundled | Ships with Windows |
+| UI and reading, macOS | **SF Pro** (GPUI's `.SystemUIFont`) | The system font, not bundled | Ships with macOS |
+| UI and reading, Linux | **Inter** 4.1 (Rasmus Andersson) | `Inter-Regular.ttf`, `Inter-Italic.ttf`, `Inter-SemiBold.ttf`, `Inter-SemiBoldItalic.ttf`: the static, hinted TTFs from `extras/ttf/` of the 4.1 release, bundled in the Linux build only | SIL OFL 1.1 |
+| Code and terminal | **JetBrains Mono NL** (no-ligature build of JetBrains Mono) | `JetBrainsMonoNL-Regular.ttf`, `-Italic.ttf`, `-Bold.ttf`, bundled everywhere | SIL OFL 1.1 |
 
-Why Inter. It is drawn for interface text at 11 to 16px: its x-height is 0.546 em against 0.486 for Source Sans 3 (read from the font files), which is what lets the base size drop to 13px and the density tighten without losing legibility. It is neutral enough to disappear, which is the point of a workbench, and it is the face the reference interfaces lean on, so Acta feels native to that family of tools without borrowing anything they own. It replaces Source Sans 3, whose four files leave the bundle; one sans, not two.
+Why the platform's own sans (decided 2026-11-21, after the user found the type fuzzy on Windows). GPUI rasterises with DirectWrite on Windows (ClearType when the system uses it, natural symmetric rendering, 4 horizontal subpixel positions, whole-pixel baselines). Measured side by side in the app's own renderer at 100% (`--specimen` with the font comparison, PrintWindow captures zoomed 5x): Inter at 13 to 15px puts its stems and its x-height on fractional pixels, so every vertical and the top of every lowercase letter is a two-pixel grey band; Segoe UI Variable is hinted for exactly this rasteriser, lands stems and x-height on the pixel grid and reads sharp at the same sizes, in dark and in light. On macOS, Core Text renders every face well and SF Pro is what the platform's own apps use. On Linux there is no single system face, so Inter stays, bundled. One sans per platform, never two in one build; the identity lives in the layout, the scale and the colour, not in a typeface.
 
-Checked in the four Inter files with fontTools on 2026-11-20: every French character (é è ê ë à â ç î ï ô ù û ü œ Œ and their capitals, « » ’ … – — €), the no-break space U+00A0 and the narrow no-break space U+202F that French punctuation needs, the arrows, and the macOS key glyphs (⌘ ⇧ ⌥ ⌃ ↵) are present; the features `tnum`, `case` and `zero` exist in all four; the files carry hinting. Default figures are proportional (1 is 833 units wide, 0 is 1292), so `tnum` must be set explicitly wherever digits align. JetBrains Mono NL lacks U+202F, U+2009 and ↵, which is acceptable because interface sentences and shortcut hints are never set in mono (see kbd in 5).
+Checked with fontTools on 2026-11-21: Segoe UI Variable and Segoe UI carry every French character (é è ê ë à â ç î ï ô ù û ü œ Œ and their capitals, « » ’ … – — €), U+00A0 and U+202F, the arrows, and `tnum`; they lack the macOS key glyphs (⌘ ⇧ ⌥ ⌃ ↵), which only macOS shows (kbd in 5), where SF Pro has them. Segoe UI's default figures are already equal-width (tabular), Inter's are not, so `tnum` stays set explicitly wherever digits align. JetBrains Mono NL lacks U+202F, U+2009 and ↵, which is acceptable because interface sentences and shortcut hints are never set in mono.
 
-Still conditional, as before, on the M1 rendering check in GPUI on Windows (grayscale antialiasing at 13px). The named fallback is Source Sans 3 with `type.ui` at 14 / 20 and `type.small` at 13 / 18, the rest of the scale unchanged.
-
-Static files only (no variable fonts), two weights of the sans: 400 and 600. There is no 500 and no 700 in the UI. OpenType features: `kern`, `liga` and `calt` at defaults; enable `tnum` explicitly wherever digits align or tick: timestamps, counts, ids, version numbers, table columns, shortcut hints. Proportional figures in prose. GPUI's pinned version has no letter-spacing, so no role asks for any; that is also why the largest size is 24px, the largest at which Inter's default spacing still reads as intended. Fallback order for missing glyphs: bundled family, then the platform UI font (Segoe UI, SF Pro, system sans), then the platform symbol font; the terminal falls back to the platform mono (Cascadia Mono, Menlo, DejaVu Sans Mono). Bold 700 of the mono exists only for terminal bold.
+Two weights of the sans: 400 and 600 (Segoe UI Variable's Regular and Semibold instances). There is no 500 and no 700 in the UI. OpenType features: `kern`, `liga` and `calt` at defaults; enable `tnum` explicitly wherever digits align or tick: timestamps, counts, ids, version numbers, table columns, shortcut hints. Proportional figures in prose. GPUI's pinned version has no letter-spacing, so no role asks for any; that is also why the largest size is 24px. Fallback order for missing glyphs: the platform sans, then the platform symbol font; the terminal falls back to the platform mono (Cascadia Mono, Menlo, DejaVu Sans Mono). Bold 700 of the mono exists only for terminal bold.
 
 ### 3.2 Scale
 
@@ -28,8 +28,8 @@ Static files only (no variable fonts), two weights of the sans: 400 and 600. The
 | `type.heading` | Sans | 16 / 24 | 600 | Dialog title, empty-state heading, Markdown h1/h2 on short surfaces, document h3 |
 | `type.reading` | Sans | 15 / 24 | 400 | Current state, description, timeline bodies, notes |
 | `type.document` | Sans | 16 / 26 | 400 | Document body, in the reading view and in its editor |
-| `type.ui` | Sans | 13 / 20 | 400 | Everything else: rows, buttons, inputs, menus, property values |
-| `type.ui-strong` | Sans | 13 / 20 | 600 | Author names, selected segment, primary button, project rows, Markdown h3 |
+| `type.ui` | Sans | 14 / 20 | 400 | Everything else: rows, buttons, inputs, menus, property values |
+| `type.ui-strong` | Sans | 14 / 20 | 600 | Author names, selected segment, primary button, project rows, Markdown h3 |
 | `type.small` | Sans | 12 / 16 | 400 | Timestamps, counts, breadcrumb, tooltips, hints, status bar, kbd hints |
 | `type.label` | Sans | 12 / 16 | 600 | Section labels ("Current state", "Timeline"), epic rows, table and tool window headers |
 | `type.code` | Mono | 13 / 20 | 400 | Inline code, code blocks, paths, ids, "Claude Code" author name |
