@@ -21,14 +21,14 @@ const PROMPT_MARKERS: [char; 2] = ['>', '\u{276F}'];
 const PLACEHOLDER: &str = "Try \"";
 
 /// Words of a question Claude Code is waiting on (a permission prompt).
-const QUESTION_MARKERS: [&str; 1] = ["do you want"];
+const QUESTION_MARKERS: [&str; 3] = ["do you want", "would you like", "do you trust"];
 
 /// Whether `line` is a choice of a menu: a numbered item ("1. Yes",
 /// "\u{276F} 2. No"), with or without the selection marker.
 fn is_choice(line: &str) -> bool {
     let line = line
         .trim()
-        .trim_matches(|c: char| c == '\u{2502}' || c == '|')
+        .trim_matches(|c: char| ('\u{2500}'..='\u{257F}').contains(&c) || c == '|')
         .trim()
         .trim_start_matches(PROMPT_MARKERS)
         .trim_start();
@@ -64,7 +64,7 @@ pub fn claude_idle(screen: &str, plain: &[String], quiet: Duration) -> bool {
     let Some(rest) = plain.iter().rev().find_map(|row| {
         let line = row
             .trim()
-            .trim_matches(|c: char| c == '\u{2502}' || c == '|')
+            .trim_matches(|c: char| ('\u{2500}'..='\u{257F}').contains(&c) || c == '|')
             .trim();
         line.strip_prefix(PROMPT_MARKERS).map(str::trim)
     }) else {
