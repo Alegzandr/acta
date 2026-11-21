@@ -358,6 +358,12 @@ pub fn claude_session_vars<S: AsRef<str>>(names: &[S]) -> Vec<String> {
 /// every program Acta starts (the terminal's shell and `claude`) begins a
 /// session of its own.
 ///
+/// This is done to the process, not to the terminal child's environment,
+/// because `alacritty_terminal` can only add to the child's: its
+/// `tty::Options::env` is merged over the inherited environment (the
+/// ConPTY block appends every inherited variable not overridden, the Unix
+/// `Command` never clears), and an empty value is still a set variable.
+///
 /// # Safety
 ///
 /// Call it first in `main`, before any thread exists: changing the
