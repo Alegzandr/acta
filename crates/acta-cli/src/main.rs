@@ -953,6 +953,11 @@ fn export(
 }
 
 fn import(store: &mut acta_core::Store, path: &Path, dry_run: bool) -> Result<String, String> {
+    // An import can set what only the user sets (commit modes, active
+    // folders: ADR 0011); the store also guards it.
+    if author() == Author::Claude {
+        return Err("Import is for you to run, not Claude Code.".into());
+    }
     let text =
         std::fs::read_to_string(path).map_err(|e| format!("cannot read the file: {}", e.kind()))?;
     let file = ExportFile::from_json(&text).map_err(|e| e.to_string())?;

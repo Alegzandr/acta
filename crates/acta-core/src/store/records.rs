@@ -1,10 +1,11 @@
 //! Projects, epics and topics: create, read, update, reorder, and the tree.
 
 use super::{STAMP_COLS, Store, new_uuid, required, stamp};
+use crate::date::Date;
 use crate::error::{Error, Result};
 use crate::model::{
-    Author, Epic, EpicId, EpicSummary, EventKind, Page, PageReq, Progress, Project, ProjectId,
-    ProjectSummary, ProjectTree, Record, Status, Topic, TopicId, TopicSummary,
+    Author, Epic, EpicId, EpicSummary, EventKind, FolderId, Owner, Page, PageReq, Progress,
+    Project, ProjectId, ProjectSummary, ProjectTree, Record, Status, Topic, TopicId, TopicSummary,
 };
 use crate::time::now_ms;
 use rusqlite::{OptionalExtension, params};
@@ -53,7 +54,7 @@ pub struct TopicFilter {
 
 const TOPIC_SUMMARY_COLS: &str = "t.id, t.epic_id, t.title, t.status, t.position,
     (SELECT count(*) FROM entries e WHERE e.topic_id = t.id AND e.deleted_at IS NULL AND e.kind <> 'system'),
-    t.updated_at, t.updated_by";
+    t.updated_at, t.updated_by, t.due_on";
 
 fn topic_summary(row: &rusqlite::Row<'_>) -> rusqlite::Result<TopicSummary> {
     Ok(TopicSummary {
@@ -65,6 +66,7 @@ fn topic_summary(row: &rusqlite::Row<'_>) -> rusqlite::Result<TopicSummary> {
         entries: row.get(5)?,
         updated_at: row.get(6)?,
         updated_by: row.get(7)?,
+        due_on: row.get(8)?,
     })
 }
 
@@ -205,7 +207,8 @@ impl Store {
         let mut stmt = self.conn.prepare(
             "SELECT e.id, e.title, e.position, e.updated_at,
                (SELECT count(*) FROM topics t WHERE t.epic_id = e.id AND t.deleted_at IS NULL AND t.status = 'done'),
-               (SELECT count(*) FROM topics t WHERE t.epic_id = e.id AND t.deleted_at IS NULL AND t.status <> 'dropped')
+               (SELECT count(*) FROM topics t WHERE t.epic_id = e.id AND t.deleted_at IS NULL AND t.status <> 'dropped'),
+               e.due_on
              FROM epics e WHERE e.project_id = ?1 AND e.deleted_at IS NULL ORDER BY e.position, e.id",
         )?;
         let rows = stmt.query_map([project.0], |r| {
@@ -218,9 +221,55 @@ impl Store {
                     done: r.get(4)?,
                     total: r.get(5)?,
                 },
+                due_on: r.get(6)?,
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    // ---- due dates (data.md request 16) ----
+
+    /// Sets (`Some`) or clears (`None`) the due day of a project, an epic or
+    /// a topic, with its `updated_at` / `updated_by`. On a topic the change
+    /// is also a system event of kind `due` (old and new as `YYYY-MM-DD`).
+    /// Setting the date it already has writes nothing.
+    pub fn set_due(&mut self, record: Owner, due: Option<Date>, author: Author) -> Result<()> {
+        if let Some(d) = due
+            && !d.in_range()
+        {
+            return Err(Error::Invalid(format!(
+                "a due date must be in 2000 to 2099, got {d}"
+            )));
+        }
+        let tx = self.write()?;
+        let (table, id, current) = match record {
+            Owner::Project(id) => ("projects", id.0, read_project(&tx, id)?.due_on),
+            Owner::Epic(id) => ("epics", id.0, read_epic(&tx, id)?.due_on),
+            Owner::Topic(id) => ("topics", id.0, read_topic(&tx, id)?.due_on),
+        };
+        if current == due {
+            return Ok(());
+        }
+        let now = now_ms();
+        tx.execute(
+            &format!(
+                "UPDATE {table} SET due_on = ?2, updated_at = ?3, updated_by = ?4 WHERE id = ?1"
+            ),
+            params![id, due, now, author],
+        )?;
+        if let Owner::Topic(t) = record {
+            super::timeline::system_event(
+                &tx,
+                t,
+                EventKind::Due,
+                current.map(|d| d.to_string()),
+                due.map(|d| d.to_string()),
+                author,
+                now,
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
     }
 
     // ---- topics ----
@@ -571,6 +620,13 @@ pub(crate) fn apply_topic_patch(
         )?;
         epic = new_epic;
         position = next_topic_position(tx, cur.project, new_epic)?;
+        // An active folder inherited from the old epic is out of sight now
+        // (ADR 0011): the default rule applies again.
+        tx.execute(
+            "UPDATE topics SET active_folder_id = NULL WHERE id = ?1 AND active_folder_id IN
+                (SELECT id FROM folders WHERE epic_id IS NOT NULL AND epic_id IS NOT ?2)",
+            params![cur.id.0, new_epic.map(|e| e.0)],
+        )?;
     }
     tx.execute(
         "UPDATE topics SET title = ?2, description = ?3, status = ?4, state = ?5, state_updated_at = ?6,
@@ -596,7 +652,7 @@ pub(crate) fn apply_topic_patch(
 pub(crate) fn read_project(conn: &rusqlite::Connection, id: ProjectId) -> Result<Project> {
     conn.query_row(
         &format!(
-            "SELECT id, title, description, position, {STAMP_COLS}
+            "SELECT id, title, description, position, active_folder_id, due_on, {STAMP_COLS}
                  FROM projects WHERE id = ?1 AND deleted_at IS NULL"
         ),
         [id.0],
@@ -606,7 +662,9 @@ pub(crate) fn read_project(conn: &rusqlite::Connection, id: ProjectId) -> Result
                 title: r.get(1)?,
                 description: r.get(2)?,
                 position: r.get(3)?,
-                stamp: stamp(r, 4)?,
+                active_folder: r.get::<_, Option<i64>>(4)?.map(FolderId),
+                due_on: r.get(5)?,
+                stamp: stamp(r, 6)?,
             })
         },
     )
@@ -618,7 +676,7 @@ pub(crate) fn read_epic(conn: &rusqlite::Connection, id: EpicId) -> Result<Epic>
     conn
         .query_row(
             &format!(
-                "SELECT id, project_id, title, description, state, position, include_inherited_folders, {STAMP_COLS}
+                "SELECT id, project_id, title, description, state, position, active_folder_id, due_on, {STAMP_COLS}
                  FROM epics WHERE id = ?1 AND deleted_at IS NULL"
             ),
             [id.0],
@@ -630,8 +688,9 @@ pub(crate) fn read_epic(conn: &rusqlite::Connection, id: EpicId) -> Result<Epic>
                     description: r.get(3)?,
                     state: r.get(4)?,
                     position: r.get(5)?,
-                    include_inherited_folders: r.get(6)?,
-                    stamp: stamp(r, 7)?,
+                    active_folder: r.get::<_, Option<i64>>(6)?.map(FolderId),
+                    due_on: r.get(7)?,
+                    stamp: stamp(r, 8)?,
                 })
             },
         )
@@ -644,7 +703,7 @@ pub(crate) fn read_topic(conn: &rusqlite::Connection, id: TopicId) -> Result<Top
         .query_row(
             &format!(
                 "SELECT id, project_id, epic_id, title, description, status, state,
-                        state_updated_at, state_updated_by, position, include_inherited_folders, {STAMP_COLS}
+                        state_updated_at, state_updated_by, position, active_folder_id, due_on, {STAMP_COLS}
                  FROM topics WHERE id = ?1 AND deleted_at IS NULL"
             ),
             [id.0],
@@ -660,8 +719,9 @@ pub(crate) fn read_topic(conn: &rusqlite::Connection, id: TopicId) -> Result<Top
                     state_updated_at: r.get(7)?,
                     state_updated_by: r.get(8)?,
                     position: r.get(9)?,
-                    include_inherited_folders: r.get(10)?,
-                    stamp: stamp(r, 11)?,
+                    active_folder: r.get::<_, Option<i64>>(10)?.map(FolderId),
+                    due_on: r.get(11)?,
+                    stamp: stamp(r, 12)?,
                 })
             },
         )

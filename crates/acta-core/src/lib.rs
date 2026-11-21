@@ -4,6 +4,7 @@
 
 pub mod agent;
 pub mod claude_settings;
+pub mod date;
 pub mod db;
 pub mod error;
 pub mod folder_identity;

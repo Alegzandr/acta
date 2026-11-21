@@ -3,6 +3,7 @@
 
 use super::test_support::{TestStore, open};
 use super::*;
+use crate::date::Date;
 use crate::keys::{Key, KeyStore, MemoryKeyStore};
 use crate::model::*;
 use crate::snapshots::SnapshotKind;
@@ -611,30 +612,30 @@ fn folders_inherit_nearest_wins_and_resolve_deepest() {
     let t2 = topic(&mut store, p, Some(e), "Snapshots");
 
     // Nothing attached anywhere.
-    let none = store.effective_folders(Owner::Topic(t)).unwrap();
-    assert!(none.folders.is_empty());
+    let none = store.visible_folders(Owner::Topic(t)).unwrap();
+    assert!(none.is_empty());
+    assert!(none.active().is_none());
 
     store.add_folder(Owner::Project(p), &repo, H).unwrap();
     store.add_folder(Owner::Project(p), &docs, H).unwrap();
     let same_again = repo.join("crates").join("..");
     assert!(store.add_folder(Owner::Project(p), &same_again, H).is_err());
-    let inherited = store.effective_folders(Owner::Topic(t)).unwrap();
-    assert_eq!(inherited.inherited_from, Some(Owner::Project(p)));
+    let inherited = store.visible_folders(Owner::Topic(t)).unwrap();
     assert_eq!(inherited.folders.len(), 2);
-    assert!(inherited.folders[0].path.ends_with("acta"));
+    let active = inherited.active().unwrap();
+    assert_eq!(active.origin, Owner::Project(p));
+    assert!(active.folder.path.ends_with("acta"));
 
+    // Always inherited: a topic with its own folder still sees the
+    // project's, after its own.
     store.add_folder(Owner::Topic(t), &worktree, H).unwrap();
-    let own = store.effective_folders(Owner::Topic(t)).unwrap();
-    assert_eq!(own.inherited_from, None);
-    assert_eq!(own.folders.len(), 1);
-    store
-        .set_include_inherited(Owner::Topic(t), true, H)
-        .unwrap();
-    let both = store.effective_folders(Owner::Topic(t)).unwrap();
+    let both = store.visible_folders(Owner::Topic(t)).unwrap();
     assert_eq!(
-        both.folders.iter().map(|f| f.from).collect::<Vec<_>>(),
+        both.folders.iter().map(|f| f.origin).collect::<Vec<_>>(),
         [Owner::Topic(t), Owner::Project(p), Owner::Project(p)]
     );
+    assert_eq!(both.active().unwrap().origin, Owner::Topic(t));
+    assert_eq!(both.additional().count(), 2);
 
     // Reverse lookup: the deepest attached folder wins.
     let hit = store
@@ -818,9 +819,28 @@ fn populate(store: &mut Store, dir: &std::path::Path) -> ProjectId {
         .unwrap();
     let folder = dir.join("repo");
     std::fs::create_dir_all(&folder).unwrap();
-    store.add_folder(Owner::Epic(e), &folder, H).unwrap();
+    let f = store.add_folder(Owner::Epic(e), &folder, H).unwrap();
+    // Folder sets (ADR 0011) and due dates (request 16), so the round trip
+    // carries every new field.
+    store.set_folder_name(f, "Storage repo", H).unwrap();
+    store.set_folder_icon(f, "database", H).unwrap();
     store
-        .set_include_inherited(Owner::Epic(e), true, H)
+        .set_commit_settings(f, CommitMode::Push, Some(true), true, H)
+        .unwrap();
+    let docs = dir.join("docs");
+    std::fs::create_dir_all(&docs).unwrap();
+    store.add_folder(Owner::Topic(t), &docs, H).unwrap();
+    store
+        .set_active_folder(Owner::Topic(t), Some(f), H)
+        .unwrap();
+    store
+        .set_due(Owner::Topic(t), Date::parse_iso("2026-12-15"), H)
+        .unwrap();
+    store
+        .set_due(Owner::Epic(e), Date::parse_iso("2027-01-31"), H)
+        .unwrap();
+    store
+        .set_due(Owner::Project(p), Date::parse_iso("2027-03-01"), H)
         .unwrap();
     let trashed = topic(store, p, None, "Trashed");
     store.delete(Record::Topic(trashed), H).unwrap();
@@ -1241,7 +1261,7 @@ fn search_reports_whether_the_total_is_capped() {
 #[test]
 fn a_fresh_database_has_entry_numbers_unique_and_trash_batches() {
     let t = open();
-    assert_eq!(crate::schema::SCHEMA_VERSION, 3);
+    assert_eq!(crate::schema::SCHEMA_VERSION, 4);
     let count = |sql: &str| -> i64 { t.store.conn.query_row(sql, [], |r| r.get(0)).unwrap() };
     assert_eq!(
         count("SELECT count(*) FROM sqlite_master WHERE name = 'entries_topic_seq'"),
@@ -1456,7 +1476,15 @@ fn a_version_1_database_with_notes_migrates_to_version_2() {
     let mut v1 = Store::open_with(&config, &crate::schema::MIGRATIONS[..1]).unwrap();
     assert_eq!(crate::db::user_version(&v1.conn).unwrap(), 1);
     let p = v1.create_project("Acta", "", H).unwrap();
-    let k = topic(&mut v1, p, None, "Keys");
+    // Raw rows: this build reads columns schema 1 does not have.
+    v1.conn
+        .execute(
+            "INSERT INTO topics (uuid, project_id, title, status, position, created_at, updated_at, updated_by)
+             VALUES ('k', ?1, 'Keys', 'draft', 0, 1, 1, 'human')",
+            [p.0],
+        )
+        .unwrap();
+    let k = TopicId(v1.conn.last_insert_rowid());
     for (uuid, text, filed) in [
         ("n1", "Open note by Alexandre", None),
         ("n2", "Filed note", Some(k.0)),
@@ -1839,4 +1867,726 @@ fn path_keyed_values_follow_every_path_change() {
         "kept for the other folder"
     );
     assert_eq!(at(&store, &new), (true, true), "and copied");
+}
+
+// ---- folder sets (ADR 0011) ----
+
+/// A project, an epic and a topic in it, and a loose topic.
+fn levels(store: &mut Store) -> (ProjectId, EpicId, TopicId, TopicId) {
+    let p = store.create_project("Acta", "", H).unwrap();
+    let e = store.create_epic(p, "Terminal", "", H).unwrap();
+    let t = topic(store, p, Some(e), "Embed the terminal");
+    let loose = topic(store, p, None, "Loose");
+    (p, e, t, loose)
+}
+
+fn folder_in(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
+    let d = dir.join(name);
+    std::fs::create_dir_all(&d).unwrap();
+    d
+}
+
+fn active_of(store: &Store, owner: Owner) -> Option<FolderId> {
+    store
+        .visible_folders(owner)
+        .unwrap()
+        .active()
+        .map(|f| f.folder.id)
+}
+
+#[test]
+fn the_default_rule_at_each_level() {
+    let TestStore { mut store, dir, .. } = open();
+    let (p, e, t, loose) = levels(&mut store);
+    let acta = store
+        .add_folder(Owner::Project(p), &folder_in(dir.path(), "acta"), H)
+        .unwrap();
+    let docs = store
+        .add_folder(Owner::Project(p), &folder_in(dir.path(), "docs"), H)
+        .unwrap();
+    // Nothing of their own: every page follows the project's first folder.
+    for owner in [
+        Owner::Project(p),
+        Owner::Epic(e),
+        Owner::Topic(t),
+        Owner::Topic(loose),
+    ] {
+        assert_eq!(active_of(&store, owner), Some(acta), "{owner}");
+    }
+    // The project chooses: pages without folders of their own follow it.
+    store
+        .set_active_folder(Owner::Project(p), Some(docs), H)
+        .unwrap();
+    assert_eq!(active_of(&store, Owner::Epic(e)), Some(docs));
+    assert_eq!(active_of(&store, Owner::Topic(t)), Some(docs));
+    // The epic gets a folder: its first own folder is its default, and the
+    // topic, with nothing of its own, follows the epic.
+    let wt = store
+        .add_folder(Owner::Epic(e), &folder_in(dir.path(), "acta-wt"), H)
+        .unwrap();
+    assert_eq!(active_of(&store, Owner::Epic(e)), Some(wt));
+    assert_eq!(active_of(&store, Owner::Topic(t)), Some(wt));
+    assert_eq!(active_of(&store, Owner::Topic(loose)), Some(docs));
+    // A topic given its own worktree starts there with no extra step.
+    let own = store
+        .add_folder(Owner::Topic(t), &folder_in(dir.path(), "embed"), H)
+        .unwrap();
+    assert_eq!(active_of(&store, Owner::Topic(t)), Some(own));
+    let seen = store.visible_folders(Owner::Topic(t)).unwrap();
+    assert_eq!(
+        seen.folders
+            .iter()
+            .map(|f| (f.folder.id, f.origin))
+            .collect::<Vec<_>>(),
+        [
+            (own, Owner::Topic(t)),
+            (wt, Owner::Epic(e)),
+            (acta, Owner::Project(p)),
+            (docs, Owner::Project(p)),
+        ]
+    );
+    assert_eq!(seen.folders.iter().filter(|f| f.active).count(), 1);
+}
+
+#[test]
+fn a_page_can_point_at_an_inherited_folder() {
+    let TestStore { mut store, dir, .. } = open();
+    let (p, e, t, _) = levels(&mut store);
+    let acta = store
+        .add_folder(Owner::Project(p), &folder_in(dir.path(), "acta"), H)
+        .unwrap();
+    let wt = store
+        .add_folder(Owner::Epic(e), &folder_in(dir.path(), "acta-wt"), H)
+        .unwrap();
+    store
+        .add_folder(Owner::Topic(t), &folder_in(dir.path(), "embed"), H)
+        .unwrap();
+    store
+        .set_active_folder(Owner::Topic(t), Some(acta), H)
+        .unwrap();
+    assert_eq!(store.topic(t).unwrap().active_folder, Some(acta));
+    assert_eq!(active_of(&store, Owner::Topic(t)), Some(acta));
+    // The epic's own choice is unchanged by the topic's.
+    assert_eq!(active_of(&store, Owner::Epic(e)), Some(wt));
+    // A folder the page does not see is refused: another topic's.
+    let other = topic(&mut store, p, None, "Other");
+    let theirs = store
+        .add_folder(Owner::Topic(other), &folder_in(dir.path(), "other"), H)
+        .unwrap();
+    assert!(
+        store
+            .set_active_folder(Owner::Topic(t), Some(theirs), H)
+            .is_err()
+    );
+    // Back to the default rule.
+    store.set_active_folder(Owner::Topic(t), None, H).unwrap();
+    assert_ne!(active_of(&store, Owner::Topic(t)), Some(acta));
+}
+
+#[test]
+fn a_pointer_is_ignored_while_its_folder_is_trashed_and_cleared_by_a_move_out_of_sight() {
+    let TestStore { mut store, dir, .. } = open();
+    let (p, e, t, _) = levels(&mut store);
+    let acta = store
+        .add_folder(Owner::Project(p), &folder_in(dir.path(), "acta"), H)
+        .unwrap();
+    let docs = store
+        .add_folder(Owner::Project(p), &folder_in(dir.path(), "docs"), H)
+        .unwrap();
+    let wt = store
+        .add_folder(Owner::Epic(e), &folder_in(dir.path(), "acta-wt"), H)
+        .unwrap();
+
+    // Removing the active folder: the default rule applies again, and a
+    // restore brings the choice back.
+    store
+        .set_active_folder(Owner::Topic(t), Some(docs), H)
+        .unwrap();
+    store.delete(Record::Folder(docs), H).unwrap();
+    assert_eq!(active_of(&store, Owner::Topic(t)), Some(wt));
+    store.restore(Record::Folder(docs), H).unwrap();
+    assert_eq!(active_of(&store, Owner::Topic(t)), Some(docs));
+    store.delete(Record::Folder(docs), H).unwrap();
+
+    // Moving the topic out of the epic whose folder it pointed at.
+    store
+        .set_active_folder(Owner::Topic(t), Some(wt), H)
+        .unwrap();
+    let out = TopicPatch {
+        epic: Some(None),
+        ..Default::default()
+    };
+    store.update_topic(t, out, H).unwrap();
+    assert_eq!(store.topic(t).unwrap().active_folder, None);
+    assert_eq!(active_of(&store, Owner::Topic(t)), Some(acta));
+
+    // To another epic: a pointer at a project folder stays in sight.
+    let e2 = store.create_epic(p, "Notes", "", H).unwrap();
+    store
+        .set_active_folder(Owner::Topic(t), Some(acta), H)
+        .unwrap();
+    let to_e2 = TopicPatch {
+        epic: Some(Some(e2)),
+        ..Default::default()
+    };
+    store.update_topic(t, to_e2, H).unwrap();
+    assert_eq!(store.topic(t).unwrap().active_folder, Some(acta));
+    // And from one epic to another, a pointer at the old epic's folder goes.
+    let to_e = TopicPatch {
+        epic: Some(Some(e)),
+        ..Default::default()
+    };
+    store.update_topic(t, to_e, H).unwrap();
+    store
+        .set_active_folder(Owner::Topic(t), Some(wt), H)
+        .unwrap();
+    store
+        .update_topic(
+            t,
+            TopicPatch {
+                epic: Some(Some(e2)),
+                ..Default::default()
+            },
+            H,
+        )
+        .unwrap();
+    assert_eq!(store.topic(t).unwrap().active_folder, None);
+
+    // A page trashed with its folder keeps its pointer for the restore.
+    let t3 = topic(&mut store, p, None, "Scrollback");
+    let mine = store
+        .add_folder(Owner::Topic(t3), &folder_in(dir.path(), "scroll"), H)
+        .unwrap();
+    store
+        .add_folder(Owner::Topic(t3), &folder_in(dir.path(), "scroll2"), H)
+        .unwrap();
+    store
+        .set_active_folder(Owner::Topic(t3), Some(mine), H)
+        .unwrap();
+    store.delete(Record::Topic(t3), H).unwrap();
+    store.restore(Record::Topic(t3), H).unwrap();
+    assert_eq!(store.topic(t3).unwrap().active_folder, Some(mine));
+}
+
+#[test]
+fn a_path_at_two_levels_is_listed_once_at_the_nearest() {
+    let TestStore { mut store, dir, .. } = open();
+    let (p, e, t, _) = levels(&mut store);
+    let repo = folder_in(dir.path(), "acta");
+    let on_project = store.add_folder(Owner::Project(p), &repo, H).unwrap();
+    let on_epic = store.add_folder(Owner::Epic(e), &repo, H).unwrap();
+    let on_topic = store.add_folder(Owner::Topic(t), &repo, H).unwrap();
+    let seen = store.visible_folders(Owner::Topic(t)).unwrap();
+    assert_eq!(seen.folders.len(), 1);
+    assert_eq!(seen.folders[0].folder.id, on_topic);
+    assert_eq!(seen.folders[0].origin, Owner::Topic(t));
+    let seen = store.visible_folders(Owner::Epic(e)).unwrap();
+    assert_eq!(seen.folders.len(), 1);
+    assert_eq!(seen.folders[0].folder.id, on_epic);
+    // A pointer at the hidden copy marks the one listed in its place.
+    let docs = store
+        .add_folder(Owner::Topic(t), &folder_in(dir.path(), "docs"), H)
+        .unwrap();
+    store
+        .set_active_folder(Owner::Topic(t), Some(on_project), H)
+        .unwrap();
+    let seen = store.visible_folders(Owner::Topic(t)).unwrap();
+    assert_eq!(seen.active().unwrap().folder.id, on_topic);
+    assert_eq!(
+        seen.additional().map(|f| f.folder.id).collect::<Vec<_>>(),
+        [docs]
+    );
+}
+
+#[test]
+fn folder_names_icons_commit_settings_and_order() {
+    let TestStore { mut store, dir, .. } = open();
+    let (p, _, _, _) = levels(&mut store);
+    let a = store
+        .add_folder(
+            Owner::Project(p),
+            &folder_in(dir.path(), "embed-terminal"),
+            H,
+        )
+        .unwrap();
+    let b = store
+        .add_folder(Owner::Project(p), &folder_in(dir.path(), "docs"), H)
+        .unwrap();
+    let f = store.folder(a).unwrap();
+    assert_eq!(
+        (f.name.as_str(), f.icon.as_str(), f.commit_mode),
+        ("", "", CommitMode::Manual)
+    );
+    assert_eq!((f.commit_as_user, f.commit_on_default), (None, false));
+    assert_eq!(f.display_name(), "embed-terminal");
+    store.set_folder_name(a, "  Terminal  ", H).unwrap();
+    assert_eq!(store.folder(a).unwrap().display_name(), "Terminal");
+    store.set_folder_name(a, "", H).unwrap();
+    assert_eq!(store.folder(a).unwrap().display_name(), "embed-terminal");
+
+    store.set_folder_icon(a, "git-branch", H).unwrap();
+    assert!(store.set_folder_icon(a, "rocket", H).is_err());
+    assert_eq!(store.folder(a).unwrap().icon, "git-branch");
+    store.set_folder_icon(a, "", H).unwrap();
+
+    store
+        .set_commit_settings(a, CommitMode::Commit, Some(false), true, H)
+        .unwrap();
+    // Commit modes are the user's.
+    assert!(
+        store
+            .set_commit_settings(a, CommitMode::Push, None, false, C)
+            .is_err()
+    );
+    let f = store.folder(a).unwrap();
+    assert_eq!(
+        (f.commit_mode, f.commit_as_user, f.commit_on_default),
+        (CommitMode::Commit, Some(false), true)
+    );
+    assert_eq!(f.stamp.updated_by, H);
+
+    // Move down past the end is clamped; move up to the top.
+    store.move_folder(a, 5, H).unwrap();
+    let order: Vec<FolderId> = store
+        .folders(Owner::Project(p))
+        .unwrap()
+        .iter()
+        .map(|f| f.id)
+        .collect();
+    assert_eq!(order, [b, a]);
+    store.move_folder(a, -1, H).unwrap();
+    assert_eq!(store.folders(Owner::Project(p)).unwrap()[0].id, a);
+    store.move_folder(a, -3, H).unwrap();
+    assert_eq!(store.folders(Owner::Project(p)).unwrap()[0].id, a);
+}
+
+/// Opens a schema-3 database (0.4.1) in a temporary directory.
+fn version_3() -> (tempfile::TempDir, MemoryKeyStore, StoreConfig, Store) {
+    let dir = tempfile::tempdir().unwrap();
+    let keys = MemoryKeyStore::new();
+    let config = StoreConfig {
+        data_dir: dir.path().to_path_buf(),
+        keys: keys.stores(),
+    };
+    let v3 = Store::open_with(&config, &crate::schema::MIGRATIONS[..3]).unwrap();
+    assert_eq!(crate::db::user_version(&v3.conn).unwrap(), 3);
+    (dir, keys, config, v3)
+}
+
+#[test]
+fn schema_4_keeps_every_old_primary_as_the_active_folder_and_adds_no_date() {
+    let (_dir, _keys, config, v3) = version_3();
+    // Written as 0.4.1 would: raw rows, since this build reads the new
+    // columns. Project P (folders a, b), epic E (folder c, include
+    // inherited on), topic T1 in E (none), topic T2 in E (d, e), loose
+    // topic T3 (none), epic E2 (none) with topic T4 (none).
+    let sql = "
+        INSERT INTO projects (id, uuid, title, position, created_at, updated_at, updated_by)
+            VALUES (1, 'p', 'Acta', 0, 1, 1, 'human');
+        INSERT INTO epics (id, uuid, project_id, title, position, include_inherited_folders, created_at, updated_at, updated_by)
+            VALUES (1, 'e', 1, 'Terminal', 0, 1, 1, 1, 'human'),
+                   (2, 'e2', 1, 'Notes', 1, 0, 1, 1, 'human');
+        INSERT INTO topics (id, uuid, project_id, epic_id, title, status, position, include_inherited_folders, created_at, updated_at, updated_by)
+            VALUES (1, 't1', 1, 1, 'Grid', 'active', 0, 0, 1, 1, 'human'),
+                   (2, 't2', 1, 1, 'Embed', 'draft', 1, 1, 1, 1, 'human'),
+                   (3, 't3', 1, NULL, 'Loose', 'done', 0, 0, 1, 1, 'human'),
+                   (4, 't4', 1, 2, 'Inbox', 'blocked', 0, 0, 1, 1, 'human');
+        INSERT INTO folders (id, uuid, project_id, epic_id, topic_id, path, position, created_at, updated_at, updated_by)
+            VALUES (1, 'fa', 1, NULL, NULL, '/w/a', 0, 1, 1, 'human'),
+                   (2, 'fb', 1, NULL, NULL, '/w/b', 1, 1, 1, 'human'),
+                   (3, 'fc', 1, 1, NULL, '/w/c', 0, 1, 1, 'human'),
+                   (4, 'fd', 1, NULL, 2, '/w/d', 1, 1, 1, 'human'),
+                   (5, 'fe', 1, NULL, 2, '/w/e', 0, 1, 1, 'human');";
+    v3.conn.execute_batch(sql).unwrap();
+    // The primary as 0.4.1 computed it: the first own folder of the nearest
+    // level that has one.
+    let old_primary = [
+        (Owner::Project(ProjectId(1)), 1),
+        (Owner::Epic(EpicId(1)), 3),
+        (Owner::Epic(EpicId(2)), 1),
+        (Owner::Topic(TopicId(1)), 3),
+        (Owner::Topic(TopicId(2)), 5),
+        (Owner::Topic(TopicId(3)), 1),
+        (Owner::Topic(TopicId(4)), 1),
+    ];
+    drop(v3);
+
+    let s = Store::open(&config).unwrap();
+    assert_eq!(
+        crate::db::user_version(&s.conn).unwrap(),
+        crate::schema::SCHEMA_VERSION
+    );
+    for (owner, primary) in old_primary {
+        assert_eq!(active_of(&s, owner), Some(FolderId(primary)), "{owner}");
+    }
+    // Every row kept, no pointer and no date added, folders at defaults.
+    let count = |sql: &str| -> i64 { s.conn.query_row(sql, [], |r| r.get(0)).unwrap() };
+    assert_eq!(count("SELECT count(*) FROM topics"), 4);
+    assert_eq!(count("SELECT count(*) FROM epics"), 2);
+    assert_eq!(count("SELECT count(*) FROM folders"), 5);
+    for table in ["projects", "epics", "topics"] {
+        assert_eq!(
+            count(&format!(
+                "SELECT count(*) FROM {table} WHERE due_on IS NOT NULL OR active_folder_id IS NOT NULL"
+            )),
+            0
+        );
+    }
+    let f = s.folder(FolderId(3)).unwrap();
+    assert_eq!(f.commit_mode, CommitMode::Manual);
+    assert_eq!((f.name.as_str(), f.icon.as_str()), ("", ""));
+    // Inheritance is now unconditional: T2 sees its own, then E's, then P's.
+    assert_eq!(
+        s.visible_folders(Owner::Topic(TopicId(2)))
+            .unwrap()
+            .folders
+            .iter()
+            .map(|f| f.folder.id.0)
+            .collect::<Vec<_>>(),
+        [5, 4, 3, 1, 2]
+    );
+    // The shape check refuses a malformed day written behind the store.
+    assert!(
+        s.conn
+            .execute("UPDATE topics SET due_on = 'friday' WHERE id = 1", [])
+            .is_err()
+    );
+}
+
+#[test]
+fn an_old_export_imports_with_the_defaults() {
+    let mut a = open();
+    populate(&mut a.store, a.dir.path());
+    let file = a.store.export(None).unwrap();
+    // The same data as a version 1 file: no new field, and the dropped
+    // `include_inherited_folders` still present.
+    let mut v1: serde_json::Value = serde_json::from_str(&file.to_json().unwrap()).unwrap();
+    v1["version"] = 1.into();
+    for kind in ["projects", "epics", "topics"] {
+        for x in v1[kind].as_array_mut().unwrap() {
+            let o = x.as_object_mut().unwrap();
+            o.remove("active_folder");
+            o.remove("due_on");
+            if kind != "projects" {
+                o.insert("include_inherited_folders".into(), true.into());
+            }
+        }
+    }
+    for x in v1["folders"].as_array_mut().unwrap() {
+        let o = x.as_object_mut().unwrap();
+        for k in [
+            "name",
+            "icon",
+            "commit_mode",
+            "commit_as_user",
+            "commit_on_default",
+        ] {
+            o.remove(k);
+        }
+    }
+    let parsed = ExportFile::from_json(&v1.to_string()).unwrap();
+    assert_eq!(parsed.version, 1);
+    let mut b = open();
+    let report = b.store.import(&parsed, false).unwrap();
+    assert_eq!(report.topics.created, 4);
+    let again = b.store.export(None).unwrap();
+    assert!(again.folders.iter().all(|f| f.name.is_empty()
+        && f.icon.is_empty()
+        && f.commit_mode == CommitMode::Manual
+        && f.commit_as_user.is_none()
+        && !f.commit_on_default));
+    assert!(
+        again
+            .topics
+            .iter()
+            .all(|t| t.due_on.is_none() && t.active_folder.is_none())
+    );
+    assert!(again.epics.iter().all(|e| e.due_on.is_none()));
+    assert!(again.projects.iter().all(|p| p.due_on.is_none()));
+}
+
+#[test]
+fn the_new_fields_survive_an_export_and_an_import() {
+    let mut a = open();
+    let p = populate(&mut a.store, a.dir.path());
+    let file = a.store.export(None).unwrap();
+    assert_eq!(file.version, FORMAT_VERSION);
+    let folder = file
+        .folders
+        .iter()
+        .find(|f| f.name == "Storage repo")
+        .unwrap();
+    assert_eq!(
+        (
+            folder.icon.as_str(),
+            folder.commit_mode,
+            folder.commit_as_user,
+            folder.commit_on_default
+        ),
+        ("database", CommitMode::Push, Some(true), true)
+    );
+    let keys = file.topics.iter().find(|t| t.title == "Keys").unwrap();
+    assert_eq!(
+        keys.active_folder.as_deref(),
+        Some(folder.stamp.uuid.as_str())
+    );
+    assert_eq!(keys.due_on.as_deref(), Some("2026-12-15"));
+    assert_eq!(file.epics[0].due_on.as_deref(), Some("2027-01-31"));
+    let text = file.to_json().unwrap();
+    assert!(!text.contains("include_inherited_folders"));
+
+    let mut b = open();
+    b.store.import(&file, false).unwrap();
+    let project = b
+        .store
+        .projects()
+        .unwrap()
+        .into_iter()
+        .find(|x| x.title == "Acta")
+        .unwrap();
+    assert_eq!(project.id, p);
+    assert_eq!(
+        b.store.project(project.id).unwrap().due_on,
+        Date::parse_iso("2027-03-01")
+    );
+    let tree = b.store.tree(project.id).unwrap();
+    let (_, topics) = &tree.epics[0];
+    let keys = topics.iter().find(|t| t.title == "Keys").unwrap();
+    assert_eq!(keys.due_on, Date::parse_iso("2026-12-15"));
+    let active = b
+        .store
+        .visible_folders(Owner::Topic(keys.id))
+        .unwrap()
+        .active()
+        .cloned()
+        .unwrap();
+    assert_eq!(active.folder.name, "Storage repo");
+    assert_eq!(active.folder.commit_mode, CommitMode::Push);
+
+    // A pointer to a folder the file does not carry is dropped.
+    let mut lone = file.clone();
+    lone.folders.clear();
+    for t in &mut lone.topics {
+        t.stamp.updated_at += 1;
+    }
+    let mut c = open();
+    c.store.import(&lone, false).unwrap();
+    let n: i64 = c
+        .store
+        .conn
+        .query_row(
+            "SELECT count(*) FROM topics WHERE active_folder_id IS NOT NULL",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(n, 0);
+
+    // A malformed day in a file is refused, not guessed.
+    let mut bad = file;
+    bad.topics[0].due_on = Some("friday".into());
+    let mut d = open();
+    assert!(d.store.import(&bad, true).is_err());
+}
+
+// ---- due dates (request 16) ----
+
+#[test]
+fn set_due_writes_the_event_and_the_author() {
+    let TestStore { mut store, .. } = open();
+    let (p, e, t, _) = levels(&mut store);
+    let day = Date::parse_iso("2026-12-15");
+    store.set_due(Owner::Topic(t), day, C).unwrap();
+    let topic_row = store.topic(t).unwrap();
+    assert_eq!(topic_row.due_on, day);
+    assert_eq!(topic_row.stamp.updated_by, C);
+    let events = |store: &Store| -> Vec<(Option<String>, Option<String>)> {
+        store
+            .entries(
+                t,
+                &EntryFilter {
+                    include_system: true,
+                    ..EntryFilter::default()
+                },
+                all(),
+            )
+            .unwrap()
+            .items
+            .into_iter()
+            .filter_map(|e| e.event)
+            .filter(|ev| ev.kind == EventKind::Due)
+            .map(|ev| (ev.old, ev.new))
+            .collect()
+    };
+    assert_eq!(events(&store), [(None, Some("2026-12-15".into()))]);
+    // The same date again writes nothing.
+    store.set_due(Owner::Topic(t), day, H).unwrap();
+    assert_eq!(events(&store).len(), 1);
+    assert_eq!(store.topic(t).unwrap().stamp.updated_by, C);
+    // Cleared.
+    store.set_due(Owner::Topic(t), None, H).unwrap();
+    assert_eq!(store.topic(t).unwrap().due_on, None);
+    assert_eq!(events(&store).len(), 2);
+    // Epics and projects: the field and the stamp.
+    store.set_due(Owner::Epic(e), day, C).unwrap();
+    store.set_due(Owner::Project(p), day, H).unwrap();
+    assert_eq!(store.epic(e).unwrap().due_on, day);
+    assert_eq!(store.epic(e).unwrap().stamp.updated_by, C);
+    assert_eq!(store.project(p).unwrap().due_on, day);
+    assert_eq!(store.epics(p).unwrap()[0].due_on, day);
+    // Out of range is refused.
+    let far = Date::from_days(crate::time::days_from_civil(2100, 1, 1));
+    assert!(store.set_due(Owner::Topic(t), Some(far), H).is_err());
+}
+
+#[test]
+fn the_main_connection_has_a_16_mib_page_cache() {
+    let t = open();
+    let kib: i64 = t
+        .store
+        .conn
+        .pragma_query_value(None, "cache_size", |r| r.get(0))
+        .unwrap();
+    assert_eq!(kib, -16_384);
+}
+
+#[test]
+fn a_version_1_import_leaves_what_version_1_does_not_know() {
+    let mut a = open();
+    populate(&mut a.store, a.dir.path());
+    let file = a.store.export(None).unwrap();
+    // The same records, newer, as a version 1 file would carry them.
+    let mut v1: serde_json::Value = serde_json::from_str(&file.to_json().unwrap()).unwrap();
+    v1["version"] = 1.into();
+    for kind in ["projects", "epics", "topics", "folders"] {
+        for x in v1[kind].as_array_mut().unwrap() {
+            let o = x.as_object_mut().unwrap();
+            for k in [
+                "active_folder",
+                "due_on",
+                "name",
+                "icon",
+                "commit_mode",
+                "commit_as_user",
+                "commit_on_default",
+            ] {
+                o.remove(k);
+            }
+            let at = o["updated_at"].as_i64().unwrap();
+            o.insert("updated_at".into(), (at + 1_000).into());
+            if let Some(title) = o.get("title").and_then(|t| t.as_str()).map(str::to_owned) {
+                o.insert("title".into(), format!("{title} (v1)").into());
+            }
+        }
+    }
+    let old = ExportFile::from_json(&v1.to_string()).unwrap();
+    let report = a.store.import(&old, false).unwrap();
+    assert!(report.topics.updated > 0 && report.folders.updated > 0);
+    let after = a.store.export(None).unwrap();
+    // Updated...
+    assert!(after.topics.iter().any(|t| t.title == "Keys (v1)"));
+    // ...without losing the due days, the pointer or the folder settings.
+    let strip = |f: &ExportFile| -> Vec<String> {
+        let mut out = Vec::new();
+        for p in &f.projects {
+            out.push(format!(
+                "{} {:?} {:?}",
+                p.stamp.uuid, p.due_on, p.active_folder
+            ));
+        }
+        for e in &f.epics {
+            out.push(format!(
+                "{} {:?} {:?}",
+                e.stamp.uuid, e.due_on, e.active_folder
+            ));
+        }
+        for t in &f.topics {
+            out.push(format!(
+                "{} {:?} {:?}",
+                t.stamp.uuid, t.due_on, t.active_folder
+            ));
+        }
+        for x in &f.folders {
+            out.push(format!(
+                "{} {} {} {:?} {:?} {}",
+                x.stamp.uuid, x.name, x.icon, x.commit_mode, x.commit_as_user, x.commit_on_default
+            ));
+        }
+        out
+    };
+    assert_eq!(strip(&after), strip(&file));
+    let keys = after
+        .topics
+        .iter()
+        .find(|t| t.title == "Keys (v1)")
+        .unwrap();
+    assert_eq!(keys.due_on.as_deref(), Some("2026-12-15"));
+    assert!(keys.active_folder.is_some());
+    assert!(
+        after
+            .folders
+            .iter()
+            .any(|f| f.commit_mode == CommitMode::Push)
+    );
+}
+
+#[test]
+fn an_import_by_claude_code_never_sets_commit_settings_or_pointers() {
+    let mut a = open();
+    populate(&mut a.store, a.dir.path());
+    let file = a.store.export(None).unwrap();
+    // Into an empty database: new folders start Manual, no pointer.
+    let mut b = open();
+    b.store.import_by(&file, false, C).unwrap();
+    let got = b.store.export(None).unwrap();
+    assert!(
+        got.folders
+            .iter()
+            .all(|f| f.commit_mode == CommitMode::Manual
+                && f.commit_as_user.is_none()
+                && !f.commit_on_default)
+    );
+    assert!(got.topics.iter().all(|t| t.active_folder.is_none()));
+    // Over existing records: the local settings and choices stay.
+    let mut newer = file.clone();
+    for f in &mut newer.folders {
+        f.commit_mode = CommitMode::Commit;
+        f.commit_as_user = Some(false);
+        f.stamp.updated_at += 1_000;
+    }
+    for t in &mut newer.topics {
+        t.active_folder = None;
+        t.stamp.updated_at += 1_000;
+    }
+    a.store.import_by(&newer, false, C).unwrap();
+    let kept = a.store.export(None).unwrap();
+    let folder = kept
+        .folders
+        .iter()
+        .find(|f| f.name == "Storage repo")
+        .unwrap();
+    assert_eq!(
+        (
+            folder.commit_mode,
+            folder.commit_as_user,
+            folder.commit_on_default
+        ),
+        (CommitMode::Push, Some(true), true)
+    );
+    let keys = kept.topics.iter().find(|t| t.title == "Keys").unwrap();
+    assert_eq!(
+        keys.active_folder.as_deref(),
+        Some(folder.stamp.uuid.as_str())
+    );
+    // A newer one imported by the human does change them.
+    for f in &mut newer.folders {
+        f.stamp.updated_at += 1_000;
+    }
+    a.store.import(&newer, false).unwrap();
+    let mine = a.store.export(None).unwrap();
+    assert!(
+        mine.folders
+            .iter()
+            .all(|f| f.commit_mode == CommitMode::Commit)
+    );
 }

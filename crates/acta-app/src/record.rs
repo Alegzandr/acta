@@ -7,7 +7,7 @@ use std::collections::HashSet;
 use acta_core::model::{
     Author, Entry, EntryKind, EpicId, Folder, Owner, PageReq, ProjectId, Topic, TopicSummary,
 };
-use acta_core::store::{EffectiveFolder, EffectiveFolders, EntryFilter, KbFilter};
+use acta_core::store::{EntryFilter, KbFilter};
 use acta_core::{Result, Store};
 
 use crate::kb_model::{self, Section};
@@ -53,21 +53,28 @@ impl EntryFilterKind {
     }
 }
 
-/// The working folders of a page (docs/design/components-folders.md 5).
+/// One folder a launch from a page uses, and the level it belongs to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EffectiveFolder {
+    pub path: String,
+    pub from: Owner,
+}
+
+/// The working folders of a page (docs/design/components-folders.md 5;
+/// ADR 0011: always inherited, one active folder).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Folders {
     /// The page's own list, in order.
     pub own: Vec<Folder>,
-    /// What a launch from this page uses, the first being the primary.
+    /// Every folder the page sees, the active one first.
     pub effective: Vec<EffectiveFolder>,
-    /// Where the effective folders come from when the page has none.
+    /// Where the active folder comes from when it is not the page's own.
     pub inherited_from: Option<(Owner, String)>,
-    /// The effective folders of the level directly above, for "Also
-    /// include inherited folders" and "Not used here".
+    /// The folders the page inherits (its epic's, then its project's), in
+    /// list order.
     pub above: Vec<EffectiveFolder>,
+    /// The level directly above.
     pub above_from: Option<(Owner, String)>,
-    /// The page's switch (epics and topics).
-    pub include_inherited: bool,
     /// Paths (as stored) that are not a folder on this computer.
     pub missing: HashSet<String>,
 }
@@ -160,27 +167,30 @@ fn parent_of(store: &Store, owner: Owner) -> Result<Option<Owner>> {
 /// checks the disk with [`Folders::paths`] once the store is released.
 pub fn load_folders(store: &Store, owner: Owner) -> Result<Folders> {
     let own = store.folders(owner)?;
-    let EffectiveFolders {
-        folders: effective,
-        inherited_from,
-    } = store.effective_folders(owner)?;
-    let inherited_from = match inherited_from {
-        Some(from) => Some((from, owner_name(store, from)?)),
+    let visible = store.visible_folders(owner)?;
+    let as_effective = |f: &acta_core::store::VisibleFolder| EffectiveFolder {
+        path: f.folder.path.clone(),
+        from: f.origin,
+    };
+    let effective: Vec<EffectiveFolder> = visible
+        .active()
+        .into_iter()
+        .chain(visible.additional())
+        .map(as_effective)
+        .collect();
+    let inherited_from = match visible.active().map(|f| f.origin) {
+        Some(from) if from != owner => Some((from, owner_name(store, from)?)),
+        _ => None,
+    };
+    let above = visible
+        .folders
+        .iter()
+        .filter(|f| f.origin != owner)
+        .map(as_effective)
+        .collect();
+    let above_from = match parent_of(store, owner)? {
+        Some(parent) => Some((parent, owner_name(store, parent)?)),
         None => None,
-    };
-    let (above, above_from) = match parent_of(store, owner)? {
-        Some(parent) => {
-            let up = store.effective_folders(parent)?;
-            let from = up.inherited_from.unwrap_or(parent);
-            let name = owner_name(store, from)?;
-            (up.folders, Some((from, name)))
-        }
-        None => (Vec::new(), None),
-    };
-    let include_inherited = match owner {
-        Owner::Project(_) => false,
-        Owner::Epic(id) => store.epic(id)?.include_inherited_folders,
-        Owner::Topic(id) => store.topic(id)?.include_inherited_folders,
     };
     // Existence is checked later, off the store (`Folders::paths`).
     let missing = HashSet::new();
@@ -190,7 +200,6 @@ pub fn load_folders(store: &Store, owner: Owner) -> Result<Folders> {
         inherited_from,
         above,
         above_from,
-        include_inherited,
         missing,
     })
 }

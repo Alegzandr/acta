@@ -578,6 +578,19 @@ fn link_remove_restores_auto_memory_and_export_import_round_trip() {
         "",
     );
     assert!(ok && out.contains("0 created"), "{out}");
+    // Under Claude Code, import is refused: it could set commit modes.
+    let out = base_cmd(&data)
+        .env("CLAUDECODE", "1")
+        .args(["import", file.to_str().unwrap()])
+        .current_dir(&repo)
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success() && err.contains("Import is for you to run, not Claude Code"),
+        "{err}"
+    );
     let (ok, out, _) = cli(&data, &repo, &["snapshot", "list"], "");
     assert!(ok, "{out}");
 }

@@ -1,31 +1,55 @@
-//! Working folders (ADR 0008): ordered lists on projects, epics and topics,
-//! nearest-wins inheritance, and the reverse lookup from a directory to the
-//! deepest attached folder.
+//! Working folders (ADR 0008, as amended by ADR 0011): ordered lists on
+//! projects, epics and topics, always inherited, one active folder per page,
+//! and the reverse lookup from a directory to the deepest attached folder.
 
 use super::{STAMP_COLS, Store, new_uuid, owner_at, owner_condition, owner_ids, stamp};
 use crate::error::{Error, Result};
 use crate::folder_identity::{self, Followed, Known, Learned};
 use crate::folder_path;
-use crate::model::{Author, EpicId, Folder, FolderId, Owner, ProjectId, TopicId};
+use crate::model::{
+    Author, CommitMode, EpicId, FOLDER_ICONS, Folder, FolderId, Owner, ProjectId, Record, TopicId,
+};
 use crate::paths::Os;
 use crate::time::now_ms;
 use rusqlite::{OptionalExtension, params};
 use std::path::Path;
 
-/// One effective folder and the level it comes from.
+/// One folder a page sees (ADR 0011, 1).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct EffectiveFolder {
-    pub path: String,
-    pub from: Owner,
+pub struct VisibleFolder {
+    pub folder: Folder,
+    /// The level the folder belongs to: the page itself, its epic or its
+    /// project. Inherited folders are edited there.
+    pub origin: Owner,
+    /// Claude Code starts here; every other folder is additional.
+    pub active: bool,
 }
 
-/// The folders a launch from `owner` uses: the first is the primary.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct EffectiveFolders {
-    pub folders: Vec<EffectiveFolder>,
-    /// Where the list comes from when the owner has none of its own
-    /// ("from epic Storage"); `None` when it has its own.
-    pub inherited_from: Option<Owner>,
+/// The folders a page sees: its own, then its epic's own, then its
+/// project's own, each group in its order; a path present at two levels is
+/// listed once, at the nearest. At most one is active.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct VisibleFolders {
+    pub folders: Vec<VisibleFolder>,
+}
+
+impl VisibleFolders {
+    /// The active folder: the page's pointer when it points at a folder the
+    /// page sees, else the default rule (the page's first own folder, else
+    /// its parent's active folder). `None` only when the page sees none.
+    pub fn active(&self) -> Option<&VisibleFolder> {
+        self.folders.iter().find(|f| f.active)
+    }
+
+    /// Every folder but the active one, in list order (the `--add-dir`
+    /// candidates, before the same-repository rule of ADR 0011).
+    pub fn additional(&self) -> impl Iterator<Item = &VisibleFolder> {
+        self.folders.iter().filter(|f| !f.active)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.folders.is_empty()
+    }
 }
 
 /// What a directory resolves to, for sessions started outside Acta.
@@ -113,8 +137,10 @@ fn upsert_meta(conn: &rusqlite::Connection, key: &str, value: &str) -> rusqlite:
     )
 }
 
-const FOLDER_COLS: &str = "id, project_id, epic_id, topic_id, path, position";
+const FOLDER_COLS: &str = "id, project_id, epic_id, topic_id, path, position, \
+     name, icon, commit_mode, commit_as_user, commit_on_default";
 
+/// Reads [`FOLDER_COLS`] then [`STAMP_COLS`].
 fn folder_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Folder> {
     Ok(Folder {
         id: FolderId(r.get(0)?),
@@ -122,8 +148,90 @@ fn folder_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Folder> {
         owner: owner_at(r, 1)?,
         path: r.get(4)?,
         position: r.get(5)?,
-        stamp: stamp(r, 6)?,
+        name: r.get(6)?,
+        icon: r.get(7)?,
+        commit_mode: r.get(8)?,
+        commit_as_user: r.get(9)?,
+        commit_on_default: r.get(10)?,
+        stamp: stamp(r, 11)?,
     })
+}
+
+/// The page and the levels above it, nearest first, each with its pointer.
+fn chain(conn: &rusqlite::Connection, owner: Owner) -> Result<Vec<(Owner, Option<FolderId>)>> {
+    use super::records::{read_epic, read_project, read_topic};
+    let project = |id: ProjectId| -> Result<(Owner, Option<FolderId>)> {
+        Ok((Owner::Project(id), read_project(conn, id)?.active_folder))
+    };
+    let epic = |id: EpicId| -> Result<Vec<(Owner, Option<FolderId>)>> {
+        let e = read_epic(conn, id)?;
+        Ok(vec![
+            (Owner::Epic(id), e.active_folder),
+            project(e.project)?,
+        ])
+    };
+    Ok(match owner {
+        Owner::Project(id) => vec![project(id)?],
+        Owner::Epic(id) => epic(id)?,
+        Owner::Topic(id) => {
+            let t = read_topic(conn, id)?;
+            let mut levels = vec![(owner, t.active_folder)];
+            match t.epic {
+                Some(e) => levels.extend(epic(e)?),
+                None => levels.push(project(t.project)?),
+            }
+            levels
+        }
+    })
+}
+
+/// The folders `owner` sees and its active one (ADR 0011, 1).
+fn visible(conn: &rusqlite::Connection, owner: Owner) -> Result<VisibleFolders> {
+    let os = Os::CURRENT;
+    let levels = chain(conn, owner)?;
+    let own: Vec<Vec<Folder>> = levels
+        .iter()
+        .map(|(level, _)| folders_of(conn, *level))
+        .collect::<Result<_>>()?;
+    // The listed folders and, for a folder hidden by a nearer one with the
+    // same path, the one listed in its place.
+    let mut listed: Vec<VisibleFolder> = Vec::new();
+    let mut alias: Vec<(FolderId, FolderId)> = Vec::new();
+    for ((level, _), folders) in levels.iter().zip(&own) {
+        for f in folders {
+            match listed
+                .iter()
+                .find(|l| folder_path::same(os, &l.folder.path, &f.path))
+            {
+                Some(kept) => alias.push((f.id, kept.folder.id)),
+                None => listed.push(VisibleFolder {
+                    folder: f.clone(),
+                    origin: *level,
+                    active: false,
+                }),
+            }
+        }
+    }
+    // From the project down: each level's choice when it sees the folder,
+    // else its first own folder, else what the level above resolved.
+    let mut active: Option<FolderId> = None;
+    for (i, (_, pointer)) in levels.iter().enumerate().rev() {
+        let sees = |id: FolderId| own[i..].iter().flatten().any(|f| f.id == id);
+        active = match pointer {
+            Some(p) if sees(*p) => Some(*p),
+            _ => own[i].first().map(|f| f.id).or(active),
+        };
+    }
+    if let Some(id) = active {
+        let id = alias
+            .iter()
+            .find(|(hidden, _)| *hidden == id)
+            .map_or(id, |(_, kept)| *kept);
+        if let Some(f) = listed.iter_mut().find(|f| f.folder.id == id) {
+            f.active = true;
+        }
+    }
+    Ok(VisibleFolders { folders: listed })
 }
 
 impl Store {
@@ -421,89 +529,112 @@ impl Store {
         Ok(changes.into_iter().map(|(id, _, _)| id).collect())
     }
 
-    /// The "also include inherited folders" switch of an epic or a topic.
-    pub fn set_include_inherited(
+    /// The folders a page sees, each with its origin, and which is active
+    /// (ADR 0011, 1).
+    pub fn visible_folders(&self, owner: Owner) -> Result<VisibleFolders> {
+        visible(&self.conn, owner)
+    }
+
+    /// Makes a folder the page sees its active folder (`Some`), or goes back
+    /// to the default rule (`None`). One write, carried by an export.
+    pub fn set_active_folder(
         &mut self,
         owner: Owner,
-        include: bool,
+        folder: Option<FolderId>,
         author: Author,
     ) -> Result<()> {
-        let (table, id) = match owner {
-            Owner::Epic(id) => ("epics", self.epic(id)?.id.0),
-            Owner::Topic(id) => ("topics", self.topic(id)?.id.0),
-            Owner::Project(_) => {
-                return Err(Error::Invalid("a project has no inherited folders".into()));
-            }
-        };
         let tx = self.write()?;
+        let levels = chain(&tx, owner)?;
+        if let Some(id) = folder {
+            let mut sees = false;
+            for (level, _) in &levels {
+                sees |= folders_of(&tx, *level)?.iter().any(|f| f.id == id);
+            }
+            if !sees {
+                return Err(Error::Invalid(format!("{owner} does not see {id}")));
+            }
+        }
+        let (table, raw) = match owner {
+            Owner::Project(id) => ("projects", id.0),
+            Owner::Epic(id) => ("epics", id.0),
+            Owner::Topic(id) => ("topics", id.0),
+        };
         tx.execute(
-            &format!("UPDATE {table} SET include_inherited_folders = ?2, updated_at = ?3, updated_by = ?4 WHERE id = ?1"),
-            params![id, include, now_ms(), author],
+            &format!(
+                "UPDATE {table} SET active_folder_id = ?2, updated_at = ?3, updated_by = ?4 WHERE id = ?1"
+            ),
+            params![raw, folder.map(|f| f.0), now_ms(), author],
         )?;
         tx.commit()?;
         Ok(())
     }
 
-    /// Nearest wins: the owner's own folders if it has any (plus the
-    /// parent's effective ones as additional folders when its switch is on),
-    /// otherwise the parent's effective folders.
-    pub fn effective_folders(&self, owner: Owner) -> Result<EffectiveFolders> {
-        let (parent, include) = match owner {
-            Owner::Project(id) => {
-                self.project(id)?;
-                (None, false)
-            }
-            Owner::Epic(id) => {
-                let e = self.epic(id)?;
-                (Some(Owner::Project(e.project)), e.include_inherited_folders)
-            }
-            Owner::Topic(id) => {
-                let t = self.topic(id)?;
-                let parent = t.epic.map_or(Owner::Project(t.project), Owner::Epic);
-                (Some(parent), t.include_inherited_folders)
-            }
-        };
-        let own: Vec<EffectiveFolder> = self
-            .folders(owner)?
-            .into_iter()
-            .map(|f| EffectiveFolder {
-                path: f.path,
-                from: owner,
-            })
-            .collect();
-        let Some(parent) = parent else {
-            return Ok(EffectiveFolders {
-                folders: own,
-                inherited_from: None,
-            });
-        };
-        if own.is_empty() {
-            let inherited = self.effective_folders(parent)?;
-            let from = inherited.inherited_from.or(Some(parent));
-            return Ok(EffectiveFolders {
-                inherited_from: if inherited.folders.is_empty() {
-                    None
-                } else {
-                    from
-                },
-                folders: inherited.folders,
-            });
+    /// Names a folder; an empty name means the last segment of its path.
+    pub fn set_folder_name(&mut self, id: FolderId, name: &str, author: Author) -> Result<()> {
+        self.update_folder(id, "name", name.trim(), author)
+    }
+
+    /// Sets a folder's icon: one of [`FOLDER_ICONS`], or `""` for automatic.
+    pub fn set_folder_icon(&mut self, id: FolderId, icon: &str, author: Author) -> Result<()> {
+        if !icon.is_empty() && !FOLDER_ICONS.contains(&icon) {
+            return Err(Error::Invalid(format!("unknown folder icon `{icon}`")));
         }
-        let mut folders = own;
-        if include {
-            for f in self.effective_folders(parent)?.folders {
-                if !folders
-                    .iter()
-                    .any(|o| folder_path::same(Os::CURRENT, &o.path, &f.path))
-                {
-                    folders.push(f);
-                }
-            }
+        self.update_folder(id, "icon", icon, author)
+    }
+
+    /// The commit mode of a folder and its two options (ADR 0011, 3):
+    /// `as_user` is "Commit in my name" (`None` follows the Settings
+    /// default), `on_default` is "Also on <default branch>". Commit modes
+    /// are the user's: refused for Claude Code.
+    pub fn set_commit_settings(
+        &mut self,
+        id: FolderId,
+        mode: CommitMode,
+        as_user: Option<bool>,
+        on_default: bool,
+        author: Author,
+    ) -> Result<()> {
+        if author == Author::Claude {
+            return Err(Error::Invalid(
+                "Commit modes are set by the user in Acta.".into(),
+            ));
         }
-        Ok(EffectiveFolders {
-            folders,
-            inherited_from: None,
-        })
+        let tx = self.write()?;
+        read_folder(&tx, id)?;
+        tx.execute(
+            "UPDATE folders SET commit_mode = ?2, commit_as_user = ?3, commit_on_default = ?4,
+                    updated_at = ?5, updated_by = ?6 WHERE id = ?1",
+            params![id.0, mode, as_user, on_default, now_ms(), author],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Moves a folder up (`delta < 0`) or down (`delta > 0`) among its
+    /// owner's folders, clamped at the ends (Move up / Move down).
+    pub fn move_folder(&mut self, id: FolderId, delta: i64, author: Author) -> Result<()> {
+        let record = Record::Folder(id);
+        let at = self.order_index(record)? as i64;
+        self.reorder(record, (at + delta).max(0) as usize, author)
+    }
+
+    fn update_folder(
+        &mut self,
+        id: FolderId,
+        column: &str,
+        value: &str,
+        author: Author,
+    ) -> Result<()> {
+        let tx = self.write()?;
+        read_folder(&tx, id)?;
+        tx.execute(
+            &format!(
+                "UPDATE folders SET {column} = ?2, updated_at = ?3, updated_by = ?4 WHERE id = ?1"
+            ),
+            params![id.0, value, now_ms(), author],
+        )?;
+        tx.commit()?;
+        Ok(())
     }
 
     /// The reverse direction (ADR 0008): the deepest attached folder that is
@@ -620,6 +751,7 @@ impl Store {
     fn live_owner_folders(&self) -> Result<Vec<Folder>> {
         let mut stmt = self.conn.prepare(
             "SELECT f.id, f.project_id, f.epic_id, f.topic_id, f.path, f.position,
+                    f.name, f.icon, f.commit_mode, f.commit_as_user, f.commit_on_default,
                     f.uuid, f.created_at, f.updated_at, f.updated_by, f.deleted_at, f.deleted_by
              FROM folders f
              JOIN projects p ON p.id = f.project_id AND p.deleted_at IS NULL

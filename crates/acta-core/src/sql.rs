@@ -1,7 +1,7 @@
 //! Text forms of the domain enums in the database and in exports. They are
 //! the serde names, so the database, the export file and agent output agree.
 
-use crate::model::{Author, ChangeKind, EntryKind, EventKind, KbKind, Level, Status};
+use crate::model::{Author, ChangeKind, CommitMode, EntryKind, EventKind, KbKind, Level, Status};
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, ValueRef};
 
 macro_rules! text_enum {
@@ -55,7 +55,9 @@ text_enum!(EventKind {
     State => "state",
     Restored => "restored",
     Edited => "edited",
+    Due => "due",
 });
+text_enum!(CommitMode { Manual => "manual", Commit => "commit", Push => "push" });
 text_enum!(KbKind { Document => "document", Memory => "memory" });
 text_enum!(Level { Project => "project", Epic => "epic", Topic => "topic" });
 text_enum!(ChangeKind {
@@ -67,6 +69,21 @@ text_enum!(ChangeKind {
     Moved => "moved",
     Restored => "restored",
 });
+
+/// A due day is stored as its ISO text (schema V4 checks the shape).
+impl ToSql for crate::date::Date {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        Ok(ToSqlOutput::from(self.to_string()))
+    }
+}
+
+impl FromSql for crate::date::Date {
+    fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
+        let text = value.as_str()?;
+        crate::date::Date::parse_iso(text)
+            .ok_or_else(|| FromSqlError::Other(format!("not a due date `{text}`").into()))
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -86,6 +103,10 @@ mod tests {
         check(EntryKind::System, EntryKind::System.as_str());
         check(EventKind::Restored, EventKind::Restored.as_str());
         check(EventKind::Edited, EventKind::Edited.as_str());
+        check(EventKind::Due, EventKind::Due.as_str());
+        for m in [CommitMode::Manual, CommitMode::Commit, CommitMode::Push] {
+            check(m, m.as_str());
+        }
         check(KbKind::Memory, KbKind::Memory.as_str());
         check(Level::Epic, Level::Epic.as_str());
         check(

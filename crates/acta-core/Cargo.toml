@@ -28,6 +28,8 @@ windows-sys = { version = "0.61", features = [
 ] }
 
 [dependencies]
+# The local time zone for "today" and local days (date.rs, Zone::system).
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 getrandom = "0.4"
 hmac = "0.12"
 keyring = "4.2.0"

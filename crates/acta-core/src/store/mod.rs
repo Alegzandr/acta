@@ -10,6 +10,7 @@
 mod exchange;
 mod folders;
 mod kb;
+mod overview;
 mod records;
 mod search;
 mod seen;
@@ -20,8 +21,12 @@ pub use exchange::{
     ExportFile, FILE_EXTENSION, FORMAT_NAME, FORMAT_VERSION, ImportCounts, ImportReport, XEntry,
     XEpic, XFolder, XKb, XNote, XProject, XRevision, XStamp, XTopic,
 };
-pub use folders::{AUTO_MEMORY_PREFIX, EffectiveFolder, EffectiveFolders, FolderResolution};
+pub use folders::{AUTO_MEMORY_PREFIX, FolderResolution, VisibleFolder, VisibleFolders};
 pub use kb::{KbCounts, KbEdit, KbFilter, KbRevisionSummary, KbUpdate, NewKb};
+pub use overview::{
+    IDLE_DAYS, INBOX_DAYS, Overview, OverviewEpic, OverviewFilter, OverviewItem, STALE_MEMORY_DAYS,
+    Scope, WEEK_DAYS,
+};
 pub use records::{EpicPatch, NewTopic, ProjectPatch, TopicFilter, TopicPatch};
 pub use search::{SNIPPET_CLOSE, SNIPPET_OPEN, SearchHit, SearchKind, SearchQuery};
 pub use seen::Unread;
@@ -71,6 +76,9 @@ pub struct Store {
 /// `meta` key raised by the second release of a two-step destructive change
 /// (ADR 0003); a build whose schema is older refuses to write.
 const META_MIN_COMPATIBLE: &str = "min_compatible_version";
+/// Page cache of the main connection, in KiB (16 MiB; SQLite's default is
+/// 2,000 KiB). `presence.db` keeps the default.
+const PAGE_CACHE_KIB: i64 = 16_384;
 /// When the user last exported (data model request 5). Local, not exported.
 const META_LAST_EXPORT: &str = "last_export_at";
 
@@ -86,6 +94,9 @@ impl Store {
         let (mut conn, key, opened, lock) = db::open_or_init(&config.data_dir, &config.keys)?;
         db::migrate(&mut conn, &config.data_dir, &key, steps)?;
         drop(lock);
+        // A cap, filled only as pages are read; decrypted pages stay in
+        // memory (ADR 0003 changelog). Sized for the Overview's budget.
+        conn.execute_batch(&format!("PRAGMA cache_size = -{PAGE_CACHE_KIB};"))?;
         let min: Option<i64> = conn
             .query_row(
                 "SELECT value FROM meta WHERE key = ?1",

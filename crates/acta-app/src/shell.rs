@@ -19,15 +19,15 @@ use std::time::{Duration, Instant};
 
 use acta_core::model::{Author, EpicId, KbId, KbKind, Owner, ProjectId, Record, Status, TopicId};
 use acta_core::store::ExportFile;
-use gpui_kit::component::input::{Escape, Input, InputEvent, InputState};
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::window_border;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, AnyView, App, AppContext, Bounds, Context, DragMoveEvent, Entity, EventEmitter,
     FocusHandle, Focusable, InteractiveElement, IntoElement, KeyBinding, KeyDownEvent,
-    ParentElement, PathPromptOptions, Render, SharedString, StatefulInteractiveElement, Styled,
-    Subscription, Task, TitlebarOptions, Window, WindowBounds, WindowDecorations, WindowOptions,
-    actions, deferred, div, point, px, size,
+    ParentElement, PathPromptOptions, Render, StatefulInteractiveElement, Styled, Subscription,
+    Task, TitlebarOptions, Window, WindowBounds, WindowDecorations, WindowOptions, actions,
+    deferred, div, point, px, size,
 };
 
 #[cfg(windows)]
@@ -42,7 +42,7 @@ use crate::commands::{self, Command};
 use crate::db::{self, Db, Opened};
 use crate::dialogs::{Dialog, DialogEvent, Kind as DialogKind};
 use crate::first_run::{FirstRun, FirstRunEvent};
-use crate::i18n::{Arg, Key, Locale, short_count, text, tr};
+use crate::i18n::{Arg, Key, Locale, text, tr};
 use crate::icons::{Icon, icon};
 use crate::inbox_page::InboxPage;
 use crate::kb_model::Filters;
@@ -55,7 +55,7 @@ use crate::route::{History, Route};
 use crate::settings;
 use crate::settings_page::SettingsPage;
 use crate::terminal_dock::{DockEvent, Origin, TerminalDock};
-use crate::theme::{self, RADIUS_LG, RADIUS_SM, Tokens};
+use crate::theme::{self, RADIUS_LG, Tokens};
 use crate::titlebar::{self, Crumb};
 use crate::trash_page::TrashPage;
 use crate::tree::{self, Folds, MenuItem, MenuKind, Row, RowKey};
@@ -65,6 +65,8 @@ use crate::workspace::{Toast, ToastKind, Workspace, WorkspaceEvent};
 
 #[path = "shell_layout.rs"]
 mod layout_ui;
+#[path = "shell_tree.rs"]
+mod tree_ui;
 
 use layout_ui::{CHAT, LayoutUi, ResizeDrag};
 pub(crate) use layout_ui::{
@@ -422,6 +424,8 @@ struct Bench {
     first_run: Entity<FirstRun>,
     folds: Folds,
     cursor: tree::Cursor,
+    /// The tree's rows, scroll and pending reveal (4.2.1).
+    tree: tree_ui::TreeState,
     /// The tree's open menu (`Shift+F10`, `S`, `M`).
     tree_menu: Option<TreeMenu>,
     /// The row being renamed in place.
@@ -660,6 +664,7 @@ impl Shell {
             first_run,
             folds,
             cursor: tree::Cursor::default(),
+            tree: tree_ui::TreeState::default(),
             tree_menu: None,
             rename: None,
             find: (String::new(), None),
@@ -1190,7 +1195,6 @@ impl Shell {
         };
         if let Some(project) = project {
             bench.active_project = Some(project);
-            bench.folds.expand(&project.to_string());
         } else if bench.active_project.is_none() {
             // A page of no project opened first (Settings, Trash at
             // launch): the first project in the tree, so the status bar
@@ -1213,6 +1217,8 @@ impl Shell {
             dock.active = origin;
             cx.notify();
         });
+        // Opening a page by any route reveals its row (layout.md 4.2.1).
+        self.reveal_in_tree(false, cx);
         self.sync_page_kind_views(window, cx);
         self.save_layout(cx);
         if focus {
@@ -1264,7 +1270,11 @@ impl Shell {
                 {
                     bench.active_project = Some(project);
                 }
-                // The breadcrumb and the tree now know the entry's owner.
+                // The breadcrumb and the tree now know the entry's owner,
+                // whose row the tree reveals.
+                if current == Some(tab) {
+                    self.reveal_in_tree(false, cx);
+                }
                 cx.notify();
             }
             PageEvent::ShowTerminal(project) => self.show_session_terminal(*project, window, cx),
@@ -1840,6 +1850,7 @@ impl Shell {
             Command::NewTopic => self.open_palette(None, Some(CreateKind::Topic), window, cx),
             Command::NewEpic => self.open_palette(None, Some(CreateKind::Epic), window, cx),
             Command::NewProject => self.new_project(window, cx),
+            Command::TreeCollapseAll => self.collapse_all(cx),
             Command::AddEntry => self.with_record(
                 cx,
                 |page, window, cx| page.focus_composer(window, cx),
@@ -2755,24 +2766,6 @@ impl Shell {
 
     // ---- tree ----
 
-    fn rows(&mut self, cx: &mut Context<Self>) -> Vec<Row> {
-        match self.bench() {
-            Some(bench) => {
-                let projects = &bench.ws.read(cx).projects;
-                tree::rows(projects, &bench.folds)
-            }
-            None => Vec::new(),
-        }
-    }
-
-    fn toggle_fold(&mut self, key: String, cx: &mut Context<Self>) {
-        if let Some(bench) = self.bench() {
-            bench.folds.toggle(key);
-        }
-        self.save_layout(cx);
-        cx.notify();
-    }
-
     fn tree_key(&mut self, key: TreeKey, window: &mut Window, cx: &mut Context<Self>) {
         let rows = self.rows(cx);
         let Some(bench) = self.bench() else { return };
@@ -2828,9 +2821,12 @@ impl Shell {
                 (Some(_), Some(true)) => bench.cursor.set(&rows, at + 1),
                 _ => {}
             },
-            TreeKey::Open => match row.route() {
-                Some(route) => self.navigate(route, true, window, cx),
-                None => {
+            TreeKey::Open => match (row.route(), &row) {
+                (Some(route), _) => self.navigate(route, true, window, cx),
+                (None, Row::NewTopic { project, epic }) => {
+                    self.new_topic_in(*project, Some(*epic), window, cx)
+                }
+                (None, _) => {
                     if let Some(k) = row.fold_key() {
                         self.toggle_fold(k, cx);
                     }
@@ -2868,6 +2864,8 @@ impl Shell {
                 }
             }
         }
+        // The cursor's row stays in view, never under the sticky row.
+        self.reveal_cursor(cx);
         cx.notify();
     }
 
@@ -2941,14 +2939,23 @@ impl Shell {
             tree::Letter::Status => self.open_tree_menu(MenuKind::Status, &rows, cx),
             tree::Letter::Move => self.open_tree_menu(MenuKind::Epics, &rows, cx),
             tree::Letter::Rename => self.start_rename(&row, window, cx),
-            tree::Letter::Preview => {
-                if let Some(route) = row.route() {
+            tree::Letter::Preview => match (row.route(), &row) {
+                (Some(route), _) => {
                     if let Some(bench) = self.bench() {
                         bench.history.open(route);
                     }
                     self.show_route(route, false, window, cx);
                 }
-            }
+                // On a ghost row `Space` does what `Enter` does (6.1).
+                (None, Row::NewTopic { project, epic }) => {
+                    self.new_topic_in(*project, Some(*epic), window, cx)
+                }
+                (None, _) => {
+                    if let Some(k) = row.fold_key() {
+                        self.toggle_fold(k, cx);
+                    }
+                }
+            },
             tree::Letter::Find(query) => {
                 let from = if query.chars().count() == 1 {
                     at + 1
@@ -2961,6 +2968,7 @@ impl Shell {
                     }
                     bench.find = (query, Some(Instant::now()));
                 }
+                self.reveal_cursor(cx);
             }
         }
         cx.stop_propagation();
@@ -3086,7 +3094,6 @@ impl Shell {
     /// Save the inline edit; it stays with the typed text until the write
     /// succeeds (interaction.md 6.4).
     fn commit_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let rows = self.rows(cx);
         let Some(bench) = self.bench() else { return };
         let Some(Rename { key, state, saving }) = bench.rename.clone() else {
             return;
@@ -3095,9 +3102,25 @@ impl Shell {
             return;
         }
         let new = state.read(cx).value().trim().to_owned();
-        let row = rows.iter().find(|r| r.key() == key);
-        let unchanged = row.and_then(Row::title).is_none_or(|old| old == new);
-        let owner = row.and_then(owner_of);
+        // The row may be folded away or out of the drawn range: the record
+        // and its title come from the key.
+        let projects = &bench.ws.read(cx).projects;
+        let (owner, old) = match key {
+            RowKey::Route(Route::Project(id)) => (
+                Some(Owner::Project(id)),
+                tree::locate_project(projects, id).and_then(|l| l.project.map(|p| p.1)),
+            ),
+            RowKey::Route(Route::Epic(id)) => (
+                Some(Owner::Epic(id)),
+                tree::locate_epic(projects, id).and_then(|l| l.epic.map(|e| e.1)),
+            ),
+            RowKey::Route(Route::Topic(id)) => (
+                Some(Owner::Topic(id)),
+                tree::locate_topic(projects, id).and_then(|l| l.topic.map(|t| t.1)),
+            ),
+            _ => (None, None),
+        };
+        let unchanged = old.is_none_or(|old| old == new);
         let (Some(owner), false, false) = (owner, new.is_empty(), unchanged) else {
             self.cancel_rename(window, cx);
             return;
@@ -3149,150 +3172,6 @@ impl Shell {
             });
         }
         current
-    }
-
-    /// The Projects view (4.8.3): the tree, with Trash and Settings pinned
-    /// at its bottom; it fills its group.
-    fn projects_view(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let tokens = cx.global::<Tokens>().clone();
-        let t = &tokens;
-        let locale = settings::locale(cx);
-        let rows = self.rows(cx);
-        let current = self.tree_route(cx);
-        let Some(bench) = self.bench() else {
-            return div().into_any_element();
-        };
-        let cursor = bench.cursor.index(&rows);
-        let tree_focus = bench.tree_focus.clone();
-        // components.md 5: the keyboard cursor is a focus ring, which
-        // pointer input never draws (interaction.md 6.2).
-        let ring = tree_focus.is_focused(window) && window.last_input_was_keyboard();
-        let menu = bench.tree_menu;
-        let renaming = bench.rename.as_ref().map(|r| (r.key, r.state.clone()));
-        let menu_items = self.menu_items(&rows, cx);
-        let unread: Vec<bool> = match self.bench() {
-            Some(bench) => {
-                let ws = bench.ws.read(cx);
-                rows.iter()
-                    .map(|row| tree::row_unread(row, &ws.projects, &ws.unread))
-                    .collect()
-            }
-            None => vec![false; rows.len()],
-        };
-        let items: Vec<AnyElement> = rows
-            .iter()
-            .enumerate()
-            .map(|(i, row)| {
-                let key = row.key();
-                let menu = menu.filter(|m| m.row == key).map(|m| {
-                    let status = match row {
-                        Row::Topic { status, .. } => Some(*status),
-                        _ => None,
-                    };
-                    tree_menu(&menu_items, m, status, locale, t, cx)
-                });
-                let edit = renaming
-                    .as_ref()
-                    .filter(|(k, _)| *k == key)
-                    .map(|(_, state)| state.clone());
-                let cursor = ring && i == cursor && edit.is_none();
-                tree_row(
-                    row, i, current, unread[i], cursor, menu, edit, locale, t, cx,
-                )
-            })
-            .collect();
-        let on_trash = current == Some(Route::Trash);
-        let on_settings = current == Some(Route::Settings);
-        let pinned = div()
-            .flex()
-            .flex_col()
-            .flex_shrink_0()
-            .p(px(8.))
-            .border_t_1()
-            .border_color(t.border_subtle)
-            .child(
-                sidebar_row(
-                    "sidebar-trash",
-                    Icon::Trash2,
-                    text(locale, Key::TreeTrash),
-                    on_trash,
-                    t,
-                )
-                .on_click(cx.listener(|shell, _, window, cx| {
-                    shell.navigate(Route::Trash, true, window, cx)
-                })),
-            )
-            .child(
-                sidebar_row(
-                    "sidebar-settings",
-                    Icon::Settings,
-                    text(locale, Key::TreeSettings),
-                    on_settings,
-                    t,
-                )
-                .on_click(cx.listener(|shell, _, window, cx| shell.open_settings(window, cx))),
-            );
-        div()
-            .flex()
-            .flex_col()
-            .size_full()
-            .bg(t.bg_sunken)
-            .child(
-                div()
-                    .id("tree")
-                    .key_context("Tree")
-                    .track_focus(&tree_focus)
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .p(px(8.))
-                    .on_action(cx.listener(|s, _: &TreeUp, w, cx| s.tree_key(TreeKey::Up, w, cx)))
-                    .on_action(
-                        cx.listener(|s, _: &TreeDown, w, cx| s.tree_key(TreeKey::Down, w, cx)),
-                    )
-                    .on_action(
-                        cx.listener(|s, _: &TreeLeft, w, cx| s.tree_key(TreeKey::Left, w, cx)),
-                    )
-                    .on_action(
-                        cx.listener(|s, _: &TreeRight, w, cx| s.tree_key(TreeKey::Right, w, cx)),
-                    )
-                    .on_action(
-                        cx.listener(|s, _: &TreeOpen, w, cx| s.tree_key(TreeKey::Open, w, cx)),
-                    )
-                    .on_action(
-                        cx.listener(|s, _: &TreeDelete, w, cx| s.tree_key(TreeKey::Delete, w, cx)),
-                    )
-                    .on_action(
-                        cx.listener(|s, _: &TreeMoveUp, w, cx| s.tree_key(TreeKey::MoveUp, w, cx)),
-                    )
-                    .on_action(cx.listener(|s, _: &TreeMoveDown, w, cx| {
-                        s.tree_key(TreeKey::MoveDown, w, cx)
-                    }))
-                    .on_action(
-                        cx.listener(|s, _: &TreeHome, w, cx| s.tree_key(TreeKey::Home, w, cx)),
-                    )
-                    .on_action(cx.listener(|s, _: &TreeEnd, w, cx| s.tree_key(TreeKey::End, w, cx)))
-                    .on_action(cx.listener(|s, _: &DismissSidebar, w, cx| {
-                        if !s.close_tree_menu(cx) {
-                            s.dismiss_sidebar(w, cx)
-                        }
-                    }))
-                    .on_action(cx.listener(|s, _: &TreeOpenTab, w, cx| {
-                        let rows = s.rows(cx);
-                        let route = s
-                            .bench()
-                            .and_then(|b| rows.get(b.cursor.index(&rows)))
-                            .and_then(Row::route);
-                        if let Some(route) = route {
-                            s.open_in_tab(route, w, cx);
-                        }
-                    }))
-                    .on_action(cx.listener(|s, _: &Escape, w, cx| s.cancel_rename(w, cx)))
-                    .on_key_down(cx.listener(Self::tree_key_down))
-                    .children(items),
-            )
-            .child(pinned)
-            .into_any_element()
     }
 
     /// Read again what the status bar says about the active project when
@@ -4181,17 +4060,17 @@ fn key_loss(db: PathBuf, unreadable: bool) -> Content {
     }
 }
 
-/// Debug builds started with `ACTA_DEV_SEED=1` fill an empty database with
-/// sample data, the current directory as the project folder.
+/// Debug builds started with `ACTA_DEV_SEED=1` (or `bare`, or `long`) fill an
+/// empty database with sample data, the current directory as the project folder.
 fn seed_if_asked(store: &mut acta_core::Store) {
     let seed = std::env::var("ACTA_DEV_SEED").unwrap_or_default();
     if cfg!(debug_assertions)
-        && (seed == "1" || seed == "bare")
+        && (seed == "1" || seed == "bare" || seed == "long")
         && let Some(dir) = crate::launch_dir()
-        && let Err(err) = if seed == "bare" {
-            crate::dev_seed::bare(store, &dir)
-        } else {
-            crate::dev_seed::seed(store, &dir)
+        && let Err(err) = match seed.as_str() {
+            "bare" => crate::dev_seed::bare(store, &dir),
+            "long" => crate::dev_seed::long(store, &dir),
+            _ => crate::dev_seed::seed(store, &dir),
         }
     {
         crate::log::line(&format!(
@@ -4209,7 +4088,9 @@ fn row_project(projects: &[acta_core::model::ProjectTree], row: &Row) -> Option<
         Row::Topic { id, .. } => {
             tree::locate_topic(projects, *id).and_then(|l| l.project.map(|p| p.0))
         }
-        Row::Inbox { project, .. } | Row::Knowledge { project, .. } => Some(*project),
+        Row::Inbox { project, .. } | Row::Knowledge { project } | Row::NewTopic { project, .. } => {
+            Some(*project)
+        }
         Row::Closed { .. } => None,
     }
 }
@@ -4260,247 +4141,6 @@ enum TreeKey {
     MoveDown,
     Home,
     End,
-}
-
-/// One row of the tree (docs/design/components.md 5, list / tree row).
-#[allow(clippy::too_many_arguments)]
-fn tree_row(
-    row: &Row,
-    index: usize,
-    current: Option<Route>,
-    unread: bool,
-    cursor: bool,
-    menu: Option<AnyElement>,
-    edit: Option<Entity<InputState>>,
-    locale: Locale,
-    t: &Tokens,
-    cx: &mut Context<Shell>,
-) -> AnyElement {
-    let selected = row.route().is_some() && row.route() == current;
-    let id = SharedString::from(format!("tree-row-{index}"));
-    let (hover, primary) = (t.fill_hover, t.text_primary);
-    let rest = if selected {
-        t.text_primary
-    } else {
-        t.text_secondary
-    };
-    let indent = row.depth() as f32 * 16.;
-    let mut el = div()
-        .id(id.clone())
-        .group(id.clone())
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap(px(8.))
-        .h(px(28.))
-        .pl(px(8. + indent))
-        .pr(px(8.))
-        .rounded(px(RADIUS_SM))
-        .when(selected, |this| this.bg(t.fill_selected))
-        .when(!selected, |this| this.hover(move |s| s.bg(hover)))
-        .when(cursor, |this| this.shadow(ui::ring_shadow(t, false)));
-    let chevron = |expanded: bool, key: String, cx: &mut Context<Shell>| {
-        div()
-            .id(SharedString::from(format!("tree-fold-{index}")))
-            .on_click(cx.listener(move |shell, _, _, cx| {
-                cx.stop_propagation();
-                shell.toggle_fold(key.clone(), cx);
-            }))
-            .child(icon(
-                if expanded {
-                    Icon::ChevronDown
-                } else {
-                    Icon::ChevronRight
-                },
-                16.,
-                t.text_secondary,
-            ))
-    };
-    // Renaming: the title becomes an inline edit (components.md 5).
-    let title = |role: type_scale::TypeRole, label: String, color| match &edit {
-        Some(state) => role
-            .el()
-            .flex_1()
-            .min_w_0()
-            .text_color(primary)
-            .child(Input::new(state).appearance(false))
-            .into_any_element(),
-        None => role
-            .el()
-            .flex_1()
-            .min_w_0()
-            .truncate()
-            .text_color(color)
-            .group_hover(id.clone(), move |s| s.text_color(primary))
-            .child(label)
-            .into_any_element(),
-    };
-    let count = |n: i64| {
-        type_scale::SMALL
-            .el()
-            .font_features(type_scale::tabular())
-            .text_color(if selected {
-                t.text_secondary
-            } else {
-                t.text_tertiary
-            })
-            .child(short_count(n.max(0) as u64))
-    };
-    // components.md 5, list / tree row: hover on a project or epic row
-    // reveals a compact ghost `plus`, "New topic" there.
-    let plus = |project: ProjectId, epic: Option<EpicId>, cx: &mut Context<Shell>| {
-        div()
-            .invisible()
-            .group_hover(id.clone(), |s| s.visible())
-            .child(
-                ui::ghost_icon_button(
-                    format!("tree-plus-{index}"),
-                    Icon::Plus,
-                    24.,
-                    false,
-                    false,
-                    true,
-                    t,
-                )
-                .tooltip(ui::tip(text(locale, Key::TopicNew)))
-                .on_click(cx.listener(move |shell, _, window, cx| {
-                    cx.stop_propagation();
-                    if let Some(bench) = shell.bench() {
-                        bench.create_in = Some((project, epic));
-                    }
-                    shell.open_palette(None, Some(CreateKind::Topic), window, cx);
-                })),
-            )
-    };
-    // components-app.md 5, Claude Code sessions: one `bot` on the row a
-    // live session focuses, in its state's colour.
-    let glyph = session_glyph(row, index, locale, t, cx);
-    el = match row {
-        Row::Project {
-            title: name,
-            expanded,
-            id: pid,
-        } => el
-            .child(chevron(*expanded, pid.to_string(), cx))
-            .child(title(type_scale::UI_STRONG, name.clone(), t.text_primary))
-            .children(glyph)
-            .child(plus(*pid, None, cx)),
-        Row::Inbox { count: n, .. } => el
-            .child(icon(Icon::Inbox, 16., rest))
-            .child(title(
-                if selected {
-                    type_scale::UI_STRONG
-                } else {
-                    type_scale::UI
-                },
-                text(locale, Key::TreeInbox),
-                rest,
-            ))
-            .when(*n > 0, |this| this.child(count(*n))),
-        Row::Knowledge { count: n, .. } => el
-            .child(icon(Icon::Library, 16., rest))
-            .child(title(
-                if selected {
-                    type_scale::UI_STRONG
-                } else {
-                    type_scale::UI
-                },
-                text(locale, Key::TreeKnowledge),
-                rest,
-            ))
-            .when(*n > 0, |this| this.child(count(*n))),
-        Row::Epic {
-            title: name,
-            expanded,
-            id: eid,
-            project,
-        } => el
-            .child(chevron(*expanded, eid.to_string(), cx))
-            .child(title(type_scale::UI_STRONG, name.clone(), rest))
-            .children(glyph)
-            .child(plus(*project, Some(*eid), cx)),
-        Row::Topic {
-            title: name,
-            status,
-            ..
-        } => {
-            let color = if status.is_open() {
-                rest
-            } else {
-                t.text_tertiary
-            };
-            // The 14 glyph sits in a 16 slot, so topic titles line up
-            // with the Inbox and Knowledge titles above them.
-            el.child(icon_slot(ui::status_glyph(*status, 14., t)))
-                .child(title(
-                    if selected {
-                        type_scale::UI_STRONG
-                    } else {
-                        type_scale::UI
-                    },
-                    name.clone(),
-                    color,
-                ))
-                .children(glyph)
-        }
-        Row::Closed {
-            count: n,
-            group,
-            shown,
-            ..
-        } => {
-            let key = group.key();
-            let _ = shown;
-            // Under the titles of its group, not under their glyphs.
-            el.on_click(cx.listener(move |shell, _, _, cx| shell.toggle_fold(key.clone(), cx)))
-                .child(div().w(px(16.)).flex_shrink_0())
-                .child(type_scale::SMALL.el().text_color(t.text_tertiary).child(tr(
-                    locale,
-                    Key::TreeClosed,
-                    &[("n", Arg::Count(*n as u64))],
-                )))
-        }
-    };
-    // The trailing slot: the unread dot (components.md 5, list / tree row).
-    if unread {
-        el = el.child(busy_dot(t));
-    }
-    if let Some(route) = row.route() {
-        // Mod+click or a middle click opens the row in a new tab (4.4).
-        el = el
-            .on_click(
-                cx.listener(move |shell, event: &gpui_kit::ClickEvent, window, cx| {
-                    let rows = shell.rows(cx);
-                    if let Some(bench) = shell.bench() {
-                        bench.cursor.set(&rows, index);
-                        bench.tree_menu = None;
-                    }
-                    if event.modifiers().secondary(cx) {
-                        shell.open_in_tab(route, window, cx)
-                    } else {
-                        shell.navigate(route, true, window, cx)
-                    }
-                }),
-            )
-            .on_mouse_down(
-                gpui_kit::MouseButton::Middle,
-                cx.listener(move |shell, _, window, cx| shell.open_in_tab(route, window, cx)),
-            )
-            // A right click opens the row's menu (components.md 5).
-            .on_mouse_down(
-                gpui_kit::MouseButton::Right,
-                cx.listener(move |shell, _, window, cx| {
-                    let rows = shell.rows(cx);
-                    let Some(bench) = shell.bench() else { return };
-                    bench.cursor.set(&rows, index);
-                    let handle = bench.tree_focus.clone();
-                    window.focus(&handle, cx);
-                    shell.open_tree_menu(MenuKind::Row, &rows, cx);
-                }),
-            );
-    }
-    el.children(menu.map(|menu| div().absolute().top_0().left(px(8. + indent)).child(menu)))
-        .into_any_element()
 }
 
 /// The plan usage meters of the status bar (components-app.md 5, Plan
@@ -4579,46 +4219,6 @@ fn usage_items(t: &Tokens, locale: Locale, cx: &mut Context<Shell>) -> Vec<AnyEl
         .collect()
 }
 
-/// The `bot` glyph of a tree row whose record a live Claude Code session
-/// focuses, with "Claude Code is working here · since 14:05" as tooltip.
-fn session_glyph(
-    row: &Row,
-    index: usize,
-    locale: Locale,
-    t: &Tokens,
-    cx: &App,
-) -> Option<AnyElement> {
-    let owner = match row {
-        Row::Project { id, .. } => Owner::Project(*id),
-        Row::Epic { id, .. } => Owner::Epic(*id),
-        Row::Topic { id, .. } => Owner::Topic(*id),
-        _ => return None,
-    };
-    let live = crate::sessions::live(cx);
-    let here = crate::sessions::here(live, owner)?;
-    let mut tip = crate::sessions::here_text(locale, here);
-    if let Some(first) = live
-        .iter()
-        .filter(|s| crate::sessions::place(s) == owner)
-        .min_by_key(|s| s.started_at)
-    {
-        tip.push_str(" \u{b7} ");
-        tip.push_str(&crate::sessions::since(locale, first.started_at));
-    }
-    Some(
-        div()
-            .id(SharedString::from(format!("tree-claude-{index}")))
-            .flex_shrink_0()
-            .child(icon(
-                Icon::Bot,
-                14.,
-                crate::sessions::state_color(here.state, t),
-            ))
-            .tooltip(ui::tip(tip))
-            .into_any_element(),
-    )
-}
-
 /// The open menu of a tree row (components.md 5, Context menu): the row
 /// menu, the status menu (`S`, then `1` to `6`) or the epics (`M`).
 fn tree_menu(
@@ -4683,63 +4283,15 @@ fn tree_menu(
     .into_any_element()
 }
 
-/// A 16 slot centring a smaller glyph, so rows with 14 and 16 icons keep
-/// one title column.
-fn icon_slot(glyph: impl IntoElement) -> gpui_kit::Div {
-    div()
-        .size(px(16.))
-        .flex_shrink_0()
-        .flex()
-        .items_center()
-        .justify_center()
-        .child(glyph)
-}
-
-/// A pinned row of the sidebar (docs/design/components.md 5, list / tree row).
-fn sidebar_row(
-    id: &'static str,
-    glyph: Icon,
-    label: String,
-    selected: bool,
-    tokens: &Tokens,
-) -> gpui_kit::Stateful<gpui_kit::Div> {
-    let (hover, primary) = (tokens.fill_hover, tokens.text_primary);
-    let rest = if selected {
-        tokens.text_primary
-    } else {
-        tokens.text_secondary
-    };
-    let role = if selected {
-        type_scale::UI_STRONG
-    } else {
-        type_scale::UI
-    };
-    div()
-        .id(id)
-        .group(id)
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap(px(8.))
-        .h(px(28.))
-        .px(px(8.))
-        .rounded(px(RADIUS_SM))
-        .when(selected, |this| this.bg(tokens.fill_selected))
-        .when(!selected, |this| this.hover(move |style| style.bg(hover)))
-        .child(icon(glyph, 16., rest).group_hover(id, move |style| style.text_color(primary)))
-        .child(
-            role.el()
-                .min_w_0()
-                .truncate()
-                .text_color(rest)
-                .group_hover(id, move |style| style.text_color(primary))
-                .child(label),
-        )
-}
-
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let tokens = cx.global::<Tokens>().clone();
+        // A hidden tree reports no pointer leaving it: it is not hovered.
+        if !self.view_drawn(ViewId::Projects, window)
+            && let Some(bench) = self.bench()
+        {
+            bench.tree.clear_hover();
+        }
         // Windows: 1px outline when not maximized (docs/design/layout.md 4.3).
         let outlined = cfg!(target_os = "windows") && !window.is_maximized();
         let crumbs = match &self.content {
@@ -4906,6 +4458,7 @@ impl Render for Shell {
                 // cursor on the open page's row; in a narrow window the
                 // left sidebar shows over the page.
                 if s.is_workbench() {
+                    s.reveal_in_tree(true, cx);
                     let rows = s.rows(cx);
                     let current = s.tree_route(cx);
                     if let Some(bench) = s.bench()
