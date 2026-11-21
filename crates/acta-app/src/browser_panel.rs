@@ -53,6 +53,9 @@ const IDLE_CLOSE: Duration = Duration::from_secs(600);
 const HIGHLIGHT: Duration = Duration::from_millis(300);
 /// The size a web view takes when it was never on screen.
 const PARKED_SIZE: (f64, f64) = (1024., 700.);
+/// The web view behind a page that paints no background: white, as in
+/// any browser (RGBA).
+const PAGE_BACKGROUND: (u8, u8, u8, u8) = (255, 255, 255, 255);
 const CLEAR_ATTEMPTS: u32 = 40;
 const CLEAR_PAUSE: Duration = Duration::from_millis(250);
 
@@ -576,16 +579,12 @@ impl BrowserPanel {
         let popups = self.shared.clone();
         let popup_jobs = self.jobs.clone();
         let loads = self.jobs.clone();
-        let surface = gpui_kit::Rgba::from(cx.global::<Tokens>().bg_sunken);
-        let channel = |v: f32| (v.clamp(0., 1.) * 255.).round() as u8;
         let builder = wry::WebViewBuilder::new_with_web_context(&mut context)
             .with_url("about:blank")
-            .with_background_color((
-                channel(surface.r),
-                channel(surface.g),
-                channel(surface.b),
-                255,
-            ))
+            // A browser's default page background, whatever Acta's theme:
+            // a page that sets none is black on white for the human and in
+            // the agent's screenshots, as in any browser.
+            .with_background_color(PAGE_BACKGROUND)
             .with_devtools(false)
             // Never take the keyboard on creation: created on an agent's
             // call, it must not activate Acta's window (run: a new view
