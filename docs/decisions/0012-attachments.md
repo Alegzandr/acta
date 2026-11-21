@@ -1,6 +1,6 @@
 # 0012 - Attachments on notes, entries and descriptions
 
-Status: accepted for storage, viewing in the app, Save as, export and agent access; **proposed** for "Open in another app", which writes a decrypted copy to disk and so needs the user's acceptance as an exception to CLAUDE.md's plaintext rule (below). Until it is accepted, the UI ships without that one action.
+Status: accepted. "Open in another app" (section 8) was rejected by the user on 2026-11-21: no decrypted copy is ever written; files outside the in-app viewer leave Acta only through Save as.
 Date: 2026-11-21
 
 ## Context
@@ -33,7 +33,7 @@ Encryption, snapshots, live refresh, export and atomicity with the note come fro
 
 **7. Getting a file out.** "Save as..." writes the decrypted file where the human chooses, through the system's save dialog: an explicit act, like an export, and the same kind of plaintext the human asked for. It is always available.
 
-**8. "Open in another app" (proposed).** For PDFs and any other file, an external application needs a file on disk. Acta would write the decrypted copy into `<data dir>/open/<random>/<file name>` (a per-user directory: inside `%LOCALAPPDATA%` on Windows, mode 0700 with the file at 0600 on macOS and Linux), hand it to the system's opener, and delete the directory's contents when Acta quits and again at the next start (after a crash). The first use shows the sentence of the catalogue ("Acta writes a decrypted copy for the other app and deletes it when Acta quits.") with Open and Cancel, once per installation. This is a new plaintext file for as long as Acta runs, so it ships only when the user accepts it and CLAUDE.md lists it next to the web view profiles as an accepted exception. Without it the human uses Save as.
+**8. "Open in another app" (rejected by the user, 2026-11-21; kept for the record).** For PDFs and any other file, an external application needs a file on disk. Acta would write the decrypted copy into `<data dir>/open/<random>/<file name>` (a per-user directory: inside `%LOCALAPPDATA%` on Windows, mode 0700 with the file at 0600 on macOS and Linux), hand it to the system's opener, and delete the directory's contents when Acta quits and again at the next start (after a crash). The first use shows the sentence of the catalogue ("Acta writes a decrypted copy for the other app and deletes it when Acta quits.") with Open and Cancel, once per installation. This is a new plaintext file for as long as Acta runs, so it ships only when the user accepts it and CLAUDE.md lists it next to the web view profiles as an accepted exception. Without it the human uses Save as.
 
 **9. Export.** The `.acta.json` export includes attachments by default: one `blobs` array, deduplicated by hash, each blob's content in base64, and attachment records referencing blobs by hash. The export dialog shows the size they add and a checkbox, "Include attached files (32 MB)", on by default; unchecked, attachment records are exported with their names and sizes and no content, and an import of that file lists them as "not in the export". Import deduplicates by hash. The export format version goes up by one; older files import with no attachments.
 
