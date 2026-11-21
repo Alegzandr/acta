@@ -305,7 +305,7 @@ impl ActaServer {
 
     #[tool(
         name = "update",
-        description = "Call to change a topic, epic or note: title, description, state, status, or move a topic to another epic. A note's status open puts it back in the inbox.",
+        description = "Call to change a topic, epic or note: title, description, state, status, due date, or move a topic to another epic. A note's status open puts it back in the inbox.",
         annotations(idempotent_hint = false)
     )]
     fn update(&self, Parameters(a): Parameters<UpdateArgs>) -> CallToolResult {
@@ -314,7 +314,7 @@ impl ActaServer {
 
     #[tool(
         name = "find",
-        description = "Call to locate topics, epics, notes or timeline entries in this project, by query or filters. kind=note without query lists the inbox.",
+        description = "Call to locate topics, epics, notes or timeline entries in this project, by query or filters. kind=note without query lists the inbox; due lists deadlines.",
         annotations(read_only_hint = true)
     )]
     fn find(&self, Parameters(a): Parameters<FindArgs>) -> CallToolResult {

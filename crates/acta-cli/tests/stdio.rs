@@ -841,3 +841,131 @@ fn link_attached_and_setup_remove_round_trip_auto_memory() {
     assert!(stdout.contains("back on in 1 folder"), "{stdout}");
     assert!(!broken_local.exists());
 }
+
+/// Due dates and the Attention line over stdio (data.md requests 16 and
+/// 17): the agent sets, finds and clears a date; the CLI does the same with
+/// `--due` and reads it back with `--json`. Dates far in the past or the
+/// future keep the test independent of today.
+#[test]
+fn due_dates_set_found_and_cleared_over_stdio() {
+    let tmp = tempfile::tempdir().unwrap();
+    let data = tmp.path().join("data");
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    assert!(cli(&data, &repo, &["link"], "").0);
+    let (ok, out, err) = cli(&data, &repo, &["create", "epic"], "Storage");
+    assert!(ok && out.starts_with("ok E-1"), "{out}{err}");
+    for title in ["Encrypted storage", "Snapshots"] {
+        let (ok, out, err) = cli(&data, &repo, &["create", "topic", "--epic", "E-1"], title);
+        assert!(ok && out.starts_with("ok T-"), "{out}{err}");
+    }
+
+    let mut m = Mcp::start(&data, &repo, false);
+    let (err, ack) = m.call("update", json!({"id": "T-1", "due": "2000-01-03"}));
+    assert!(
+        !err && ack.starts_with("ok T-1 · due 2000-01-03 ("),
+        "{ack}"
+    );
+    assert!(chars(&ack) <= 160);
+    let (err, text) = m.call("update", json!({"id": "T-2", "due": "next friday"}));
+    assert!(err, "{text}");
+    assert_eq!(
+        text,
+        "due must be YYYY-MM-DD (2000-2099) or \"\" to clear, got \"next friday\""
+    );
+    let (err, ack) = m.call("update", json!({"id": "E-1", "due": "2000-01-05"}));
+    assert!(!err && ack.starts_with("ok E-1 · due 2000-01-05"), "{ack}");
+    let (err, ack) = m.call("update", json!({"id": "P-1", "due": "2099-12-31"}));
+    assert!(!err && ack.starts_with("ok P-1 · due 2099-12-31"), "{ack}");
+    let (err, ack) = m.call(
+        "create",
+        json!({"items": [{"kind": "topic", "title": "Backups", "epic": "E-1", "due": "2099-06-01"}]}),
+    );
+    assert!(!err && ack.starts_with("ok T-3"), "{ack}");
+
+    let (err, late) = m.call("find", json!({"due": "overdue"}));
+    assert!(!err && chars(&late) <= 2_000, "{late}");
+    let rows: Vec<&str> = late
+        .lines()
+        .filter(|l| l.starts_with("T-") || l.starts_with("E-"))
+        .collect();
+    assert_eq!(rows.len(), 2, "{late}");
+    assert!(
+        rows[0].starts_with("T-1 planned  Encrypted storage · E-1 · overdue ")
+            && rows[0].ends_with("(due 2000-01-03)"),
+        "{late}"
+    );
+    assert!(rows[1].starts_with("E-1 epic  Storage"), "{late}");
+    assert!(late.ends_with("2 hits"), "{late}");
+
+    let (_, project) = m.call("brief", json!({"id": "P-1"}));
+    assert!(chars(&project) <= 1_200, "{project}");
+    let attention = project
+        .lines()
+        .find(|l| l.starts_with("Attention: "))
+        .unwrap_or_else(|| panic!("{project}"));
+    assert!(
+        attention.starts_with("Attention: overdue T-1 "),
+        "{project}"
+    );
+    assert!(attention.contains(", E-1 "), "{project}");
+    assert!(chars(attention) <= 160);
+    assert!(project.contains("· due 2099-12-31"), "{project}");
+    let (_, topic) = m.call("brief", json!({"id": "T-1"}));
+    assert!(
+        topic.contains("T-1 Encrypted storage · planned · overdue "),
+        "{topic}"
+    );
+    assert!(topic.contains("(due 2000-01-03)"), "{topic}");
+    // The session-start briefing is the brief: it carries the segments.
+    let (_, hook) = m.call("hook", json!({"event": "compact", "session": "e2e-due"}));
+    let v: Value = serde_json::from_str(&hook).unwrap();
+    let ctx = v["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
+    assert!(
+        chars(ctx) <= 1_200 && ctx.contains("Attention: overdue"),
+        "{ctx}"
+    );
+
+    let (err, ack) = m.call("update", json!({"id": "T-1", "due": ""}));
+    assert!(!err && ack == "ok T-1 · due cleared", "{ack}");
+    let (_, late) = m.call("find", json!({"due": "overdue", "kind": "topic"}));
+    assert_eq!(late, "0 hits");
+    drop(m);
+
+    // The CLI: --due sets and clears, --json reads back.
+    let (ok, out, err) = cli(
+        &data,
+        &repo,
+        &["update", "T-2", "--due", "2000-02-01", "--json"],
+        "",
+    );
+    assert!(ok, "{out}{err}");
+    let v: Value = serde_json::from_str(out.trim()).unwrap();
+    assert_eq!(
+        v,
+        json!({"id": "T-2", "due": "2000-02-01", "overdue": true})
+    );
+    let (ok, out, err) = cli(&data, &repo, &["find", "--due", "overdue", "--json"], "");
+    assert!(ok, "{out}{err}");
+    let v: Value = serde_json::from_str(out.trim()).unwrap();
+    let ids: Vec<&str> = v["hits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|h| h["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["E-1", "T-2"], "{out}");
+    assert_eq!(v["hits"][1]["due"], "2000-02-01");
+    assert_eq!(v["hits"][1]["overdue"], true);
+    let (ok, out, err) = cli(&data, &repo, &["update", "T-2", "--due", "friday"], "");
+    assert!(!ok && err.contains("due must be YYYY-MM-DD"), "{out}{err}");
+    let (ok, out, _) = cli(&data, &repo, &["update", "T-2", "--due", ""], "");
+    assert!(ok && out.trim() == "ok T-2 · due cleared", "{out}");
+    let (ok, out, _) = cli(&data, &repo, &["find", "--due", "overdue"], "");
+    assert!(
+        ok && out.contains("E-1 epic  Storage") && out.trim_end().ends_with("1 hit"),
+        "{out}"
+    );
+}

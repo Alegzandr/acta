@@ -3,6 +3,7 @@
 //! server and the CLI are thin transports over this module.
 
 pub mod args;
+pub mod due;
 pub mod git;
 pub mod presence;
 pub mod render;

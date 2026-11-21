@@ -1628,6 +1628,7 @@ fn a_write_failing_after_validation_rolls_the_whole_triage_back() {
             title: "Sync".into(),
             description: String::new(),
             notes: vec![NoteId(1)],
+            due: None,
         },
         Plan::Topic {
             epic: Some(EpicRef::Item(0)),
@@ -1635,6 +1636,7 @@ fn a_write_failing_after_validation_rolls_the_whole_triage_back() {
             description: String::new(),
             status: Status::Draft,
             notes: vec![NoteId(2)],
+            due: None,
         },
     ];
     let e = ts
@@ -1650,4 +1652,507 @@ fn a_write_failing_after_validation_rolls_the_whole_triage_back() {
     assert!(s.note(NoteId(1)).unwrap().is_open());
     assert!(s.note(NoteId(3)).unwrap().is_open());
     assert_eq!(s.inbox(p, PageReq::first(10)).unwrap().total, 5);
+}
+
+// ---- due dates and the Overview (data.md requests 16 and 17) ----
+
+fn day(s: &str) -> crate::date::Date {
+    crate::date::Date::parse_iso(s).unwrap()
+}
+
+/// A session reading on a fixed day, in UTC.
+fn dated(session: &mut Session, today: crate::date::Date) {
+    session.zone = crate::date::Zone::UTC;
+    session.today = Some(today);
+}
+
+fn set_due(a: &mut Agent<'_>, id: String, due: &str) -> Reply {
+    a.update(UpdateArgs {
+        id,
+        due: Some(due.into()),
+        ..Default::default()
+    })
+}
+
+#[test]
+fn due_dates_are_set_found_and_cleared_exactly() {
+    let mut ts = test_support::open();
+    let h = Author::Human;
+    let s = &mut ts.store;
+    let p = s.create_project("Acta", "", h).unwrap();
+    let e = s.create_epic(p, "Storage", "", h).unwrap();
+    let topic = |s: &mut Store, title: &str, status| {
+        s.create_topic(
+            NewTopic {
+                project: p,
+                epic: Some(e),
+                title: title.into(),
+                description: String::new(),
+                status,
+            },
+            h,
+        )
+        .unwrap()
+    };
+    let t1 = topic(s, "Encrypted storage", Status::Active);
+    let t2 = topic(s, "Snapshots", Status::Planned);
+    let done = topic(s, "Keychain", Status::Done);
+    let note = s.add_note(p, "Ask Alexandre about backups", h).unwrap();
+    let mut sess = Session::unbound(Author::Claude);
+    sess.project = Some(p);
+    sess.focus = Some(Owner::Topic(t1));
+    dated(&mut sess, day("2026-11-21"));
+    let mut a = agent(&mut ts.store, &mut sess);
+
+    assert_eq!(
+        set_due(&mut a, t1.to_string(), "2026-12-15").unwrap(),
+        format!("ok {t1} · due 2026-12-15 (in 24d)")
+    );
+    assert_eq!(
+        set_due(&mut a, t1.to_string(), "friday").unwrap_err(),
+        "due must be YYYY-MM-DD (2000-2099) or \"\" to clear, got \"friday\""
+    );
+    assert!(set_due(&mut a, t1.to_string(), "2100-01-01").is_err());
+    let n = set_due(&mut a, note.to_string(), "2026-12-15").unwrap_err();
+    assert!(n.contains("a note has no due date"), "{n}");
+    assert_eq!(
+        set_due(&mut a, p.to_string(), "2027-02-03").unwrap(),
+        format!("ok {p} · due 2027-02-03 (in 74d)")
+    );
+    let refused = a
+        .update(UpdateArgs {
+            id: p.to_string(),
+            title: Some("x".into()),
+            due: Some("2027-02-03".into()),
+            ..Default::default()
+        })
+        .unwrap_err();
+    assert!(refused.contains("only due"), "{refused}");
+    // A date with other fields: one ack naming both.
+    let both = a
+        .update(UpdateArgs {
+            id: t2.to_string(),
+            status: Some("active".into()),
+            due: Some("2026-11-18".into()),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(
+        both,
+        format!("ok {t2} updated: status · due 2026-11-18 (3d ago)")
+    );
+    set_due(&mut a, e.to_string(), "2026-11-19").unwrap();
+    set_due(&mut a, done.to_string(), "2026-11-01").unwrap();
+    // A bad date refuses the whole update: the title is not written.
+    assert!(
+        a.update(UpdateArgs {
+            id: t1.to_string(),
+            title: Some("Renamed".into()),
+            due: Some("soon".into()),
+            ..Default::default()
+        })
+        .is_err()
+    );
+    assert_eq!(a.store.topic(t1).unwrap().title, "Encrypted storage");
+
+    // Briefs carry the segments.
+    let brief = a.brief(BriefArgs::default()).unwrap();
+    assert!(
+        brief.contains(&format!(
+            "{t1} Encrypted storage · active · due 12-15 (24d)"
+        )),
+        "{brief}"
+    );
+    let eb = a
+        .brief(BriefArgs {
+            id: Some(e.to_string()),
+            focus: false,
+        })
+        .unwrap();
+    assert!(eb.contains("· overdue 2d (due 11-19)"), "{eb}");
+    assert!(
+        eb.contains(&format!("{t2} active  Snapshots · overdue 3d")),
+        "{eb}"
+    );
+    assert!(
+        eb.contains(&format!("{t1} active  Encrypted storage · due 12-15")),
+        "{eb}"
+    );
+    assert!(
+        !eb.contains("Keychain · "),
+        "a closed topic has no segment: {eb}"
+    );
+    assert!(eb.contains(&format!("Attention: overdue {t2} 3d")), "{eb}");
+    let pb = a
+        .brief(BriefArgs {
+            id: Some(p.to_string()),
+            focus: false,
+        })
+        .unwrap();
+    assert!(pb.contains("· due 2027-02-03 (74d)"), "{pb}");
+    assert!(
+        pb.contains(&format!("Attention: overdue {t2} 3d, {e} 2d")),
+        "{pb}"
+    );
+    assert!(!pb.contains("Overdue:"), "{pb}");
+
+    // find(due=...): open records by date, each line ending with its segment.
+    let late = a
+        .find(FindArgs {
+            due: Some("overdue".into()),
+            ..Default::default()
+        })
+        .unwrap();
+    let lines: Vec<&str> = late.lines().filter(|l| l.contains("overdue")).collect();
+    assert_eq!(lines.len(), 2, "{late}");
+    assert!(
+        lines[0].starts_with(&t2.to_string()) && lines[0].ends_with("· overdue 3d (due 11-18)"),
+        "{late}"
+    );
+    assert!(
+        lines[1].starts_with(&e.to_string()) && lines[1].ends_with("· overdue 2d (due 11-19)"),
+        "{late}"
+    );
+    assert!(!late.contains("Keychain"), "{late}");
+    assert!(late.ends_with("2 hits"), "{late}");
+    let week = a
+        .find(FindArgs {
+            due: Some("week".into()),
+            ..Default::default()
+        })
+        .unwrap();
+    assert!(week.ends_with("2 hits"), "{week}");
+    a.session.today = Some(day("2026-12-10"));
+    let week = a
+        .find(FindArgs {
+            due: Some("week".into()),
+            kind: Some("topic".into()),
+            ..Default::default()
+        })
+        .unwrap();
+    assert!(
+        week.contains("Encrypted storage") && week.ends_with("2 hits"),
+        "{week}"
+    );
+    a.session.today = Some(day("2026-11-21"));
+    for bad in [
+        FindArgs {
+            due: Some("soon".into()),
+            ..Default::default()
+        },
+        FindArgs {
+            due: Some("overdue".into()),
+            kind: Some("note".into()),
+            ..Default::default()
+        },
+        FindArgs {
+            due: Some("overdue".into()),
+            query: Some("storage".into()),
+            ..Default::default()
+        },
+    ] {
+        assert!(a.find(bad).is_err());
+    }
+    let json: serde_json::Value = serde_json::from_str(
+        &a.find_json(FindArgs {
+            due: Some("overdue".into()),
+            ..Default::default()
+        })
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(json["total"], 2);
+    assert_eq!(json["hits"][0]["due"], "2026-11-18");
+    assert_eq!(json["hits"][0]["overdue"], true);
+    let rec: serde_json::Value =
+        serde_json::from_str(&a.record_json(&t1.to_string()).unwrap()).unwrap();
+    assert_eq!(rec["due"], "2026-12-15");
+    assert_eq!(rec["overdue"], false);
+
+    // Cleared.
+    assert_eq!(
+        set_due(&mut a, t1.to_string(), "").unwrap(),
+        format!("ok {t1} · due cleared")
+    );
+    assert_eq!(a.store.topic(t1).unwrap().due_on, None);
+
+    // create: dates on topic and epic items; a bad one writes nothing.
+    let before = a.store.epics(p).unwrap().len();
+    let bad = a
+        .create(CreateArgs {
+            items: vec![
+                CreateItem {
+                    kind: "epic".into(),
+                    title: "Sync".into(),
+                    due: Some("2026-12-01".into()),
+                    ..Default::default()
+                },
+                CreateItem {
+                    kind: "topic".into(),
+                    title: "Merge".into(),
+                    due: Some("next week".into()),
+                    ..Default::default()
+                },
+            ],
+            dismiss: None,
+        })
+        .unwrap_err();
+    assert!(bad.starts_with("item 2: due must be YYYY-MM-DD"), "{bad}");
+    assert_eq!(a.store.epics(p).unwrap().len(), before);
+    let note_due = a
+        .create(CreateArgs {
+            items: vec![CreateItem {
+                kind: "note".into(),
+                title: "x".into(),
+                due: Some("2026-12-01".into()),
+                ..Default::default()
+            }],
+            dismiss: None,
+        })
+        .unwrap_err();
+    assert!(note_due.contains("not due"), "{note_due}");
+    let ack = a
+        .create(CreateArgs {
+            items: vec![
+                CreateItem {
+                    kind: "epic".into(),
+                    title: "Sync".into(),
+                    due: Some("2026-12-01".into()),
+                    ..Default::default()
+                },
+                CreateItem {
+                    kind: "topic".into(),
+                    title: "Merge".into(),
+                    epic: Some("@1".into()),
+                    due: Some("2026-12-20".into()),
+                    ..Default::default()
+                },
+            ],
+            dismiss: None,
+        })
+        .unwrap();
+    assert!(ack.starts_with("ok E-"), "{ack}");
+    let sync = a
+        .store
+        .epics(p)
+        .unwrap()
+        .into_iter()
+        .find(|x| x.title == "Sync")
+        .unwrap();
+    assert_eq!(sync.due_on, Some(day("2026-12-01")));
+}
+
+#[test]
+fn an_idle_active_topic_says_so_in_its_header() {
+    let mut ts = test_support::open();
+    let h = Author::Human;
+    let p = ts.store.create_project("Acta", "", h).unwrap();
+    let t = ts
+        .store
+        .create_topic(
+            NewTopic {
+                project: p,
+                epic: None,
+                title: "Sync".into(),
+                description: String::new(),
+                status: Status::Active,
+            },
+            h,
+        )
+        .unwrap();
+    let real = crate::date::Zone::UTC.today();
+    let mut sess = Session::unbound(Author::Claude);
+    sess.project = Some(p);
+    sess.focus = Some(Owner::Topic(t));
+    dated(&mut sess, real.add_days(6));
+    let mut a = agent(&mut ts.store, &mut sess);
+    let b = a.brief(BriefArgs::default()).unwrap();
+    assert!(!b.contains("no activity"), "{b}");
+    a.session.today = Some(real.add_days(12));
+    let b = a.brief(BriefArgs::default()).unwrap();
+    assert!(
+        b.contains(&format!("{t} Sync · active · no activity 12d")),
+        "{b}"
+    );
+    // The project line agrees with the header.
+    let pb = a
+        .brief(BriefArgs {
+            id: Some(p.to_string()),
+            focus: false,
+        })
+        .unwrap();
+    assert!(pb.contains(&format!("Attention: idle {t} 12d")), "{pb}");
+}
+
+/// Requests 16 and 17 budgets: every record dated and overdue, every topic
+/// blocked, overdue or idle, the inbox old.
+#[test]
+fn briefs_stay_within_budget_when_everything_needs_attention() {
+    let mut seed = seed();
+    let project = seed.project;
+    let focus = seed.focus;
+    let s = &mut seed.ts.store;
+    let today = crate::date::Zone::UTC.today().add_days(40);
+    let h = Author::Human;
+    for (i, e) in s.epics(project).unwrap().iter().enumerate() {
+        s.set_due(Owner::Epic(e.id), Some(today.add_days(-(i as i64) - 1)), h)
+            .unwrap();
+    }
+    let topics = s
+        .topics(
+            &crate::store::TopicFilter {
+                project: Some(project),
+                ..Default::default()
+            },
+            crate::model::PageReq::first(200),
+        )
+        .unwrap();
+    for (i, t) in topics.items.iter().enumerate() {
+        let due = today.add_days(-(i as i64 % 30) - 1);
+        s.set_due(Owner::Topic(t.id), Some(due), h).unwrap();
+        if i % 3 == 0 && t.id != focus {
+            let patch = crate::store::TopicPatch {
+                status: Some(Status::Blocked),
+                ..Default::default()
+            };
+            s.update_topic(t.id, patch, h).unwrap();
+        }
+    }
+    s.set_due(Owner::Project(project), Some(today.add_days(-3)), h)
+        .unwrap();
+    let epic = s.topic(focus).unwrap().epic.unwrap();
+    let mut sess = session(&seed);
+    dated(&mut sess, today);
+    let mut a = agent(&mut seed.ts.store, &mut sess);
+
+    let topic = ok(a.brief(BriefArgs::default()), budget::BRIEF);
+    assert!(topic.contains("· overdue"), "{topic}");
+    assert!(topic.contains("· no activity 40d"), "{topic}");
+    let eb = ok(
+        a.brief(BriefArgs {
+            id: Some(epic.to_string()),
+            focus: false,
+        }),
+        budget::BRIEF,
+    );
+    let pb = ok(
+        a.brief(BriefArgs {
+            id: Some(project.to_string()),
+            focus: false,
+        }),
+        budget::BRIEF,
+    );
+    for (text, max) in [(&eb, 120), (&pb, 160)] {
+        let line = text
+            .lines()
+            .find(|l| l.starts_with("Attention: "))
+            .unwrap_or_else(|| panic!("no Attention line:\n{text}"));
+        assert!(chars(line) <= max, "{} > {max}: {line}", chars(line));
+        assert!(
+            line.contains("blocked ") && line.contains("overdue "),
+            "{line}"
+        );
+        assert!(line.contains(" +"), "{line}");
+    }
+    let line = pb.lines().find(|l| l.starts_with("Attention: ")).unwrap();
+    assert!(line.contains("idle ") && line.contains("inbox "), "{line}");
+    // Right after the header line.
+    let header = pb
+        .lines()
+        .position(|l| l.starts_with(&project.to_string()))
+        .unwrap();
+    assert!(
+        pb.lines()
+            .nth(header + 1)
+            .unwrap()
+            .starts_with("Attention: "),
+        "{pb}"
+    );
+    for due in ["overdue", "week"] {
+        let f = ok(
+            a.find(FindArgs {
+                due: Some(due.into()),
+                limit: Some(20),
+                ..Default::default()
+            }),
+            budget::FIND,
+        );
+        assert!(f.contains("more: cursor="), "{f}");
+    }
+    for scope in [None, Some(Owner::Epic(epic))] {
+        a.session.focus = scope;
+        let b = a.session_briefing(false).unwrap();
+        assert!(chars(&b) <= budget::SESSION_BRIEFING, "{}", chars(&b));
+        assert!(b.contains("Attention: "), "{b}");
+    }
+    a.session.focus = Some(Owner::Topic(focus));
+    let b = a.session_briefing(true).unwrap();
+    assert!(chars(&b) <= budget::SESSION_BRIEFING, "{}", chars(&b));
+}
+
+#[test]
+fn find_due_pages_cover_every_record_once_in_date_order() {
+    let mut ts = test_support::open();
+    let h = Author::Human;
+    let s = &mut ts.store;
+    let p = s.create_project("Acta", "", h).unwrap();
+    let today = day("2026-11-21");
+    let mut want = Vec::new();
+    for i in 0..5 {
+        let e = s.create_epic(p, &format!("Epic {i}"), "", h).unwrap();
+        let due = today.add_days(-(i * 3));
+        s.set_due(Owner::Epic(e), Some(due), h).unwrap();
+        want.push((due, 0, e.0, e.to_string()));
+    }
+    for i in 0..17 {
+        let t = s
+            .create_topic(
+                NewTopic {
+                    project: p,
+                    epic: None,
+                    title: format!("Topic {i}"),
+                    description: String::new(),
+                    status: Status::Planned,
+                },
+                h,
+            )
+            .unwrap();
+        let due = today.add_days(-(i % 13));
+        s.set_due(Owner::Topic(t), Some(due), h).unwrap();
+        want.push((due, 1, t.0, t.to_string()));
+    }
+    want.sort();
+    let want: Vec<String> = want
+        .into_iter()
+        .filter(|(d, ..)| *d < today)
+        .map(|(.., id)| id)
+        .collect();
+    let mut sess = Session::unbound(Author::Claude);
+    sess.project = Some(p);
+    dated(&mut sess, today);
+    let mut a = agent(&mut ts.store, &mut sess);
+    let mut got = Vec::new();
+    let mut cursor = None;
+    loop {
+        let page: serde_json::Value = serde_json::from_str(
+            &a.find_json(FindArgs {
+                due: Some("overdue".into()),
+                limit: Some(4),
+                cursor,
+                ..Default::default()
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(page["total"], want.len());
+        for hit in page["hits"].as_array().unwrap() {
+            assert_eq!(hit["overdue"], true);
+            got.push(hit["id"].as_str().unwrap().to_owned());
+        }
+        match page["next_cursor"].as_i64() {
+            Some(c) => cursor = Some(c),
+            None => break,
+        }
+    }
+    assert_eq!(got, want);
 }
