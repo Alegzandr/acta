@@ -42,7 +42,7 @@ Five regions, each with one job: the tree finds, the page reads and writes, tool
 
 ### 4.3 Titlebar (client-side, 36 high, `bg.sunken`, bottom border `border.subtle`)
 
-Content, left to right after the platform inset: sidebar toggle (`panel-left`); back and forward (`arrow-left`, `arrow-right`; compact ghost buttons, disabled at the ends of the active tab's history); the breadcrumb of the active page; drag region; "Search" button showing the palette shortcut; chat toggle (`message-circle`; Windows and macOS only); terminal toggle (`square-terminal`). A toggle whose tool window is visible shows `fill.selected` and its icon in `text.primary`. The whole bar is a drag region except the controls; double-click follows the platform (zoom on macOS, maximize elsewhere).
+Content, left to right after the platform inset: on Windows and Linux the app icon, 16, vertically centred, 8 before the next control (the hand-rendered `hicolor` bitmap of the scale: 16 at 1x, 24 at 1.5x, 32 at 2x, never a downscaled large one; part of the drag region, no hover state, at 60% opacity when the window is inactive; macOS shows none, its traffic lights sit there); sidebar toggle (`panel-left`); back and forward (`arrow-left`, `arrow-right`; compact ghost buttons, disabled at the ends of the active tab's history); the breadcrumb of the active page; drag region; "Search" button showing the palette shortcut; chat toggle (`message-circle`; Windows and macOS only); terminal toggle (`square-terminal`). A toggle whose tool window is visible shows `fill.selected` and its icon in `text.primary`. The whole bar is a drag region except the controls; double-click follows the platform (zoom on macOS, maximize elsewhere).
 
 **Breadcrumb**: `type.small`, parts separated by " / " in `text.tertiary`: "Acta / Terminal / Embed the terminal". Every part but the last is a link (`text.tertiary`, `text.primary` and underlined on hover and focus) to that project or epic page; the last part is the page itself, in `text.secondary`, not a link. A page's location (its project and epic) appears here and only here, so pages carry no breadcrumb of their own; the page's title is on the page. When it does not fit, the last part truncates at its end; under 240 of available width the middle parts collapse into one "…" part that opens a menu of them.
 
@@ -52,7 +52,7 @@ Content, left to right after the platform inset: sidebar toggle (`panel-left`); 
 | Windows | Minimize, maximize/restore, close on the right, each 46 x 36, drawn by the app with 10px 1px-stroke glyphs | Hover `fill.hover`, pressed `fill.pressed`; close hover `caption.close.hover` with a white glyph. Hit-test regions must report as native caption buttons so Snap Layouts appears on maximize hover. 1px `border.subtle` window outline when not maximized. |
 | Linux | Client-side controls on the right in the same style as Windows, 36 x 36 each | Honour the desktop's button layout and side when the platform reports it. When the compositor provides server-side decorations (tiling window managers), keep the system titlebar and render this bar as a plain 36 toolbar without controls. |
 
-When the window is inactive, titlebar text and icons drop to `text.tertiary`. Nothing else changes.
+When the window is inactive, titlebar text and icons drop to `text.tertiary` and the app icon to 60% opacity. Nothing else changes. First run, key loss and open failed show only the app icon (Windows and Linux), "Acta" and the window controls.
 
 ### 4.4 Tabs
 
