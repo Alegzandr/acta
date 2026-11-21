@@ -21,7 +21,8 @@ fn base_cmd(data: &Path) -> Command {
         .env_remove("ACTA_TOPIC")
         .env_remove("CLAUDE_CODE_SESSION_ID")
         .env_remove("CLAUDECODE")
-        .env_remove("CLAUDE_CONFIG_DIR");
+        .env_remove("CLAUDE_CONFIG_DIR")
+        .env_remove("CLAUDE_PROJECT_DIR");
     c
 }
 
@@ -933,6 +934,21 @@ fn commit_modes_and_the_pre_git_guard() {
     git(&repo, &["config", "alias.ci", "commit --no-verify"]);
     assert!(reason(&hook(&repo, "git ci -m x")).contains("--no-verify"));
     assert_eq!(hook(&repo, "git status && git log -1"), "");
+    // Judged where it acts: a manual folder next door, variables.
+    let manual = tmp.path().join("manual");
+    std::fs::create_dir_all(&manual).unwrap();
+    git(&manual, &["init", "-q", "-b", "main"]);
+    let (ok, out, err) = cli(&data, &manual, &["link", "--add", "--keep-auto-memory"], "");
+    assert!(ok, "{out}{err}");
+    assert!(
+        reason(&hook(&repo, "git -C ../manual commit -m x"))
+            .contains("commits in manual are manual")
+    );
+    assert!(reason(&hook(&repo, "cd ../manual && git commit -m x")).contains("are manual"));
+    assert!(
+        reason(&hook(&repo, "cd \"$HOME\" && git commit -m x")).contains("run git in this folder")
+    );
+    assert!(reason(&hook(&repo, "HUSKY=0 git commit -m x")).contains("environment variables"));
     git(&repo, &["switch", "-q", "main"]);
     assert!(reason(&hook(&repo, "git commit -m x")).contains("on main"));
     let (ok, out, err) = cli(

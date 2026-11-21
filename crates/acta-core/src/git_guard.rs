@@ -13,6 +13,7 @@
 
 use crate::agent::git::GitInfo;
 use crate::claude_settings::{CommitMode, CommitSettings};
+use std::path::{Component, Path, PathBuf};
 
 /// The hook's answer for a deny: Claude Code blocks the call and shows the
 /// model the reason.
@@ -25,52 +26,161 @@ pub fn deny_json(reason: &str) -> String {
     .to_string()
 }
 
-/// The deny reason, or `None`. Aliases are not resolved (see
-/// [`check_with`]).
-pub fn check(command: &str, folder: &CommitSettings, git: &GitInfo) -> Option<String> {
-    check_with(command, folder, git, &|_| None)
+/// What the guard knows about a directory a git call acts in.
+#[derive(Clone, Debug)]
+pub enum Place {
+    /// Not inside any attached folder.
+    Unlinked,
+    /// Inside an attached folder: its display name, commit settings and git
+    /// state (`None` when git's files cannot be read there).
+    Folder {
+        name: String,
+        settings: CommitSettings,
+        git: Option<Box<GitInfo>>,
+    },
+    /// Attached, but Acta cannot read its settings (store or keychain).
+    Unreadable,
 }
 
-/// [`check`], resolving a subcommand that is not one of git's own through
-/// `alias` (`git config --get alias.<name>` in the folder).
-pub fn check_with(
-    command: &str,
-    folder: &CommitSettings,
-    git: &GitInfo,
-    alias: &dyn Fn(&str) -> Option<String>,
-) -> Option<String> {
-    if !folder.mode.automatic() {
-        return None;
-    }
+/// A git alias looked up in the repository's config.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Alias {
+    None,
+    Value(String),
+    /// git could not answer in time: the call cannot be read.
+    Failed,
+}
+
+/// The guard's view of the session.
+pub struct Context<'a> {
+    /// The hook's working directory: relative `cd` and `-C` start here.
+    pub cwd: &'a Path,
+    /// Where the session started (its settings file holds the allow rules).
+    pub session: &'a Path,
+    pub place: &'a dyn Fn(&Path) -> Place,
+    pub alias: &'a dyn Fn(&Path, &str) -> Alias,
+}
+
+/// The deny reason, or `None` (Claude Code's normal flow decides).
+///
+/// Each commit or push is judged in the folder it acts in: the hook's
+/// directory, then every `cd`/`pushd` before it in the command (all of
+/// them, since a subshell's `cd` may or may not apply), then `-C`,
+/// `--work-tree`, `--git-dir`, `env -C`. A directory that cannot be worked
+/// out is refused when the session folder is automatic.
+pub fn check(command: &str, cx: &Context) -> Option<String> {
     let mut a = Analysis::default();
     analyze(command, 0, &mut a);
-    resolve_aliases(&mut a, alias);
+    let session = (cx.place)(cx.session);
+    let session_auto =
+        matches!(&session, Place::Folder { settings, .. } if settings.mode.automatic());
+    let unreadable = matches!(session, Place::Unreadable);
     let mentions = mentions_commit_or_push(command);
-    for c in &a.calls {
-        match c.sub.as_str() {
-            "commit" | "push" => {
-                if c.config || a.config_env {
-                    return Some(CONFIG.to_owned());
+    if !session_auto
+        && !unreadable
+        && !a
+            .calls
+            .iter()
+            .any(|c| c.sub == "commit" || c.sub == "push" || !is_own(&c.sub))
+    {
+        return None;
+    }
+    let alias_dir = cx.cwd.to_path_buf();
+    resolve_aliases(&mut a, &|name| (cx.alias)(&alias_dir, name));
+    let mut any_auto = session_auto;
+    for c in a
+        .calls
+        .iter()
+        .filter(|c| c.sub == "commit" || c.sub == "push")
+    {
+        for cand in &c.candidates {
+            let Some(steps) = cand else {
+                if session_auto || unreadable {
+                    return Some(DIR.to_owned());
                 }
-                if c.open_args {
-                    return Some(DIRECT.to_owned());
+                continue;
+            };
+            let dir = walk(cx.cwd, steps);
+            match (cx.place)(&dir) {
+                Place::Unreadable => return Some(FAIL.to_owned()),
+                Place::Unlinked => {
+                    if unreadable {
+                        return Some(FAIL.to_owned());
+                    }
+                    if let Place::Folder { name, .. } = &session
+                        && session_auto
+                    {
+                        return Some(outside(name));
+                    }
                 }
-                let reason = if c.sub == "commit" {
-                    check_commit(&c.args, folder, git)
-                } else {
-                    check_push(&c.args, folder, git)
-                };
-                if reason.is_some() {
-                    return reason;
+                Place::Folder {
+                    name,
+                    settings,
+                    git,
+                } => {
+                    if !settings.mode.automatic() {
+                        if session_auto {
+                            return Some(manual(&name));
+                        }
+                        continue;
+                    }
+                    any_auto = true;
+                    if c.config
+                        || a.env
+                            .iter()
+                            .chain(&c.env)
+                            .any(|n| n.to_ascii_uppercase().starts_with("GIT_CONFIG"))
+                    {
+                        return Some(CONFIG.to_owned());
+                    }
+                    if a.env.iter().chain(&c.env).any(|n| !env_allowed(n)) {
+                        return Some(ENV.to_owned());
+                    }
+                    if c.open_args {
+                        return Some(DIRECT.to_owned());
+                    }
+                    let Some(git) = git else {
+                        return Some(UNKNOWN.to_owned());
+                    };
+                    let reason = if c.sub == "commit" {
+                        check_commit(&c.args, &settings, &git)
+                    } else {
+                        check_push(&c.args, &settings, &git)
+                    };
+                    if reason.is_some() {
+                        return reason;
+                    }
                 }
             }
-            s if s.contains('$') && mentions => return Some(DIRECT.to_owned()),
-            // `git -c alias.x=... x`: an inline alias cannot be read.
-            s if c.config && !is_own(s) => return Some(CONFIG.to_owned()),
-            _ => {}
         }
     }
-    (a.opaque && mentions).then(|| DIRECT.to_owned())
+    if a.alias_failed && (session_auto || unreadable) {
+        return Some(DIRECT.to_owned());
+    }
+    if session_auto {
+        for c in &a.calls {
+            if c.sub.contains('$') && mentions {
+                return Some(DIRECT.to_owned());
+            }
+            if c.config && !is_own(&c.sub) {
+                return Some(CONFIG.to_owned());
+            }
+        }
+    }
+    if a.opaque && mentions {
+        if unreadable {
+            return Some(FAIL.to_owned());
+        }
+        if any_auto {
+            return Some(DIRECT.to_owned());
+        }
+    }
+    None
+}
+
+/// The hook's answer when the folder is linked but Acta cannot read it.
+pub fn fail_closed() -> String {
+    deny_json(FAIL)
 }
 
 /// Whether the command may need the guard at all: a git commit or push, a
@@ -81,8 +191,54 @@ pub fn needs_check(command: &str) -> bool {
     analyze(command, 0, &mut a);
     a.calls
         .iter()
-        .any(|c| c.sub == "commit" || c.sub == "push" || !BUILTIN.contains(&c.sub.as_str()))
+        .any(|c| c.sub == "commit" || c.sub == "push" || !is_own(&c.sub))
         || (a.opaque && mentions_commit_or_push(command))
+}
+
+/// Variables a commit or push may carry: locale, time zone, terminal.
+fn env_allowed(name: &str) -> bool {
+    matches!(name, "LANG" | "TZ" | "TERM") || name.starts_with("LC_")
+}
+
+/// The directory a list of `cd` steps leads to from `base`, worked out on
+/// the text (`.` and `..` folded). On Windows, Git Bash's `/c/...` is `C:\...`.
+fn walk(base: &Path, steps: &[String]) -> PathBuf {
+    let mut p = base.to_path_buf();
+    for s in steps {
+        let s = msys(s);
+        let step = Path::new(&s);
+        if step.has_root() {
+            p = PathBuf::new();
+        }
+        for c in step.components() {
+            match c {
+                Component::CurDir => {}
+                Component::ParentDir => {
+                    p.pop();
+                }
+                other => p.push(other.as_os_str()),
+            }
+        }
+    }
+    p
+}
+
+fn msys(s: &str) -> String {
+    if cfg!(windows) {
+        let b = s.as_bytes();
+        if b.len() >= 2
+            && b[0] == b'/'
+            && b[1].is_ascii_alphabetic()
+            && (b.len() == 2 || b[2] == b'/')
+        {
+            return format!(
+                "{}:\\{}",
+                (b[1] as char).to_ascii_uppercase(),
+                s.get(3..).unwrap_or("")
+            );
+        }
+    }
+    s.to_owned()
 }
 
 const NO_VERIFY: &str =
@@ -96,10 +252,31 @@ const UNKNOWN: &str =
 const CONFIG: &str =
     "Acta: no -c, --config-env or GIT_CONFIG_* on a commit or push here. Run git plainly.";
 const DIRECT: &str = "Acta: run git commit or git push directly here, not through another command.";
+const ENV: &str =
+    "Acta: no environment variables on a commit or push here (LANG, LC_*, TZ, TERM only).";
+const DIR: &str = "Acta: run git in this folder (no cd to a variable, ~ or -, no --git-dir).";
+const FAIL: &str = "Acta cannot read this folder's commit mode. Ask the user before committing.";
+
+fn short(name: &str) -> String {
+    name.chars().take(30).collect()
+}
 
 fn on_default(branch: &str) -> String {
-    let b: String = branch.chars().take(30).collect();
-    format!("Acta: no automatic commit or push on {b} here. Ask the user.")
+    format!(
+        "Acta: no automatic commit or push on {} here. Ask the user.",
+        short(branch)
+    )
+}
+
+fn manual(name: &str) -> String {
+    format!("Acta: commits in {} are manual. Ask the user.", short(name))
+}
+
+fn outside(name: &str) -> String {
+    format!(
+        "Acta: automatic commits only in {}. Ask the user.",
+        short(name)
+    )
 }
 
 /// The branch rule: HEAD or the default branch unknown, detached, or the
@@ -248,6 +425,11 @@ struct Call {
     config: bool,
     /// More arguments come from elsewhere (`xargs`).
     open_args: bool,
+    /// Variables set for this call (prefix assignments, `env NAME=`).
+    env: Vec<String>,
+    /// The directories it may act in, as `cd` steps from the hook's
+    /// directory; `None` for one that cannot be worked out.
+    candidates: Vec<Option<Vec<String>>>,
 }
 
 #[derive(Debug, Default)]
@@ -255,8 +437,12 @@ struct Analysis {
     calls: Vec<Call>,
     /// Something that may run git could not be read.
     opaque: bool,
-    /// A `GIT_CONFIG*` variable is set somewhere in the command.
-    config_env: bool,
+    /// Variables exported or assigned for the rest of the command.
+    env: Vec<String>,
+    /// The `cd` / `pushd` steps so far, in order; `None` when unknown.
+    cds: Vec<Option<String>>,
+    /// git could not say whether a subcommand is an alias.
+    alias_failed: bool,
 }
 
 const MAX_DEPTH: usize = 6;
@@ -268,9 +454,11 @@ const BUILTIN: &[&str] = &[
     "annotate",
     "apply",
     "archive",
+    "backfill",
     "bisect",
     "blame",
     "branch",
+    "bugreport",
     "bundle",
     "cat-file",
     "check-attr",
@@ -278,8 +466,10 @@ const BUILTIN: &[&str] = &[
     "check-mailmap",
     "check-ref-format",
     "checkout",
+    "checkout-index",
     "cherry",
     "cherry-pick",
+    "citool",
     "clean",
     "clone",
     "column",
@@ -289,39 +479,68 @@ const BUILTIN: &[&str] = &[
     "count-objects",
     "credential",
     "describe",
+    "diagnose",
     "diff",
     "diff-files",
     "diff-index",
     "diff-tree",
     "difftool",
+    "fast-export",
+    "fast-import",
     "fetch",
+    "filter-branch",
+    "fmt-merge-msg",
     "for-each-ref",
+    "for-each-repo",
     "format-patch",
     "fsck",
     "gc",
+    "get-tar-commit-id",
     "grep",
+    "gui",
     "hash-object",
     "help",
+    "hook",
+    "imap-send",
+    "index-pack",
     "init",
+    "init-db",
+    "instaweb",
     "interpret-trailers",
+    "lfs",
     "log",
     "ls-files",
     "ls-remote",
     "ls-tree",
+    "mailinfo",
+    "mailsplit",
     "maintenance",
     "merge",
     "merge-base",
     "merge-file",
+    "merge-tree",
     "mergetool",
+    "mktag",
+    "mktree",
+    "multi-pack-index",
     "mv",
+    "name-rev",
     "notes",
+    "pack-objects",
+    "pack-refs",
+    "patch-id",
+    "prune",
+    "prune-packed",
     "pull",
     "range-diff",
+    "read-tree",
     "rebase",
     "reflog",
+    "refs",
     "remote",
     "repack",
     "replace",
+    "request-pull",
     "rerere",
     "reset",
     "restore",
@@ -329,21 +548,31 @@ const BUILTIN: &[&str] = &[
     "rev-parse",
     "revert",
     "rm",
+    "scalar",
+    "send-email",
     "shortlog",
     "show",
     "show-branch",
+    "show-index",
     "show-ref",
     "sparse-checkout",
+    "stage",
     "stash",
     "status",
+    "stripspace",
     "submodule",
+    "subtree",
+    "svn",
     "switch",
     "symbolic-ref",
     "tag",
+    "unpack-objects",
     "update-index",
     "update-ref",
+    "update-server-info",
     "var",
     "verify-commit",
+    "verify-pack",
     "verify-tag",
     "version",
     "whatchanged",
@@ -404,30 +633,36 @@ fn skip_opts<'a>(mut w: &'a [String], with_value: &[&str]) -> &'a [String] {
     w
 }
 
-/// `GIT_CONFIG*=...` anywhere: a prefix, `env`, `export`, `declare`.
-fn note_assignment(w: &str, out: &mut Analysis) {
-    if w.split_once('=')
-        .is_some_and(|(n, _)| n.to_ascii_uppercase().starts_with("GIT_CONFIG"))
-    {
-        out.config_env = true;
-    }
+fn assigned_name(w: &str) -> &str {
+    w.split_once('=').map_or(w, |(n, _)| n)
+}
+
+/// A directory word `cd` can be told about: no variable, substitution,
+/// home or previous directory.
+fn plain_dir(w: &str) -> Option<String> {
+    (!w.is_empty() && w != "-" && !w.starts_with('~') && !w.contains('$') && !w.contains('`'))
+        .then(|| w.to_owned())
 }
 
 /// One simple command: keywords, assignments and wrappers peeled off,
-/// nested shells and `eval` read again, a git call recorded.
+/// nested shells and `eval` read again, `cd` followed, a git call recorded.
 fn simple(words: &[String], depth: usize, out: &mut Analysis) {
-    for w in words {
-        note_assignment(w, out);
-    }
     let mut w = words;
     let mut open_args = false;
+    let mut env: Vec<String> = Vec::new();
+    // `env -C`, `sudo -D`: a directory for this command only.
+    let mut steps: Vec<Option<String>> = Vec::new();
     loop {
         while let Some(first) = w.first()
             && is_assignment(first)
         {
+            env.push(assigned_name(first).to_owned());
             w = &w[1..];
         }
         let Some(first) = w.first() else {
+            // Assignments alone: they change the shell's variables, which
+            // an exported one carries to git.
+            out.env.extend(env);
             return;
         };
         let lower = basename(first).to_ascii_lowercase();
@@ -438,10 +673,32 @@ fn simple(words: &[String], depth: usize, out: &mut Analysis) {
             "exec" => skip_opts(&w[1..], &["-a"]),
             "nice" => skip_opts(&w[1..], &["-n"]),
             "stdbuf" => skip_opts(&w[1..], &["-i", "-o", "-e"]),
-            "sudo" | "doas" => skip_opts(
-                &w[1..],
-                &["-u", "-g", "-C", "-D", "-h", "-p", "-r", "-t", "-U", "-T"],
-            ),
+            "sudo" | "doas" => {
+                let mut rest = &w[1..];
+                while let Some(x) = rest.first() {
+                    if x == "--" {
+                        rest = &rest[1..];
+                        break;
+                    }
+                    if !x.starts_with('-') {
+                        break;
+                    }
+                    if x == "-D" || x == "--chdir" {
+                        steps.push(rest.get(1).and_then(|d| plain_dir(d)));
+                    } else if let Some(d) = x.strip_prefix("--chdir=") {
+                        steps.push(plain_dir(d));
+                    }
+                    let two = [
+                        "-u", "-g", "-C", "-D", "-h", "-p", "-r", "-t", "-U", "-T", "--chdir",
+                    ];
+                    rest = if two.contains(&x.as_str()) {
+                        rest.get(2..).unwrap_or(&[])
+                    } else {
+                        &rest[1..]
+                    };
+                }
+                rest
+            }
             "timeout" => {
                 let rest = skip_opts(&w[1..], &["-s", "-k"]);
                 rest.get(1..).unwrap_or(&[])
@@ -453,10 +710,25 @@ fn simple(words: &[String], depth: usize, out: &mut Analysis) {
                     &["-I", "-n", "-L", "-P", "-d", "-E", "-s", "-a", "-l"],
                 )
             }
-            "env" => match env_rest(&w[1..], depth, out) {
+            "env" => match env_rest(&w[1..], depth, out, &mut env, &mut steps) {
                 Some(rest) => rest,
                 None => return,
             },
+            "export" | "declare" | "typeset" | "readonly" | "local" => {
+                for x in w[1..].iter().filter(|x| !x.starts_with('-')) {
+                    out.env.push(assigned_name(x).to_owned());
+                }
+                return;
+            }
+            "cd" | "pushd" | "chdir" => {
+                let rest = skip_opts(&w[1..], &[]);
+                out.cds.push(rest.first().and_then(|d| plain_dir(d)));
+                return;
+            }
+            "popd" => {
+                out.cds.push(None);
+                return;
+            }
             "bash" | "sh" | "zsh" | "dash" | "ksh" | "fish" => {
                 shell(w, depth, out);
                 return;
@@ -466,8 +738,9 @@ fn simple(words: &[String], depth: usize, out: &mut Analysis) {
                 return;
             }
             "git" => {
-                if let Some(mut call) = git_call(w) {
+                if let Some(mut call) = git_call(w, &steps, &out.cds) {
                     call.open_args |= open_args;
+                    call.env = env;
                     out.calls.push(call);
                 }
                 return;
@@ -482,9 +755,15 @@ fn simple(words: &[String], depth: usize, out: &mut Analysis) {
     }
 }
 
-/// `env`'s options and assignments skipped; `-S` read as a command. `None`
-/// when nothing is left to look at.
-fn env_rest<'a>(mut rest: &'a [String], depth: usize, out: &mut Analysis) -> Option<&'a [String]> {
+/// `env`'s options and assignments skipped (names kept, `-C` followed);
+/// `-S` read as a command. `None` when nothing is left to look at.
+fn env_rest<'a>(
+    mut rest: &'a [String],
+    depth: usize,
+    out: &mut Analysis,
+    env: &mut Vec<String>,
+    steps: &mut Vec<Option<String>>,
+) -> Option<&'a [String]> {
     loop {
         let x = rest.first()?;
         let split = if x == "-S" || x == "--split-string" {
@@ -495,13 +774,24 @@ fn env_rest<'a>(mut rest: &'a [String], depth: usize, out: &mut Analysis) -> Opt
                 .map(|v| (v.to_owned(), 1))
         };
         if let Some((script, n)) = split {
+            // The variables set so far stay with the split command.
             let tail = rest.get(n..).unwrap_or(&[]);
+            out.env.append(env);
             analyze(&format!("{script} {}", quote_all(tail)), depth + 1, out);
             return None;
         }
-        if ["-u", "-C", "--unset", "--chdir"].contains(&x.as_str()) {
+        if x == "-C" || x == "--chdir" {
+            steps.push(rest.get(1).and_then(|d| plain_dir(d)));
             rest = rest.get(2..).unwrap_or(&[]);
-        } else if x.starts_with('-') || is_assignment(x) {
+        } else if let Some(d) = x.strip_prefix("--chdir=") {
+            steps.push(plain_dir(d));
+            rest = &rest[1..];
+        } else if x == "-u" || x == "--unset" {
+            rest = rest.get(2..).unwrap_or(&[]);
+        } else if x.starts_with('-') {
+            rest = &rest[1..];
+        } else if is_assignment(x) {
+            env.push(assigned_name(x).to_owned());
             rest = &rest[1..];
         } else {
             return Some(rest);
@@ -553,11 +843,15 @@ fn has_git_then_sub(words: &[String]) -> bool {
     })
 }
 
-/// A git call from its words (`git` first): global options read, the
-/// subcommand and its arguments.
-fn git_call(words: &[String]) -> Option<Call> {
+/// A git call from its words (`git` first): global options read (`-C`,
+/// `--work-tree`, `--git-dir` become directory steps), the subcommand and
+/// its arguments, and the directories it may act in.
+fn git_call(words: &[String], pre: &[Option<String>], cds: &[Option<String>]) -> Option<Call> {
     let mut i = 1;
     let mut config = false;
+    let mut steps: Vec<Option<String>> = pre.to_vec();
+    let mut work_tree: Option<Option<String>> = None;
+    let mut git_dir: Option<Option<String>> = None;
     while let Some(w) = words.get(i) {
         if !w.starts_with('-') {
             break;
@@ -565,6 +859,19 @@ fn git_call(words: &[String]) -> Option<Call> {
         i += 1;
         if w.starts_with("-c") || w.starts_with("--config-env") {
             config = true;
+        }
+        let value = |inline: &str| -> Option<String> {
+            match w.strip_prefix(inline).and_then(|r| r.strip_prefix('=')) {
+                Some(v) => plain_dir(v),
+                None => words.get(i).and_then(|v| plain_dir(v)),
+            }
+        };
+        if w == "-C" {
+            steps.push(value("-C"));
+        } else if w == "--work-tree" || w.starts_with("--work-tree=") {
+            work_tree = Some(value("--work-tree"));
+        } else if w == "--git-dir" || w.starts_with("--git-dir=") {
+            git_dir = Some(value("--git-dir"));
         }
         if [
             "-C",
@@ -579,12 +886,33 @@ fn git_call(words: &[String]) -> Option<Call> {
             i += 1;
         }
     }
+    match (work_tree, git_dir) {
+        (Some(t), _) => steps.push(t),
+        // `--git-dir=<worktree>/.git`: the worktree is its parent.
+        (None, Some(d)) => steps.push(d.and_then(|d| {
+            let t = d.trim_end_matches(['/', '\\']);
+            (t == ".git" || t.ends_with("/.git") || t.ends_with("\\.git"))
+                .then(|| format!("{t}/.."))
+        })),
+        (None, None) => {}
+    }
     let sub = words.get(i)?;
+    // The hook's directory and where the `cd`s before this call lead (a
+    // subshell's `cd` may or may not apply: both are judged).
+    let mut candidates: Vec<Option<Vec<String>>> = Vec::new();
+    for k in [0, cds.len()] {
+        let path: Option<Vec<String>> = cds[..k].iter().chain(steps.iter()).cloned().collect();
+        if !candidates.contains(&path) {
+            candidates.push(path);
+        }
+    }
     Some(Call {
         sub: sub.clone(),
         args: words[i + 1..].to_vec(),
         config,
         open_args: false,
+        env: Vec::new(),
+        candidates,
     })
 }
 
@@ -592,19 +920,28 @@ fn is_own(sub: &str) -> bool {
     sub == "commit" || sub == "push" || BUILTIN.contains(&sub)
 }
 
-/// Replaces calls to an alias by what it runs, a few levels deep.
-fn resolve_aliases(a: &mut Analysis, alias: &dyn Fn(&str) -> Option<String>) {
+/// Replaces calls to an alias by what it runs, a few levels deep. A lookup
+/// git could not answer makes the call unreadable.
+fn resolve_aliases(a: &mut Analysis, alias: &dyn Fn(&str) -> Alias) {
     for _ in 0..5 {
         let mut changed = false;
         for c in std::mem::take(&mut a.calls) {
-            let value = if is_own(&c.sub) || c.sub.contains('$') {
-                None
+            let found = if is_own(&c.sub) || c.sub.contains('$') {
+                Alias::None
             } else {
                 alias(&c.sub)
             };
-            let Some(value) = value else {
-                a.calls.push(c);
-                continue;
+            let value = match found {
+                Alias::None => {
+                    a.calls.push(c);
+                    continue;
+                }
+                Alias::Failed => {
+                    a.alias_failed = true;
+                    a.calls.push(c);
+                    continue;
+                }
+                Alias::Value(v) => v,
             };
             changed = true;
             let text = match value.strip_prefix('!') {
@@ -614,10 +951,13 @@ fn resolve_aliases(a: &mut Analysis, alias: &dyn Fn(&str) -> Option<String>) {
             let mut inner = Analysis::default();
             analyze(&text, 1, &mut inner);
             a.opaque |= inner.opaque;
-            a.config_env |= inner.config_env;
+            a.env.extend(inner.env);
             for mut ic in inner.calls {
                 ic.config |= c.config;
                 ic.open_args |= c.open_args;
+                ic.env.extend(c.env.iter().cloned());
+                // The alias runs where the call was made.
+                ic.candidates = c.candidates.clone();
                 a.calls.push(ic);
             }
         }
@@ -950,7 +1290,6 @@ impl Parser<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
 
     fn git(branch: Option<&str>) -> GitInfo {
         GitInfo {
@@ -962,6 +1301,35 @@ mod tests {
             default_branch: Some("main".into()),
             upstream_branch: None,
         }
+    }
+
+    /// The old shape: every directory is one attached folder named acta.
+    fn check(cmd: &str, f: &CommitSettings, g: &GitInfo) -> Option<String> {
+        check_with(cmd, f, g, &|_| None)
+    }
+
+    fn check_with(
+        cmd: &str,
+        f: &CommitSettings,
+        g: &GitInfo,
+        alias: &dyn Fn(&str) -> Option<String>,
+    ) -> Option<String> {
+        let place = |_: &Path| Place::Folder {
+            name: "acta".into(),
+            settings: *f,
+            git: Some(Box::new(g.clone())),
+        };
+        let alias = |_: &Path, n: &str| alias(n).map_or(Alias::None, Alias::Value);
+        let cwd = PathBuf::from("/w/acta");
+        super::check(
+            cmd,
+            &Context {
+                cwd: &cwd,
+                session: &cwd,
+                place: &place,
+                alias: &alias,
+            },
+        )
     }
 
     fn folder(mode: CommitMode, on_default: bool) -> CommitSettings {
@@ -1189,7 +1557,7 @@ mod tests {
         );
         assert_eq!(
             check("GIT_TRACE=1 git commit -n", &f, &g).as_deref(),
-            Some(NO_VERIFY)
+            Some(ENV)
         );
         assert_eq!(
             check("git -C sub commit --no-verify", &f, &g).as_deref(),
@@ -1217,7 +1585,7 @@ mod tests {
         ("time -p git commit -n -m x", NO_VERIFY),
         // Wrappers.
         ("env git commit -n -m x", NO_VERIFY),
-        ("env -i PATH=/usr/bin git commit -n -m x", NO_VERIFY),
+        ("env -i git commit -n -m x", NO_VERIFY),
         ("env -u HOME -C . git push -f", FORCED),
         ("env -S 'git commit -n -m x'", NO_VERIFY),
         ("env --split-string='git push -f'", FORCED),
@@ -1235,7 +1603,7 @@ mod tests {
         ("stdbuf -o L git push -f", FORCED),
         ("noglob git push -f", FORCED),
         ("setsid git push -f", FORCED),
-        ("GIT_TRACE=1 env A=1 nohup git commit -n -m x", NO_VERIFY),
+        ("LANG=C env LC_ALL=C nohup git commit -n -m x", NO_VERIFY),
         // Nested shells and eval.
         ("bash -c 'git commit -n -m x'", NO_VERIFY),
         ("sh -lc \"git push --force\"", FORCED),
@@ -1350,9 +1718,167 @@ mod tests {
         assert_eq!(check("git push", &f, &g), None);
     }
 
+    /// A small world: an automatic folder, a manual one, one Acta cannot
+    /// read, and the rest unlinked.
+    fn world(cmd: &str, cwd: &str, alias: Alias) -> Option<String> {
+        let auto = folder(COMMIT, false);
+        let place = |dir: &Path| -> Place {
+            if dir.starts_with("/ws/auto") {
+                Place::Folder {
+                    name: "auto".into(),
+                    settings: auto,
+                    git: Some(Box::new(git(Some("t")))),
+                }
+            } else if dir.starts_with("/ws/manual") {
+                Place::Folder {
+                    name: "manual".into(),
+                    settings: folder(MANUAL, false),
+                    git: Some(Box::new(git(Some("t")))),
+                }
+            } else if dir.starts_with("/ws/locked") {
+                Place::Unreadable
+            } else {
+                Place::Unlinked
+            }
+        };
+        let alias = |_: &Path, _: &str| alias.clone();
+        let cwd = PathBuf::from(cwd);
+        super::check(
+            cmd,
+            &Context {
+                cwd: &cwd,
+                session: &cwd,
+                place: &place,
+                alias: &alias,
+            },
+        )
+    }
+
+    #[test]
+    fn each_call_is_judged_where_it_acts() {
+        let m = manual("manual");
+        let out = outside("auto");
+        let rows: &[(&str, Option<&str>)] = &[
+            ("git commit -m x", None),
+            ("cd sub && git commit -m x", None),
+            ("cd /ws/auto/sub; git commit -m x", None),
+            ("cd ../manual && git commit -m x", Some(&m)),
+            ("cd .. && cd manual && git commit -m x", Some(&m)),
+            ("pushd /ws/manual; git commit -m x", Some(&m)),
+            ("(cd ../manual); git commit -m x", Some(&m)),
+            ("git -C ../manual commit -m x", Some(&m)),
+            ("git -C .. -C manual push", Some(&m)),
+            ("git --work-tree=../manual commit -m x", Some(&m)),
+            ("git --git-dir ../manual/.git commit -m x", Some(&m)),
+            ("env -C ../manual git commit -m x", Some(&m)),
+            ("sudo -D ../manual git commit -m x", Some(&m)),
+            ("bash -c 'cd ../manual && git commit -m x'", Some(&m)),
+            ("cd ../other && git commit -m x", Some(&out)),
+            ("git -C /tmp/elsewhere push", Some(&out)),
+            ("cd $HOME/x && git commit -m x", Some(DIR)),
+            ("cd - && git commit -m x", Some(DIR)),
+            ("cd ~/x && git commit -m x", Some(DIR)),
+            ("cd && git commit -m x", Some(DIR)),
+            (
+                "cd \"$(git rev-parse --show-toplevel)\" && git commit -m x",
+                Some(DIR),
+            ),
+            ("popd; git commit -m x", Some(DIR)),
+            ("git --git-dir=/srv/repo.git commit -m x", Some(DIR)),
+            ("git -C \"$D\" commit -m x", Some(DIR)),
+            ("cd ../locked && git commit -m x", Some(FAIL)),
+            // Not a commit or push: nothing to judge.
+            ("cd ../manual && git status", None),
+        ];
+        for (cmd, want) in rows {
+            assert_eq!(
+                world(cmd, "/ws/auto", Alias::None).as_deref(),
+                *want,
+                "{cmd}"
+            );
+        }
+        // From a manual session, an automatic folder's rules still apply.
+        assert_eq!(
+            world(
+                "cd ../auto && git commit -n -m x",
+                "/ws/manual",
+                Alias::None
+            )
+            .as_deref(),
+            Some(NO_VERIFY)
+        );
+        assert_eq!(world("git commit -n -m x", "/ws/manual", Alias::None), None);
+        assert_eq!(
+            world("cd ../other && git commit -n", "/ws/manual", Alias::None),
+            None
+        );
+        assert_eq!(
+            world("cd $X && git commit -n", "/ws/manual", Alias::None),
+            None
+        );
+        // Fail closed where Acta cannot read the folder.
+        assert_eq!(
+            world("git commit -m x", "/ws/locked", Alias::None).as_deref(),
+            Some(FAIL)
+        );
+        assert_eq!(world("git status", "/ws/locked", Alias::None), None);
+        // An alias git could not answer for.
+        assert_eq!(
+            world("git ci -m x", "/ws/auto", Alias::Failed).as_deref(),
+            Some(DIRECT)
+        );
+        assert_eq!(world("git ci -m x", "/ws/auto", Alias::None), None);
+    }
+
+    #[test]
+    fn variables_on_a_commit_or_push_are_refused() {
+        let rows: &[(&str, Option<&str>)] = &[
+            ("HUSKY=0 git commit -m x", Some(ENV)),
+            ("HUSKY_SKIP_HOOKS=1 git commit -m x", Some(ENV)),
+            ("SKIP=lint git commit -m x", Some(ENV)),
+            ("LEFTHOOK=0 git push", Some(ENV)),
+            ("LEFTHOOK_EXCLUDE=lint git commit -m x", Some(ENV)),
+            (
+                "env PRE_COMMIT_ALLOW_NO_CONFIG=1 git commit -m x",
+                Some(ENV),
+            ),
+            ("export SKIP=lint; git commit -m x", Some(ENV)),
+            ("export HUSKY; git commit -m x", Some(ENV)),
+            ("declare -x HUSKY=0; git commit -m x", Some(ENV)),
+            ("LEFTHOOK=0; git commit -m x", Some(ENV)),
+            ("GIT_DIR=../manual/.git git commit -m x", Some(ENV)),
+            ("GIT_CONFIG_COUNT=1 git commit -m x", Some(CONFIG)),
+            ("LANG=C LC_ALL=C TZ=UTC TERM=dumb git commit -m x", None),
+            ("HUSKY=0 npm test && git commit -m x", None),
+            ("git commit -m \"HUSKY=0 is gone\"", None),
+        ];
+        for (cmd, want) in rows {
+            assert_eq!(
+                world(cmd, "/ws/auto", Alias::None).as_deref(),
+                *want,
+                "{cmd}"
+            );
+            assert_eq!(world(cmd, "/ws/other", Alias::None), None, "{cmd}");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn git_bash_paths_are_windows_paths() {
+        assert_eq!(
+            walk(Path::new("C:\\w"), &["/d/acta".into()]),
+            PathBuf::from("D:\\acta")
+        );
+        assert_eq!(
+            walk(Path::new("C:\\w\\a"), &["../b".into(), "./c".into()]),
+            PathBuf::from("C:\\w\\b\\c")
+        );
+    }
+
     #[test]
     fn reasons_fit_the_hook_budget() {
         let long = on_default(&"b".repeat(300));
+        let (m, o) = (manual(&"n".repeat(300)), outside(&"n".repeat(300)));
         for r in [
             NO_VERIFY,
             FORCED,
@@ -1361,7 +1887,12 @@ mod tests {
             UNKNOWN,
             CONFIG,
             DIRECT,
+            ENV,
+            DIR,
+            FAIL,
             long.as_str(),
+            m.as_str(),
+            o.as_str(),
         ] {
             let json = deny_json(r);
             assert!(

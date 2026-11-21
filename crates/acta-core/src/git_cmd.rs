@@ -18,6 +18,8 @@ use std::time::Duration;
 /// Limit of the working-tree summary (ADR 0011: past it, nothing is shown).
 pub const STATUS_LIMIT: Duration = Duration::from_secs(2);
 const LOCAL_LIMIT: Duration = Duration::from_secs(10);
+/// The guard's alias lookup runs inside a hook: short.
+const ALIAS_LIMIT: Duration = Duration::from_secs(2);
 const NETWORK_LIMIT: Duration = Duration::from_secs(60);
 
 /// Why a git action did not happen. Each kind has its own short message in
@@ -372,14 +374,23 @@ pub fn user_name(dir: &Path) -> Option<String> {
 }
 
 /// The value of `alias.<name>` in the repository's config, for the guard.
-pub fn alias(dir: &Path, name: &str) -> Option<String> {
+/// `Ok(None)` when there is none; an error (including past 2 s) means the
+/// guard cannot read the call.
+pub fn alias(dir: &Path, name: &str) -> Result<Option<String>, GitError> {
     if name.starts_with('-') || name.contains(char::is_whitespace) {
-        return None;
+        return Ok(None);
     }
     let key = format!("alias.{name}");
-    let out = run_ok(dir, &["config", "--get", &key], LOCAL_LIMIT).ok()?;
-    let v = out.trim();
-    (!v.is_empty()).then(|| v.to_owned())
+    let out = run(dir, &["config", "--get", &key], ALIAS_LIMIT)?;
+    match out.status.code() {
+        Some(0) => {
+            let v = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+            Ok((!v.is_empty()).then_some(v))
+        }
+        // `git config --get`: 1 is "no such key".
+        Some(1) => Ok(None),
+        _ => Err(classify(&String::from_utf8_lossy(&out.stderr))),
+    }
 }
 
 /// Whether `path` (relative to `dir`) is tracked by git.
