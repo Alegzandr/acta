@@ -330,10 +330,11 @@ fn every_tool_stays_within_its_budget_on_pathological_data() {
                 .map(|i| CreateItem {
                     kind: "topic".into(),
                     title: long(&format!("New{i}"), 120),
-                    from_notes: Some(vec!["N-1".into(), "N-2".into()]),
+                    from_notes: Some((1..=2).map(|k| format!("N-{}", i * 2 + k)).collect()),
                     ..Default::default()
                 })
                 .collect(),
+            dismiss: Some((21..=30).map(|k| format!("N-{k}")).collect()),
         }),
         budget::CREATE,
     );
@@ -630,6 +631,7 @@ fn other_projects_are_out_of_reach_and_unlinked_sessions_say_so() {
                 title: "x".into(),
                 ..Default::default()
             }],
+            ..Default::default()
         }),
         a.kb(KbArgs {
             id: Some(t.clone()),
@@ -1213,6 +1215,7 @@ fn create_validates_every_item_before_writing() {
                     ..Default::default()
                 },
             ],
+            ..Default::default()
         })
         .unwrap_err();
     assert!(e.contains("item 2 title is 121 chars"), "{e}");
@@ -1227,6 +1230,7 @@ fn create_validates_every_item_before_writing() {
     let e = a
         .create(CreateArgs {
             items: vec![CreateItem::default(); 11],
+            ..Default::default()
         })
         .unwrap_err();
     assert!(e.contains("limit is 10"), "{e}");
@@ -1250,4 +1254,255 @@ fn link_index_follows_folder_changes() {
         .unwrap();
     let index = crate::link_index::LinkIndex::read(ts.dir.path()).unwrap();
     assert!(!index.matches(os, &[stored]));
+}
+
+/// A small project for triage: one epic with one topic, six open notes by
+/// Alexandre, and a session focused on the topic.
+fn triage_seed() -> (TestStore, Session, ProjectId, TopicId) {
+    let mut ts = test_support::open();
+    let s = &mut ts.store;
+    let h = Author::Human;
+    let p = s.create_project("Acta", "", h).unwrap();
+    let e = s.create_epic(p, "Storage", "", h).unwrap();
+    let t = s
+        .create_topic(
+            NewTopic {
+                project: p,
+                epic: Some(e),
+                title: "Encrypted storage".into(),
+                description: String::new(),
+                status: Status::Active,
+            },
+            h,
+        )
+        .unwrap();
+    for text in [
+        "Sync between two laptops",
+        "Conflict handling when both edit the same topic",
+        "Quick capture from the tray",
+        "Capture should keep the last project",
+        "WAL checkpoint runs too often on battery",
+        "Quick capture from the tray (again)",
+    ] {
+        s.add_note(p, text, h).unwrap();
+    }
+    let mut sess = Session::unbound(Author::Claude);
+    sess.project = Some(p);
+    sess.focus = Some(Owner::Topic(t));
+    (ts, sess, p, t)
+}
+
+#[test]
+fn a_whole_triage_applies_in_one_call() {
+    let (mut ts, mut sess, p, t) = triage_seed();
+    let mut a = agent(&mut ts.store, &mut sess);
+    let inbox = ok(
+        a.find(FindArgs {
+            kind: Some("note".into()),
+            ..Default::default()
+        }),
+        budget::FIND,
+    );
+    assert!(
+        inbox.contains("N-1 note  Sync between two laptops"),
+        "{inbox}"
+    );
+    assert!(inbox.ends_with("6 hits"), "{inbox}");
+
+    let ack = ok(
+        a.create(CreateArgs {
+            items: vec![
+                CreateItem {
+                    kind: "epic".into(),
+                    title: "Sync".into(),
+                    from_notes: Some(vec!["N-1".into()]),
+                    ..Default::default()
+                },
+                CreateItem {
+                    kind: "topic".into(),
+                    title: "Conflict handling".into(),
+                    epic: Some("@1".into()),
+                    from_notes: Some(vec!["N-2".into()]),
+                    ..Default::default()
+                },
+                CreateItem {
+                    kind: "topic".into(),
+                    title: "Quick capture".into(),
+                    description: Some("Tray capture that remembers the project.".into()),
+                    from_notes: Some(vec!["N-3".into(), "N-4".into()]),
+                    ..Default::default()
+                },
+                CreateItem {
+                    kind: "entry".into(),
+                    topic: Some(t.to_string()),
+                    from_notes: Some(vec!["N-5".into()]),
+                    ..Default::default()
+                },
+            ],
+            dismiss: Some(vec!["N-6".into()]),
+        }),
+        budget::CREATE,
+    );
+    assert_eq!(
+        ack,
+        "ok E-2 (N-1) · T-2 draft in E-2 (N-2) · T-3 draft (N-3 N-4) · T-1 +1 entry (N-5) · dismissed N-6"
+    );
+    let s = &*a.store;
+    use crate::model::{EpicId, NoteFate, NoteId};
+    let fate = |n: i64| s.note(NoteId(n)).unwrap();
+    assert_eq!(fate(1).fate(), NoteFate::Epic(EpicId(2)));
+    assert_eq!(fate(2).fate(), NoteFate::Topic(TopicId(2)));
+    assert_eq!(fate(4).fate(), NoteFate::Topic(TopicId(3)));
+    assert_eq!(fate(5).fate(), NoteFate::Topic(t));
+    assert_eq!(fate(6).fate(), NoteFate::Dismissed);
+    assert!((1..=6).all(|n| fate(n).filed_by == Some(Author::Claude)));
+    assert_eq!(
+        s.inbox(p, crate::model::PageReq::first(10)).unwrap().total,
+        0
+    );
+    assert_eq!(
+        s.filed_notes(p, crate::model::PageReq::first(10))
+            .unwrap()
+            .total,
+        6
+    );
+    // The epic and the topic without a description keep the note's words.
+    assert_eq!(
+        s.epic(EpicId(2)).unwrap().description,
+        "Sync between two laptops"
+    );
+    let conflict = s.topic(TopicId(2)).unwrap();
+    assert_eq!(conflict.epic, Some(EpicId(2)));
+    assert_eq!(conflict.status, Status::Draft);
+    assert_eq!(
+        conflict.description,
+        "Conflict handling when both edit the same topic"
+    );
+    // The entry carries the note's text and its human author.
+    let e = s
+        .entries(t, &Default::default(), crate::model::PageReq::first(1))
+        .unwrap()
+        .items
+        .remove(0);
+    assert_eq!(e.text, "WAL checkpoint runs too often on battery");
+    assert_eq!((e.kind, e.author), (EntryKind::Discussion, Author::Human));
+
+    // Filed notes cannot be filed again; open puts one back.
+    let again = a
+        .create(CreateArgs {
+            dismiss: Some(vec!["N-3".into()]),
+            ..Default::default()
+        })
+        .unwrap_err();
+    assert!(again.contains("N-3 is already filed in T-3"), "{again}");
+    let back = ok(
+        a.update(UpdateArgs {
+            id: "N-3".into(),
+            status: Some("open".into()),
+            ..Default::default()
+        }),
+        budget::ACK,
+    );
+    assert_eq!(back, "ok N-3 updated: back in the inbox");
+    assert!(a.store.note(NoteId(3)).unwrap().is_open());
+    let gone = ok(
+        a.update(UpdateArgs {
+            id: "N-3".into(),
+            status: Some("dismissed".into()),
+            ..Default::default()
+        }),
+        budget::ACK,
+    );
+    assert_eq!(gone, "ok N-3 updated: dismissed");
+}
+
+#[test]
+fn a_triage_with_one_bad_item_writes_nothing() {
+    let (mut ts, mut sess, p, _) = triage_seed();
+    let mut a = agent(&mut ts.store, &mut sess);
+    let item = |kind: &str, notes: &[&str]| CreateItem {
+        kind: kind.into(),
+        title: "Fine".into(),
+        from_notes: Some(notes.iter().map(|n| n.to_string()).collect()),
+        ..Default::default()
+    };
+    let cases: Vec<(CreateArgs, &str)> = vec![
+        (
+            CreateArgs {
+                items: vec![item("epic", &["N-1"]), item("topic", &["N-1"])],
+                ..Default::default()
+            },
+            "item 2: N-1 is used twice",
+        ),
+        (
+            CreateArgs {
+                items: vec![item("epic", &["N-1"])],
+                dismiss: Some(vec!["N-99".into()]),
+            },
+            "N-99 not found",
+        ),
+        (
+            CreateArgs {
+                items: vec![CreateItem {
+                    epic: Some("@1".into()),
+                    ..item("topic", &["N-2"])
+                }],
+                ..Default::default()
+            },
+            "must name an epic item",
+        ),
+        (
+            CreateArgs {
+                items: vec![CreateItem {
+                    topic: Some("T-1".into()),
+                    ..item("entry", &[])
+                }],
+                ..Default::default()
+            },
+            "an entry comes from notes",
+        ),
+        (
+            CreateArgs {
+                items: vec![item("topic", &["N-1"]), item("epic", &["T-1"])],
+                ..Default::default()
+            },
+            "T-1 is not a note id",
+        ),
+        (
+            CreateArgs {
+                dismiss: Some((0..41).map(|i| format!("N-{i}")).collect()),
+                ..Default::default()
+            },
+            "the limit is 40",
+        ),
+    ];
+    for (args, want) in cases {
+        let e = a.create(args).unwrap_err();
+        assert!(e.contains(want), "{e} (wanted {want})");
+    }
+    let s = &*a.store;
+    assert_eq!(
+        s.inbox(p, crate::model::PageReq::first(10)).unwrap().total,
+        6
+    );
+    assert_eq!(s.epics(p).unwrap().len(), 1);
+}
+
+#[test]
+fn notes_of_another_project_cannot_be_filed() {
+    let (mut ts, mut sess, _, _) = triage_seed();
+    let other = ts.store.create_project("Other", "", Author::Human).unwrap();
+    let n = ts
+        .store
+        .add_note(other, "Alexandre's private note", Author::Human)
+        .unwrap();
+    let mut a = agent(&mut ts.store, &mut sess);
+    let e = a
+        .create(CreateArgs {
+            dismiss: Some(vec![n.to_string()]),
+            ..Default::default()
+        })
+        .unwrap_err();
+    assert!(e.contains("another project"), "{e}");
+    assert!(a.store.note(n).unwrap().is_open());
 }

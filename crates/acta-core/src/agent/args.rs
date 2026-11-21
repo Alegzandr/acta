@@ -70,7 +70,8 @@ pub struct UpdateArgs {
     pub description: Option<String>,
     /// Replaces the current state; the old one stays in history.
     pub state: Option<String>,
-    /// Topics: draft, planned, active, blocked, done, dropped.
+    /// Topics: draft, planned, active, blocked, done, dropped. Notes: open
+    /// (back to the inbox) or dismissed.
     pub status: Option<String>,
     /// Move a topic: E-n, or "none".
     pub epic: Option<String>,
@@ -92,21 +93,28 @@ pub struct FindArgs {
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
 pub struct CreateItem {
-    /// topic, epic or note.
+    /// topic, epic, note, or entry (files notes into an existing topic's timeline).
     pub kind: String,
-    /// The note text for a note.
+    /// Title; for a note, its text.
+    #[serde(default)]
     pub title: String,
+    /// Default with from_notes: the notes' text.
     pub description: Option<String>,
-    /// Epic of a new topic: E-n.
+    /// Epic of a new topic: E-n, or @k for epic item k of this call.
     pub epic: Option<String>,
-    /// N-ids this topic comes from; they are marked filed.
+    /// entry: the existing topic T-n.
+    pub topic: Option<String>,
+    /// Open N-ids this item comes from; they leave the inbox, linked to it.
     pub from_notes: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
 pub struct CreateArgs {
     /// Max 10.
+    #[serde(default)]
     pub items: Vec<CreateItem>,
+    /// N-ids to close without filing: duplicates, done, noise.
+    pub dismiss: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]

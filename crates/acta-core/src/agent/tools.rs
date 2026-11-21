@@ -11,8 +11,8 @@ use super::session::{Session, parse_owner};
 use crate::error::Error;
 use crate::markdown;
 use crate::model::{
-    Author, Entry, EntryKind, EpicId, KbId, KbKind, KbSummary, Level, NoteId, Owner, PageReq,
-    ProjectId, Record, Status, TopicId,
+    Author, Entry, EntryKind, EpicId, KbId, KbKind, KbSummary, Level, Note, NoteFate, NoteId,
+    Owner, PageReq, ProjectId, Record, Status, TopicId,
 };
 use crate::store::{
     EntryFilter, EpicPatch, KbEdit, KbFilter, KbUpdate, NewEntry, NewKb, NewTopic, SNIPPET_CLOSE,
@@ -623,15 +623,47 @@ impl Agent<'_> {
         {
             let note = self.store.note(n).map_err(err)?;
             self.check_project(note.project, id)?;
-            let text = a
-                .description
-                .or(a.title)
-                .ok_or("a note takes its new text in description")?;
-            check_len("note", &text, limit::NOTE)?;
+            if a.state.is_some() || a.epic.is_some() {
+                return Err("a note has no state or epic; file it with create(from_notes)".into());
+            }
+            let text = a.description.or(a.title);
+            let fate = match a.status.as_deref().map(|s| s.trim().to_ascii_lowercase()) {
+                None => None,
+                Some(s) if s == "open" => Some(true),
+                Some(s) if s == "dismissed" => Some(false),
+                Some(_) => return Err("a note's status is open or dismissed".into()),
+            };
+            if text.is_none() && fate.is_none() {
+                return Err(
+                    "nothing to change: pass description (new text) or status (open, dismissed)"
+                        .into(),
+                );
+            }
+            if let Some(t) = &text {
+                check_len("note", t, limit::NOTE)?;
+            }
+            let author = self.author();
             self.store
-                .update_note(n, &text, self.author())
+                .atomically(|store| {
+                    if let Some(t) = &text {
+                        store.update_note(n, t, author)?;
+                    }
+                    match fate {
+                        Some(true) => store.unfile_note(n, author),
+                        Some(false) => store.dismiss_notes(&[n], author),
+                        None => Ok(()),
+                    }
+                })
                 .map_err(err)?;
-            fields = vec!["text"];
+            fields = Vec::new();
+            if text.is_some() {
+                fields.push("text");
+            }
+            match fate {
+                Some(true) => fields.push("back in the inbox"),
+                Some(false) => fields.push("dismissed"),
+                None => {}
+            }
             n.to_string()
         } else {
             return Err("id must be T-n, E-n or N-n".into());
@@ -864,10 +896,44 @@ impl Agent<'_> {
 
     // ---- create ----
 
+    /// One open note of this project, not already used in this call.
+    fn open_note(
+        &self,
+        id: &str,
+        what: &str,
+        seen: &mut Vec<NoteId>,
+    ) -> Result<(NoteId, Note), String> {
+        let nid = NoteId::parse(id)
+            .filter(|_| id.trim().to_ascii_uppercase().starts_with("N-"))
+            .ok_or(format!("{what}: {} is not a note id", render::clip(id, 20)))?;
+        let note = self.store.note(nid).map_err(err)?;
+        self.check_project(note.project, &nid.to_string())?;
+        if seen.contains(&nid) {
+            return Err(format!("{what}: {nid} is used twice in this call"));
+        }
+        let gone = match note.fate() {
+            NoteFate::Open => None,
+            NoteFate::Topic(t) => Some(format!("filed in {t}")),
+            NoteFate::Epic(e) => Some(format!("filed as {e}")),
+            NoteFate::Dismissed => Some("dismissed".to_owned()),
+        };
+        if let Some(gone) = gone {
+            return Err(format!(
+                "{what}: {nid} is already {gone}; update(id=\"{nid}\", status=\"open\") puts it back in the inbox"
+            ));
+        }
+        seen.push(nid);
+        Ok((nid, note))
+    }
+
+    /// Creates topics, epics and notes, files inbox notes into them or into
+    /// existing topics, and dismisses notes: validated first, then written
+    /// in one transaction, so a bad item writes nothing.
     pub fn create(&mut self, a: CreateArgs) -> Reply {
         let project = self.project()?;
-        if a.items.is_empty() {
-            return Err("items is empty".into());
+        let dismiss = a.dismiss.unwrap_or_default();
+        if a.items.is_empty() && dismiss.is_empty() {
+            return Err("nothing to do: pass items, dismiss or both".into());
         }
         if a.items.len() > limit::CREATE_ITEMS {
             return Err(format!(
@@ -876,88 +942,161 @@ impl Agent<'_> {
                 limit::CREATE_ITEMS
             ));
         }
-        // Validate everything first, so a bad item writes nothing.
-        enum Plan {
-            Topic(NewTopic, Vec<NoteId>),
-            Epic(String, String),
-            Note(String),
+        let note_count = a
+            .items
+            .iter()
+            .map(|i| i.from_notes.as_ref().map_or(0, Vec::len))
+            .sum::<usize>()
+            + dismiss.len();
+        if note_count > limit::CREATE_NOTES {
+            return Err(format!(
+                "{note_count} notes; the limit is {} per call",
+                limit::CREATE_NOTES
+            ));
         }
+        let kinds: Vec<String> = a
+            .items
+            .iter()
+            .map(|i| i.kind.trim().to_ascii_lowercase())
+            .collect();
+        let mut seen = Vec::new();
         let mut plans = Vec::new();
         for (i, it) in a.items.iter().enumerate() {
-            let n = i + 1;
-            let desc = it.description.clone().unwrap_or_default();
-            match it.kind.trim().to_ascii_lowercase().as_str() {
+            let what = format!("item {}", i + 1);
+            let mut notes = Vec::new();
+            for id in it.from_notes.iter().flatten() {
+                notes.push(self.open_note(id, &what, &mut seen)?.1);
+            }
+            let ids: Vec<NoteId> = notes.iter().map(|n| n.id).collect();
+            let title = it.title.trim().to_owned();
+            let kind = kinds[i].as_str();
+            if matches!(kind, "topic" | "epic") {
+                if title.is_empty() {
+                    return Err(format!("{what}: a {kind} needs a title"));
+                }
+                check_len(&format!("{what} title"), &title, limit::TITLE)?;
+            }
+            // Without a description, the human's words from the notes.
+            let description = match &it.description {
+                Some(d) => {
+                    check_len(&format!("{what} description"), d, limit::DESCRIPTION)?;
+                    d.clone()
+                }
+                None => {
+                    let joined: Vec<&str> = notes.iter().map(|n| n.text.trim()).collect();
+                    render::clip(&joined.join("\n\n"), limit::DESCRIPTION)
+                }
+            };
+            match kind {
                 "topic" => {
-                    check_len(&format!("item {n} title"), &it.title, limit::TITLE)?;
-                    check_len(&format!("item {n} description"), &desc, limit::DESCRIPTION)?;
-                    let epic = it.epic.as_deref().map(|e| self.epic_arg(e)).transpose()?;
-                    let mut notes = Vec::new();
-                    for id in it.from_notes.iter().flatten() {
-                        let nid =
-                            NoteId::parse(id).ok_or(format!("item {n}: {id} is not a note id"))?;
-                        let note = self.store.note(nid).map_err(err)?;
-                        self.check_project(note.project, id)?;
-                        notes.push(nid);
-                    }
-                    plans.push(Plan::Topic(
-                        NewTopic {
-                            project,
-                            epic,
-                            title: it.title.clone(),
-                            description: desc,
-                            status: Status::Planned,
-                        },
-                        notes,
-                    ));
-                }
-                "epic" => {
-                    check_len(&format!("item {n} title"), &it.title, limit::TITLE)?;
-                    check_len(&format!("item {n} description"), &desc, limit::DESCRIPTION)?;
-                    plans.push(Plan::Epic(it.title.clone(), desc));
-                }
-                "note" => {
-                    let text = if desc.trim().is_empty() {
-                        it.title.clone()
-                    } else {
-                        format!("{}\n\n{}", it.title.trim(), desc.trim())
+                    let epic = match it.epic.as_deref().map(str::trim) {
+                        None => None,
+                        Some(e) if e.starts_with('@') => {
+                            let k = e[1..]
+                                .parse::<usize>()
+                                .ok()
+                                .filter(|k| {
+                                    *k >= 1 && kinds.get(k - 1).is_some_and(|x| x == "epic")
+                                })
+                                .ok_or(format!(
+                                    "{what}: epic {} must name an epic item of this call (@1 is item 1)",
+                                    render::clip(e, 20)
+                                ))?;
+                            Some(EpicRef::Item(k - 1))
+                        }
+                        Some(e) => Some(EpicRef::Existing(self.epic_arg(e)?)),
                     };
-                    check_len(&format!("item {n} note"), &text, limit::NOTE)?;
+                    // Topics from notes are proposals the human refines.
+                    let status = if ids.is_empty() {
+                        Status::Planned
+                    } else {
+                        Status::Draft
+                    };
+                    plans.push(Plan::Topic {
+                        epic,
+                        title,
+                        description,
+                        status,
+                        notes: ids,
+                    });
+                }
+                "epic" => plans.push(Plan::Epic {
+                    title,
+                    description,
+                    notes: ids,
+                }),
+                "note" => {
+                    if !ids.is_empty() {
+                        return Err(format!("{what}: a note cannot come from notes"));
+                    }
+                    let d = it.description.clone().unwrap_or_default();
+                    let text = if d.trim().is_empty() {
+                        title
+                    } else {
+                        format!("{title}\n\n{}", d.trim())
+                    };
+                    if text.is_empty() {
+                        return Err(format!("{what}: a note needs its text in title"));
+                    }
+                    check_len(&format!("{what} note"), &text, limit::NOTE)?;
                     plans.push(Plan::Note(text));
                 }
-                _ => return Err(format!("item {n}: kind must be topic, epic or note")),
-            }
-        }
-        let author = self.author();
-        let mut acks = Vec::new();
-        for plan in plans {
-            match plan {
-                Plan::Topic(new, notes) => {
-                    let id = self.store.create_topic(new, author).map_err(err)?;
+                "entry" => {
+                    let topic = it
+                        .topic
+                        .as_deref()
+                        .ok_or(format!("{what}: an entry needs topic=\"T-n\""))?;
+                    let topic = self.topic_arg(Some(topic))?;
                     if notes.is_empty() {
-                        acks.push(id.to_string());
-                    } else {
-                        self.store.file_notes(&notes, id, author).map_err(err)?;
-                        let list: Vec<String> = notes.iter().map(|n| n.to_string()).collect();
-                        acks.push(format!("{id} (notes {} filed)", list.join(" ")));
+                        return Err(format!(
+                            "{what}: an entry comes from notes; for your own text call log"
+                        ));
                     }
+                    plans.push(Plan::Entries { topic, notes });
                 }
-                Plan::Epic(title, desc) => {
-                    let id = self
-                        .store
-                        .create_epic(project, &title, &desc, author)
-                        .map_err(err)?;
-                    acks.push(id.to_string());
-                }
-                Plan::Note(text) => {
-                    let id = self.store.add_note(project, &text, author).map_err(err)?;
-                    acks.push(id.to_string());
-                }
+                _ => return Err(format!("{what}: kind must be topic, epic, note or entry")),
             }
         }
-        Ok(render::finish(
-            format!("ok {}", acks.join(" · ")),
-            budget::CREATE,
-        ))
+        let mut dismissed = Vec::new();
+        for id in &dismiss {
+            dismissed.push(self.open_note(id, "dismiss", &mut seen)?.0);
+        }
+
+        let author = self.author();
+        let acks = self
+            .store
+            .atomically(|store| apply_plans(store, project, plans, &dismissed, author))
+            .map_err(err)?;
+        let render_acks = |notes_shown: bool| {
+            let mut parts: Vec<String> = acks
+                .iter()
+                .map(|(ack, notes)| {
+                    if notes_shown && !notes.is_empty() {
+                        format!("{ack} ({})", id_list(notes))
+                    } else {
+                        ack.clone()
+                    }
+                })
+                .collect();
+            if !dismissed.is_empty() {
+                parts.push(if notes_shown {
+                    format!("dismissed {}", id_list(&dismissed))
+                } else {
+                    format!(
+                        "dismissed {}",
+                        plural(dismissed.len() as i64, "note", "notes")
+                    )
+                });
+            }
+            format!("ok {}", parts.join(" · "))
+        };
+        let full = render_acks(true);
+        let text = if render::chars(&full) <= budget::CREATE {
+            full
+        } else {
+            render_acks(false)
+        };
+        Ok(render::finish(text, budget::CREATE))
     }
 
     // ---- kb ----
@@ -1575,6 +1714,135 @@ fn fenced_reply(head: Option<&str>, body: &str, foot: Option<&str>, max: usize) 
 /// defused.
 fn quoted(text: &str, max: usize) -> String {
     render::defuse(&render::clip(&render::one_line(text), max))
+}
+
+/// An epic a planned topic goes into: an existing one, or an epic item of
+/// the same `create` call (by index).
+enum EpicRef {
+    Existing(EpicId),
+    Item(usize),
+}
+
+/// One validated `create` item.
+enum Plan {
+    Topic {
+        epic: Option<EpicRef>,
+        title: String,
+        description: String,
+        status: Status,
+        notes: Vec<NoteId>,
+    },
+    Epic {
+        title: String,
+        description: String,
+        notes: Vec<NoteId>,
+    },
+    Note(String),
+    /// Notes filed into an existing topic, each as a discussion entry.
+    Entries {
+        topic: TopicId,
+        notes: Vec<Note>,
+    },
+}
+
+/// Writes validated plans (inside one transaction, see `Agent::create`);
+/// returns one ack and the notes it filed per item.
+fn apply_plans(
+    store: &mut Store,
+    project: ProjectId,
+    plans: Vec<Plan>,
+    dismissed: &[NoteId],
+    author: Author,
+) -> crate::Result<Vec<(String, Vec<NoteId>)>> {
+    // Epics first, so topics can name them by item number.
+    let mut epics: Vec<Option<EpicId>> = vec![None; plans.len()];
+    for (i, plan) in plans.iter().enumerate() {
+        if let Plan::Epic {
+            title, description, ..
+        } = plan
+        {
+            epics[i] = Some(store.create_epic(project, title, description, author)?);
+        }
+    }
+    let mut acks = Vec::new();
+    for (i, plan) in plans.into_iter().enumerate() {
+        let (ack, notes) = match plan {
+            Plan::Epic { notes, .. } => {
+                let id = epics[i].expect("created above");
+                store.file_notes_in_epic(&notes, id, author)?;
+                (id.to_string(), notes)
+            }
+            Plan::Topic {
+                epic,
+                title,
+                description,
+                status,
+                notes,
+            } => {
+                let epic = match epic {
+                    None => None,
+                    Some(EpicRef::Existing(e)) => Some(e),
+                    Some(EpicRef::Item(k)) => epics[k],
+                };
+                let id = store.create_topic(
+                    NewTopic {
+                        project,
+                        epic,
+                        title,
+                        description,
+                        status,
+                    },
+                    author,
+                )?;
+                store.file_notes(&notes, id, author)?;
+                let mut ack = id.to_string();
+                if status == Status::Draft {
+                    ack.push_str(" draft");
+                }
+                if let Some(e) = epic {
+                    ack.push_str(&format!(" in {e}"));
+                }
+                (ack, notes)
+            }
+            Plan::Note(text) => (
+                store.add_note(project, &text, author)?.to_string(),
+                Vec::new(),
+            ),
+            Plan::Entries { topic, notes } => {
+                // The entry keeps the note's words and its author.
+                for n in &notes {
+                    store.log(
+                        topic,
+                        NewEntry {
+                            kind: EntryKind::Discussion,
+                            text: n.text.clone(),
+                            state: None,
+                            status: None,
+                        },
+                        n.author,
+                    )?;
+                }
+                let ids: Vec<NoteId> = notes.iter().map(|n| n.id).collect();
+                store.file_notes(&ids, topic, author)?;
+                (
+                    format!("{topic} +{}", plural(ids.len() as i64, "entry", "entries")),
+                    ids,
+                )
+            }
+        };
+        acks.push((ack, notes));
+    }
+    store.dismiss_notes(dismissed, author)?;
+    Ok(acks)
+}
+
+/// `N-3 N-5`.
+fn id_list(notes: &[NoteId]) -> String {
+    notes
+        .iter()
+        .map(|n| n.to_string())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn plural(n: i64, one: &str, many: &str) -> String {

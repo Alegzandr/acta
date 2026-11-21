@@ -163,7 +163,7 @@ impl ActaServer {
 
     #[tool(
         name = "update",
-        description = "Call to change a topic, epic or note: title, description, state, status, or move a topic to another epic.",
+        description = "Call to change a topic, epic or note: title, description, state, status, or move a topic to another epic. A note's status open puts it back in the inbox.",
         annotations(idempotent_hint = false)
     )]
     fn update(&self, Parameters(a): Parameters<UpdateArgs>) -> CallToolResult {
@@ -181,7 +181,7 @@ impl ActaServer {
 
     #[tool(
         name = "create",
-        description = "Call to create topics, epics or notes, up to 10 in one call. from_notes files inbox notes under a new topic.",
+        description = "Call to create topics, epics or notes (up to 10), or to apply an agreed inbox triage in one all-or-nothing call: from_notes files notes into each item, kind=entry adds them to an existing topic, dismiss closes the rest.",
         annotations(idempotent_hint = false)
     )]
     fn create(&self, Parameters(a): Parameters<CreateArgs>) -> CallToolResult {
