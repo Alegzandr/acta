@@ -9,7 +9,7 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 | M2 | Data model and core UI | v0.3.0 | done |
 | M3 | MCP server, CLI, Claude Code setup; Acta tracks itself | v0.3.0 | done (dogfooding pending) |
 | M4 | Integrated terminal running Claude Code | v0.3.0 | doing (docked; live Claude Code session to verify) |
-| M5 | Claude chat panel beside the work (Windows and macOS; link on Linux; ADR 0009) | v0.5.0 | todo |
+| M5 | Claude chat panel beside the work (Windows and macOS; link on Linux; ADR 0009) | v0.5.0 | doing |
 | M6 | Notes inbox and notes-to-topics flow | v0.6.0 | todo |
 | M7 | Polish | v1.0.0 | todo |
 
@@ -66,7 +66,7 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 - [x] ADR 0009 accepted with conditions: claude.ai in the system web view, Windows proven by the spike, macOS unproven, Linux gets a link; M5 opens with the keyboard handoff check, a real sign-in by the user and a macOS build
 - [ ] First: keyboard handoff while the page has focus, a real sign-in by the user, a macOS build (the three things the spike could not check)
 - [x] DESIGN.md: specify the chat panel (placement, toggle, placeholder under overlays, failure and sign-in help states) - `docs/design/components-app.md`, `docs/design/screens.md` 8.13
-- [ ] Side panel with a persistent session, toggled from the keyboard
+- [ ] Side panel with a persistent session, toggled from the keyboard - built on `gpui-engineer/m5-chat` for Windows: chat tool window in the right or bottom dock, lazy web view with profile in `<data dir>/webview`, allow-list, hidden under overlays, runtime-missing / could-not-open / sign-in help states, kept keys routed through WebView2's `AcceleratorKeyPressed`; macOS and Linux get the link (ADR 0009 changelog 2026-11-21); the kept-key route and a real sign-in are not yet exercised
 
 ## M6 - Notes
 - [ ] Per-project inbox, quick capture (inbox page and Mod+N in M2)

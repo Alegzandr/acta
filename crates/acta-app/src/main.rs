@@ -3,6 +3,12 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod capture;
+#[cfg(windows)]
+mod chat;
+#[cfg(windows)]
+mod chat_panel;
+#[cfg(windows)]
+mod chat_windows;
 mod cli_export;
 mod commands;
 mod db;

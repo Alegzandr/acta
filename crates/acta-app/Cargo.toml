@@ -33,10 +33,24 @@ ureq = { version = "3.5", default-features = false, features = ["rustls"] }
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"
+# The chat panel (ADR 0009): the system web view, Windows only for now (macOS and
+# Linux get the link). Exact pins, bumped together with gpui-kit; gpui-webview builds
+# on Longbridge's wry fork.
+gpui-webview = "=0.10.0"
+wry = { version = "=0.53.3", package = "lb-wry" }
+# The chat panel's navigation allow-list (chat.rs).
+url = "2"
+# Messages from the web view's handlers (which run outside GPUI) to the chat panel.
+async-channel = "2"
+# The WebView2 controller events wry does not expose: accelerator keys routed to
+# Acta, focus, and failed navigations (chat_windows.rs). Same versions as lb-wry's.
+webview2-com = "=0.38.2"
+windows = "0.61"
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_Threading",
+    "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
 ] }
 

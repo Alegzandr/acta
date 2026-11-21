@@ -23,4 +23,8 @@ accepted = [
     # WTFPL of the bundled libtomcrypt. Both put no condition on the binary.
     "blessing",
     "WTFPL",
+    # target-lexicon, a build-time dependency of the chat panel's web view stack
+    # (lb-wry -> gtk/system-deps -> cfg-expr). Apache-2.0 with the LLVM exception
+    # only waives conditions on binaries; nothing beyond Apache-2.0 is asked.
+    "Apache-2.0 WITH LLVM-exception",
 ]

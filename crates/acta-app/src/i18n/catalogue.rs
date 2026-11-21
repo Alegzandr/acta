@@ -1069,6 +1069,18 @@ catalogue! {
         en: t("Sign out and clear"),
         fr: t("Se déconnecter et effacer"),
     }
+    ChatHide "chat.hide" {
+        en: t("Hide chat"),
+        fr: t("Masquer le chat"),
+    }
+    ChatMore "chat.more" {
+        en: t("More"),
+        fr: t("Plus"),
+    }
+    ChatClearFailed "chat.clear_failed" {
+        en: t("The chat data could not be deleted. Acta tries again at the next start."),
+        fr: t("Les données du chat n\u{2019}ont pas pu être supprimées. Acta réessaiera au prochain démarrage."),
+    }
     TabOpenNew "tab.open_new" {
         en: t("Open in new tab"),
         fr: t("Ouvrir dans un nouvel onglet"),

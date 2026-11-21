@@ -100,6 +100,12 @@ pub struct SettingsPage {
 }
 
 impl SettingsPage {
+    #[cfg(windows)]
+    /// The language menu is open (the chat's web view hides under it).
+    pub fn menu_open(&self) -> bool {
+        self.language_menu_open
+    }
+
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let language_focus = cx.focus_handle();
         // The menu belongs to its control: it closes when focus leaves it.
@@ -751,6 +757,32 @@ impl SettingsPage {
                 )
                 .into_any_element(),
         );
+        // components-app.md 5, Settings: Chat.
+        out.push(subtitle(Key::SettingsChat));
+        let chat_row = if cfg!(windows) {
+            setting_row(
+                text(locale, Key::ChatSignout),
+                text(locale, Key::ChatSignoutBody),
+                action(
+                    "settings-chat-signout",
+                    text(locale, Key::ChatSignoutConfirm),
+                    Box::new(crate::shell::ChatSignOut),
+                ),
+                t,
+            )
+        } else {
+            setting_row(
+                text(locale, Key::ChatBrowser),
+                String::new(),
+                action(
+                    "settings-chat-browser",
+                    text(locale, Key::ChatOpenBrowser),
+                    Box::new(crate::shell::OpenChatInBrowser),
+                ),
+                t,
+            )
+        };
+        out.push(chat_row.into_any_element());
         out
     }
 }

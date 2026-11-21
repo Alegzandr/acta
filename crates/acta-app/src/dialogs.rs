@@ -49,6 +49,9 @@ pub enum Kind {
         selected: Option<usize>,
     },
     RestartTerminal,
+    #[cfg(windows)]
+    /// "Sign out and clear chat data?" (components-app.md 5, Chat panel).
+    ChatSignOut,
 }
 
 pub enum DialogEvent {
@@ -57,6 +60,9 @@ pub enum DialogEvent {
     Recover(Arc<ExportFile>),
     /// The terminal restart was confirmed.
     RestartTerminal,
+    #[cfg(windows)]
+    /// Deleting the chat panel's profile was confirmed.
+    ChatSignOut,
 }
 
 pub struct Dialog {
@@ -648,6 +654,35 @@ impl Dialog {
                     .into_any_element(),
                 ];
                 (text(locale, Key::TerminalRestartTitle), body, buttons, 440.)
+            }
+            #[cfg(windows)]
+            Kind::ChatSignOut => {
+                let body = type_scale::UI
+                    .el()
+                    .text_color(t.text_secondary)
+                    .child(text(locale, Key::ChatSignoutBody))
+                    .into_any_element();
+                let buttons = vec![
+                    ui::button(
+                        "dialog-cancel",
+                        text(locale, Key::CommonCancel),
+                        Variant::Secondary,
+                        false,
+                        t,
+                    )
+                    .on_click(cx.listener(|d, _, _, cx| d.close(cx)))
+                    .into_any_element(),
+                    ui::button(
+                        "chat-signout-confirm",
+                        text(locale, Key::ChatSignoutConfirm),
+                        Variant::Primary,
+                        false,
+                        t,
+                    )
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(DialogEvent::ChatSignOut)))
+                    .into_any_element(),
+                ];
+                (text(locale, Key::ChatSignoutTitle), body, buttons, 440.)
             }
         }
     }
