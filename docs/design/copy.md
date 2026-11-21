@@ -71,7 +71,7 @@ Both languages use the 24-hour clock and day-month-year order; neither follows t
 - **Absolute date, `{date}`**: "18 Nov 2026" / "18 nov. 2026", with no article; the French string supplies "le" or "du" itself. **Absolute date and time, `{datetime}`**: "18 Nov 2026, 09:12" / "18 nov. 2026 à 09:12". Used where exactness matters more than recency: versions, snapshots, export files.
 - **Full form** (tooltips only): "Tuesday 17 November 2026, 14:05" / "mardi 17 novembre 2026 à 14:05".
 - **Today with a time** exists only in the snapshot line of Settings and has its own strings: "today, 09:12" / "aujourd'hui à 09:12".
-- **Whole days** exist only for the age of the last export: "12 days ago" / "il y a 12 jours", "today" / "aujourd'hui".
+- **Whole days** exist only for the age of the last export ("12 days ago" / "il y a 12 jours", "today" / "aujourd'hui") and inside the Overview's sentences ("the oldest for 12 days" / "la plus ancienne depuis 12 jours"), counted in local calendar days as in 10.2.1.
 
 | What | English | French |
 |---|---|---|
