@@ -247,6 +247,16 @@ impl TerminalDock {
         true
     }
 
+    /// Write `bytes` into the project's session as typed (development
+    /// checks only: Esc to decline a question).
+    #[cfg(debug_assertions)]
+    pub fn dev_send_raw(&mut self, project: ProjectId, bytes: &[u8], cx: &mut App) {
+        if let Some(Pane::Running { view, .. }) = self.panes.get(&project) {
+            let bytes = bytes.to_vec();
+            view.update(cx, |view, _| view.send_raw(bytes));
+        }
+    }
+
     /// End the project's session and start Claude Code on `command`.
     pub fn restart_on(
         &mut self,

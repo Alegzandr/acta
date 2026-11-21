@@ -831,6 +831,12 @@ impl Shell {
             // terminal's screen goes to stderr at each step.
             #[cfg(debug_assertions)]
             Ok("triage-check") => self.dev_triage_check(window, cx),
+            // The same against a pending permission question: the prompt
+            // in `ACTA_DEV_CHECK_PROMPT` is typed first; the triage must
+            // then find Claude Code busy and type nothing; the question is
+            // declined with Esc, never approved, then `/exit`.
+            #[cfg(debug_assertions)]
+            Ok("permission-check") => self.dev_permission_check(window, cx),
             Ok("split") => {
                 self.change_layout(None, window, cx, |l| {
                     l.show_view(ViewId::Terminal);
@@ -2480,6 +2486,63 @@ impl Shell {
         bench.toast = None;
         bench.ws.update(cx, |ws, cx| ws.undo_active(project, cx));
         cx.notify();
+    }
+
+    #[cfg(debug_assertions)]
+    fn dev_permission_check(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let prompt = std::env::var("ACTA_DEV_CHECK_PROMPT").unwrap_or_default();
+        self.view_action(ViewId::Terminal, ViewAction::Show, window, cx);
+        cx.spawn_in(window, async move |shell, cx| {
+            let step = |shell: &mut Shell, name: &str, cx: &mut Context<Shell>, f: &dyn Fn(&mut TerminalDock, ProjectId, &mut Context<TerminalDock>)| {
+                let Some(bench) = shell.bench() else { return };
+                let Some(project) = bench.active_project else { return };
+                let screen = bench.dock.read(cx).dev_screen(project, cx);
+                eprintln!("[permission-check] {name}\n{}", screen.unwrap_or_default());
+                bench.dock.update(cx, |dock, cx| f(dock, project, cx));
+            };
+            cx.background_executor()
+                .timer(Duration::from_secs(30))
+                .await;
+            let _ = shell.update_in(cx, |shell, _, cx| {
+                step(shell, "start", cx, &|dock, project, cx| {
+                    let typed = dock.dev_type_if_idle(project, &prompt, cx);
+                    eprintln!("[permission-check] prompt typed: {typed}");
+                })
+            });
+            cx.background_executor()
+                .timer(Duration::from_secs(40))
+                .await;
+            let _ = shell.update_in(cx, |shell, window, cx| {
+                step(shell, "question pending", cx, &|_, _, _| {});
+                if let Some(project) = shell.bench().and_then(|b| b.active_project) {
+                    shell.file_with_claude(project, window, cx);
+                }
+                // The restart confirmation, if it opened: left unanswered.
+                shell.close_overlay(window, cx);
+            });
+            cx.background_executor()
+                .timer(Duration::from_secs(5))
+                .await;
+            let _ = shell.update_in(cx, |shell, _, cx| {
+                step(shell, "declining", cx, &|dock, project, cx| {
+                    dock.dev_send_raw(project, b"\x1b", cx)
+                })
+            });
+            cx.background_executor()
+                .timer(Duration::from_secs(15))
+                .await;
+            let _ = shell.update_in(cx, |shell, _, cx| {
+                step(shell, "declined", cx, &|dock, project, cx| {
+                    let typed = dock.dev_type_if_idle(project, "/exit", cx);
+                    eprintln!("[permission-check] /exit typed: {typed}");
+                })
+            });
+            cx.background_executor()
+                .timer(Duration::from_secs(10))
+                .await;
+            let _ = shell.update_in(cx, |shell, _, cx| step(shell, "after exit", cx, &|_, _, _| {}));
+        })
+        .detach();
     }
 
     #[cfg(debug_assertions)]
