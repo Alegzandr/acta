@@ -48,6 +48,25 @@ fn key(os: Os, stored: &str) -> String {
     if os == Os::Linux { n } else { n.to_lowercase() }
 }
 
+/// `path` and every ancestor, split by `os`'s separators rather than the
+/// host's, so each OS's rules hold (and are tested) on any host. Each
+/// prefix is given with and without its trailing separator; hashing
+/// normalises both, which keeps roots such as `C:\` and `/`.
+fn ancestors(os: Os, path: &str) -> Vec<&str> {
+    let is_sep = |c: char| c == '/' || (os == Os::Windows && c == '\\');
+    let mut out = vec![path];
+    for (i, c) in path.char_indices().rev() {
+        if is_sep(c) {
+            out.push(&path[..i + c.len_utf8()]);
+            if i > 0 {
+                out.push(&path[..i]);
+            }
+        }
+    }
+    out.retain(|a| !a.is_empty());
+    out
+}
+
 impl LinkIndex {
     fn hash(&self, os: Os, stored: &str) -> String {
         let mut h = Sha256::new();
@@ -76,10 +95,8 @@ impl LinkIndex {
     /// for a git worktree, its main checkout).
     pub fn matches(&self, os: Os, dirs: &[String]) -> bool {
         dirs.iter().any(|d| {
-            Path::new(d)
-                .ancestors()
-                .filter_map(|a| a.to_str())
-                .filter(|a| !a.is_empty())
+            ancestors(os, d)
+                .iter()
                 .any(|a| self.hashes.contains(&self.hash(os, a)))
         })
     }
@@ -143,6 +160,19 @@ mod tests {
         assert!(!i.matches(os, &[r"C:\work".into()]));
         assert!(!i.matches(os, &[r"C:\work\actable".into()]));
         assert!(!i.matches(os, &[r"D:\other".into(), r"C:\elsewhere".into()]));
+    }
+
+    #[test]
+    fn ancestors_follow_the_target_os_not_the_host() {
+        let w = ancestors(Os::Windows, r"C:\work\acta");
+        assert!(w.contains(&r"C:\work") && w.contains(&r"C:\"), "{w:?}");
+        let l = ancestors(Os::Linux, "/home/alexandre/a");
+        assert!(l.contains(&"/home/alexandre") && l.contains(&"/"), "{l:?}");
+        // On Linux a backslash is part of a name, not a separator.
+        assert_eq!(
+            ancestors(Os::Linux, r"/srv/a\b"),
+            [r"/srv/a\b", "/srv/", "/srv", "/"]
+        );
     }
 
     #[test]
