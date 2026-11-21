@@ -243,18 +243,30 @@ impl Agent<'_> {
     fn attention(&self, scope: Scope, max: usize) -> Result<Option<String>, String> {
         let today = self.session.today();
         let zone = self.session.zone;
-        let list = |f| self.store.overview_list(scope, f, today, zone).map_err(err);
+        // One read of the scope for every list (the inbox is the project's).
+        let mut filters = vec![
+            OverviewFilter::Blocked,
+            OverviewFilter::Overdue,
+            OverviewFilter::Idle,
+        ];
+        if matches!(scope, Scope::Project(_)) {
+            filters.push(OverviewFilter::Inbox);
+        }
+        let mut lists = self
+            .store
+            .overview_lists(scope, &filters, today, zone)
+            .map_err(err)?
+            .into_iter();
+        let mut next = || lists.next().unwrap_or_default();
         let with_days = |items: Vec<OverviewItem>| -> Vec<(String, i64)> {
             items
                 .into_iter()
                 .map(|i| (i.record.to_string(), i.days.unwrap_or(0)))
                 .collect()
         };
-        let blocked: Vec<String> = list(OverviewFilter::Blocked)?
-            .into_iter()
-            .map(|i| i.record.to_string())
-            .collect();
-        let mut overdue = with_days(list(OverviewFilter::Overdue)?);
+        let blocked: Vec<String> = next().into_iter().map(|i| i.record.to_string()).collect();
+        let mut overdue = with_days(next());
+        let idle = with_days(next());
         let mut inbox = None;
         if let Scope::Project(p) = scope {
             for e in self.store.epics(p).map_err(err)? {
@@ -264,14 +276,13 @@ impl Agent<'_> {
             }
             // Oldest date first; stable, so topics keep their order.
             overdue.sort_by_key(|(_, d)| std::cmp::Reverse(*d));
-            let notes = list(OverviewFilter::Inbox)?;
+            let notes = next();
             if let Some(d) = notes.first().and_then(|n| n.days)
                 && d >= INBOX_DAYS
             {
                 inbox = Some(format!("inbox {}, oldest {d}d", notes.len()));
             }
         }
-        let idle = with_days(list(OverviewFilter::Idle)?);
         let days = |v: Vec<(String, i64)>| -> Vec<String> {
             v.into_iter().map(|(id, d)| format!("{id} {d}d")).collect()
         };

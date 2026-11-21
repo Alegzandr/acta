@@ -249,6 +249,23 @@ impl Store {
         self.list(&facts, filter, today, zone)
     }
 
+    /// The records behind several figures with the scope read once: one
+    /// list per filter, in the order given, each equal to
+    /// [`Store::overview_list`] for that filter.
+    pub fn overview_lists(
+        &self,
+        scope: Scope,
+        filters: &[OverviewFilter],
+        today: Date,
+        zone: Zone,
+    ) -> Result<Vec<Vec<OverviewItem>>> {
+        let facts = self.facts(scope)?;
+        filters
+            .iter()
+            .map(|f| self.list(&facts, *f, today, zone))
+            .collect()
+    }
+
     /// Days since an Active topic's last activity when it is idle by the
     /// definition of [`OverviewFilter::Idle`]; `None` when it is not Active
     /// or not idle. For the agent's topic header (`· no activity 12d`).
@@ -927,6 +944,16 @@ mod tests {
         let s = &store.store;
         for scope in [Scope::Project(p), Scope::Epic(e)] {
             let o = s.overview(scope, today(), ZONE).unwrap();
+            let all = s
+                .overview_lists(scope, &OverviewFilter::ALL, today(), ZONE)
+                .unwrap();
+            for (f, list) in OverviewFilter::ALL.into_iter().zip(&all) {
+                assert_eq!(
+                    list,
+                    &s.overview_list(scope, f, today(), ZONE).unwrap(),
+                    "{scope:?} {f:?}"
+                );
+            }
             for f in OverviewFilter::ALL {
                 let n = s.overview_list(scope, f, today(), ZONE).unwrap().len();
                 let count = match f {
