@@ -1,6 +1,6 @@
 # 0008 - Working folders
 
-Status: accepted (the `claude` flags named here are to be re-verified against the current CLI in M4)
+Status: accepted, amended by 0011 (folder sets, the active folder, always inherited, commit modes)
 Date: 2026-11-20
 
 ## Context
@@ -63,3 +63,6 @@ The terminal starts `claude` in the primary effective folder with, in this order
 - Paths in arguments: `--plugin-dir` is a path in Acta's data directory, accepted under the same ruling as `--add-dir`; the UUIDs are opaque. On the `cmd /s /c` shim path the plugin directory is left out if it holds a character `cmd` interprets; an id that is not a UUID is never passed.
 
 The terminal's header names its session "Claude · T-12 Embed the terminal" and adds "waiting for you" while it waits; the Sessions view's "End session" ends the terminal's process (the conversation stays resumable).
+
+## Changelog
+- 2026-11-21: ADR 0011 replaces the primary folder with an active folder chosen per page, makes inheritance unconditional (the include-inherited switch and its ruling are withdrawn; another checkout of the same repository as the active folder is left out instead), and adds names, icons and commit modes. Path identity, reverse resolution, not-found and repair, the empty case and the process-argument ruling stand. `--add-dir` confirmed in `claude --help` 2.1.330.

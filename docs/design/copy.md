@@ -84,6 +84,41 @@ Both languages use the 24-hour clock and day-month-year order; neither follows t
 
 The first of the month is "1er" in French, in the long and the compact forms ("le 1er nov. 2026", "1er nov."); English has no such form. File names Acta proposes (`acta-2026-11-20.acta.json`) are not localised.
 
+### 10.2.1 Due dates
+
+Added 2026-11-21 with due dates (components-records.md 5, data.md 11 request 16). A due date is a **calendar day**, not a moment: it has no time and no time zone, and reads as the same day on every machine. Everything relative ("today", "overdue") is computed against **the local date of the machine doing the reading**, the app or the `acta` process, at the moment of reading. The app re-evaluates every relative form at local midnight, on resume from sleep and when the system clock or time zone changes, without moving anything else (the rows keep their place; only text and the overdue marks change). "N days" is the difference in calendar days between the two local dates, never 24-hour periods, so a daylight-saving change never makes a date off by one.
+
+**Forms.**
+
+| Form | Used in | English | French |
+|---|---|---|---|
+| Absolute, `{date}` (10.2) | The Due property, tooltips, system events | 15 Dec 2026 | 15 déc. 2026 (the string supplies "le" or "au") |
+| Full, `{date_full}` | The picker's preview line | Friday 27 November 2026 | Vendredi 27 novembre 2026 (capitalised: it stands alone) |
+| Month header | The picker | November 2026 | Novembre 2026 |
+| Relative phrase | The Due property, the picker's preview | Today · Tomorrow · In 3 days · Overdue by 3 days | Aujourd'hui · Demain · Dans 3 jours · En retard de 3 jours |
+| Sentence, tooltips | Tree marks, table cells | Due today · Due tomorrow · Due 27 Nov 2026, in 6 days · Overdue by 3 days, due 18 Nov 2026 | Échéance aujourd'hui · Échéance demain · Échéance le 27 nov. 2026, dans 6 jours · En retard de 3 jours, échéance le 18 nov. 2026 |
+| Compact, `{due_short}` | The table's Due column | see below | see below |
+
+**Compact form** (the Due column, 72 of text): today "Today" / "Aujourd'hui"; tomorrow "Tomorrow" / "Demain"; 2 to 6 days ahead, the short weekday, capitalised ("Fri" / "Ven."); later this year "15 Dec" / "15 déc."; another year "Feb 2027" / "Févr. 2027". **A past date is always written as a date** ("18 Nov", "Feb 2025"), never as a weekday or "Yesterday", so a past date can never be read as an upcoming one. Measured at 12px with fontTools from the font files (advance widths, before `tnum`): the widest is "Aujourd'hui", 64.7 in Inter and 61.7 in Segoe UI; then "Sept. 2027" 61.8 / 55.5 and "Tomorrow" 58.7 / 54.7. All fit 72; with the 12 icon and its 4 the column is 88.
+
+Full month names: January ... December / janvier février mars avril mai juin juillet août septembre octobre novembre décembre. Full weekday names: Monday ... Sunday / lundi ... dimanche (10.2). Weeks start on Monday in both languages, in the picker and in "next week".
+
+**Typed dates** (the picker's input; the only place a person types a date). The parser accepts English and French whatever the interface language, because the words do not collide: a weekday stands alone, a month needs a day next to it ("mar" alone is mardi, "15 mar" is the 15th of March). It ignores case, accents, a trailing period and the space between a number and its unit; the preview line shows the exact day before anything is set, which is how any remaining doubt is settled.
+
+| Typed | English | French | Result |
+|---|---|---|---|
+| Today, tomorrow, the day after | `today`, `tod`, `tomorrow`, `tom`, `tmr` | `aujourd'hui`, `auj`, `demain`, `après-demain` | That day |
+| Yesterday | `yesterday` | `hier` | Yesterday (immediately overdue; allowed) |
+| A weekday | `fri`, `friday`, `next fri` | `ven`, `vendredi`, `vendredi prochain` | The next such day after today; today is never matched (it has its own word), so `fri` on a Friday is in 7 days. "next" / "prochain" changes nothing |
+| An offset | `+3`, `3d`, `in 3d`, `in 3 days`, `in 2w`, `in 2 weeks`, `in 1m`, `in 1 month`, `-2` | `+3`, `3j`, `dans 3 j`, `dans 3 jours`, `dans 2 sem`, `dans 2 semaines`, `dans 1 mois`, `-2` | Today plus or minus days or weeks; months keep the day number, clamped to the month's last day |
+| Next week, next month, end of month | `next week`, `next month`, `end of month`, `eom` | `semaine prochaine`, `mois prochain`, `fin du mois` | Monday of next week; the 1st of next month; the last day of this month |
+| Day and month, no year | `15/12`, `15.12`, `15 dec`, `dec 15`, `15 december` | `15/12`, `15.12`, `15 déc`, `15 décembre`, `1er mai` | The next such day on or after today |
+| Day only | `15` | `15` | The next 15th on or after today |
+| With a year | `15/12/2026`, `15/12/26`, `15 dec 2026` | `15/12/2026`, `15/12/26`, `15 déc 2026` | That day (two-digit years are 20xx) |
+| ISO | `2026-12-15` | `2026-12-15` | That day |
+
+Day and month are always in that order, in both languages (10.2): `03/04` is the 3rd of April. A day that does not exist (`31/02`) or a year outside 2000 to 2099 is not a date. Anything else is not a date; nothing is guessed.
+
 ### 10.3 Layout under longer text
 
 French runs 15 to 25% longer than English on sentences and up to twice as long on one-word labels. The layout absorbs that by rule, not by case:

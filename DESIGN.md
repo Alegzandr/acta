@@ -44,17 +44,17 @@ Load only the part a task needs. Section numbers are global: "4.7" or "DESIGN 4.
 |---|---|---|
 | [color.md](docs/design/color.md) | 2 | Themes, the colour token table (2.1), measured contrast (2.2), topic statuses (2.3), terminal palette (2.4). |
 | [typography.md](docs/design/typography.md) | 3 | Families (3.1), the type scale and roles (3.2), long-form text and documents (3.3). |
-| [layout.md](docs/design/layout.md) | 4 | Spacing, heights, radii, icons (4.1); app shell (4.2), titlebar (4.3), tabs (4.4), tool windows (4.5), status bar (4.6), `preferences.json` (4.7). |
+| [layout.md](docs/design/layout.md) | 4 | Spacing, heights, radii, icons (4.1); app shell (4.2), the Projects tree: structure, signals, reveal, long trees, empty states (4.2.1), titlebar (4.3), tabs (4.4), tool windows (4.5), status bar (4.6), `preferences.json` (4.7). |
 | [workbench.md](docs/design/workbench.md) | 4.8 | Workbench layout: areas, views, area header and view tabs, showing and hiding, resizing, moving views by drag and drop and by command, page groups, web views during drags, narrow windows, recovering the layout, persistence, defaults and Reset layout. |
-| [components.md](docs/design/components.md) | 5 | States and focus ring; button, inputs, editors, list / tree row, status indicator, segmented control, slash menu, notice, checkbox, palette, menus, tooltip, toast, dialog, empty state, scrollbar, resize handle, kbd, update indicator. |
-| [components-records.md](docs/design/components-records.md) | 5 | Timeline entry, current-state panel, note card, properties block, topic table. |
+| [components.md](docs/design/components.md) | 5 | States and focus ring; button, inputs, editors, list row, tree row (kinds, states, drag, sticky project row), status indicator, segmented control, slash menu, notice, checkbox, palette, menus, tooltip, toast, dialog, empty state, scrollbar, resize handle, kbd, update indicator. |
+| [components-records.md](docs/design/components-records.md) | 5 | Timeline entry, current-state panel, note card, properties block, due row and due date picker, topic table. |
 | [components-knowledge.md](docs/design/components-knowledge.md) | 5 | Knowledge section, knowledge base page, document reading view and editor, history. |
-| [components-folders.md](docs/design/components-folders.md) | 5 | Working folders: rows, inheritance, not found and repair, picker, paths, terminal launch. |
+| [components-folders.md](docs/design/components-folders.md) | 5 | Working folders: rows, the switcher, inheritance, the active folder, git state, commit modes, not found and repair, picker, paths, terminal launch. |
 | [components-app.md](docs/design/components-app.md) | 5 | Chat panel, settings page, shortcuts page, export, import, trash, snapshot restore, key-loss recovery, updater window. |
 | [interaction.md](docs/design/interaction.md) | 6 | Keyboard map (6.1), focus (6.2), motion and latency budgets (6.3), writes, undo and confirmation (6.4), changes from other processes (6.5). |
 | [screens.md](docs/design/screens.md) | 8 | Wireframes: topic page (8.1), inbox (8.2), palette (8.3), terminal (8.4), first run (8.5), knowledge (8.6, 8.7, 8.10), import preview (8.8), key loss (8.9), working folders (8.11), settings (8.12), chat (8.13), epic (8.14), tab bar (8.15), updater (8.16), workbench with the right sidebar (8.17), dragging a view (8.18), split page area and views moved (8.19). |
-| [copy.md](docs/design/copy.md) | 7, 10.1 to 10.3 | Voice; languages, French conventions, dates, times and numbers, layout under longer text. |
-| [catalogue.md](docs/design/catalogue.md) | 10.4, 10.4.1 | Every UI string by key, English and French. Code and tests read 10.4; 10.4.1 notes how the keys of 4.8 moved into it. |
+| [copy.md](docs/design/copy.md) | 7, 10.1 to 10.3 | Voice; languages, French conventions, dates, times and numbers, due dates and typed dates (10.2.1), layout under longer text. |
+| [catalogue.md](docs/design/catalogue.md) | 10.4 to 10.4.4 | Every UI string by key, English and French. Code and tests read 10.4; 10.4.1 notes how the keys of 4.8 moved into it; 10.4.2 to 10.4.4 hold keys pending implementation. |
 | [data.md](docs/design/data.md) | 11 | What model data every element shows; data model requests. |
 
 Sections 1 (principles), 9 (review checklist) and the Direction are in this file. The token table (2.1), the contrast table (2.2) and the catalogue (10.4) are parsed by tests in `crates/acta-app` (`theme.rs`, `i18n/mod.rs`): keep their headings and table shapes.
@@ -65,7 +65,7 @@ Run against every screen, in dark and in light, in English and in French. One fa
 
 **Tokens and type**
 - [ ] Every colour is a token from 2.1; no literal hex, no ad hoc alpha, no opacity on text to fake a text level.
-- [ ] `accent` appears only on: focus, selection marker, the single primary action, links, Active, unread, cursor. Count accent elements at rest: three or fewer.
+- [ ] `accent` appears only on: focus, selection marker, the single primary action, links, Active, unread, cursor. Count accent elements at rest: three or fewer (in a list, the Active glyphs count as one element and the unread dots as one, since each is one signal repeated).
 - [ ] Every text style is a role from 3.2; only weights 400 and 600; no uppercase; nothing under 12px.
 - [ ] Digits that align or update use `tnum`.
 - [ ] Reading text is within the content column (the Reading width setting) and left-aligned.
@@ -101,13 +101,32 @@ Run against every screen, in dark and in light, in English and in French. One fa
 - [ ] Web views (chat, agent browser) are hidden with their placeholder line for the whole of a drag, return at their new bounds without reloading, and never cover a resize handle or a drop zone.
 - [ ] Keyboard: every move has a palette command and a view-menu item; `F6` / `Shift+F6` visit every shown area and group in order; every toggle key works from the page, and the kept keys of 6.1 from the terminal and the chat.
 
+**Tree** (4.2.1, run with 0 projects, an empty epic, and a project of 140 topics at 260 and at 200 wide)
+- [ ] Order under a project: Inbox, Knowledge, 4 of space, topics in no epic, epics; "N closed" last in each group; 8 of space after an expanded project only; stored order, never sorted by status.
+- [ ] Weight marks structure only: projects and epics 600, every other row 400 in every state, the selected row included; no row has an icon, colour or badge the table of 5 (Tree row) does not give it.
+- [ ] Where am I: the open page's row is selected and in view after every way of opening a page (pointer away from the tree); its project and epic rows are `text.primary`, every other project and epic row `text.secondary`.
+- [ ] Colour in the tree is only: Active glyph and unread dot (`accent`), Blocked glyph (`warning`), the drop line and target; closed topics are `text.tertiary` glyph and title; nothing tertiary on a selected row.
+- [ ] One trailing item per row at most; only the unread dot rolls up into folded rows, and folding never hides one; only Inbox shows a count, and only above 0; the `plus` appears on hover of project and epic rows without moving their title.
+- [ ] Long tree: the sticky project row names the project of the rows under it; truncated titles have the title tooltip; Collapse all is in the view menu and the palette; scrolling, folding and remote changes hold the next frame with 10,000 topics.
+- [ ] Drag: every move by drag has its key (`Alt+Up` / `Alt+Down`, `M`); the insertion line or target shows exactly where the row lands; `Esc` cancels; a drop is one `Mod+Z` step, with no toast.
+- [ ] Empty: no project shows "No projects yet." and "New project..."; an expanded empty epic shows the "New topic" ghost row; nothing else is added for emptiness.
+
+**Due dates** (run with no date anywhere, then with topics overdue, due today, due in 2 and in 30 days, and a closed topic with a past date, at 23:59 and after midnight)
+- [ ] Nothing about dates shows until a record has one, except the always-present Due row ("None"); the Due column and the Overdue and Next 7 days segments appear only while a listed topic has a date.
+- [ ] Overdue reads in greyscale everywhere: words on the page ("Overdue by 3 days"), `clock-alert` plus `warning` in the table, the `clock-alert` shape in the tree. A closed topic, or a complete epic or project, is never overdue anywhere, agent output included.
+- [ ] Tree: only overdue and due today are drawn, neutral (`text.secondary`, `text.tertiary`), in the trailing slot, after the hover `plus` and the unread dot; never rolled up into a folded row; no date text and no colour.
+- [ ] Picker: reachable by `D`, `Enter` on the row and "Set due date..."; every action works from the keyboard; the preview line shows the exact day before `Enter`; `Esc` and a click outside change nothing; English and French words parse in both languages; day-month order only.
+- [ ] Setting, changing and clearing is one `Mod+Z` step, writes a system event, and shows no toast. Past midnight, relative forms and marks update without moving a row; day counts are calendar days across a daylight-saving change.
+- [ ] Agent side: `brief`, `find` and the session briefing stay within their budgets with every record dated; `update` takes only `YYYY-MM-DD` or `""`.
+
 **Behaviour**
 - [ ] Feedback on the next frame; nothing in the "never animates" list animates; budgets in 6.3 hold with 10,000 topics.
 - [ ] Writes are optimistic; failure restores state and keeps the user's text.
 - [ ] Every destructive action is undoable, or is one of the confirmed cases in 6.4. No path deletes for good, overwrites a document without a revision, or writes plaintext to disk without the warning.
 - [ ] Data-safety screens (export, import, trash, snapshots, key loss) state facts and the next step: no red fills, no alarm words, no blame, exact counts and dates.
 - [ ] Knowledge: kind icon, summary and author mark visible wherever an entry is listed; inherited and rolled-up entries labelled with their level; every memory written by Claude Code can be read, edited, moved and deleted by the human from the list; document body uses `type.document`, short surfaces use `type.reading`.
-- [ ] Working folders: the row shows the primary effective folder and, when it is inherited, where it comes from; paths are `type.code`, middle-truncated, with native separators; a folder that was not found is marked by icon and words (not colour alone), offers Locate, and blocks nothing; removing a folder never touches the disk and is undoable; the terminal never starts anywhere but the primary folder.
+- [ ] Working folders: the row shows the active folder by name and icon, its git branch and changes when known, and, when it is inherited, where it comes from; the switcher changes the active folder from the row and from the terminal header in one step, and a running session is never restarted by it (the header offers "Restart in ..."); the list shows own and inherited folders in separate groups, inherited ones edited only at their level; the active folder is marked by shape and the word "Active", not colour alone; another checkout of the same repository is labelled as not passed; paths are `type.code`, middle-truncated, with native separators; a folder that was not found is marked by icon and words (not colour alone), offers Locate, and blocks nothing; removing a folder never touches the disk beyond the settings Acta wrote, and is undoable; the terminal never starts anywhere but the active folder.
+- [ ] Commit modes: offered only for a folder in a git repository; Manual is the default; each mode is described in words under the control; "Commit in my name" and "Also on main" appear only with an automatic mode; the form names the git identity commits will use and says where Acta writes its rules, or why it does not; nothing in the UI sets git identity or pushes by itself.
 - [ ] A write from another process during reading, scrolling and editing moves neither focus nor viewport, and never overwrites a field in edit.
 
 **Copy**
