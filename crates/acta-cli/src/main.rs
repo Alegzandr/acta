@@ -343,7 +343,12 @@ fn run(command: Command) -> ExitCode {
 
 fn run_setup(opener: &Opener, check: bool, remove: bool, no_allow: bool, json: bool) -> ExitCode {
     let Some(data_dir) = opener.data_dir() else {
-        eprintln!("Acta cannot find its data directory.");
+        eprintln!(
+            "{}",
+            opener
+                .refusal
+                .unwrap_or("Acta cannot find its data directory.")
+        );
         return ExitCode::FAILURE;
     };
     let base = BaseDirs::from_env();
@@ -411,8 +416,9 @@ fn run_setup(opener: &Opener, check: bool, remove: bool, no_allow: bool, json: b
 /// `setup --check`: the hooks' pre-check file can be written from the
 /// current folders.
 fn link_index_step(opener: &Opener) -> setup::Step {
-    let (ok, detail) = match opener.open() {
-        Ok(store) => match store.refresh_link_index() {
+    let (ok, detail) = match opener.open_existing() {
+        None => (true, "no database yet: nothing linked".to_owned()),
+        Some(Ok(store)) => match store.refresh_link_index() {
             Ok(()) => (true, "up to date".to_owned()),
             Err(e) => (
                 false,
@@ -422,7 +428,7 @@ fn link_index_step(opener: &Opener) -> setup::Step {
                 ),
             ),
         },
-        Err(e) => (false, e),
+        Some(Err(e)) => (false, e),
     };
     setup::Step {
         name: "link index",
@@ -434,7 +440,7 @@ fn link_index_step(opener: &Opener) -> setup::Step {
 /// `setup --remove`: the linked folders where `acta link` turned Claude
 /// Code's auto memory off stay that way until unlinked; say where.
 fn auto_memory_step(opener: &Opener) -> Option<setup::Step> {
-    let store = opener.open().ok()?;
+    let store = opener.open_existing()?.ok()?;
     let folders: Vec<String> = store
         .local_values(link::AUTO_MEMORY_PREFIX)
         .ok()?
