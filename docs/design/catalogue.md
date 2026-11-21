@@ -514,6 +514,25 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `shortcuts.group.lists` | Lists and tree | Listes et arborescence |
 | `shortcuts.group.editors` | Editors | Éditeurs |
 | `shortcuts.group.terminal` | Terminal and chat | Terminal et chat |
+| `shortcuts.palette` | Command palette | Palette de commandes |
+| `shortcuts.next_tab` | Next tab | Onglet suivant |
+| `shortcuts.previous_tab` | Previous tab | Onglet précédent |
+| `shortcuts.focus_projects` | Focus Projects | Aller aux projets |
+| `shortcuts.focus_page` | Focus the page area | Aller à la zone des pages |
+| `shortcuts.focus_terminal` | Focus the terminal | Aller au terminal |
+| `shortcuts.focus_chat` | Focus the chat | Aller au chat |
+| `shortcuts.next_area` | Focus next area (reserved) | Aller à la zone suivante (réservé) |
+| `shortcuts.previous_area` | Focus previous area (reserved) | Aller à la zone précédente (réservé) |
+| `shortcuts.maximize` | Maximize focused area (reserved) | Agrandir au maximum la zone active (réservé) |
+| `shortcuts.list.move` | Move the cursor | Déplacer le curseur |
+| `shortcuts.list.ends` | First or last row | Première ou dernière ligne |
+| `shortcuts.list.fold` | Collapse or expand | Replier ou déplier |
+| `shortcuts.list.preview` | Preview, focus stays in the list | Aperçu, le focus reste dans la liste |
+| `shortcuts.list.status` | Set status, then 1 to 6 | Changer le statut, puis 1 à 6 |
+| `shortcuts.list.reorder` | Move up or down | Monter ou descendre |
+| `shortcuts.list.menu` | Open the menu | Ouvrir le menu |
+| `shortcuts.editor.save` | Save the editor in focus | Enregistrer l'éditeur actif |
+| `shortcuts.editor.cancel` | Cancel the edit | Annuler la modification |
 
 Strings that exist in the behaviour sections but are not in this table are a defect of the table: add the row in the same change that adds the string.
 

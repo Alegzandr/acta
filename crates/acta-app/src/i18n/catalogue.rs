@@ -2025,4 +2025,80 @@ catalogue! {
         en: t("Terminal and chat"),
         fr: t("Terminal et chat"),
     }
+    ShortcutsPalette "shortcuts.palette" {
+        en: t("Command palette"),
+        fr: t("Palette de commandes"),
+    }
+    ShortcutsNextTab "shortcuts.next_tab" {
+        en: t("Next tab"),
+        fr: t("Onglet suivant"),
+    }
+    ShortcutsPreviousTab "shortcuts.previous_tab" {
+        en: t("Previous tab"),
+        fr: t("Onglet précédent"),
+    }
+    ShortcutsFocusProjects "shortcuts.focus_projects" {
+        en: t("Focus Projects"),
+        fr: t("Aller aux projets"),
+    }
+    ShortcutsFocusPage "shortcuts.focus_page" {
+        en: t("Focus the page area"),
+        fr: t("Aller à la zone des pages"),
+    }
+    ShortcutsFocusTerminal "shortcuts.focus_terminal" {
+        en: t("Focus the terminal"),
+        fr: t("Aller au terminal"),
+    }
+    ShortcutsFocusChat "shortcuts.focus_chat" {
+        en: t("Focus the chat"),
+        fr: t("Aller au chat"),
+    }
+    ShortcutsNextArea "shortcuts.next_area" {
+        en: t("Focus next area (reserved)"),
+        fr: t("Aller à la zone suivante (réservé)"),
+    }
+    ShortcutsPreviousArea "shortcuts.previous_area" {
+        en: t("Focus previous area (reserved)"),
+        fr: t("Aller à la zone précédente (réservé)"),
+    }
+    ShortcutsMaximize "shortcuts.maximize" {
+        en: t("Maximize focused area (reserved)"),
+        fr: t("Agrandir au maximum la zone active (réservé)"),
+    }
+    ShortcutsListMove "shortcuts.list.move" {
+        en: t("Move the cursor"),
+        fr: t("Déplacer le curseur"),
+    }
+    ShortcutsListEnds "shortcuts.list.ends" {
+        en: t("First or last row"),
+        fr: t("Première ou dernière ligne"),
+    }
+    ShortcutsListFold "shortcuts.list.fold" {
+        en: t("Collapse or expand"),
+        fr: t("Replier ou déplier"),
+    }
+    ShortcutsListPreview "shortcuts.list.preview" {
+        en: t("Preview, focus stays in the list"),
+        fr: t("Aperçu, le focus reste dans la liste"),
+    }
+    ShortcutsListStatus "shortcuts.list.status" {
+        en: t("Set status, then 1 to 6"),
+        fr: t("Changer le statut, puis 1 à 6"),
+    }
+    ShortcutsListReorder "shortcuts.list.reorder" {
+        en: t("Move up or down"),
+        fr: t("Monter ou descendre"),
+    }
+    ShortcutsListMenu "shortcuts.list.menu" {
+        en: t("Open the menu"),
+        fr: t("Ouvrir le menu"),
+    }
+    ShortcutsEditorSave "shortcuts.editor.save" {
+        en: t("Save the editor in focus"),
+        fr: t("Enregistrer l\u{2019}éditeur actif"),
+    }
+    ShortcutsEditorCancel "shortcuts.editor.cancel" {
+        en: t("Cancel the edit"),
+        fr: t("Annuler la modification"),
+    }
 }
