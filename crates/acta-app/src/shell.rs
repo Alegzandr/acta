@@ -874,12 +874,11 @@ impl Shell {
             PageEvent::NewKb(draft) => self.new_kb_draft(*draft, window, cx),
             PageEvent::Located(project) => {
                 let project = *project;
-                if let Some(bench) = self.bench()
-                    && bench.active_project != Some(project)
-                {
+                if let Some(bench) = self.bench() {
                     bench.active_project = Some(project);
-                    cx.notify();
                 }
+                // The breadcrumb and the tree now know the entry's owner.
+                cx.notify();
             }
         }
     }
@@ -1639,6 +1638,7 @@ impl Shell {
             PageView::Record(page) => page.read(cx).menu_open(),
             PageView::Knowledge(page) => page.read(cx).menu_open(),
             PageView::Settings(page) => page.read(cx).menu_open(),
+            PageView::Doc(page) => page.read(cx).menu_open(),
             _ => false,
         };
         sidebar_over || bench.overlay.is_some() || page_menu || bench.chat.read(cx).menu_open()
@@ -1841,7 +1841,17 @@ impl Shell {
         let Some(bench) = self.bench() else {
             return div().into_any_element();
         };
-        let current = bench.history.current();
+        let mut current = bench.history.current();
+        // A document or memory selects its owner's row (components-knowledge.md 5).
+        if let (Some(Route::Kb(_)), PageView::Doc(page)) = (current, &bench.page)
+            && let Some((owner, _)) = page.read(cx).located()
+        {
+            current = Some(match owner {
+                Owner::Project(id) => Route::Project(id),
+                Owner::Epic(id) => Route::Epic(id),
+                Owner::Topic(id) => Route::Topic(id),
+            });
+        }
         let cursor = bench.cursor;
         let tree_focus = bench.tree_focus.clone();
         let tree_focused = tree_focus.is_focused(window);
@@ -2166,15 +2176,33 @@ impl Shell {
                 .into_iter()
                 .chain([crumb(text(locale, Key::TreeKnowledge), None)])
                 .collect(),
-            (Some(Route::Kb(_)), _) => bench
-                .active_project
-                .and_then(project_crumb)
-                .into_iter()
-                .chain([crumb(
-                    text(locale, Key::TreeKnowledge),
-                    bench.active_project.map(Route::Knowledge),
-                )])
-                .collect(),
+            // A document or memory: its owner's place as links, then the
+            // entry itself (layout.md 4.3).
+            (Some(Route::Kb(_)), PageView::Doc(page)) => {
+                let Some((owner, title)) = page.read(cx).located() else {
+                    return Vec::new();
+                };
+                let mut out = Vec::new();
+                match owner {
+                    Owner::Project(id) => out.extend(project_crumb(id)),
+                    Owner::Epic(id) => {
+                        if let Some(at) = tree::locate_epic(&projects, id) {
+                            out.extend(at.project.map(|(p, n)| crumb(n, Some(Route::Project(p)))));
+                            out.extend(at.epic.map(|(e, n)| crumb(n, Some(Route::Epic(e)))));
+                        }
+                    }
+                    Owner::Topic(id) => {
+                        if let Some(at) = tree::locate_topic(&projects, id) {
+                            out.extend(at.project.map(|(p, n)| crumb(n, Some(Route::Project(p)))));
+                            out.extend(at.epic.map(|(e, n)| crumb(n, Some(Route::Epic(e)))));
+                            out.extend(at.topic.map(|(t, n)| crumb(n, Some(Route::Topic(t)))));
+                        }
+                    }
+                }
+                out.extend(title.map(|t| crumb(t, None)));
+                out
+            }
+            (Some(Route::Kb(_)), _) => Vec::new(),
             (Some(Route::Trash), _) => vec![crumb(text(locale, Key::TreeTrash), None)],
             (Some(Route::Settings), _) => vec![crumb(text(locale, Key::TreeSettings), None)],
         }
