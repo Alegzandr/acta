@@ -16,18 +16,19 @@ Widths are for the default 1440 x 900 window. Every screen exists in both themes
 |     [i] Inbox      4 |        Embed the terminal bound to the project   <- type.title 24/30    |
 |     [k] Knowledge    |    12                                                                   |
 |     (o) Naming       |        Status    [(.) Active v]            <- properties block: rows 28,|
-|   v Core UI          |        Epic      Terminal                    label column as wide as its|
-|       (v) App shell  |        Folders   > [f] ~\dev\acta-wt\embed-terminal  +1   longest label |
-|       (.) Sidebar t..|        Id        T-42                      <- type.code, copies on Enter|
-|       ( ) Palette   *|        Updated   2 h ago by Claude Code                                 |
-|   v Terminal         |    24                                                                   |
-|      [(.) Embed th..]|        +--------------------------------------------------------+       |
-|       (=) Scrollback |        | Current state                                          |       |
-|       (-) Links      |        | Rendering and input work on Windows. Resize still      |       |
-|       > 3 closed     |        | drops the last row; fix is in progress.                |       |
-|   > Notes            |        +--------------------------------------------------------+       |
-| > Atlas              |    24   bg.raised, border.subtle, radius.lg, padding 16, type.reading   |
-| > Field notes        |        Description                                  <- type.label       |
+|   v Core UI          |        Due       15 Dec 2026  In 24 days      optional; "None" if unset  |
+|       (v) App shell  |        Epic      Terminal                    label column as wide as its|
+|       (.) Sidebar t..|        Folders   > [f] ~\dev\acta-wt\embed-terminal  +1   longest label |
+|       ( ) Palette   *|        Id        T-42                      <- type.code, copies on Enter|
+|   v Terminal         |        Updated   2 h ago by Claude Code                                 |
+|      [(.) Embed th..]|    24                                                                   |
+|       (=) Scrollback |        +--------------------------------------------------------+       |
+|       (-) Links      |        | Current state                                          |       |
+|       > 3 closed     |        | Rendering and input work on Windows. Resize still      |       |
+|   > Notes            |        | drops the last row; fix is in progress.                |       |
+| > Atlas              |        +--------------------------------------------------------+       |
+| > Field notes        |    24   bg.raised, border.subtle, radius.lg, padding 16, type.reading   |
+|                      |        Description                                  <- type.label       |
 |                      |        Run Claude Code inside Acta, in the project directory, so        |
 |                      |        the tracker and the agent share one window.                      |
 |                      |    32                                                                   |
@@ -499,6 +500,7 @@ Annotations: left, the panel before the web view exists; right, Windows without 
 ```
         Terminal                                                  <- type.title
     12  Progress   3 of 7 topics done  [=====-------]             <- properties block
+        Due        18 Dec 2026  In 27 days                        <- the epic's own date
         Folders    > [f] ~\dev\acta  +1  from project Acta
         Id         E-3
         Updated    2 h ago by Claude Code
@@ -506,17 +508,17 @@ Annotations: left, the panel before the web view exists; right, Windows without 
         Everything that runs Claude Code inside Acta.
     32  Knowledge  2                                          [+]
         ...
-    32  [Open|All|Closed]  4 topics                           [+]   28  toolbar
-     8       Title                               Entries   Updated   28  header, type.small
+    32  [Open|Overdue|Next 7 days|All|Closed]  4 topics            [+]   28  toolbar
+     8       Title                        Due Entries   Updated   28  header, type.small
         ------------------------------------------------------------    border.subtle
-        (.)  Embed the terminal bound to the pr..     14   2 h ago   32
-        (=)  Terminal scrollback                 *     6   Mon       32  * unread dot
-        ( )  Links in terminal output                  0   12 Nov    32
-        (o)  Session restore                           1   9 Nov     32
-        |24 |<- title, fills, truncates ->|          |<- 56 ->|<- 72 ->|
+        (.)  Embed the terminal b..  ! 18 Nov      14   2 h ago   32  ! clock-alert, warning
+        (=)  Terminal scrollback  *     Today       6   Mon       32  * unread dot
+        ( )  Links in terminal ou..       Tue       0   12 Nov    32  due soon: text.secondary
+        (o)  Session restore                        1   9 Nov     32  no date: empty cell
+        |24 |<- title, fills ->|  |<- 88 ->|<- 56 ->|<- 72 ->|
 ```
 
-Annotations: the epic's progress is computed (topics Done over topics not Dropped). The table shows open topics by default, in the tree's order; a project page shows the same table grouped by epic. Under 520 of column width the Entries column goes.
+Annotations: the epic's progress is computed (topics Done over topics not Dropped). The drawing is made on Saturday 21 Nov 2026. The Due column and the Overdue and Next 7 days segments are there because topics of this epic have dates; with none, the toolbar reads Open / All / Closed and the column is absent (components-records.md 5). The first topic is open and was due 18 Nov, so it is overdue: icon and text in `warning`, tooltip "Overdue by 3 days, due 18 Nov 2026". The table shows open topics by default, in the tree's order; a project page shows the same table grouped by epic. Under 520 of column width the Entries column goes.
 
 ### 8.15 Tab bar
 

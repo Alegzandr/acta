@@ -48,7 +48,7 @@ Decided on 2026-11-21 at the user's request: the tree must be clear at a glance,
 |---|---|---|
 | Where am I? | The open page's row: `fill.selected`, title `text.primary`. The project and epic rows on its path: title `text.primary`, while every other project and epic row is `text.secondary`. Opening a page reveals its row (below). | An accent bar, a bold title, an icon. |
 | What is being worked on? | The Active glyph, `circle-dot` in `accent`. | Sorting Active first; a "Now" section. |
-| What needs me? | The Blocked glyph, `circle-pause` in `warning` (leading); the unread dot (trailing); the Inbox count. | Badges on epics or projects; Blocked rolled up into folded parents. |
+| What needs me? | The Blocked glyph, `circle-pause` in `warning` (leading); the unread dot (trailing); the due mark, overdue or due today (trailing, neutral, below); the Inbox count. | Badges on epics or projects; Blocked or due marks rolled up into folded parents; a "due soon" mark; colour on a due mark. |
 | How is it organised? | Three row kinds, three treatments: project (depth 0, `type.ui-strong`, no icon), epic (depth 1, `type.ui-strong`, chevron), topic (`type.ui`, status glyph); a project's places (Inbox, Knowledge) above its work, set off by space; space between projects. | Guide lines, section headers, coloured icons. |
 
 How the references do it, and what Acta takes: **VS Code's explorer** reveals the active file (expands its folders, scrolls to it), sticks the parent folder at the top while scrolling (sticky scroll), and needs indent guides because folders nest without limit and every level looks the same. **Obsidian** draws guides for the same reason and marks the active file with a fill and brighter text, nothing else. **Notion** marks the current page with a fill and darker text, reveals controls (`+`, `...`) on hover only, and writes "No pages inside" under an empty page instead of leaving a lone open chevron. **Linear** keeps colour for status and a dot for unread, shows counts only where something waits (Inbox), and lets the user order things by hand. Acta takes the reveal, the sticky parent, the fill-and-text selection, the hover-only control, the empty-container line, the single unread dot and the manual order. It leaves the guides: the tree has three levels at most and every level change is also a change of row kind (chevron and weight, or glyph), so the eye never has to count indentation.
@@ -71,15 +71,19 @@ Topics in no epic come first because (a) the project page's topic table already 
 
 | Row | Leading (16 slot) | Trailing at rest | Trailing on hover |
 |---|---|---|---|
-| Project | `chevron-right` / `chevron-down` | Unread dot when folded and anything inside it is unread | Ghost `plus`, "New topic" (in no epic) |
-| Epic | Chevron | Unread dot when folded and one of its topics is unread | Ghost `plus`, "New topic" (in this epic) |
+| Project | `chevron-right` / `chevron-down` | Unread dot when folded and anything inside it is unread; else its own due mark | Ghost `plus`, "New topic" (in no epic) |
+| Epic | Chevron | Unread dot when folded and one of its topics is unread; else its own due mark | Ghost `plus`, "New topic" (in this epic) |
 | Inbox | `inbox` | Count of open notes, when above 0 | Unchanged |
 | Knowledge | `library` | Unread dot | Unchanged |
-| Topic | Status glyph 14 | Unread dot | Unchanged |
+| Topic | Status glyph 14 | Unread dot; else its due mark | Unchanged |
 | "N closed" | Chevron 14 | Unread dot when folded and a closed topic in it is unread | Unchanged |
 | "New topic" (ghost) | `plus` 14 | Nothing | Nothing |
 
 Only unread rolls up into a folded parent, because it is transient and folding must never hide it; Active and Blocked are lasting states, and rolling them up would mark a folded epic for weeks until the reader stops seeing the mark. Epics and projects carry no counts and no progress in the tree: progress is on their pages (components-records.md 5). The unread dot means one thing everywhere: Claude Code (or any other process) wrote it since this installation last showed it (6.5, data.md 11 request 1); its tooltip says so.
+
+**Due marks** (2026-11-21, with due dates; components-records.md 5). A row whose record is open and has a due date before today shows **overdue**, `clock-alert` 14 in `text.secondary`; one due today shows **due today**, `clock` 14 in `text.tertiary`. Nothing else about dates is drawn in the tree: no "due soon", no date text, no colour. The two marks differ by shape (the alert notch), then by tone, so they read in greyscale; colour in the tree stays with Active, Blocked and unread, as this section decided. They follow the row states of 5 (Tree row): `text.primary` on hover, and on a selected row the due-today mark becomes `text.secondary` (2.2). Measured on `bg.sunken`, dark / light (glyphs need 3.0): overdue 8.02 / 6.82, due today 6.18 / 5.33, either on a selected row 6.41 / 5.81. Tooltip, on the 16 hit box: the sentence form of 10.2.1 ("Overdue by 3 days, due 18 Nov 2026", "Due today").
+
+**One signal, in this order.** The trailing slot shows the first that applies: on hover of a project or epic row, the `plus`; then the unread dot; then overdue; then due today. Unread wins because it is transient and folding or a date must never hide it; opening the row clears it, and the due mark then shows. Blocked never competes: it is the leading glyph, so a blocked, overdue topic shows both, in two different slots, which is the one case where a row says two things, both lasting and both "needs you". A live "Claude Code is working here" mark does not exist (data.md 11, request 2); if it is ever added, it is decided against this order then, not squeezed in. Due marks never roll up into a folded parent: like Active and Blocked they last for days, and an epic marked for a week stops being seen. An epic or a project shows a due mark only for its own date (components-records.md 5).
 
 **Where am I: reveal.** Opening a page by any route (tree, palette, link, back and forward, switching tabs or groups) reveals its row: its project and its epic expand (and stay expanded, as if the user had unfolded them), revealing a closed topic also unfolds its "N closed" row, and the tree scrolls by the least amount that shows the row whole below the sticky row (below). One exception keeps the reader's place: while the pointer is over the tree, the tree expands but does not scroll, and the rows on screen keep their position (anchored as in 6.5, rule 2). A document or memory selects the row of its owner (components-knowledge.md 5). `Mod+1` focuses the tree and puts the keyboard cursor on the open page's row, revealing it the same way. If the user folds the open page's epic or project afterwards, the folded row keeps its `text.primary` title, so the path stays visible.
 
@@ -92,7 +96,8 @@ Only unread rolls up into a folded parent, because it is transient and folding m
 | Indent | 16 per depth: project 0, Inbox, Knowledge, epic and topic in no epic 1, topic in an epic 2. "N closed" and "New topic" take the depth of the topics of their group |
 | Leading slot | 16 x 16 at x = 16 + 16 x depth (16, 32, 48); a 14 glyph is centred in it |
 | Title | starts 8 after the leading slot: x = 40, 56, 72; fills, truncates at the end |
-| Trailing slot | right-aligned at the row's content edge (view width minus 16), 8 after the title. Project and epic rows always reserve 24 (so the `plus` appears without moving the title); Inbox reserves the count's width; topic, Knowledge and "N closed" rows reserve 16 only while the dot shows |
+| Trailing slot | right-aligned at the row's content edge (view width minus 16), 8 after the title. Project and epic rows always reserve 24 (so the `plus` appears without moving the title); Inbox reserves the count's width; topic, Knowledge and "N closed" rows reserve 16 only while the dot or a due mark shows |
+| Due mark | `clock-alert` or `clock` 14, centred in a 16 x 16 box at the right of the trailing slot, where the dot would be |
 | Unread dot | 6, `accent`, centred in a 16 x 16 box at the right of the trailing slot |
 | `plus` | compact ghost icon button 24, its centre on the dot's centre line (it overhangs the row padding by 4) |
 | Space | 4 below the Knowledge row; 8 below the last visible row of an expanded project when another project follows |
@@ -126,7 +131,7 @@ Default, 260 wide:
 |     [k] Knowledge            * |  no count; unread dot
 |                                |  4
 |     (o) Naming                 |  no epic: Draft glyph text.tertiary
-|     ( ) Release checklist      |  Planned glyph text.secondary
+|     ( ) Release checklist    ! |  Planned glyph text.secondary; ! overdue mark
 |     > 1 closed                 |  ghost row, type.small text.tertiary
 |   v Terminal                   |  epic on path: 600, text.primary
 |     [(.) Embed the terminal  ] |  selected: fill.selected, text.primary
@@ -216,7 +221,7 @@ No project (after the last one was deleted):
 +--------------------------------+
 ```
 
-Glyphs as in 8.1: `(o)` Draft, `( )` Planned, `(.)` Active, `(=)` Blocked, `(v)` Done, `(-)` Dropped; `v` and `>` are chevrons; `[i]` `inbox`, `[k]` `library`.
+Glyphs as in 8.1: `(o)` Draft, `( )` Planned, `(.)` Active, `(=)` Blocked, `(v)` Done, `(-)` Dropped; `v` and `>` are chevrons; `[i]` `inbox`, `[k]` `library`; `!` the overdue mark, `clock-alert`.
 
 ### 4.3 Titlebar (client-side, 36 high, `bg.sunken`, bottom border `border.subtle`)
 
