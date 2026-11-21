@@ -94,6 +94,12 @@ pub enum Undo {
         back: (String, acta_core::model::EntryKind),
         expect: (String, acta_core::model::EntryKind),
     },
+    /// A note's text edited in place: the text before.
+    Note {
+        id: NoteId,
+        back: String,
+        expect: String,
+    },
     /// Several steps taken back as one, all or none.
     Many(Vec<Undo>),
 }
@@ -140,6 +146,7 @@ impl Undo {
                 let e = store.entry(*id)?;
                 (e.text, e.kind) == *expect
             }
+            Undo::Note { id, expect, .. } => store.note(*id)?.text == *expect,
             Undo::Unfile(id) => !store.note(*id)?.is_open(),
             Undo::Refile(before) => store.note(before.id)?.is_open(),
             Undo::Many(all) => {
@@ -199,6 +206,7 @@ impl Undo {
             }
             Undo::Reorder { record, back, .. } => store.reorder(*record, *back, me),
             Undo::Entry { id, back, .. } => store.update_entry(*id, &back.0, back.1, me),
+            Undo::Note { id, back, .. } => store.update_note(*id, back, me),
             Undo::Unfile(id) => store.unfile_note(*id, me),
             Undo::Refile(before) => store.restore_note_fate(before.id, before, me),
             Undo::Many(all) => all.iter().try_for_each(|undo| undo.revert(store)),
@@ -821,6 +829,62 @@ mod tests {
                 by,
             )
             .unwrap();
+    }
+
+    #[test]
+    fn an_entry_edit_and_a_note_edit_are_undone_and_only_while_unchanged() {
+        use acta_core::model::EntryKind;
+        let mut temp = temp_store();
+        let store = &mut temp.store;
+        let (project, id) = topic(store);
+        let e = store
+            .log(
+                id,
+                acta_core::store::NewEntry {
+                    kind: EntryKind::Progress,
+                    text: "Alexandre wrote this".into(),
+                    state: None,
+                    status: None,
+                },
+                Author::Human,
+            )
+            .unwrap();
+        store
+            .update_entry(
+                e.id,
+                "Alexandre decided this",
+                EntryKind::Decision,
+                Author::Human,
+            )
+            .unwrap();
+        let undo = Undo::Entry {
+            id: e.id,
+            back: ("Alexandre wrote this".into(), EntryKind::Progress),
+            expect: ("Alexandre decided this".into(), EntryKind::Decision),
+        };
+        assert!(undo.apply(store).unwrap());
+        let back = store.entry(e.id).unwrap();
+        assert_eq!(
+            (back.text.as_str(), back.kind),
+            ("Alexandre wrote this", EntryKind::Progress)
+        );
+        // Applied twice: the store no longer holds what the edit left.
+        assert!(!undo.apply(store).unwrap());
+
+        let note = store
+            .add_note(project, "Alexandre's note", Author::Human)
+            .unwrap();
+        store
+            .update_note(note, "Alexandre's better note", Author::Human)
+            .unwrap();
+        let undo = Undo::Note {
+            id: note,
+            back: "Alexandre's note".into(),
+            expect: "Alexandre's better note".into(),
+        };
+        assert!(undo.apply(store).unwrap());
+        assert_eq!(store.note(note).unwrap().text, "Alexandre's note");
+        assert!(!undo.apply(store).unwrap());
     }
 
     #[test]

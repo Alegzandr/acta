@@ -1474,7 +1474,7 @@ fn the_last_claude_write_names_the_topic_claude_code_touched_last() {
 }
 
 #[test]
-fn an_entry_is_edited_in_place_and_system_events_are_refused() {
+fn an_entry_is_edited_in_place_with_its_previous_wording_kept() {
     let mut t = open();
     let p = t.store.create_project("Acta", "", H).unwrap();
     let a = topic(&mut t.store, p, None, "Embed the terminal");
@@ -1483,14 +1483,43 @@ fn an_entry_is_edited_in_place_and_system_events_are_refused() {
         .log(a, entry(EntryKind::Progress, "Alexandre wrote this"), H)
         .unwrap();
     t.store
-        .update_entry(e.id, "Alexandre decided this", EntryKind::Decision, H)
+        .update_entry(e.id, "Alexandre decided this", EntryKind::Decision, C)
         .unwrap();
     let back = t.store.entry(e.id).unwrap();
     assert_eq!(
         (back.text.as_str(), back.kind),
         ("Alexandre decided this", EntryKind::Decision)
     );
-    assert_eq!(back.seq, e.seq);
+    assert_eq!(
+        (back.seq, back.author, back.stamp.updated_by),
+        (e.seq, H, C)
+    );
+    // The previous wording is in an `edited` system event.
+    let all = t
+        .store
+        .entries(
+            a,
+            &EntryFilter {
+                include_system: true,
+                ..EntryFilter::default()
+            },
+            PageReq::first(50),
+        )
+        .unwrap()
+        .items;
+    let edited = all
+        .iter()
+        .find(|x| {
+            x.event
+                .as_ref()
+                .is_some_and(|ev| ev.kind == EventKind::Edited)
+        })
+        .expect("an edited event");
+    let old = edited.event.as_ref().unwrap().old.as_deref().unwrap();
+    assert!(
+        old.contains("Alexandre wrote this") && old.contains("progress"),
+        "{old}"
+    );
     assert!(
         t.store
             .update_entry(e.id, "", EntryKind::Progress, H)
@@ -1501,4 +1530,27 @@ fn an_entry_is_edited_in_place_and_system_events_are_refused() {
             .update_entry(e.id, "x", EntryKind::System, H)
             .is_err()
     );
+    assert!(matches!(
+        t.store
+            .update_entry(EntryId(9999), "x", EntryKind::Progress, H),
+        Err(Error::NotFound(_))
+    ));
+}
+
+#[test]
+fn an_entry_edit_is_refused_on_a_read_only_database() {
+    let mut t = open();
+    let p = t.store.create_project("Acta", "", H).unwrap();
+    let a = topic(&mut t.store, p, None, "Keys");
+    let e = t
+        .store
+        .log(a, entry(EntryKind::Progress, "Alexandre"), H)
+        .unwrap();
+    t.store.writable = false;
+    assert!(matches!(
+        t.store
+            .update_entry(e.id, "changed", EntryKind::Progress, H),
+        Err(Error::ReadOnly)
+    ));
+    assert_eq!(t.store.entry(e.id).unwrap().text, "Alexandre");
 }

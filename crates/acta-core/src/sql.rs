@@ -54,6 +54,7 @@ text_enum!(EventKind {
     Moved => "moved",
     State => "state",
     Restored => "restored",
+    Edited => "edited",
 });
 text_enum!(KbKind { Document => "document", Memory => "memory" });
 text_enum!(Level { Project => "project", Epic => "epic", Topic => "topic" });
@@ -84,6 +85,7 @@ mod tests {
         check(Author::Claude, Author::Claude.as_str());
         check(EntryKind::System, EntryKind::System.as_str());
         check(EventKind::Restored, EventKind::Restored.as_str());
+        check(EventKind::Edited, EventKind::Edited.as_str());
         check(KbKind::Memory, KbKind::Memory.as_str());
         check(Level::Epic, Level::Epic.as_str());
         check(

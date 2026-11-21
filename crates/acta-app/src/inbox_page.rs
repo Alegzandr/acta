@@ -210,9 +210,14 @@ impl InboxPage {
                         return;
                     }
                     page.editing = None;
+                    let project = Some(page.project);
+                    // Undoable: the text before is put back (Undo::Note).
                     page.ws.update(cx, |ws, cx| {
-                        ws.write_detached(cx, Key::ErrorSave, move |store| {
-                            store.update_note(id, &text, Author::Human)
+                        ws.undoable(cx, project, None, move |store| {
+                            let back = store.note(id)?.text;
+                            store.update_note(id, &text, Author::Human)?;
+                            let expect = store.note(id)?.text;
+                            Ok((Undo::Note { id, back, expect }, ()))
                         });
                     });
                     cx.notify();

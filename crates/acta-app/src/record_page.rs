@@ -2171,6 +2171,22 @@ impl RecordPage {
                     .text_color(t.text_tertiary)
                     .child(when::long_alone(locale, entry.stamp.created_at)),
             )
+            // An entry edited after it was written says so; the previous
+            // wording is kept in an `edited` event (ADR 0005, append-only).
+            .when(entry.stamp.updated_at != entry.stamp.created_at, |this| {
+                let mark = if entry.stamp.updated_by != entry.author {
+                    let name = when::author(locale, entry.stamp.updated_by);
+                    tr(locale, Key::EntryEditedBy, &[("name", Arg::Text(&name))])
+                } else {
+                    text(locale, Key::EntryEdited)
+                };
+                this.child(
+                    type_scale::SMALL
+                        .el()
+                        .text_color(t.text_tertiary)
+                        .child(mark),
+                )
+            })
             .child(div().flex_1())
             .child(
                 div()

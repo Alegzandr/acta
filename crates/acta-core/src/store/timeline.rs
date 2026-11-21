@@ -122,7 +122,9 @@ impl Store {
     }
 
     /// Edits an entry's text and type in place (the entry menu's Edit and
-    /// Change type). System events are written by Acta and refused.
+    /// Change type). System events are written by Acta and refused. The
+    /// previous type and text are kept in an `edited` system event of the
+    /// same transaction, so the timeline stays append-only in substance.
     pub fn update_entry(
         &mut self,
         id: EntryId,
@@ -130,16 +132,47 @@ impl Store {
         kind: EntryKind,
         author: Author,
     ) -> Result<()> {
-        let current = self.entry(id)?;
-        if current.kind == EntryKind::System || kind == EntryKind::System {
+        if kind == EntryKind::System {
             return Err(Error::Invalid("system entries are written by Acta".into()));
         }
         let text = required("text", text)?;
-        self.conn.execute(
+        let tx = self.write()?;
+        let current = tx
+            .query_row(
+                &format!(
+                    "SELECT {ENTRY_COLS}, {STAMP_COLS} FROM entries WHERE id = ?1 AND deleted_at IS NULL"
+                ),
+                [id.0],
+                entry_row,
+            )
+            .optional()?
+            .ok_or_else(|| Error::NotFound(id.to_string()))?;
+        if current.kind == EntryKind::System {
+            return Err(Error::Invalid("system entries are written by Acta".into()));
+        }
+        if current.text == text && current.kind == kind {
+            return Ok(());
+        }
+        let now = now_ms();
+        let changed = tx.execute(
             "UPDATE entries SET text = ?2, kind = ?3, updated_at = ?4, updated_by = ?5
              WHERE id = ?1 AND deleted_at IS NULL",
-            params![id.0, text, kind, now_ms(), author],
+            params![id.0, text, kind, now, author],
         )?;
+        if changed == 0 {
+            return Err(Error::NotFound(id.to_string()));
+        }
+        let before = serde_json::json!({"kind": current.kind.as_str(), "text": current.text});
+        system_event(
+            &tx,
+            current.topic,
+            EventKind::Edited,
+            Some(before.to_string()),
+            current.seq.map(|n| n.to_string()),
+            author,
+            now,
+        )?;
+        tx.commit()?;
         Ok(())
     }
 
