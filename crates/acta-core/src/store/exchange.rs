@@ -510,10 +510,24 @@ impl Store {
         })
     }
 
-    /// Merges a file into the database. With `dry_run` nothing is kept and
-    /// the report says what would happen; otherwise an `import` snapshot is
-    /// taken first.
+    /// Merges a file into the database, as the human. With `dry_run`
+    /// nothing is kept and the report says what would happen; otherwise an
+    /// `import` snapshot is taken first.
     pub fn import(&mut self, file: &ExportFile, dry_run: bool) -> Result<ImportReport> {
+        self.import_by(file, dry_run, Author::Human)
+    }
+
+    /// [`Store::import`] with its author. An import by Claude Code never
+    /// sets what only the user sets (ADR 0011): folder commit settings keep
+    /// their local values (Manual for a new folder) and no active folder is
+    /// set. The CLI refuses `acta import` under Claude Code; this is the
+    /// second line.
+    pub fn import_by(
+        &mut self,
+        file: &ExportFile,
+        dry_run: bool,
+        author: Author,
+    ) -> Result<ImportReport> {
         if file.version > FORMAT_VERSION {
             return Err(Error::FormatTooNew {
                 found: file.version,
@@ -530,12 +544,12 @@ impl Store {
             let tx = self
                 .conn
                 .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-            let report = merge(&tx, file)?;
+            let report = merge(&tx, file, author)?;
             tx.rollback()?;
             return Ok(report);
         }
         let tx = self.write()?;
-        let report = merge(&tx, file)?;
+        let report = merge(&tx, file, author)?;
         tx.commit()?;
         let _ = self.refresh_link_index();
         Ok(report)
@@ -674,8 +688,12 @@ fn count(c: &mut ImportCounts, action: &Action) {
     }
 }
 
-fn merge(tx: &rusqlite::Connection, f: &ExportFile) -> Result<ImportReport> {
+fn merge(tx: &rusqlite::Connection, f: &ExportFile, author: Author) -> Result<ImportReport> {
     let mut rep = ImportReport::default();
+    // A version 1 file knows nothing of due days, active folders and folder
+    // settings: an update from it leaves them as they are here.
+    let old_format = f.version < 2;
+    let by_claude = author == Author::Claude;
     // Active folders are set once the folders exist: (table, local id,
     // folder UUID) of every project, epic and topic the merge wrote.
     let mut pointers: Vec<(&str, i64, Option<&str>)> = Vec::new();
@@ -704,9 +722,9 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile) -> Result<ImportReport> {
                     "UPDATE projects SET title = ?2, description = ?3, position = ?4, updated_at = ?5, updated_by = ?6,
                             deleted_at = ?7, deleted_by = ?8,
                             deleted_batch = CASE WHEN deleted_at IS ?7 THEN deleted_batch ELSE NULL END,
-                            due_on = ?9 WHERE id = ?1",
+                            due_on = CASE WHEN ?10 THEN due_on ELSE ?9 END WHERE id = ?1",
                     params![l.id, x.title, x.description, x.position, s.updated_at, s.updated_by, d, db,
-                            due(&s.uuid, &x.due_on)?],
+                            due(&s.uuid, &x.due_on)?, old_format],
                 )?;
                 pointers.push(("projects", l.id, x.active_folder.as_deref()));
             }
@@ -734,11 +752,12 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile) -> Result<ImportReport> {
                 let (d, db) = merged_deleted(&l, s);
                 tx.execute(
                     "UPDATE epics SET project_id = ?2, title = ?3, description = ?4, state = ?5, position = ?6,
-                            due_on = ?7, updated_at = ?8, updated_by = ?9, deleted_at = ?10, deleted_by = ?11,
+                            due_on = CASE WHEN ?12 THEN due_on ELSE ?7 END,
+                            updated_at = ?8, updated_by = ?9, deleted_at = ?10, deleted_by = ?11,
                             deleted_batch = CASE WHEN deleted_at IS ?10 THEN deleted_batch ELSE NULL END
                      WHERE id = ?1",
                     params![l.id, project, x.title, x.description, x.state, x.position, due(&s.uuid, &x.due_on)?,
-                            s.updated_at, s.updated_by, d, db],
+                            s.updated_at, s.updated_by, d, db, old_format],
                 )?;
                 pointers.push(("epics", l.id, x.active_folder.as_deref()));
             }
@@ -771,13 +790,14 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile) -> Result<ImportReport> {
                 let (d, db) = merged_deleted(&l, s);
                 tx.execute(
                     "UPDATE topics SET project_id = ?2, epic_id = ?3, title = ?4, description = ?5, status = ?6, state = ?7,
-                            state_updated_at = ?8, state_updated_by = ?9, position = ?10, due_on = ?11,
+                            state_updated_at = ?8, state_updated_by = ?9, position = ?10,
+                            due_on = CASE WHEN ?16 THEN due_on ELSE ?11 END,
                             updated_at = ?12, updated_by = ?13, deleted_at = ?14, deleted_by = ?15,
                             deleted_batch = CASE WHEN deleted_at IS ?14 THEN deleted_batch ELSE NULL END
                      WHERE id = ?1",
                     params![l.id, project, epic, x.title, x.description, x.status, x.state, x.state_updated_at,
                             x.state_updated_by, x.position, due(&s.uuid, &x.due_on)?,
-                            s.updated_at, s.updated_by, d, db],
+                            s.updated_at, s.updated_by, d, db, old_format],
                 )?;
                 pointers.push(("topics", l.id, x.active_folder.as_deref()));
                 seen_on_import(tx, "topic", l.id, s.updated_at)?;
@@ -956,6 +976,13 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile) -> Result<ImportReport> {
         let project = local_id(tx, "projects", &x.project)?;
         let epic = opt_id(tx, "epics", &x.epic)?;
         let topic = opt_id(tx, "topics", &x.topic)?;
+        // Commit settings are the user's: never taken from a file Claude
+        // Code imports.
+        let (mode, as_user, on_default) = if by_claude {
+            (CommitMode::Manual, None, false)
+        } else {
+            (x.commit_mode, x.commit_as_user, x.commit_on_default)
+        };
         match action {
             Action::Insert => {
                 tx.execute(
@@ -964,7 +991,7 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile) -> Result<ImportReport> {
                                           created_at, updated_at, updated_by, deleted_at, deleted_by)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
                     params![s.uuid, project, epic, topic, x.path, x.position,
-                            x.name, icon(&x.icon), x.commit_mode, x.commit_as_user, x.commit_on_default,
+                            x.name, icon(&x.icon), mode, as_user, on_default,
                             s.created_at, s.updated_at, s.updated_by, s.deleted_at, s.deleted_by],
                 )?;
                 super::folders::forget_identity(
@@ -978,10 +1005,15 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile) -> Result<ImportReport> {
                     "UPDATE folders SET project_id = ?2, epic_id = ?3, topic_id = ?4, path = ?5, position = ?6,
                             updated_at = ?7, updated_by = ?8, deleted_at = ?9, deleted_by = ?10,
                             deleted_batch = CASE WHEN deleted_at IS ?9 THEN deleted_batch ELSE NULL END,
-                            name = ?11, icon = ?12, commit_mode = ?13, commit_as_user = ?14, commit_on_default = ?15
+                            name = CASE WHEN ?16 THEN name ELSE ?11 END,
+                            icon = CASE WHEN ?16 THEN icon ELSE ?12 END,
+                            commit_mode = CASE WHEN ?17 THEN commit_mode ELSE ?13 END,
+                            commit_as_user = CASE WHEN ?17 THEN commit_as_user ELSE ?14 END,
+                            commit_on_default = CASE WHEN ?17 THEN commit_on_default ELSE ?15 END
                      WHERE id = ?1",
                     params![l.id, project, epic, topic, x.path, x.position, s.updated_at, s.updated_by, d, db,
-                            x.name, icon(&x.icon), x.commit_mode, x.commit_as_user, x.commit_on_default],
+                            x.name, icon(&x.icon), mode, as_user, on_default,
+                            old_format, old_format || by_claude],
                 )?;
             }
             Action::Skip => {}
@@ -989,7 +1021,12 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile) -> Result<ImportReport> {
     }
 
     // A pointer to a folder this database does not have is dropped: the
-    // default rule applies, as it does to a pointer nobody can see.
+    // default rule applies, as it does to a pointer nobody can see. A
+    // version 1 file has no pointers to give, and Claude Code never sets
+    // one: the local choice stays.
+    if old_format || by_claude {
+        pointers.clear();
+    }
     for (table, id, folder) in pointers {
         let folder: Option<i64> = match folder {
             Some(uuid) => tx

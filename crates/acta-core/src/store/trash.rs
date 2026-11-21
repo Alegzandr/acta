@@ -169,19 +169,6 @@ impl Store {
                 params![now, author, batch],
             )?;
         }
-        // A page whose active folder went to the trash follows the default
-        // rule again (ADR 0011). Pages trashed in the same batch keep theirs,
-        // so a restore brings them back as they were.
-        for owner in ["projects", "epics", "topics"] {
-            tx.execute(
-                &format!(
-                    "UPDATE {owner} SET active_folder_id = NULL
-                     WHERE deleted_at IS NULL
-                       AND active_folder_id IN (SELECT id FROM folders WHERE deleted_batch = ?1)"
-                ),
-                [&batch],
-            )?;
-        }
         tx.commit()?;
         let _ = self.refresh_link_index();
         Ok(())

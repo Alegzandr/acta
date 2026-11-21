@@ -1899,7 +1899,7 @@ fn a_page_can_point_at_an_inherited_folder() {
 }
 
 #[test]
-fn a_pointer_is_cleared_by_a_remove_and_by_a_move_out_of_sight() {
+fn a_pointer_is_ignored_while_its_folder_is_trashed_and_cleared_by_a_move_out_of_sight() {
     let TestStore { mut store, dir, .. } = open();
     let (p, e, t, _) = levels(&mut store);
     let acta = store
@@ -1912,13 +1912,16 @@ fn a_pointer_is_cleared_by_a_remove_and_by_a_move_out_of_sight() {
         .add_folder(Owner::Epic(e), &folder_in(dir.path(), "acta-wt"), H)
         .unwrap();
 
-    // Removing the active folder: the default rule applies again.
+    // Removing the active folder: the default rule applies again, and a
+    // restore brings the choice back.
     store
         .set_active_folder(Owner::Topic(t), Some(docs), H)
         .unwrap();
     store.delete(Record::Folder(docs), H).unwrap();
-    assert_eq!(store.topic(t).unwrap().active_folder, None);
     assert_eq!(active_of(&store, Owner::Topic(t)), Some(wt));
+    store.restore(Record::Folder(docs), H).unwrap();
+    assert_eq!(active_of(&store, Owner::Topic(t)), Some(docs));
+    store.delete(Record::Folder(docs), H).unwrap();
 
     // Moving the topic out of the epic whose folder it pointed at.
     store
@@ -2360,4 +2363,145 @@ fn the_main_connection_has_a_16_mib_page_cache() {
         .pragma_query_value(None, "cache_size", |r| r.get(0))
         .unwrap();
     assert_eq!(kib, -16_384);
+}
+
+#[test]
+fn a_version_1_import_leaves_what_version_1_does_not_know() {
+    let mut a = open();
+    populate(&mut a.store, a.dir.path());
+    let file = a.store.export(None).unwrap();
+    // The same records, newer, as a version 1 file would carry them.
+    let mut v1: serde_json::Value = serde_json::from_str(&file.to_json().unwrap()).unwrap();
+    v1["version"] = 1.into();
+    for kind in ["projects", "epics", "topics", "folders"] {
+        for x in v1[kind].as_array_mut().unwrap() {
+            let o = x.as_object_mut().unwrap();
+            for k in [
+                "active_folder",
+                "due_on",
+                "name",
+                "icon",
+                "commit_mode",
+                "commit_as_user",
+                "commit_on_default",
+            ] {
+                o.remove(k);
+            }
+            let at = o["updated_at"].as_i64().unwrap();
+            o.insert("updated_at".into(), (at + 1_000).into());
+            if let Some(title) = o.get("title").and_then(|t| t.as_str()).map(str::to_owned) {
+                o.insert("title".into(), format!("{title} (v1)").into());
+            }
+        }
+    }
+    let old = ExportFile::from_json(&v1.to_string()).unwrap();
+    let report = a.store.import(&old, false).unwrap();
+    assert!(report.topics.updated > 0 && report.folders.updated > 0);
+    let after = a.store.export(None).unwrap();
+    // Updated...
+    assert!(after.topics.iter().any(|t| t.title == "Keys (v1)"));
+    // ...without losing the due days, the pointer or the folder settings.
+    let strip = |f: &ExportFile| -> Vec<String> {
+        let mut out = Vec::new();
+        for p in &f.projects {
+            out.push(format!(
+                "{} {:?} {:?}",
+                p.stamp.uuid, p.due_on, p.active_folder
+            ));
+        }
+        for e in &f.epics {
+            out.push(format!(
+                "{} {:?} {:?}",
+                e.stamp.uuid, e.due_on, e.active_folder
+            ));
+        }
+        for t in &f.topics {
+            out.push(format!(
+                "{} {:?} {:?}",
+                t.stamp.uuid, t.due_on, t.active_folder
+            ));
+        }
+        for x in &f.folders {
+            out.push(format!(
+                "{} {} {} {:?} {:?} {}",
+                x.stamp.uuid, x.name, x.icon, x.commit_mode, x.commit_as_user, x.commit_on_default
+            ));
+        }
+        out
+    };
+    assert_eq!(strip(&after), strip(&file));
+    let keys = after
+        .topics
+        .iter()
+        .find(|t| t.title == "Keys (v1)")
+        .unwrap();
+    assert_eq!(keys.due_on.as_deref(), Some("2026-12-15"));
+    assert!(keys.active_folder.is_some());
+    assert!(
+        after
+            .folders
+            .iter()
+            .any(|f| f.commit_mode == CommitMode::Push)
+    );
+}
+
+#[test]
+fn an_import_by_claude_code_never_sets_commit_settings_or_pointers() {
+    let mut a = open();
+    populate(&mut a.store, a.dir.path());
+    let file = a.store.export(None).unwrap();
+    // Into an empty database: new folders start Manual, no pointer.
+    let mut b = open();
+    b.store.import_by(&file, false, C).unwrap();
+    let got = b.store.export(None).unwrap();
+    assert!(
+        got.folders
+            .iter()
+            .all(|f| f.commit_mode == CommitMode::Manual
+                && f.commit_as_user.is_none()
+                && !f.commit_on_default)
+    );
+    assert!(got.topics.iter().all(|t| t.active_folder.is_none()));
+    // Over existing records: the local settings and choices stay.
+    let mut newer = file.clone();
+    for f in &mut newer.folders {
+        f.commit_mode = CommitMode::Commit;
+        f.commit_as_user = Some(false);
+        f.stamp.updated_at += 1_000;
+    }
+    for t in &mut newer.topics {
+        t.active_folder = None;
+        t.stamp.updated_at += 1_000;
+    }
+    a.store.import_by(&newer, false, C).unwrap();
+    let kept = a.store.export(None).unwrap();
+    let folder = kept
+        .folders
+        .iter()
+        .find(|f| f.name == "Storage repo")
+        .unwrap();
+    assert_eq!(
+        (
+            folder.commit_mode,
+            folder.commit_as_user,
+            folder.commit_on_default
+        ),
+        (CommitMode::Push, Some(true), true)
+    );
+    let keys = kept.topics.iter().find(|t| t.title == "Keys").unwrap();
+    assert_eq!(
+        keys.active_folder.as_deref(),
+        Some(folder.stamp.uuid.as_str())
+    );
+    // A newer one imported by the human does change them.
+    for f in &mut newer.folders {
+        f.stamp.updated_at += 1_000;
+    }
+    a.store.import(&newer, false).unwrap();
+    let mine = a.store.export(None).unwrap();
+    assert!(
+        mine.folders
+            .iter()
+            .all(|f| f.commit_mode == CommitMode::Commit)
+    );
 }
