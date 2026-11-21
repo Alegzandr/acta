@@ -8,9 +8,12 @@ Nothing on screen is illustrative. Every value comes from the model of ADRs 0005
 
 | Element | Source |
 |---|---|
-| Tree: projects, epics, topics, order | The records and their stored position. Collapsed state is a preference (4.7). |
-| Inbox count | Notes of the project not yet filed. |
-| Knowledge count | Knowledge entries of the project at every level. |
+| Tree: projects, epics, topics, order | The records and their stored position, never sorted by status (4.2.1). Folded projects and epics and unfolded "N closed" groups are a preference (4.7). |
+| Tree: rows on the path, active project | Computed from the open page's project and epic (as the breadcrumb) and the active project (4.6). |
+| Tree: "N closed" | Count of Done and Dropped topics in the group. |
+| Tree: unread dot | The read markers of request 1: a topic or knowledge entry whose last write is by another process and is newer than its marker. Folded rows aggregate their topics; the Knowledge row aggregates the project's entries at every level. |
+| Inbox count | Notes of the project not yet filed. Shown in the tree only above 0. |
+| Knowledge count | Knowledge entries of the project at every level. Shown on the knowledge page, not in the tree (4.2.1). |
 | Status glyph and word | The topic's status (2.3). Epics and projects have no status of their own. |
 | Progress (epic, project, group row) | Topics Done divided by topics not Dropped, in that epic or project. Computed, never stored. |
 | Id (T-42, E-7, K-7) | The per-installation short ids of ADR 0005 and 0006. |
@@ -24,10 +27,17 @@ Nothing on screen is illustrative. Every value comes from the model of ADRs 0005
 | Drafts of unsaved editors | Request 15. |
 | Entries column of the topic table | Count of timeline entries of the topic. |
 | Knowledge rows, summaries, kinds, levels, history | `kb_entries` and `kb_revisions` (ADR 0007). |
-| Folders, origin label, not-found state | The `folders` table and inheritance rule of ADR 0008; existence is checked on this machine. |
+| Folders, origin label, not-found state | The `folders` table and the inheritance rule of ADR 0011 (own, then epic's, then project's); existence is checked on this machine. |
+| Folder name and icon | `folders.name` (empty: the last path segment) and `folders.icon` (empty: automatic, from the git detection below). |
+| Active folder, "Active" | The page's `active_folder_id` if it names a folder the page sees, else the default rule of ADR 0011 (first own folder, else the parent's active folder). |
+| Git state: branch, "3 changed", worktree icon | Read on this machine, never stored: `.git`, `HEAD` and `commondir` through `agent::git::inspect`; changed files from `git status --porcelain` with a 2 s timeout. |
+| "Another checkout of the same repository" | Computed at display and launch: same git common directory as the active folder, different worktree root. |
+| Commit mode, "Commit in my name", "Also on main" | `folders.commit_mode`, `folders.commit_as_user` (empty: the Settings default, a local value), `folders.commit_on_default`; the default branch's name from `refs/remotes/origin/HEAD`, else `main` or `master`. |
+| "Commits use your git identity: Alexandre" | `git config user.name` read in that folder when the form opens; never stored, never written. |
+| "Acta writes these rules..." and its alternatives | The settings ledger (local values) and the state of the folder's `.claude/settings.local.json` (tracked by git, user-set keys). |
 | Breadcrumb | The page's project and epic. |
 | Tabs | A preference: per window, a list of typed references (a record id, or a fixed page key with its project id where it has one). |
-| Terminal header context | The page the session was started from, held by the app while the session lives. |
+| Terminal header context and switcher | The page the session was started from, the folder it runs in and the commit mode it started with, held by the app while the session lives; compared with the stored values for the mismatch (4.5). |
 | Status bar: Claude Code status | `acta setup --check` (ADR 0005) and whether the active project has a working folder. Tooltip: the latest write authored by Claude Code in the project. |
 | Status bar: version, update | The running build and the updater's state (ADR 0004). |
 | Settings: last export, snapshots, trash count, database path | Export history, the snapshot list and the trash of ADR 0006; the storage location of ADR 0003. |

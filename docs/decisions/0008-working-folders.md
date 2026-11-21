@@ -1,6 +1,6 @@
 # 0008 - Working folders
 
-Status: accepted (the `claude` flags named here are to be re-verified against the current CLI in M4)
+Status: accepted, amended by 0011 (folder sets, the active folder, always inherited, commit modes)
 Date: 2026-11-20
 
 ## Context
@@ -51,3 +51,6 @@ If nothing is attached anywhere up the chain, the terminal asks for a folder onc
 
 ## Evidence
 None yet. Design decision. `--add-dir` exists in the Claude Code CLI as of the lead's knowledge; to be confirmed against the installed version when M4 is built.
+
+## Changelog
+- 2026-11-21: ADR 0011 replaces the primary folder with an active folder chosen per page, makes inheritance unconditional (the include-inherited switch and its ruling are withdrawn; another checkout of the same repository as the active folder is left out instead), and adds names, icons and commit modes. Path identity, reverse resolution, not-found and repair, the empty case and the process-argument ruling stand. `--add-dir` confirmed in `claude --help` 2.1.330.
