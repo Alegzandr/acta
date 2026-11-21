@@ -8,6 +8,7 @@ pub mod error;
 pub mod folder_identity;
 pub mod folder_path;
 mod fsutil;
+pub mod git_cmd;
 pub mod keys;
 pub mod link_index;
 pub mod markdown;
