@@ -53,6 +53,9 @@ pub struct Preferences {
     pub chat_started: bool,
     /// The sign-in help notice was dismissed ("Got it").
     pub chat_help_dismissed: bool,
+    /// "Sign out and clear" has not finished deleting the web view's
+    /// profile: it is deleted at the next launch, before any web view.
+    pub chat_clear_pending: bool,
 }
 
 /// The file as stored. Every field but the version may be missing (it then
@@ -80,6 +83,8 @@ struct Stored {
     chat_started: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     chat_help_dismissed: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    chat_clear_pending: bool,
 }
 
 #[derive(Clone, Copy, Default, Serialize, Deserialize)]
@@ -183,6 +188,7 @@ pub fn parse(text: &str) -> Result<Preferences, LoadError> {
         chat_bottom: stored.chat_bottom,
         chat_started: stored.chat_started,
         chat_help_dismissed: stored.chat_help_dismissed,
+        chat_clear_pending: stored.chat_clear_pending,
     })
 }
 
@@ -200,6 +206,7 @@ pub fn serialize(prefs: &Preferences) -> String {
         chat_bottom: prefs.chat_bottom,
         chat_started: prefs.chat_started,
         chat_help_dismissed: prefs.chat_help_dismissed,
+        chat_clear_pending: prefs.chat_clear_pending,
     };
     // A struct of plain enums and numbers always serializes.
     let mut text = serde_json::to_string_pretty(&stored).unwrap_or_default();
@@ -404,6 +411,7 @@ mod tests {
             chat_bottom: true,
             chat_started: true,
             chat_help_dismissed: true,
+            chat_clear_pending: true,
         };
         save_to(&path, &prefs).unwrap();
         assert_eq!(load_from(&path).unwrap(), prefs);
@@ -516,11 +524,15 @@ mod tests {
             language: Locale::Fr,
             ..Preferences::default()
         });
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while load_from(&path).map(|p| p.language) != Ok(Locale::Fr) {
+        // Wait on the writer's own record of what it wrote, not on the
+        // file's contents, with a deadline only a hung thread can miss: on a
+        // loaded machine the thread may start late.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        while *writer.written.lock().unwrap() < 1 {
             assert!(std::time::Instant::now() < deadline, "never written");
             thread::sleep(std::time::Duration::from_millis(10));
         }
+        assert_eq!(load_from(&path).map(|p| p.language), Ok(Locale::Fr));
     }
 
     #[test]

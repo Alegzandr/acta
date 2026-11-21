@@ -49,6 +49,7 @@ pub enum Kind {
         selected: Option<usize>,
     },
     RestartTerminal,
+    #[cfg(windows)]
     /// "Sign out and clear chat data?" (components-app.md 5, Chat panel).
     ChatSignOut,
 }
@@ -59,6 +60,7 @@ pub enum DialogEvent {
     Recover(Arc<ExportFile>),
     /// The terminal restart was confirmed.
     RestartTerminal,
+    #[cfg(windows)]
     /// Deleting the chat panel's profile was confirmed.
     ChatSignOut,
 }
@@ -653,6 +655,7 @@ impl Dialog {
                 ];
                 (text(locale, Key::TerminalRestartTitle), body, buttons, 440.)
             }
+            #[cfg(windows)]
             Kind::ChatSignOut => {
                 let body = type_scale::UI
                     .el()

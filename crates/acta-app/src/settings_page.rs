@@ -100,6 +100,7 @@ pub struct SettingsPage {
 }
 
 impl SettingsPage {
+    #[cfg(windows)]
     /// The language menu is open (the chat's web view hides under it).
     pub fn menu_open(&self) -> bool {
         self.language_menu_open
@@ -758,7 +759,7 @@ impl SettingsPage {
         );
         // components-app.md 5, Settings: Chat.
         out.push(subtitle(Key::SettingsChat));
-        let chat_row = if cfg!(any(windows, target_os = "macos")) {
+        let chat_row = if cfg!(windows) {
             setting_row(
                 text(locale, Key::ChatSignout),
                 text(locale, Key::ChatSignoutBody),

@@ -17,11 +17,11 @@ use webview2_com::{
     AcceleratorKeyPressedEventHandler, FocusChangedEventHandler, NavigationCompletedEventHandler,
 };
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    GetAsyncKeyState, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
+    GetKeyState, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
 };
 use wry::WebViewExtWindows as _;
 
-use crate::chat::{self, Mods, Platform};
+use crate::chat::{self, Mods};
 use crate::chat_panel::Signal;
 
 /// The registered handlers; dropping this removes them.
@@ -47,7 +47,7 @@ impl Drop for Hooks {
 
 fn down(key: u16) -> bool {
     // SAFETY: a plain query of the keyboard state.
-    (unsafe { GetAsyncKeyState(i32::from(key)) } as u16 & 0x8000) != 0
+    (unsafe { GetKeyState(i32::from(key)) } as u16 & 0x8000) != 0
 }
 
 pub fn install(web: &wry::WebView, signals: Sender<Signal>) -> windows::core::Result<Hooks> {
@@ -79,7 +79,7 @@ pub fn install(web: &wry::WebView, signals: Sender<Signal>) -> windows::core::Re
             cmd: down(VK_LWIN) || down(VK_RWIN),
         };
         let key = chat::windows_key(virtual_key, status.ScanCode);
-        if let Some(kept) = chat::kept(Platform::Windows, key, mods) {
+        if let Some(kept) = chat::kept(key, mods) {
             // SAFETY: as above.
             unsafe { args.SetHandled(true)? };
             // Auto-repeat is swallowed, not repeated.

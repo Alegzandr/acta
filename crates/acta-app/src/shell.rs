@@ -8,8 +8,9 @@
 //! (8.5). Tabs are M5: one page per window, with back and forward history.
 //!
 //! Docks (layout.md 4.5): the terminal lives in the right dock; the chat in
-//! the right or the bottom one. One tool window per dock: showing one in
-//! the right dock hides the other there, and both go on running.
+//! the right or the bottom one (Windows; macOS and Linux open claude.ai in
+//! the browser, ADR 0009). One tool window per dock: showing one in the
+//! right dock hides the other there, and both go on running.
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -26,7 +27,9 @@ use gpui_kit::{
 };
 
 use crate::capture::{Capture, CaptureEvent};
+#[cfg(windows)]
 use crate::chat::Kept;
+#[cfg(windows)]
 use crate::chat_panel::{ChatEvent, ChatPanel, Dock};
 use crate::commands::{self, Command};
 use crate::db::{self, Db, Opened};
@@ -51,6 +54,10 @@ use crate::tree::{self, Folds, Row};
 use crate::type_scale;
 use crate::ui::{self, Variant};
 use crate::workspace::{Toast, ToastKind, Workspace, WorkspaceEvent};
+
+/// claude.ai: the chat panel's page, and what "Open claude.ai in your
+/// browser" opens.
+pub const CLAUDE_HOME: &str = "https://claude.ai/";
 
 /// docs/design/layout.md 4.2: default 1440 x 900, minimum 880 x 560.
 pub const DEFAULT_SIZE: (f32, f32) = (1440., 900.);
@@ -107,10 +114,10 @@ actions!(
         FocusPage,
         /// `Mod+3`.
         FocusTerminal,
-        /// `Mod+Shift+H`, palette "Toggle chat" (Linux: claude.ai in the
-        /// browser).
+        /// `Mod+Shift+H`, palette "Toggle chat" (macOS and Linux: claude.ai
+        /// in the browser).
         ToggleChat,
-        /// `Mod+4` (not on Linux).
+        /// `Mod+4` (Windows only).
         FocusChat,
         /// "Open claude.ai in your browser".
         OpenChatInBrowser,
@@ -154,16 +161,10 @@ fn key_bindings() -> Vec<KeyBinding> {
     // the focused terminal (readline keys), so app keys stop at it; on
     // macOS Acta keeps every Cmd shortcut there except undo and redo
     // (`plain` below) and the terminal's own copy, paste and text size.
-    // The chat's page keeps every key but the short list of 6.1: on macOS
-    // its keys may reach GPUI's view first, so app keys stop at `ChatWeb`;
-    // on Windows the page has the keyboard and the kept keys are routed
-    // from WebView2 (chat_windows.rs).
-    let app = if mac {
-        Some("!ChatWeb")
-    } else {
-        Some("!Terminal && !ChatWeb")
-    };
-    let plain = Some("!Terminal && !Input && !ChatWeb");
+    // While the chat's page has the keyboard (Windows) GPUI receives no
+    // keys; the ones Acta keeps are routed from WebView2 (chat_windows.rs).
+    let app = if mac { None } else { Some("!Terminal") };
+    let plain = Some("!Terminal && !Input");
     let mut out = vec![
         KeyBinding::new(m("cmd-b", "ctrl-b"), ToggleSidebar, app),
         KeyBinding::new(m("cmd-,", "ctrl-,"), OpenSettings, app),
@@ -204,8 +205,8 @@ fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("home", TreeHome, Some("Tree")),
         KeyBinding::new("end", TreeEnd, Some("Tree")),
     ];
-    // interaction.md 6.1: on Linux there is no chat panel to focus.
-    if !cfg!(target_os = "linux") {
+    // interaction.md 6.1: only Windows has a chat panel to focus.
+    if cfg!(windows) {
         out.push(KeyBinding::new(m("cmd-4", "ctrl-4"), FocusChat, None));
     }
     if mac {
@@ -218,41 +219,6 @@ fn key_bindings() -> Vec<KeyBinding> {
     }
     out
 }
-
-/// macOS: the application menu and a standard Edit menu whose Cut, Copy,
-/// Paste and Select All go to the first responder, so that they work in
-/// the chat's web view (interaction.md 6.1). Their bindings name a context
-/// no element sets: they only give the menu its key equivalents, GPUI's
-/// own inputs keep their bindings, and inside the page the menu sends the
-/// selector to the web view. Undo and Redo are GPUI actions in the pinned
-/// GPUI (not `undo:` / `redo:`), so they cannot reach the page this way.
-#[cfg(target_os = "macos")]
-pub fn set_menus(cx: &mut App) {
-    use gpui_kit::{Menu, MenuItem, OsAction};
-    cx.bind_keys([
-        KeyBinding::new("cmd-x", MenuCut, Some("MenuOnly")),
-        KeyBinding::new("cmd-c", MenuCopy, Some("MenuOnly")),
-        KeyBinding::new("cmd-v", MenuPaste, Some("MenuOnly")),
-        KeyBinding::new("cmd-a", MenuSelectAll, Some("MenuOnly")),
-    ]);
-    let locale = settings::locale(cx);
-    cx.set_menus(vec![
-        Menu::new(acta_core::APP_NAME),
-        Menu::new(text(locale, Key::MenuEdit)).items([
-            MenuItem::os_action(text(locale, Key::MenuCut), MenuCut, OsAction::Cut),
-            MenuItem::os_action(text(locale, Key::MenuCopy), MenuCopy, OsAction::Copy),
-            MenuItem::os_action(text(locale, Key::MenuPaste), MenuPaste, OsAction::Paste),
-            MenuItem::os_action(
-                text(locale, Key::MenuSelectAll),
-                MenuSelectAll,
-                OsAction::SelectAll,
-            ),
-        ]),
-    ]);
-}
-
-#[cfg(target_os = "macos")]
-actions!(acta, [MenuCut, MenuCopy, MenuPaste, MenuSelectAll]);
 
 /// What the page area shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -321,6 +287,7 @@ struct Bench {
     toast_timer: Task<()>,
     dock: Entity<TerminalDock>,
     dock_visible: bool,
+    #[cfg(windows)]
     chat: Entity<ChatPanel>,
     _subs: Vec<Subscription>,
     _page_sub: Option<Subscription>,
@@ -415,6 +382,7 @@ impl Shell {
     fn start_workbench(&mut self, db: Db, window: &mut Window, cx: &mut Context<Self>) {
         let ws = cx.new(|cx| Workspace::new(db, cx));
         let dock = cx.new(|cx| TerminalDock::new(ws.clone(), cx));
+        #[cfg(windows)]
         let chat = cx.new(|cx| ChatPanel::new(window, cx));
         let prefs = settings::current(cx).clone();
         let folds = Folds {
@@ -423,7 +391,8 @@ impl Shell {
         };
         let settings_page = cx.new(|cx| SettingsPage::new(window, cx));
         settings_page.update(cx, |page, cx| page.attach(ws.clone(), cx));
-        let subs = vec![
+        #[allow(unused_mut)]
+        let mut subs = vec![
             cx.subscribe_in(&ws, window, Self::on_workspace),
             cx.observe(&ws, |_, _, cx| cx.notify()),
             cx.subscribe_in(
@@ -434,8 +403,9 @@ impl Shell {
                     DockEvent::RestartHere => shell.restart_terminal_here(window, cx),
                 },
             ),
-            cx.subscribe_in(&chat, window, Self::on_chat),
         ];
+        #[cfg(windows)]
+        subs.push(cx.subscribe_in(&chat, window, Self::on_chat));
         let first_run = cx.new(|_| FirstRun);
         let first_run_sub = Self::watch_first_run(&first_run, window, cx);
         let bench = Bench {
@@ -457,6 +427,7 @@ impl Shell {
             toast_timer: Task::ready(()),
             dock,
             dock_visible: false,
+            #[cfg(windows)]
             chat,
             _subs: subs,
             _page_sub: Some(first_run_sub),
@@ -546,8 +517,10 @@ impl Shell {
             Ok("capture") => self.open_capture(window, cx),
             Ok("terminal") => self.toggle_terminal(window, cx),
             // Shown without taking the keyboard, for captures.
+            #[cfg(windows)]
             Ok("chat") => self.show_chat(false, window, cx),
             // The chat under the palette: the placeholder instead of the page.
+            #[cfg(windows)]
             Ok("chat-palette") => {
                 self.show_chat(false, window, cx);
                 self.open_palette(None, None, window, cx);
@@ -605,6 +578,7 @@ impl Shell {
         }
     }
 
+    #[cfg(windows)]
     pub fn chat_visible(&self, cx: &App) -> bool {
         match &self.content {
             Content::Workbench(bench) => bench.chat.read(cx).is_shown(),
@@ -857,6 +831,9 @@ impl Shell {
     }
 
     fn command_context(&self, cx: &App) -> commands::Context {
+        // Only the chat (Windows) needs the app here.
+        #[cfg(not(windows))]
+        let _ = cx;
         match &self.content {
             Content::Workbench(bench) => commands::Context {
                 has_project: bench.active_project.is_some(),
@@ -864,6 +841,7 @@ impl Shell {
                 on_record: matches!(bench.page, PageView::Record(_)),
                 can_back: bench.history.can_go_back(),
                 can_forward: bench.history.can_go_forward(),
+                #[cfg(windows)]
                 chat_bottom: bench.chat.read(cx).dock == Dock::Bottom,
             },
             _ => commands::Context::default(),
@@ -1031,10 +1009,14 @@ impl Shell {
             Command::Undo => self.undo(cx),
             Command::ToggleSidebar => self.toggle_sidebar(cx),
             Command::ToggleTerminal => self.toggle_terminal(window, cx),
+            #[cfg(windows)]
             Command::ToggleChat => self.toggle_chat(window, cx),
+            #[cfg(windows)]
             Command::ChatBottom => self.move_chat(Dock::Bottom, window, cx),
+            #[cfg(windows)]
             Command::ChatRight => self.move_chat(Dock::Right, window, cx),
-            Command::ChatBrowser => cx.open_url(crate::chat::HOME),
+            Command::ChatBrowser => cx.open_url(CLAUDE_HOME),
+            #[cfg(windows)]
             Command::ChatSignOut => self.open_dialog(DialogKind::ChatSignOut, window, cx),
             Command::RestartTerminal => self.restart_terminal_here(window, cx),
             Command::TerminalLarger => self.terminal_size(1., cx),
@@ -1117,6 +1099,7 @@ impl Shell {
                     shell.close_overlay(window, cx);
                     shell.do_restart_terminal(window, cx);
                 }
+                #[cfg(windows)]
                 DialogEvent::ChatSignOut => {
                     shell.close_overlay(window, cx);
                     if let Some(bench) = shell.bench() {
@@ -1307,10 +1290,8 @@ impl Shell {
         }
         let Some(origin) = origin else { return };
         bench.dock_visible = true;
-        let chat = bench.chat.clone();
-        if chat.read(cx).dock == Dock::Right {
-            chat.update(cx, |chat, cx| chat.hide(cx));
-        }
+        #[cfg(windows)]
+        hide_right_chat(bench, cx);
         dock.update(cx, |dock, cx| dock.show(origin, window, cx));
         let handle = dock.read(cx).focus_handle(cx);
         window.focus(&handle, cx);
@@ -1344,10 +1325,8 @@ impl Shell {
         };
         let Some(bench) = self.bench() else { return };
         bench.dock_visible = true;
-        let chat = bench.chat.clone();
-        if chat.read(cx).dock == Dock::Right {
-            chat.update(cx, |chat, cx| chat.hide(cx));
-        }
+        #[cfg(windows)]
+        hide_right_chat(bench, cx);
         bench
             .dock
             .update(cx, |dock, cx| dock.restart(origin, window, cx));
@@ -1364,6 +1343,7 @@ impl Shell {
 
     // ---- chat ----
 
+    #[cfg(windows)]
     fn on_chat(
         &mut self,
         _: &Entity<ChatPanel>,
@@ -1376,9 +1356,18 @@ impl Shell {
             ChatEvent::Move(dock) => self.move_chat(*dock, window, cx),
             ChatEvent::SignOut => self.open_dialog(DialogKind::ChatSignOut, window, cx),
             ChatEvent::Kept(kept) => self.run_kept(*kept, window, cx),
+            ChatEvent::ClearFailed => {
+                let message = text(settings::locale(cx), Key::ChatClearFailed);
+                if let Some(bench) = self.bench() {
+                    bench
+                        .ws
+                        .update(cx, |ws, cx| ws.toast(message, ToastKind::Error, cx));
+                }
+            }
         }
     }
 
+    #[cfg(windows)]
     /// A key Acta keeps, pressed while the page had the keyboard
     /// (interaction.md 6.1). Keys of features that do not exist yet (tabs,
     /// pane cycling, zoom) are kept from the page and do nothing.
@@ -1397,8 +1386,7 @@ impl Shell {
             | Kept::PreviousTab
             | Kept::NextPane
             | Kept::PreviousPane
-            | Kept::ZoomToolWindow
-            | Kept::System => return,
+            | Kept::ZoomToolWindow => return,
         };
         // The keyboard comes back to the GPUI window before the action
         // runs, so that what it focuses receives the next keys.
@@ -1406,6 +1394,7 @@ impl Shell {
         window.dispatch_action(action, cx);
     }
 
+    #[cfg(windows)]
     /// Show and focus the chat; if it has focus, hide it (layout.md 4.5).
     fn toggle_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(bench) = self.bench() else { return };
@@ -1418,10 +1407,11 @@ impl Shell {
         }
     }
 
+    #[cfg(windows)]
     fn show_chat(&mut self, focus: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some(bench) = self.bench() else { return };
         let chat = bench.chat.clone();
-        if chat.read(cx).dock == Dock::Right && cfg!(any(windows, target_os = "macos")) {
+        if chat.read(cx).dock == Dock::Right {
             bench.dock_visible = false;
         }
         chat.update(cx, |chat, cx| {
@@ -1433,6 +1423,7 @@ impl Shell {
         cx.notify();
     }
 
+    #[cfg(windows)]
     fn hide_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(bench) = self.bench() else { return };
         let chat = bench.chat.clone();
@@ -1441,6 +1432,7 @@ impl Shell {
         cx.notify();
     }
 
+    #[cfg(windows)]
     /// `Mod+4`: focus the chat, showing it first if needed.
     fn focus_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(bench) = self.bench() else { return };
@@ -1452,6 +1444,7 @@ impl Shell {
         }
     }
 
+    #[cfg(windows)]
     /// "Move chat to bottom" / "Move chat to right": the chat shows in its
     /// new dock and takes the right dock from the terminal if it goes there.
     fn move_chat(&mut self, dock: Dock, window: &mut Window, cx: &mut Context<Self>) {
@@ -1461,6 +1454,7 @@ impl Shell {
         self.show_chat(true, window, cx);
     }
 
+    #[cfg(windows)]
     /// Whether a GPUI layer that can overlap the chat is open
     /// (components-app.md 5: palette, quick capture, dialog, menu).
     fn chat_covered(&mut self, cx: &mut Context<Self>) -> bool {
@@ -1474,6 +1468,60 @@ impl Shell {
             _ => false,
         };
         bench.overlay.is_some() || page_menu || bench.chat.read(cx).menu_open()
+    }
+
+    /// macOS and Linux: no panel, claude.ai opens in the browser
+    /// (components-app.md 5, Chat panel).
+    #[cfg(not(windows))]
+    fn toggle_chat(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        cx.open_url(CLAUDE_HOME);
+    }
+
+    #[cfg(not(windows))]
+    fn focus_chat(&mut self, _: &mut Window, _: &mut Context<Self>) {}
+
+    #[cfg(windows)]
+    fn ask_chat_sign_out(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_dialog(DialogKind::ChatSignOut, window, cx);
+    }
+
+    #[cfg(not(windows))]
+    fn ask_chat_sign_out(&mut self, _: &mut Window, _: &mut Context<Self>) {}
+
+    /// The chat for the right dock and for the bottom dock, with the web
+    /// view hidden while an overlay is open.
+    #[cfg(windows)]
+    fn chat_docks(
+        &mut self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> (Option<AnyElement>, Option<AnyElement>) {
+        let covered = self.chat_covered(cx);
+        let Some(bench) = self.bench() else {
+            return (None, None);
+        };
+        let chat = bench.chat.clone();
+        chat.update(cx, |chat, cx| chat.set_covered(covered, window, cx));
+        let (shown, dock) = {
+            let chat = chat.read(cx);
+            (chat.is_shown(), chat.dock)
+        };
+        if !shown {
+            return (None, None);
+        }
+        match dock {
+            Dock::Right => (Some(chat.into_any_element()), None),
+            Dock::Bottom => (None, Some(chat.into_any_element())),
+        }
+    }
+
+    #[cfg(not(windows))]
+    fn chat_docks(
+        &mut self,
+        _: &Window,
+        _: &mut Context<Self>,
+    ) -> (Option<AnyElement>, Option<AnyElement>) {
+        (None, None)
     }
 
     // ---- toast and undo ----
@@ -2564,24 +2612,15 @@ impl Render for Shell {
                     (self.sidebar_visible && !first_run).then(|| self.sidebar(window, cx));
                 let bulk = self.bulk_notice(cx);
                 let toast = self.toast_element(cx);
-                let covered = self.chat_covered(cx);
+                let (right_chat, bottom) = self.chat_docks(window, cx);
                 let bench = self.bench().expect("workbench");
-                let chat = bench.chat.clone();
-                chat.update(cx, |chat, cx| chat.set_covered(covered, window, cx));
-                let (chat_shown, chat_dock) = {
-                    let chat = chat.read(cx);
-                    (chat.is_shown(), chat.dock)
-                };
                 let page_view = bench.page.view();
                 let page_focus = bench.page_focus.clone();
                 let right: Option<AnyElement> = if bench.dock_visible {
                     Some(bench.dock.clone().into_any_element())
-                } else if chat_shown && chat_dock == Dock::Right {
-                    Some(chat.clone().into_any_element())
                 } else {
-                    None
+                    right_chat
                 };
-                let bottom = (chat_shown && chat_dock == Dock::Bottom).then(|| chat.clone());
                 let page = div()
                     .id("page-area")
                     .track_focus(&page_focus)
@@ -2664,10 +2703,8 @@ impl Render for Shell {
             .on_action(cx.listener(|s, _: &ToggleTerminal, w, cx| s.toggle_terminal(w, cx)))
             .on_action(cx.listener(|s, _: &ToggleChat, w, cx| s.toggle_chat(w, cx)))
             .on_action(cx.listener(|s, _: &FocusChat, w, cx| s.focus_chat(w, cx)))
-            .on_action(|_: &OpenChatInBrowser, _, cx| cx.open_url(crate::chat::HOME))
-            .on_action(cx.listener(|s, _: &ChatSignOut, w, cx| {
-                s.open_dialog(DialogKind::ChatSignOut, w, cx)
-            }))
+            .on_action(|_: &OpenChatInBrowser, _, cx| cx.open_url(CLAUDE_HOME))
+            .on_action(cx.listener(|s, _: &ChatSignOut, w, cx| s.ask_chat_sign_out(w, cx)))
             .on_action(cx.listener(|s, _: &FocusSidebar, w, cx| {
                 if let Some(bench) = s.bench() {
                     let handle = bench.tree_focus.clone();
@@ -2715,6 +2752,15 @@ impl Render for Shell {
         } else {
             frame.into_any_element()
         }
+    }
+}
+
+/// A chat in the right dock gives way to the terminal shown there.
+#[cfg(windows)]
+fn hide_right_chat(bench: &mut Bench, cx: &mut Context<Shell>) {
+    let chat = bench.chat.clone();
+    if chat.read(cx).dock == Dock::Right {
+        chat.update(cx, |chat, cx| chat.hide(cx));
     }
 }
 

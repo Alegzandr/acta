@@ -62,7 +62,8 @@ without shipping a browser engine. Facts checked on 2026-11-20; "read" means rea
 
 ## Decision
 **Go with limits.** Build the panel on Windows and macOS with the system web view; Linux gets a link
-until an X11-only, WebKitGTK-linked build is judged acceptable.
+until an X11-only, WebKitGTK-linked build is judged acceptable. (Amended 2026-11-21: macOS gets the link
+too for now; see Changelog.)
 
 1. `gpui-webview = "=0.10.0"` and `lb-wry = "=0.53.3"`, in the GUI crate only and only for Windows and
    macOS targets. The domain, storage, CLI and MCP crates never see them. Bumped together with gpui-kit.
@@ -133,6 +134,14 @@ until an X11-only, WebKitGTK-linked build is judged acceptable.
 ## Changelog
 - 2026-11-20: proposed as "go with limits"; accepted with the conditions in the status line.
 - 2026-11-20: the panel's design was specified; CLAUDE.md records the web view profile exception.
+- 2026-11-21: macOS gets the link, like Linux, until wry tells main-frame navigations apart: on WKWebView
+  its navigation handler runs for every frame with no main-frame flag, so the allow-list would refuse (and
+  send to the browser) the page's own third-party frames. The panel ships on Windows only; the WKWebView
+  path is not compiled. Decision 2 holds for what Acta adds; wry itself always adds one initialization
+  script, a `window.ipc.postMessage` shim, to every page, and with no IPC handler attached what the page
+  posts is dropped, so the page gains no capability from it. "Sign out and clear" that cannot delete the
+  profile (files still held) leaves `chat_clear_pending` in preferences and deletes it at the next launch,
+  before any web view; if that fails too the user is told.
 
 ## Evidence
 Spike: `spikes/chat-panel` (standalone, own lockfile, README with the commands). Windows 11 26300, rustc

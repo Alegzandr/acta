@@ -1069,25 +1069,17 @@ catalogue! {
         en: t("Sign out and clear"),
         fr: t("Se déconnecter et effacer"),
     }
-    MenuEdit "menu.edit" {
-        en: t("Edit"),
-        fr: t("Édition"),
+    ChatHide "chat.hide" {
+        en: t("Hide chat"),
+        fr: t("Masquer le chat"),
     }
-    MenuCut "menu.cut" {
-        en: t("Cut"),
-        fr: t("Couper"),
+    ChatMore "chat.more" {
+        en: t("More"),
+        fr: t("Plus"),
     }
-    MenuCopy "menu.copy" {
-        en: t("Copy"),
-        fr: t("Copier"),
-    }
-    MenuPaste "menu.paste" {
-        en: t("Paste"),
-        fr: t("Coller"),
-    }
-    MenuSelectAll "menu.select_all" {
-        en: t("Select All"),
-        fr: t("Tout sélectionner"),
+    ChatClearFailed "chat.clear_failed" {
+        en: t("The chat data could not be deleted. Acta tries again at the next start."),
+        fr: t("Les données du chat n\u{2019}ont pas pu être supprimées. Acta réessaiera au prochain démarrage."),
     }
     TabOpenNew "tab.open_new" {
         en: t("Open in new tab"),

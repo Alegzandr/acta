@@ -5,12 +5,14 @@
 //!
 //! The panel is a plain browser surface: nothing here reads from or writes
 //! to the page. URLs are only classified, keys only matched.
+//!
+//! Windows only: macOS and Linux get the link to the browser (ADR 0009,
+//! changelog 2026-11-21), so nothing here is compiled for them.
 
 use url::Url;
 
-/// The page the panel opens, and the one "Open claude.ai in your browser"
-/// opens everywhere.
-pub const HOME: &str = "https://claude.ai/";
+/// The page the panel opens.
+pub const HOME: &str = crate::shell::CLAUDE_HOME;
 /// Microsoft's WebView2 download page ("Get WebView2").
 pub const WEBVIEW2_DOWNLOAD: &str = "https://developer.microsoft.com/microsoft-edge/webview2/";
 
@@ -82,26 +84,20 @@ pub fn new_window(raw: &str) -> Decision {
     }
 }
 
-/// Scheme, host and path only, for the log: query strings carry tokens.
+/// Scheme and host only, for the log (scheme alone when there is no
+/// host): paths and query strings can carry tokens, addresses and file
+/// names.
 pub fn for_log(raw: &str) -> String {
     match Url::parse(raw) {
-        Ok(url) => format!(
-            "{}://{}{}",
-            url.scheme(),
-            url.host_str().unwrap_or(""),
-            url.path()
-        ),
+        Ok(url) => match url.host_str() {
+            Some(host) => format!("{}://{host}", url.scheme()),
+            None => format!("{}:", url.scheme()),
+        },
         Err(_) => "(unparsable)".into(),
     }
 }
 
 // ---- keys ----
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Platform {
-    Windows,
-    MacOs,
-}
 
 /// A key, as far as the tables of interaction.md 6.1 need to tell keys
 /// apart. Letters are the character the layout produces; digits and the
@@ -122,7 +118,7 @@ pub struct Mods {
     pub ctrl: bool,
     pub shift: bool,
     pub alt: bool,
-    /// Cmd on macOS.
+    /// The Windows key.
     pub cmd: bool,
 }
 
@@ -139,54 +135,42 @@ pub enum Kept {
     NextPane,
     PreviousPane,
     ZoomToolWindow,
-    /// macOS's own `Cmd+Q`, `Cmd+H`, `Cmd+M`: left to the system.
-    System,
 }
 
-/// What Acta keeps of `key` with `mods` on `platform` while the chat web
-/// view has focus (interaction.md 6.1, "Chat web view"). Everything else
-/// belongs to the page, `Mod+K` and plain typing included.
-pub fn kept(platform: Platform, key: KeyCode, mods: Mods) -> Option<Kept> {
+/// What Acta keeps of `key` with `mods` while the chat web view has focus
+/// (interaction.md 6.1, "Chat web view", Windows). Everything else belongs
+/// to the page, `Ctrl+K` and plain typing included.
+pub fn kept(key: KeyCode, mods: Mods) -> Option<Kept> {
     let Mods {
         ctrl,
         shift,
         alt,
         cmd,
     } = mods;
-    // Alt (Option) is never part of a kept key; on Windows Ctrl+Alt is
-    // also AltGr, which types characters.
-    if alt {
+    // Alt is never part of a kept key; Ctrl+Alt is also AltGr, which types
+    // characters.
+    if alt || cmd {
         return None;
     }
-    // `Mod`: Ctrl on Windows, Cmd on macOS, and never both.
-    let (modifier, other) = match platform {
-        Platform::Windows => (ctrl, cmd),
-        Platform::MacOs => (cmd, ctrl),
-    };
-    let bare = !ctrl && !cmd;
+    let bare = !ctrl;
     match key {
         KeyCode::F6 if bare => Some(if shift {
             Kept::PreviousPane
         } else {
             Kept::NextPane
         }),
-        // Ctrl+Tab on every platform.
-        KeyCode::Tab if ctrl && !cmd => Some(if shift {
+        KeyCode::Tab if ctrl => Some(if shift {
             Kept::PreviousTab
         } else {
             Kept::NextTab
         }),
-        // Ctrl+` on every platform.
-        KeyCode::Backtick if ctrl && !cmd && !shift => Some(Kept::ToggleTerminal),
-        _ if !modifier || other => None,
+        KeyCode::Backtick if ctrl && !shift => Some(Kept::ToggleTerminal),
+        _ if !ctrl => None,
         KeyCode::Letter('k') if shift => Some(Kept::Palette),
         KeyCode::Letter('h') if shift => Some(Kept::ToggleChat),
         KeyCode::Letter('j') if shift => Some(Kept::ToggleTerminal),
         KeyCode::Enter if shift => Some(Kept::ZoomToolWindow),
         KeyCode::Digit(n @ 1..=4) if !shift => Some(Kept::Focus(n)),
-        KeyCode::Letter('q' | 'h' | 'm') if platform == Platform::MacOs && !shift => {
-            Some(Kept::System)
-        }
         _ => None,
     }
 }
@@ -273,8 +257,6 @@ pub enum Effect {
     Build,
     /// Load the page again in the existing web view.
     Reload,
-    /// Open this URL in the system browser instead of showing a panel.
-    OpenInBrowser(&'static str),
     /// Destroy the web view and delete its profile.
     DropAndClear,
 }
@@ -290,8 +272,6 @@ pub enum Built {
 /// The panel's state machine.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChatState {
-    /// Whether this platform has a panel at all (not on Linux).
-    pub panel: bool,
     pub phase: Phase,
     /// Shown in its dock.
     pub shown: bool,
@@ -307,9 +287,8 @@ pub struct ChatState {
 }
 
 impl ChatState {
-    pub fn new(panel: bool, consented: bool) -> Self {
+    pub fn new(consented: bool) -> Self {
         Self {
-            panel,
             phase: Phase::NotStarted,
             shown: false,
             covered: false,
@@ -319,12 +298,9 @@ impl ChatState {
         }
     }
 
-    /// Show the panel. On Linux there is none: claude.ai opens in the
-    /// browser. Once the user has started it here, showing starts it.
+    /// Show the panel. Once the user has started it here, showing starts
+    /// the web view.
     pub fn show(&mut self) -> Effect {
-        if !self.panel {
-            return Effect::OpenInBrowser(HOME);
-        }
         self.shown = true;
         if self.phase == Phase::NotStarted && self.consented {
             return self.start();
@@ -338,9 +314,6 @@ impl ChatState {
 
     /// "Open claude.ai here".
     pub fn start(&mut self) -> Effect {
-        if !self.panel {
-            return Effect::OpenInBrowser(HOME);
-        }
         if matches!(self.phase, Phase::Starting | Phase::Live) {
             return Effect::None;
         }
@@ -414,7 +387,7 @@ impl ChatState {
     }
 
     pub fn surface(&self) -> Surface {
-        if !self.panel || !self.shown {
+        if !self.shown {
             return Surface::Closed;
         }
         match self.phase {
@@ -508,12 +481,20 @@ mod tests {
     }
 
     #[test]
-    fn the_log_never_sees_a_query_string() {
+    fn the_log_keeps_scheme_and_host_only() {
         assert_eq!(
             for_log("https://claude.ai/magic-link?token=secret#x"),
-            "https://claude.ai/magic-link"
+            "https://claude.ai"
         );
+        assert_eq!(for_log("data:text/html,<b>Alexandre</b>"), "data:");
+        assert_eq!(for_log("mailto:alexandre@example.com"), "mailto:");
+        assert_eq!(for_log("file:///C:/Users/Alexandre/notes.txt"), "file:");
         assert_eq!(for_log("::"), "(unparsable)");
+    }
+
+    #[test]
+    fn the_runtime_download_is_a_web_link() {
+        assert_eq!(new_window(WEBVIEW2_DOWNLOAD), Decision::Browser);
     }
 
     // ---- keys ----
@@ -531,12 +512,6 @@ mod tests {
             ..Mods::default()
         }
     }
-    fn cmd() -> Mods {
-        Mods {
-            cmd: true,
-            ..Mods::default()
-        }
-    }
     fn cmd_shift() -> Mods {
         Mods {
             cmd: true,
@@ -548,7 +523,7 @@ mod tests {
     #[test]
     fn windows_keeps_exactly_the_listed_keys() {
         use KeyCode::*;
-        let w = |key, mods| kept(Platform::Windows, key, mods);
+        let w = |key, mods| kept(key, mods);
         assert_eq!(w(Letter('k'), ctrl_shift()), Some(Kept::Palette));
         assert_eq!(w(Letter('h'), ctrl_shift()), Some(Kept::ToggleChat));
         assert_eq!(w(Backtick, ctrl()), Some(Kept::ToggleTerminal));
@@ -570,7 +545,7 @@ mod tests {
     #[test]
     fn windows_passes_the_page_its_own_keys() {
         use KeyCode::*;
-        let w = |key, mods| kept(Platform::Windows, key, mods);
+        let w = |key, mods| kept(key, mods);
         // Mod+K is claude.ai's own shortcut; Ctrl+W, Ctrl+N, Ctrl+Enter too.
         for key in [Letter('k'), Letter('w'), Letter('n'), Letter('c'), Enter] {
             assert_eq!(w(key, ctrl()), None, "{key:?}");
@@ -603,28 +578,6 @@ mod tests {
     }
 
     #[test]
-    fn macos_keeps_cmd_keys_and_the_ctrl_exceptions() {
-        use KeyCode::*;
-        let m = |key, mods| kept(Platform::MacOs, key, mods);
-        assert_eq!(m(Letter('k'), cmd_shift()), Some(Kept::Palette));
-        assert_eq!(m(Letter('h'), cmd_shift()), Some(Kept::ToggleChat));
-        assert_eq!(m(Letter('j'), cmd_shift()), Some(Kept::ToggleTerminal));
-        assert_eq!(m(Backtick, ctrl()), Some(Kept::ToggleTerminal));
-        assert_eq!(m(Digit(4), cmd()), Some(Kept::Focus(4)));
-        assert_eq!(m(Tab, ctrl()), Some(Kept::NextTab));
-        assert_eq!(m(Enter, cmd_shift()), Some(Kept::ZoomToolWindow));
-        for key in [Letter('q'), Letter('h'), Letter('m')] {
-            assert_eq!(m(key, cmd()), Some(Kept::System));
-        }
-        // Cmd+K, Cmd+W, Cmd+N, Cmd+, belong to the page; so does Ctrl+Shift+K.
-        for key in [Letter('k'), Letter('w'), Letter('n'), Other] {
-            assert_eq!(m(key, cmd()), None, "{key:?}");
-        }
-        assert_eq!(m(Letter('k'), ctrl_shift()), None);
-        assert_eq!(m(Digit(1), ctrl()), None);
-    }
-
-    #[test]
     fn windows_keys_follow_the_layout_for_letters_and_the_position_for_digits() {
         assert_eq!(windows_key(0x4b, 0x25), KeyCode::Letter('k'));
         // AZERTY: the digit row yields symbols, but the scan code is the key.
@@ -643,7 +596,7 @@ mod tests {
 
     #[test]
     fn the_panel_starts_closed_and_asks_before_creating_anything() {
-        let mut s = ChatState::new(true, false);
+        let mut s = ChatState::new(false);
         assert_eq!(s.surface(), Surface::Closed);
         assert_eq!(s.show(), Effect::None);
         assert_eq!(s.surface(), Surface::NotStarted);
@@ -652,7 +605,7 @@ mod tests {
 
     #[test]
     fn opening_goes_through_starting_to_live() {
-        let mut s = ChatState::new(true, false);
+        let mut s = ChatState::new(false);
         s.show();
         assert_eq!(s.start(), Effect::Build);
         assert_eq!(s.surface(), Surface::Starting { line: false });
@@ -667,14 +620,14 @@ mod tests {
 
     #[test]
     fn once_consented_showing_starts_the_web_view() {
-        let mut s = ChatState::new(true, true);
+        let mut s = ChatState::new(true);
         assert_eq!(s.show(), Effect::Build);
         assert_eq!(s.phase, Phase::Starting);
     }
 
     #[test]
     fn hiding_keeps_the_web_view_and_showing_brings_it_back() {
-        let mut s = ChatState::new(true, true);
+        let mut s = ChatState::new(true);
         s.show();
         s.built(Built::Ok);
         s.hide();
@@ -686,7 +639,7 @@ mod tests {
 
     #[test]
     fn an_overlay_hides_the_web_view_and_shows_the_placeholder() {
-        let mut s = ChatState::new(true, true);
+        let mut s = ChatState::new(true);
         s.show();
         s.built(Built::Ok);
         s.set_covered(true);
@@ -695,7 +648,7 @@ mod tests {
         s.set_covered(false);
         assert!(s.web_visible());
         // Only the live page is covered: the other states are GPUI's own.
-        let mut s = ChatState::new(true, false);
+        let mut s = ChatState::new(false);
         s.show();
         s.set_covered(true);
         assert_eq!(s.surface(), Surface::NotStarted);
@@ -703,7 +656,7 @@ mod tests {
 
     #[test]
     fn a_missing_runtime_offers_to_try_again() {
-        let mut s = ChatState::new(true, false);
+        let mut s = ChatState::new(false);
         s.show();
         s.start();
         s.built(Built::RuntimeMissing);
@@ -715,7 +668,7 @@ mod tests {
 
     #[test]
     fn a_failed_load_shows_why_and_reload_retries_in_place() {
-        let mut s = ChatState::new(true, true);
+        let mut s = ChatState::new(true);
         s.show();
         s.built(Built::Ok);
         s.load_failed(Reason::Offline);
@@ -724,7 +677,7 @@ mod tests {
         assert_eq!(s.retry(), Effect::Reload);
         assert_eq!(s.surface(), Surface::Live);
         // A creation failure builds again.
-        let mut s = ChatState::new(true, true);
+        let mut s = ChatState::new(true);
         s.show();
         s.built(Built::Failed);
         assert_eq!(s.surface(), Surface::Failed(Reason::Unknown));
@@ -733,7 +686,7 @@ mod tests {
 
     #[test]
     fn a_load_failure_before_the_web_view_exists_is_ignored() {
-        let mut s = ChatState::new(true, true);
+        let mut s = ChatState::new(true);
         s.show();
         s.load_failed(Reason::Offline);
         assert_eq!(s.phase, Phase::Starting);
@@ -741,22 +694,13 @@ mod tests {
 
     #[test]
     fn signing_out_drops_everything_and_asks_again() {
-        let mut s = ChatState::new(true, true);
+        let mut s = ChatState::new(true);
         s.show();
         s.built(Built::Ok);
         assert_eq!(s.sign_out(), Effect::DropAndClear);
         assert_eq!(s.surface(), Surface::NotStarted);
         assert!(!s.has_web && !s.consented);
         assert_eq!(s.sign_out(), Effect::DropAndClear);
-    }
-
-    #[test]
-    fn linux_has_no_panel_only_the_link() {
-        let mut s = ChatState::new(false, true);
-        assert_eq!(s.show(), Effect::OpenInBrowser(HOME));
-        assert_eq!(s.start(), Effect::OpenInBrowser(HOME));
-        assert_eq!(s.surface(), Surface::Closed);
-        assert!(!s.web_visible());
     }
 
     #[test]

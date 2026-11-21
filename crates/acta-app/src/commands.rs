@@ -27,10 +27,16 @@ pub enum Command {
     Undo,
     ToggleSidebar,
     ToggleTerminal,
+    // The chat panel exists on Windows only (ADR 0009); elsewhere the one
+    // chat command opens claude.ai in the browser.
+    #[cfg(windows)]
     ToggleChat,
+    #[cfg(windows)]
     ChatBottom,
+    #[cfg(windows)]
     ChatRight,
     ChatBrowser,
+    #[cfg(windows)]
     ChatSignOut,
     RestartTerminal,
     TerminalLarger,
@@ -56,6 +62,7 @@ pub struct Context {
     pub can_back: bool,
     pub can_forward: bool,
     /// The chat panel is in the bottom dock.
+    #[cfg(windows)]
     pub chat_bottom: bool,
 }
 
@@ -95,19 +102,20 @@ impl Command {
                 Command::TerminalSmaller,
             ]);
         }
-        // components-app.md 5: on Linux there is no panel, only the link.
-        if cfg!(any(windows, target_os = "macos")) {
-            out.push(Command::ToggleChat);
-            out.push(if ctx.chat_bottom {
+        // components-app.md 5: on macOS and Linux there is no panel, only
+        // the link.
+        #[cfg(windows)]
+        out.extend([
+            Command::ToggleChat,
+            if ctx.chat_bottom {
                 Command::ChatRight
             } else {
                 Command::ChatBottom
-            });
-        }
+            },
+        ]);
         out.push(Command::ChatBrowser);
-        if cfg!(any(windows, target_os = "macos")) {
-            out.push(Command::ChatSignOut);
-        }
+        #[cfg(windows)]
+        out.push(Command::ChatSignOut);
         out.push(Command::NewProject);
         if ctx.can_back {
             out.push(Command::Back);
@@ -152,10 +160,14 @@ impl Command {
             Command::Undo => Key::CmdUndo,
             Command::ToggleSidebar => Key::CmdToggleSidebar,
             Command::ToggleTerminal => Key::CmdToggleTerminal,
+            #[cfg(windows)]
             Command::ToggleChat => Key::CmdToggleChat,
+            #[cfg(windows)]
             Command::ChatBottom => Key::CmdChatBottom,
+            #[cfg(windows)]
             Command::ChatRight => Key::CmdChatRight,
             Command::ChatBrowser => Key::ChatBrowser,
+            #[cfg(windows)]
             Command::ChatSignOut => Key::ChatSignout,
             Command::RestartTerminal => Key::CmdRestartTerminal,
             Command::TerminalLarger => Key::CmdTerminalLarger,
@@ -211,9 +223,11 @@ impl Command {
             Command::NewMemory => vec![m, shift, "M"],
             Command::ToggleSidebar => vec![m, "B"],
             Command::ToggleTerminal => vec![KeyName::Ctrl.label(locale, macos), "`"],
+            #[cfg(windows)]
             Command::ToggleChat => vec![m, shift, "H"],
-            // Linux: Mod+Shift+H opens claude.ai in the browser.
-            Command::ChatBrowser if cfg!(target_os = "linux") => vec![m, shift, "H"],
+            // macOS and Linux: Mod+Shift+H opens claude.ai in the browser.
+            #[cfg(not(windows))]
+            Command::ChatBrowser => vec![m, shift, "H"],
             Command::Settings => vec![m, ","],
             Command::Undo => vec![m, "Z"],
             Command::Back if macos => vec![m, "["],
@@ -230,6 +244,8 @@ impl Command {
 mod tests {
     use super::*;
 
+    // `..Context::default()` fills the Windows-only `chat_bottom`.
+    #[allow(clippy::needless_update)]
     #[test]
     fn page_commands_appear_only_where_they_act() {
         let none = Command::available(Context::default());
@@ -242,13 +258,14 @@ mod tests {
             on_record: true,
             can_back: true,
             can_forward: false,
-            chat_bottom: false,
+            ..Context::default()
         });
         assert!(topic.contains(&Command::SetStatus(Status::Blocked)));
         assert!(topic.contains(&Command::Back));
         assert!(!topic.contains(&Command::Forward));
     }
 
+    #[allow(clippy::needless_update)]
     #[test]
     fn labels_come_from_the_catalogue_in_both_languages() {
         assert_eq!(
@@ -265,7 +282,7 @@ mod tests {
             on_record: true,
             can_back: true,
             can_forward: true,
-            chat_bottom: false,
+            ..Context::default()
         }) {
             for locale in Locale::ALL {
                 let label = command.label(locale);
@@ -282,33 +299,37 @@ mod tests {
             ["Ctrl", "Maj", "D"]
         );
         assert_eq!(Command::Back.shortcut(Locale::En, true), ["\u{2318}", "["]);
-        assert_eq!(
-            Command::ToggleChat.shortcut(Locale::En, true),
-            ["\u{2318}", "\u{21e7}", "H"]
-        );
     }
 
     #[test]
-    fn the_chat_commands_follow_the_dock_and_the_platform() {
+    fn every_platform_has_the_browser_link() {
+        let commands = Command::available(Context::default());
+        assert!(commands.contains(&Command::ChatBrowser));
+        assert_eq!(
+            Command::ChatBrowser.label(Locale::En),
+            "Open claude.ai in your browser"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_chat_commands_follow_the_dock() {
         let right = Command::available(Context::default());
         let bottom = Command::available(Context {
             chat_bottom: true,
             ..Context::default()
         });
-        assert!(right.contains(&Command::ChatBrowser));
-        let panel = cfg!(any(windows, target_os = "macos"));
-        assert_eq!(right.contains(&Command::ToggleChat), panel);
-        assert_eq!(right.contains(&Command::ChatBottom), panel);
-        assert!(!right.contains(&Command::ChatRight));
-        assert_eq!(bottom.contains(&Command::ChatRight), panel);
-        assert_eq!(right.contains(&Command::ChatSignOut), panel);
-        assert_eq!(
-            Command::ChatBrowser.label(Locale::En),
-            "Open claude.ai in your browser"
-        );
+        assert!(right.contains(&Command::ToggleChat));
+        assert!(right.contains(&Command::ChatBottom) && !right.contains(&Command::ChatRight));
+        assert!(bottom.contains(&Command::ChatRight) && !bottom.contains(&Command::ChatBottom));
+        assert!(right.contains(&Command::ChatSignOut));
         assert_eq!(
             Command::ToggleChat.label(Locale::Fr),
             "Afficher ou masquer le chat"
+        );
+        assert_eq!(
+            Command::ToggleChat.shortcut(Locale::En, false),
+            ["Ctrl", "Shift", "H"]
         );
     }
 }
