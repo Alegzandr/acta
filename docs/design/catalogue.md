@@ -298,6 +298,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `palette.projects` | Projects | Projets |
 | `palette.hint.open` | {keys} open | {keys} ouvrir |
 | `palette.hint.tab` | {keys} open in new tab | {keys} ouvrir dans un nouvel onglet |
+| `palette.hint.create` | {keys} create | {keys} créer |
 | `palette.hint.close` | {keys} close | {keys} fermer |
 | `palette.none` | Nothing matches "{query}". {keys} creates a topic with this title. | Aucun résultat pour « {query} ». {keys} crée un sujet avec ce titre. |
 | `cmd.go_topic` | Go to topic... | Aller au sujet... |
@@ -316,7 +317,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `cmd.language` | Language: {value} | Langue : {value} |
 | `cmd.new_project` | New project... | Nouveau projet... |
 | `cmd.new_epic` | New epic... | Nouvel epic... |
-| `cmd.switch_project` | Switch project | Changer de projet |
+| `cmd.switch_project` | Switch project... | Changer de projet... |
 | `cmd.toggle_sidebar` | Toggle sidebar | Afficher ou masquer la barre latérale |
 | `cmd.toggle_terminal` | Toggle terminal | Afficher ou masquer le terminal |
 | `cmd.toggle_chat` | Toggle chat | Afficher ou masquer le chat |

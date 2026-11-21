@@ -188,14 +188,17 @@ impl Palette {
             });
             for (topic, path) in loose.chain(in_epics) {
                 if query.is_empty() {
-                    if let Some(rank) = self.recent.iter().position(|id| *id == topic.id) {
+                    let rank = self.recent.iter().position(|id| *id == topic.id);
+                    if let Some((group, score)) =
+                        palette_model::idle_topic(rank, self.scope, topic.updated_at)
+                    {
                         items.push(Item {
-                            group: Group::Recent,
+                            group,
                             target: Target::Topic(topic.id, topic.status),
                             title: topic.title.clone(),
                             detail: path,
                             matched: vec![],
-                            score: -(rank as i64),
+                            score,
                         });
                     }
                     continue;
@@ -526,8 +529,16 @@ impl Render for Palette {
                     .px(px(12.))
                     .border_t_1()
                     .border_color(t.border_default)
-                    .child(hint(Key::PaletteHintOpen, &[enter]))
-                    .child(hint(Key::PaletteHintTab, &[m, enter]))
+                    // Naming a new topic or epic: Enter creates it, and
+                    // there is nothing to open in a tab.
+                    .map(|this| {
+                        if self.create.is_some() {
+                            this.child(hint(Key::PaletteHintCreate, &[enter]))
+                        } else {
+                            this.child(hint(Key::PaletteHintOpen, &[enter]))
+                                .child(hint(Key::PaletteHintTab, &[m, enter]))
+                        }
+                    })
                     .child(div().flex_1())
                     .child(hint(Key::PaletteHintClose, &[esc])),
             )

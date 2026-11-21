@@ -1161,6 +1161,10 @@ catalogue! {
         en: t("{keys} open in new tab"),
         fr: t("{keys} ouvrir dans un nouvel onglet"),
     }
+    PaletteHintCreate "palette.hint.create" {
+        en: t("{keys} create"),
+        fr: t("{keys} créer"),
+    }
     PaletteHintClose "palette.hint.close" {
         en: t("{keys} close"),
         fr: t("{keys} fermer"),
@@ -1234,8 +1238,8 @@ catalogue! {
         fr: t("Nouvel epic\u{2026}"),
     }
     CmdSwitchProject "cmd.switch_project" {
-        en: t("Switch project"),
-        fr: t("Changer de projet"),
+        en: t("Switch project\u{2026}"),
+        fr: t("Changer de projet\u{2026}"),
     }
     CmdToggleSidebar "cmd.toggle_sidebar" {
         en: t("Toggle sidebar"),
