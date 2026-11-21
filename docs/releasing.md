@@ -182,8 +182,11 @@ Two known sources of failure that are not necessarily a bug in Acta:
   lines of `[<to> pid N]` with "update: up to date" instead. That would mean the
   updater-restart guard of `update.rs` does not work on macOS; record it in ADR 0004
   rather than loosening the test.
-- **GitHub API rate limit.** `GithubSource` calls the API without a token: 60
-  requests per hour per IP, shared with whatever else ran on that runner's address.
+- **GitHub API rate limit (apps up to 0.1.3).** These versions check through
+  `GithubSource`, which calls the API without a token: 60 requests per hour per IP,
+  shared with whatever else ran on that runner's address. From 0.1.4 on, apps read
+  `releases/latest/download/` and are not rate limited; the guard below matters while
+  `from` is 0.1.3 or older.
   A refused check logs "update: check failed: network error; retrying at next
   launch" (from 0.1.4 on, "network error (HTTP 403)" or "(HTTP 429)"). The update step
   prints the runner's remaining quota (`/rate_limit`, which costs nothing) before the
@@ -191,13 +194,13 @@ Two known sources of failure that are not necessarily a bug in Acta:
   when fewer than 3 requests are left, since one update needs that many. Seen on
   2026-11-21 (run 44847527497, 0.1.0 to 0.1.3): macOS and Linux logged only "check
   failed: network error" three times while Windows updated; the 0.1.0 log could not
-  say more. Re-run the failed job; if it keeps happening, the rate limit is biting
-  real users too (ADR 0004 revisit condition).
+  say more. Re-run the failed job.
 
 ## Yank a bad release
 
-Installed apps look at the ten most recent published, non-pre-release releases and
-update to the highest version found there. To stop clients from updating to a bad
+Installed apps from 0.1.4 on read the feed of the release GitHub marks as latest
+(`releases/latest/download/`); older ones look at the ten most recent published,
+non-pre-release releases. Both update to a higher version only. To stop clients from updating to a bad
 version, hide it:
 
 ```sh
