@@ -26,6 +26,14 @@
 //! package still on disk (`apply.rs` in Velopack 1.2.161). Applying again in
 //! that launch would loop forever without a window; this way a failed update
 //! is retried once per launch by the user, never by the app on its own.
+//!
+//! Velopack's own startup apply is off (`set_auto_apply_on_startup(false)`
+//! in `main.rs`): it would run its updater with its native progress dialog.
+//! A package downloaded by an earlier launch is applied here instead, by the
+//! same path as a fresh one, before the feed is asked. Every apply runs
+//! Velopack's updater with `--silent` ([`APPLY_SILENT`]), so the only thing
+//! on screen until the process exits is Acta's own updater window
+//! ("Restarting..."), and the app comes back on its own ([`APPLY_RESTART`]).
 
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
@@ -33,9 +41,14 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use velopack::{UpdateCheck, UpdateInfo, UpdateManager};
+use velopack::{UpdateCheck, UpdateInfo, UpdateManager, VelopackAsset};
 
 use crate::log;
+
+/// Velopack's updater runs without its native dialog (`--silent`).
+pub const APPLY_SILENT: bool = true;
+/// And starts the app again once the package is applied.
+pub const APPLY_RESTART: bool = true;
 
 /// How long the launch waits for the feed to answer (ADR 0004).
 pub const CHECK_BUDGET: Duration = Duration::from_secs(2);
@@ -289,16 +302,35 @@ pub trait Feed {
     ) -> Result<(), String>;
     /// Exits the process on success.
     fn apply(&self, update: &Self::Update) -> Result<(), String>;
+    /// A package an earlier launch downloaded and did not apply, with its
+    /// version.
+    fn pending(&self) -> Option<(String, Self::Update)>;
+}
+
+/// An update to apply: from the feed, or already on disk.
+pub enum Package {
+    Remote(Box<UpdateInfo>),
+    Local(Box<VelopackAsset>),
+}
+
+impl Package {
+    fn asset(&self) -> &VelopackAsset {
+        match self {
+            Package::Remote(info) => &info.TargetFullRelease,
+            Package::Local(asset) => asset,
+        }
+    }
 }
 
 impl Feed for UpdateManager {
-    type Update = Box<UpdateInfo>;
+    type Update = Package;
 
     fn check(&self) -> Result<Option<(String, Self::Update)>, String> {
         match self.check_for_updates() {
-            Ok(UpdateCheck::UpdateAvailable(info)) => {
-                Ok(Some((info.TargetFullRelease.Version.clone(), info)))
-            }
+            Ok(UpdateCheck::UpdateAvailable(info)) => Ok(Some((
+                info.TargetFullRelease.Version.clone(),
+                Package::Remote(info),
+            ))),
             Ok(UpdateCheck::NoUpdateAvailable | UpdateCheck::RemoteIsEmpty) => Ok(None),
             Err(err) => Err(format!("check failed: {}", error_kind(&err))),
         }
@@ -309,6 +341,9 @@ impl Feed for UpdateManager {
         update: &Self::Update,
         progress: Box<dyn Fn(u8) + Send>,
     ) -> Result<(), String> {
+        let Package::Remote(info) = update else {
+            return Ok(());
+        };
         let (sender, receiver) = mpsc::channel::<i16>();
         // Velopack reports on the channel while it downloads; the channel
         // closes when it returns, which ends this thread.
@@ -320,7 +355,7 @@ impl Feed for UpdateManager {
                 }
             });
         let result = self
-            .download_updates(update, Some(sender))
+            .download_updates(info, Some(sender))
             .map_err(|err| format!("download failed: {}", error_kind(&err)));
         if let Ok(forward) = forward {
             let _ = forward.join();
@@ -329,8 +364,22 @@ impl Feed for UpdateManager {
     }
 
     fn apply(&self, update: &Self::Update) -> Result<(), String> {
-        self.apply_updates_and_restart(&**update)
-            .map_err(|err| format!("apply failed: {}", error_kind(&err)))
+        // `apply_updates_and_restart` would run the updater with its
+        // dialog; this is the same call with `--silent`, then the exit it
+        // waits for.
+        self.wait_exit_then_apply_updates(
+            update.asset(),
+            APPLY_SILENT,
+            APPLY_RESTART,
+            Vec::<String>::new(),
+        )
+        .map_err(|err| format!("apply failed: {}", error_kind(&err)))?;
+        std::process::exit(0);
+    }
+
+    fn pending(&self) -> Option<(String, Self::Update)> {
+        let asset = self.get_update_pending_restart()?;
+        Some((asset.Version.clone(), Package::Local(Box::new(asset))))
     }
 }
 
@@ -343,6 +392,18 @@ fn work<F: Feed>(
     state: &Arc<LaunchState>,
 ) -> Result<Option<F::Update>, String> {
     let started = Instant::now();
+    if let Some((version, update)) = feed.pending() {
+        // Downloaded by an earlier launch: no feed, no download.
+        if !gate.claim_apply() {
+            log::line(&format!(
+                "update: {version} on disk, not applied in this launch"
+            ));
+            return Ok(None);
+        }
+        log::line(&format!("update: {version} on disk, applying"));
+        state.set_status(Status::Restarting);
+        return Ok(Some(update));
+    }
     let Some((version, update)) = feed.check()? else {
         log::line(&format!(
             "update: up to date ({} ms)",
@@ -561,6 +622,7 @@ mod tests {
         up_to_date: bool,
         check_fails: bool,
         download_fails: bool,
+        pending: bool,
         downloads: Cell<u32>,
         applies: Cell<u32>,
     }
@@ -593,6 +655,35 @@ mod tests {
             // The real one exits the process; a return is a failed apply.
             Err("apply failed: other error".into())
         }
+
+        fn pending(&self) -> Option<(String, ())> {
+            self.pending.then(|| ("0.1.1".into(), ()))
+        }
+    }
+
+    #[test]
+    fn velopacks_updater_runs_silently_and_restarts_the_app() {
+        // No native dialog: Acta's updater window is all that shows.
+        const { assert!(APPLY_SILENT && APPLY_RESTART) };
+    }
+
+    #[test]
+    fn a_package_on_disk_is_applied_without_the_feed_but_never_by_the_updaters_launch() {
+        let feed = FakeFeed {
+            pending: true,
+            check_fails: true,
+            ..FakeFeed::default()
+        };
+        let (sender, receiver) = mpsc::channel();
+        let state = Arc::new(LaunchState::default());
+        let result = work(&feed, &launch_gate(false), &sender, &state);
+        assert_eq!(result, Ok(Some(())));
+        assert_eq!(feed.downloads.get(), 0);
+        assert_eq!(state.status(), Status::Restarting);
+        assert!(reports(&receiver).is_empty());
+        // Started by the updater (a failed apply): the relaunch-loop guard.
+        let result = work(&feed, &launch_gate(true), &sender, &state);
+        assert_eq!(result, Ok(None));
     }
 
     fn reports(receiver: &Receiver<Progress>) -> Vec<Progress> {
