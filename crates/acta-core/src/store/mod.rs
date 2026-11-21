@@ -7,6 +7,7 @@
 //! transaction is held between calls. List calls return summaries and pages
 //! (ADR 0005); bodies are read one record at a time.
 
+mod exchange;
 mod folders;
 mod kb;
 mod records;
@@ -14,6 +15,10 @@ mod search;
 mod timeline;
 mod trash;
 
+pub use exchange::{
+    ExportFile, FILE_EXTENSION, FORMAT_NAME, FORMAT_VERSION, ImportCounts, ImportReport, XEntry,
+    XEpic, XFolder, XKb, XNote, XProject, XRevision, XStamp, XTopic,
+};
 pub use folders::{EffectiveFolder, EffectiveFolders, FolderResolution};
 pub use kb::{KbCounts, KbEdit, KbFilter, KbRevisionSummary, KbUpdate, NewKb};
 pub use records::{EpicPatch, NewTopic, ProjectPatch, TopicFilter, TopicPatch};

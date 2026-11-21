@@ -750,6 +750,151 @@ fn search_finds_live_records_with_snippets() {
     assert_eq!(store.search(&q("\"", vec![]), all()).unwrap().total, 0);
 }
 
+// ---- export and import ----
+
+fn populate(store: &mut Store, dir: &std::path::Path) -> ProjectId {
+    let p = store
+        .create_project("Acta", "Tracker for Alexandre", H)
+        .unwrap();
+    let e = store
+        .create_epic(p, "Storage", "Encrypted at rest", H)
+        .unwrap();
+    let t = topic(store, p, Some(e), "Keys");
+    let loose = topic(store, p, None, "Loose");
+    let decision = NewEntry {
+        kind: EntryKind::Decision,
+        text: "Raw key".into(),
+        state: Some("Decided.".into()),
+        status: Some(Status::Active),
+    };
+    store.log(t, decision, C).unwrap();
+    let to_epic = TopicPatch {
+        epic: Some(Some(e)),
+        ..Default::default()
+    };
+    store.update_topic(loose, to_epic, H).unwrap();
+    let n = store.add_note(p, "Note from Alexandre", H).unwrap();
+    store.add_note(p, "Unfiled", C).unwrap();
+    store.file_notes(&[n], t, H).unwrap();
+    let k = store
+        .kb_create(kb(Owner::Topic(t), KbKind::Document, "Spec", "# A\nx\n"), H)
+        .unwrap();
+    store
+        .kb_update(k, update(Some(1), KbEdit::Body("# A\ny\n".into())), C)
+        .unwrap();
+    let folder = dir.join("repo");
+    std::fs::create_dir_all(&folder).unwrap();
+    store.add_folder(Owner::Epic(e), &folder, H).unwrap();
+    store
+        .set_include_inherited(Owner::Epic(e), true, H)
+        .unwrap();
+    let trashed = topic(store, p, None, "Trashed");
+    store.delete(Record::Topic(trashed), H).unwrap();
+    let other = store.create_project("Other", "", H).unwrap();
+    topic(store, other, None, "Elsewhere");
+    p
+}
+
+#[test]
+fn export_import_export_is_lossless() {
+    let mut a = open();
+    populate(&mut a.store, a.dir.path());
+    let first = a.store.export(None).unwrap();
+    let trashed = first.topics.iter().filter(|t| t.stamp.deleted_at.is_some());
+    assert_eq!(trashed.count(), 1);
+    assert!(first.folders.iter().all(|f| f.local));
+
+    let mut b = open();
+    let text = first.to_json().unwrap();
+    let parsed = ExportFile::from_json(&text).unwrap();
+    assert_eq!(parsed, first);
+    let report = b.store.import(&parsed, false).unwrap();
+    assert_eq!(report.total().updated + report.total().skipped, 0);
+    assert_eq!(report.topics.created, 4);
+    let mut second = b.store.export(None).unwrap();
+    second.exported_at = first.exported_at;
+    assert_eq!(second.to_json().unwrap(), text);
+
+    // Importing the same file again changes nothing.
+    let again = b.store.import(&parsed, false).unwrap();
+    assert_eq!(again.total().created + again.total().updated, 0);
+    let mut third = b.store.export(None).unwrap();
+    third.exported_at = first.exported_at;
+    assert_eq!(third, first);
+}
+
+#[test]
+fn a_project_export_holds_only_that_project() {
+    let mut a = open();
+    let p = populate(&mut a.store, a.dir.path());
+    let file = a.store.export(Some(p)).unwrap();
+    assert_eq!(file.projects.len(), 1);
+    let uuid = file.projects[0].stamp.uuid.clone();
+    assert_eq!(file.project.as_deref(), Some(uuid.as_str()));
+    assert!(file.topics.iter().all(|t| t.project == uuid));
+    let mut b = open();
+    b.store.import(&file, false).unwrap();
+    assert_eq!(b.store.projects().unwrap().len(), 1);
+}
+
+#[test]
+fn import_merges_newer_wins_and_never_deletes() {
+    let mut a = open();
+    let p = a.store.create_project("Acta", "", H).unwrap();
+    let t = topic(&mut a.store, p, None, "Keys");
+    let gone = topic(&mut a.store, p, None, "Gone");
+    let base = a.store.export(None).unwrap();
+
+    // The file has a newer title for one topic, which it also says is
+    // trashed, and an older title for the other.
+    let mut file = base.clone();
+    for x in &mut file.topics {
+        if x.title == "Keys" {
+            x.title = "Keys (renamed by Alexandre)".into();
+            x.stamp.updated_at += 10_000;
+            x.stamp.deleted_at = Some(x.stamp.updated_at);
+            x.stamp.deleted_by = Some(H);
+        } else {
+            x.title = "Stale".into();
+            x.stamp.updated_at -= 10_000;
+        }
+    }
+    a.store.delete(Record::Topic(gone), H).unwrap();
+
+    let preview = a.store.import(&file, true).unwrap();
+    let expected = ImportCounts {
+        created: 0,
+        updated: 1,
+        skipped: 1,
+    };
+    assert_eq!(preview.topics, expected);
+    assert_eq!(a.store.topic(t).unwrap().title, "Keys");
+
+    let report = a.store.import(&file, false).unwrap();
+    assert_eq!(report.topics, expected);
+    // Updated, but never trashed by an import.
+    assert_eq!(
+        a.store.topic(t).unwrap().title,
+        "Keys (renamed by Alexandre)"
+    );
+    // Never revived by an older version.
+    assert!(a.store.topic(gone).is_err());
+    let snapshots = a.store.snapshots().unwrap();
+    assert!(snapshots.iter().any(|s| s.kind == SnapshotKind::Import));
+
+    let mut future = base;
+    future.version = FORMAT_VERSION + 1;
+    let text = future.to_json().unwrap();
+    assert!(matches!(
+        ExportFile::from_json(&text),
+        Err(Error::FormatTooNew { .. })
+    ));
+    assert!(matches!(
+        ExportFile::from_json("{\"format\":\"x\",\"version\":1}"),
+        Err(Error::Invalid(_))
+    ));
+}
+
 #[test]
 fn export_history_is_recorded() {
     let mut t = open();
