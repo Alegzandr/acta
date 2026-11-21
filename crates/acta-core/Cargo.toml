@@ -15,6 +15,10 @@ rusqlite = { version = "0.43.0", default-features = false, features = ["bundled-
 [target.'cfg(target_os = "macos")'.dependencies]
 rusqlite = { version = "0.43.0", default-features = false, features = ["bundled-sqlcipher", "backup"] }
 
+# Folder identity and handle-free presence checks (folder_identity.rs).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
+
 [dependencies]
 getrandom = "0.4"
 hmac = "0.12"

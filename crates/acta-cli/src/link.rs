@@ -262,8 +262,9 @@ pub fn restore_all_auto_memory(store: &mut Store) -> Result<(usize, usize), Stri
     Ok((restored, kept))
 }
 
-/// Local-value prefix of the folders where Acta turned auto memory off.
-pub const AUTO_MEMORY_PREFIX: &str = "automemory.";
+/// Local-value prefix of the folders where Acta turned auto memory off; the
+/// store moves a marker with its folder when the folder is followed.
+pub use acta_core::store::AUTO_MEMORY_PREFIX;
 
 fn marker_key(folder: &Path) -> String {
     format!("{AUTO_MEMORY_PREFIX}{}", folder.to_string_lossy())

@@ -882,6 +882,10 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile) -> Result<ImportReport> {
                     params![s.uuid, project, epic, topic, x.path, x.position,
                             s.created_at, s.updated_at, s.updated_by, s.deleted_at, s.deleted_by],
                 )?;
+                super::folders::forget_identity(
+                    tx,
+                    crate::model::FolderId(tx.last_insert_rowid()),
+                )?;
             }
             Action::Update(l) => {
                 let (d, db) = merged_deleted(&l, s);

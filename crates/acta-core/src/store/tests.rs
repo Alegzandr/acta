@@ -1580,3 +1580,178 @@ fn an_entry_edit_is_refused_on_a_read_only_database() {
     ));
     assert_eq!(t.store.entry(e.id).unwrap().text, "Alexandre");
 }
+
+// ---- live folders (ADR 0008, "Live files") ----
+
+fn linked(store_dir: &std::path::Path, path: &str) -> bool {
+    crate::link_index::LinkIndex::read(store_dir)
+        .is_some_and(|i| i.matches(crate::paths::Os::CURRENT, &[path.to_owned()]))
+}
+
+#[test]
+fn a_renamed_folder_is_followed_with_its_links() {
+    use crate::folder_identity::Monitor;
+    let TestStore { mut store, dir, .. } = open();
+    let p = store.create_project("Acta", "", H).unwrap();
+    let repo = dir.path().join("repos").join("acta");
+    std::fs::create_dir_all(&repo).unwrap();
+    let f = store.add_folder(Owner::Project(p), &repo, H).unwrap();
+    let old = store.folder(f).unwrap().path;
+    let known = store.monitored_folders().unwrap();
+    assert!(known[0].identity.is_some(), "remembered when attached");
+    store
+        .set_local_value(&format!("{AUTO_MEMORY_PREFIX}{old}"), Some("created"))
+        .unwrap();
+    assert!(linked(dir.path(), &old));
+
+    let mut monitor = Monitor::new();
+    assert!(!monitor.pass(&known, false).has_writes());
+    let renamed = dir.path().join("repos").join("acta-alexandre");
+    std::fs::rename(&repo, &renamed).unwrap();
+    let pass = monitor.pass(&known, false);
+    let moved = store
+        .apply_folder_pass(&pass.learned, &pass.followed)
+        .unwrap();
+    assert_eq!(moved, [f]);
+
+    let new = crate::folder_path::canonical(&renamed).unwrap();
+    assert_eq!(store.folder(f).unwrap().path, new);
+    assert_eq!(
+        store.monitored_folders().unwrap()[0].identity,
+        known[0].identity,
+        "the identity stays with the folder"
+    );
+    assert_eq!(
+        store
+            .local_value(&format!("{AUTO_MEMORY_PREFIX}{new}"))
+            .unwrap()
+            .as_deref(),
+        Some("created"),
+        "the auto-memory marker follows"
+    );
+    assert_eq!(
+        store
+            .local_value(&format!("{AUTO_MEMORY_PREFIX}{old}"))
+            .unwrap(),
+        None
+    );
+    assert!(linked(dir.path(), &new), "hooks find the new path");
+    assert!(!linked(dir.path(), &old));
+    assert_eq!(
+        store.resolve_folder(&renamed).unwrap().map(|r| r.project),
+        Some(p)
+    );
+
+    // Applying the same pass again changes nothing: the path moved since.
+    assert!(
+        store
+            .apply_folder_pass(&[], &pass.followed)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn a_moved_folder_without_a_proven_identity_stays_not_found() {
+    use crate::folder_identity::Monitor;
+    let TestStore { mut store, dir, .. } = open();
+    let p = store.create_project("Acta", "", H).unwrap();
+    let repo = dir.path().join("acta");
+    std::fs::create_dir_all(&repo).unwrap();
+    let f = store.add_folder(Owner::Project(p), &repo, H).unwrap();
+    let old = store.folder(f).unwrap().path;
+    // As after an import from another machine: no identity on record.
+    store
+        .set_local_value(&format!("folderid.{}", f.0), None)
+        .unwrap();
+    let known = store.monitored_folders().unwrap();
+    assert_eq!(known[0].identity, None);
+    std::fs::rename(&repo, dir.path().join("acta-2")).unwrap();
+    let pass = Monitor::new().pass(&known, true);
+    assert!(!pass.has_writes());
+    assert_eq!(store.folder(f).unwrap().path, old);
+
+    // A pass that read the folder before a Locate does not undo it.
+    let located = crate::folder_path::canonical(&dir.path().join("acta-2")).unwrap();
+    store.set_folder_paths(&[(f, located.clone())], H).unwrap();
+    let stale = crate::folder_identity::Followed {
+        id: f,
+        old: old.clone(),
+        new: old,
+        identity: "v1:1:2:-".into(),
+    };
+    assert!(store.apply_folder_pass(&[], &[stale]).unwrap().is_empty());
+    assert_eq!(store.folder(f).unwrap().path, located);
+}
+
+#[test]
+fn locate_and_its_undo_rewrite_the_hooks_pre_check() {
+    let TestStore { mut store, dir, .. } = open();
+    let p = store.create_project("Acta", "", H).unwrap();
+    let a = dir.path().join("a");
+    let b = dir.path().join("b");
+    std::fs::create_dir_all(&a).unwrap();
+    std::fs::create_dir_all(&b).unwrap();
+    let f = store.add_folder(Owner::Project(p), &a, H).unwrap();
+    let old = store.folder(f).unwrap().path;
+    let new = crate::folder_path::canonical(&b).unwrap();
+    store.set_folder_paths(&[(f, new.clone())], H).unwrap();
+    assert!(linked(dir.path(), &new));
+    assert!(!linked(dir.path(), &old));
+    store.restore_folder_path(f, &old, H).unwrap();
+    assert!(linked(dir.path(), &old));
+    assert!(!linked(dir.path(), &new));
+}
+
+#[test]
+fn an_identity_is_kept_only_for_the_path_it_was_read_at() {
+    use crate::folder_identity::Learned;
+    let TestStore { mut store, dir, .. } = open();
+    let p = store.create_project("Acta", "", H).unwrap();
+    let a = dir.path().join("a");
+    std::fs::create_dir_all(&a).unwrap();
+    let f = store.add_folder(Owner::Project(p), &a, H).unwrap();
+    let path = store.folder(f).unwrap().path;
+    let before = store.monitored_folders().unwrap()[0].identity.clone();
+    let stale = Learned {
+        id: f,
+        path: format!("{path}-elsewhere"),
+        identity: "v1:1:2:-".into(),
+    };
+    store.apply_folder_pass(&[stale], &[]).unwrap();
+    assert_eq!(store.monitored_folders().unwrap()[0].identity, before);
+    let fresh = Learned {
+        id: f,
+        path,
+        identity: "v1:1:2:-".into(),
+    };
+    // An identity left for an id with no folder row is dropped on the way.
+    store
+        .set_local_value("folderid.999", Some("v1:9:9:-"))
+        .unwrap();
+    store.apply_folder_pass(&[fresh], &[]).unwrap();
+    assert_eq!(
+        store.monitored_folders().unwrap()[0].identity.as_deref(),
+        Some("v1:1:2:-")
+    );
+    assert_eq!(store.local_value("folderid.999").unwrap(), None);
+}
+
+#[test]
+fn an_imported_folder_starts_without_an_identity() {
+    let mut a = open();
+    let p = a.store.create_project("Acta", "", H).unwrap();
+    let dir = a.dir.path().join("acta");
+    std::fs::create_dir_all(&dir).unwrap();
+    a.store.add_folder(Owner::Project(p), &dir, H).unwrap();
+    let file = a.store.export(None).unwrap();
+    let mut b = open();
+    // Left by an earlier row with the id the import will use.
+    b.store
+        .set_local_value("folderid.1", Some("v1:9:9:-"))
+        .unwrap();
+    b.store.import(&file, false).unwrap();
+    let known = b.store.monitored_folders().unwrap();
+    assert_eq!(known.len(), 1);
+    assert_eq!(known[0].identity, None);
+}

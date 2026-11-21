@@ -4,6 +4,7 @@
 
 use super::{STAMP_COLS, Store, new_uuid, owner_at, owner_condition, owner_ids, stamp};
 use crate::error::{Error, Result};
+use crate::folder_identity::{self, Followed, Known, Learned};
 use crate::folder_path;
 use crate::model::{Author, EpicId, Folder, FolderId, Owner, ProjectId, TopicId};
 use crate::paths::Os;
@@ -40,6 +41,35 @@ pub struct FolderResolution {
     pub candidates: Vec<TopicId>,
 }
 
+/// Local-value prefix of the folders where Acta turned Claude Code's auto
+/// memory off (`acta link`, ADR 0005), followed by the folder's stored path.
+pub const AUTO_MEMORY_PREFIX: &str = "automemory.";
+
+/// Local-value prefix of a folder's identity (ADR 0008, "Live files"),
+/// followed by its local id: never exported, like the path's meaning.
+const IDENTITY_PREFIX: &str = "folderid.";
+
+fn identity_key(id: FolderId) -> String {
+    format!("local.{IDENTITY_PREFIX}{}", id.0)
+}
+
+/// Forgets the identity kept under a folder id: a row inserted by an import
+/// must not inherit one left by an earlier row with the same id.
+pub(crate) fn forget_identity(
+    conn: &rusqlite::Connection,
+    id: FolderId,
+) -> rusqlite::Result<usize> {
+    conn.execute("DELETE FROM meta WHERE key = ?1", [identity_key(id)])
+}
+
+fn upsert_meta(conn: &rusqlite::Connection, key: &str, value: &str) -> rusqlite::Result<usize> {
+    conn.execute(
+        "INSERT INTO meta (key, value) VALUES (?1, ?2)
+         ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+        params![key, value],
+    )
+}
+
 const FOLDER_COLS: &str = "id, project_id, epic_id, topic_id, path, position";
 
 fn folder_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Folder> {
@@ -59,7 +89,23 @@ impl Store {
     pub fn add_folder(&mut self, owner: Owner, path: &Path, author: Author) -> Result<FolderId> {
         let stored = folder_path::canonical(path)
             .map_err(|e| Error::Invalid(format!("cannot attach this folder: {e}")))?;
-        self.add_folder_stored(owner, &stored, author)
+        let id = self.add_folder_stored(owner, &stored, author)?;
+        self.remember_identity(id, &stored);
+        Ok(id)
+    }
+
+    /// Reads the identity of the folder now at `stored` and keeps it, so a
+    /// later rename or move can be followed. Best effort: without one, the
+    /// monitor learns it on its next pass.
+    fn remember_identity(&mut self, id: FolderId, stored: &str) {
+        let Some(identity) = folder_identity::identity(Path::new(stored)) else {
+            return;
+        };
+        let _ = self.write().and_then(|tx| {
+            upsert_meta(&tx, &identity_key(id), &identity.encode())?;
+            tx.commit()?;
+            Ok(())
+        });
     }
 
     pub(crate) fn add_folder_stored(
@@ -129,6 +175,7 @@ impl Store {
         )?;
         tx.commit()?;
         let _ = self.refresh_link_index();
+        self.remember_identity(id, &stored);
         Ok(())
     }
 
@@ -175,8 +222,11 @@ impl Store {
                 "UPDATE folders SET path = ?2, updated_at = ?3, updated_by = ?4 WHERE id = ?1",
                 params![id.0, path, now, author],
             )?;
+            // Another folder now: its identity is learned on the next pass.
+            tx.execute("DELETE FROM meta WHERE key = ?1", [identity_key(*id)])?;
         }
         tx.commit()?;
+        let _ = self.refresh_link_index();
         Ok(())
     }
 
@@ -194,8 +244,97 @@ impl Store {
             "UPDATE folders SET path = ?2, updated_at = ?3, updated_by = ?4 WHERE id = ?1",
             params![id.0, stored, now_ms(), author],
         )?;
+        tx.execute("DELETE FROM meta WHERE key = ?1", [identity_key(id)])?;
         tx.commit()?;
+        let _ = self.refresh_link_index();
         Ok(())
+    }
+
+    /// Every live folder with its identity, for the folder monitor
+    /// ([`folder_identity::Monitor`]).
+    pub fn monitored_folders(&self) -> Result<Vec<Known>> {
+        let identities: std::collections::HashMap<String, String> = self
+            .local_values(IDENTITY_PREFIX)?
+            .into_iter()
+            .map(|(k, v)| (k[IDENTITY_PREFIX.len()..].to_owned(), v))
+            .collect();
+        Ok(self
+            .all_folders()?
+            .into_iter()
+            .map(|f| Known {
+                identity: identities.get(&f.id.0.to_string()).cloned(),
+                id: f.id,
+                path: f.path,
+            })
+            .collect())
+    }
+
+    /// Writes what a monitor pass found, in one transaction: identities
+    /// learned (only for a folder still at the path it was read at), and
+    /// folders followed to where they were moved. Identities kept for ids
+    /// that no longer name a folder row are dropped. A followed
+    /// folder keeps everything but its path, and what depends on the path
+    /// follows it: the auto-memory marker of `acta link` and the hooks'
+    /// pre-check file. A folder whose path changed since the pass, or whose
+    /// new path is already attached to the same owner, is left as it is.
+    /// Returns the folders followed. Touches no disk but the pre-check file.
+    pub fn apply_folder_pass(
+        &mut self,
+        learned: &[Learned],
+        followed: &[Followed],
+    ) -> Result<Vec<FolderId>> {
+        if learned.is_empty() && followed.is_empty() {
+            return Ok(Vec::new());
+        }
+        let os = Os::CURRENT;
+        let tx = self.write()?;
+        for l in learned {
+            if read_folder(&tx, l.id).is_ok_and(|f| f.path == l.path) {
+                upsert_meta(&tx, &identity_key(l.id), &l.identity)?;
+            }
+        }
+        tx.execute(
+            &format!(
+                "DELETE FROM meta WHERE substr(key, 1, {n}) = 'local.{IDENTITY_PREFIX}'
+                 AND CAST(substr(key, {n} + 1) AS INTEGER) NOT IN (SELECT id FROM folders)",
+                n = "local.".len() + IDENTITY_PREFIX.len()
+            ),
+            [],
+        )?;
+        let mut moved = Vec::new();
+        let now = now_ms();
+        for f in followed {
+            let Ok(folder) = read_folder(&tx, f.id) else {
+                continue;
+            };
+            if folder.path != f.old || folder_path::normalize(os, &f.new) != f.new {
+                continue;
+            }
+            let clash = folders_of(&tx, folder.owner)?
+                .iter()
+                .any(|o| o.id != f.id && folder_path::same(os, &o.path, &f.new));
+            if clash {
+                continue;
+            }
+            tx.execute(
+                "UPDATE folders SET path = ?2, updated_at = ?3, updated_by = ?4 WHERE id = ?1",
+                params![f.id.0, f.new, now, Author::Human],
+            )?;
+            upsert_meta(&tx, &identity_key(f.id), &f.identity)?;
+            tx.execute(
+                "UPDATE OR IGNORE meta SET key = ?2 WHERE key = ?1",
+                params![
+                    format!("local.{AUTO_MEMORY_PREFIX}{}", f.old),
+                    format!("local.{AUTO_MEMORY_PREFIX}{}", f.new)
+                ],
+            )?;
+            moved.push(f.id);
+        }
+        tx.commit()?;
+        if !moved.is_empty() {
+            let _ = self.refresh_link_index();
+        }
+        Ok(moved)
     }
 
     /// Bulk repair (ADR 0008): every folder under `old_root` whose path with
@@ -234,6 +373,7 @@ impl Store {
                 "UPDATE folders SET path = ?2, updated_at = ?3, updated_by = ?4 WHERE id = ?1",
                 params![id.0, stored, now, author],
             )?;
+            tx.execute("DELETE FROM meta WHERE key = ?1", [identity_key(*id)])?;
         }
         tx.commit()?;
         let _ = self.refresh_link_index();
