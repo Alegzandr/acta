@@ -58,6 +58,7 @@ Each milestone ends with a working, tested, released build. Status: `todo`, `doi
 ## M4 - Terminal
 - [ ] Embedded terminal launching Claude Code in the effective working folder of the topic, epic or project it was opened from (ADR 0008)
 - [ ] Rendering, input, resize, scrollback, copy/paste, links
+- [ ] Follow-up: per-row shaping cache keyed by row content, skipping rows `Term::damage()` leaves untouched (ADR 0002 rendering plan); the view relies on GPUI's per-frame line layout cache until then
 
 ## M5 - Claude chat panel
 - [x] ADR 0009 accepted with conditions: claude.ai in the system web view, Windows proven by the spike, macOS unproven, Linux gets a link; M5 opens with the keyboard handoff check, a real sign-in by the user and a macOS build
