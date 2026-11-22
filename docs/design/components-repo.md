@@ -26,7 +26,7 @@ States, the focus ring and the controls used here (buttons, inputs, tree row, li
 | Files | `files` | `folder-tree` (new icon) | Left sidebar, second tab after Projects, hidden | 200 x 160 | `Mod+Shift+E` |
 | Commits | `commits` | `git-graph` (new icon) | Bottom panel, hidden | 400 x 160 | `Mod+Shift+G` |
 
-Both are hidden on a new install and after Reset layout; their titlebar toggles follow the order of 4.8.3 (after Claude Code sessions). A history is wide and short, so the bottom panel suits it; a file tree is narrow and tall, so the left sidebar does. Both can go anywhere (4.8.7). On `bg.sunken` in a side area or the bottom panel, on `bg.base` as a tab in the page area (with the view strip of 4.8.3).
+Both are hidden on a new install and after Reset layout. **They have no titlebar toggle** (lead decision of 2026-11-22: thirteen icons would be too many, clarity review finding 14): they are shown and hidden by their key, the palette ("Toggle files", "Files: Show"...), the Layout menu, which lists every view with a `check` when visible and is always in the titlebar, and the folder row menus' "Browse files" and "Show commits" (components-folders.md 5). That keeps rule 1 of 4.8.11: the Layout menu is their visible way back. A history is wide and short, so the bottom panel suits it; a file tree is narrow and tall, so the left sidebar does. Both can go anywhere (4.8.7). On `bg.sunken` in a side area or the bottom panel, on `bg.base` as a tab in the page area (with the view strip of 4.8.3).
 
 **The page they follow.** The views show the folders of the **followed page**: the active tab of the focused group when it is a topic, epic or project page; a document or memory page follows its owner; any other page (settings, trash, shortcuts, the inbox, the knowledge base) leaves the followed page unchanged, so opening Settings does not empty the tree. At start, before any record page was shown, the followed page is the active project's page.
 
@@ -216,7 +216,7 @@ Everything runs off the UI thread; every git call is `git --no-optional-locks -C
 
 ### 5.R.11 Palette and keys
 
-Global keys (added to 6.1): `Mod+Shift+E` toggle Files, `Mod+Shift+G` toggle Commits, both with the toggle rule of 4.8.5 (show and focus, hide when focused). In the terminal and the chat they pass through, like every `Ctrl+Shift+letter` not kept there; the palette reaches both.
+Global keys (added to 6.1): `Mod+Shift+E` toggle Files, `Mod+Shift+G` toggle Commits, both with the toggle rule of 4.8.5 (show and focus, hide when focused). With no titlebar toggle (5.R.2), the key, the palette and the Layout menu are the three ways to them. In the terminal and the chat they pass through, like every `Ctrl+Shift+letter` not kept there; the palette reaches both.
 
 Palette commands (exact labels; with a view focused, its commands rank first; each row's path names the followed page and the folder, "Acta / Terminal / Embed the terminal · embed-terminal"):
 - Views: "Files: Show", "Files: Hide", "Commits: Show", "Commits: Hide" and the Move commands, from 4.8.7; "Toggle files", "Toggle commits".
