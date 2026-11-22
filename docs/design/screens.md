@@ -16,11 +16,11 @@ Widths are for the default 1440 x 900 window. Every screen exists in both themes
 |     [i] Inbox      4 |        Embed the terminal bound to the project   <- type.title 24/30    |
 |     [k] Knowledge    |    12                                                                   |
 |     (o) Naming       |        Status    [(.) Active v]            <- properties block: rows 28,|
-|   v Core UI          |        Due       15 Dec 2026  In 24 days      optional; "None" if unset  |
+|   v Core UI          |        Due       15 Dec 2026  In 24 days      optional; no row if unset  |
 |       (v) App shell  |        Epic      Terminal                    label column as wide as its|
 |       (.) Sidebar t..|        Folders   > [f] ~\dev\acta-wt\embed-terminal  +1   longest label |
-|       ( ) Palette   *|        Id        T-42                      <- type.code, copies on Enter|
-|   v Terminal         |        Updated   2 h ago by Claude Code                                 |
+|       ( ) Palette   *|        T-42 · Updated 2 h ago by Claude Code    <- meta line, small     |
+|   v Terminal         |                                                                         |
 |      [(.) Embed th..]|    24                                                                   |
 |       (=) Scrollback |        +--------------------------------------------------------+       |
 |       (-) Links      |        | Current state                                          |       |
@@ -38,10 +38,7 @@ Widths are for the default 1440 x 900 window. Every screen exists in both themes
 |                      |        9 more from epic and project          <- ghost row, collapsed    |
 |                      |    32                                                                   |
 |                      |        Timeline            [All|Progress|Decisions|Discussion]          |
-|                      |    12  +--------------------------------------------------------+       |
-|                      |        | Add an entry...                                        |       |
-|                      |        +--------------------------------------------------------+       |
-|                      |    24                                                                   |
+|                      |    12   (no composer: only Claude Code adds entries)                    |
 |                      |        [>] Claude Code  Progress  2 h ago    <- square mark, mono name  |
 |                      |            Resize now reflows the grid; the last row is still cut       |
 |                      |            when the panel is under 12 rows.                             |
@@ -56,7 +53,7 @@ Widths are for the default 1440 x 900 window. Every screen exists in both themes
   rows 28, indent 16            [..] around a tree row = fill.selected; * = unread dot (accent, 6)
 ```
 
-Annotations: one tab is open, so there is no tab bar. The tree follows 4.2.1: it lists every project; "Acta" is expanded because the open page belongs to it, "Atlas" and "Field notes" are folded. `[i]` is `inbox`, `[k]` is `library`, `[t]` `trash-2`, `[s]` `settings`, `[p]` `folder`; in the titlebar `[=]` is the sidebar toggle, `[o]` the chat toggle, `[>_]` the terminal toggle. Tree glyphs: `(o)` Draft, `( )` Planned, `(.)` Active, `(=)` Blocked, `(v)` Done, `(-)` Dropped. The page's location is in the titlebar breadcrumb and nowhere else; its title heads the page. `> [f]` is the folded working-folders row (5, 8.11), here as the value of the Folders property. The composer is one line (28 + padding) until focused, then becomes the multi-line editor. Scrolling: title and properties scroll with the content; nothing is sticky except the "new entries" button. In the status bar, `(v)` is the `circle-check` glyph of the ready state.
+Annotations: one tab is open, so there is no tab bar. The tree follows 4.2.1: it lists every project; "Acta" is expanded because the open page belongs to it, "Atlas" and "Field notes" are folded. `[i]` is `inbox`, `[k]` is `library`, `[t]` `trash-2`, `[s]` `settings`, `[p]` `folder`; in the titlebar `[=]` is the sidebar toggle, `[o]` the chat toggle, `[>_]` the terminal toggle. Tree glyphs: `(o)` Draft, `( )` Planned, `(.)` Active, `(=)` Blocked, `(v)` Done, `(-)` Dropped. The page's location is in the titlebar breadcrumb and nowhere else; its title heads the page. `> [f]` is the folded working-folders row (5, 8.11), here as the value of the Folders property. The timeline has no composer (components-records.md 5, Who writes the timeline): entries come from Claude Code, and the human edits or deletes them from each entry's menu. Scrolling: title and properties scroll with the content; nothing is sticky except the "new entries" button. In the status bar, `(v)` is the `circle-check` glyph of the ready state.
 
 ### 8.2 Notes inbox
 
@@ -865,8 +862,8 @@ Annotations: `[f]` is `file-text`, `[@]` `paperclip`, `(i)` `info`. Images come 
 ```
 |        Claude Code                                               <- type.subtitle             |
 |    8   Ready for Claude Code                                     <- type.label                |
-|        What Claude Code uses on this computer. Acta installs nothing without your click,      |
-|        and only from the publisher or your system's package manager.   <- small, tertiary     |
+|        What Claude Code uses on this computer. Nothing is installed without your click.       |
+|                                                         <- small, tertiary                    |
 |    8   (v) Claude Code                                      2.1.330                           | 44
 |            Runs in Acta's terminal and does the work. Required.                               |
 |        (o) Signed in to Claude                        Not signed in       [Sign in...]        | 44 primary
@@ -921,20 +918,20 @@ Annotations: `(v)` is `check` in `success`, `(o)` `circle-dashed` in `text.terti
 
 ### 8.27 Dictation (components-voice.md 5)
 
-The timeline composer while listening, then writing:
+The inbox capture editor while listening, then writing (the timeline has no composer, components-records.md 5):
 
 ```
 |    +--------------------------------------------------------------------------------+      |
 |    | Talked to Alexandre about the export format. He wants the passphrase option    |      | type.reading
 |    | before 1.0, so we keep format 2 open until then.|                              |      | | = caret (anchor)
 |    |                                                                                |      |
-|    | [Progress|Decision|Discussion]  (p) [#]  ====----  Listening  0:12   [Save]     | 28   | footer
+|    |                                 (p) [#]  ====----  Listening  0:12   [Save]     | 28   | footer
 |    +--------------------------------------------------------------------------------+      |
        (p) paperclip, ghost 24; [#] square on fill.selected (stop), ghost 24;
        ====---- the level bar 32 x 4; "Listening" small secondary; 0:12 small tertiary tnum;
        the hint "Ctrl+Enter to save" yields its place here because the footer is full
 
-|    | [Progress|Decision|Discussion]  (p) (m)  Writing text...             [Save]     | 28   | after the stop
+|    |                                 (p) (m)  Writing text...             [Save]     | 28   | after the stop
 |    +--------------------------------------------------------------------------------+      |
 |    (!) Acta is not allowed to use the microphone.   Open privacy settings                  | an error, 4 below
 ```
@@ -974,8 +971,8 @@ Settings > Voice:
 ```
 |        Voice                                                     <- type.subtitle             |
 |    8   Dictation                               [Whisper, on this computer v]                  |
-|        Turns what you say into text in notes, descriptions and documents. Your voice          |
-|        never leaves this computer and is never saved.                                         |
+|        Dictation in notes, descriptions and documents. Your voice never leaves this           |
+|        computer.                                                                              |
 |        Model                                                                                  |
 |        Recommended for this computer: Small. Larger models are more accurate and slower.      |
 |          Tiny          31 MB · for older computers; rough in French           Download        | 44

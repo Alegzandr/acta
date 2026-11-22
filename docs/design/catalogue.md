@@ -761,7 +761,7 @@ New with ADR 0011 (2026-11-21). They stay here, outside the table the tests read
 
 | Key | English | French |
 |---|---|---|
-| `folders.hint` | Claude Code starts in the active folder and may also read and edit the others. | Claude Code démarre dans le dossier actif et peut aussi lire et modifier les autres. |
+| `folders.hint` | Claude Code starts in the active folder and can also use the others. | Claude Code démarre dans le dossier actif et peut aussi utiliser les autres. |
 
 **New**, placed after `folders.picker` (folders), after `terminal.restart.title` (terminal), after `cmd.folders_bulk` (commands) after `settings.not_found` (settings) and after the last `import.` key (import):
 
@@ -778,7 +778,7 @@ New with ADR 0011 (2026-11-21). They stay here, outside the table the tests read
 | `folders.group.from_project` | From project {name} | Du projet {name} |
 | `folders.no_own` | No folders of its own. | Aucun dossier propre. |
 | `folders.not_found_short` | Not found | Introuvable |
-| `folders.other_checkout` | Another checkout of the same repository as {name}. Not passed to Claude Code here. | Autre copie de travail du même dépôt que {name}. Non transmise à Claude Code ici. |
+| `folders.other_checkout` | Another checkout of {name}'s repository. Not passed to Claude Code here. | Autre copie du dépôt de {name}. Non transmise à Claude Code ici. |
 | `folders.git.detached` | detached at {commit} | détaché sur {commit} |
 | `folders.git.changed` | {n} changed | {n} modifié · {n} modifiés |
 | `folders.git.auto_commit` | Claude Code commits automatically here | Claude Code commite automatiquement ici |
@@ -786,7 +786,7 @@ New with ADR 0011 (2026-11-21). They stay here, outside the table the tests read
 | `folders.name` | Name | Nom |
 | `folders.icon` | Icon | Icône |
 | `folders.icon.auto` | Automatic | Automatique |
-| `folders.icon.auto_hint` | Automatic: a branch for a git worktree, a git folder for a repository, a folder otherwise | Automatique : une branche pour un worktree git, un dossier git pour un dépôt, un dossier sinon |
+| `folders.icon.auto_hint` | Chosen from the folder: worktree, repository or plain folder | Choisie d'après le dossier : worktree, dépôt ou dossier simple |
 | `folders.icon.folder` | Folder | Dossier |
 | `folders.icon.repo` | Git repository | Dépôt git |
 | `folders.icon.worktree` | Git worktree | Worktree git |
@@ -803,20 +803,20 @@ New with ADR 0011 (2026-11-21). They stay here, outside the table the tests read
 | `folders.commit.manual` | Manual | Manuel |
 | `folders.commit.commit` | Commit | Commit |
 | `folders.commit.push` | Commit and push | Commit et push |
-| `folders.commit.manual_hint` | Claude Code commits only when you ask. | Claude Code ne commite que si vous le demandez. |
-| `folders.commit.commit_hint` | After each finished, tested change, Claude Code commits it. | Après chaque modification terminée et testée, Claude Code la commite. |
-| `folders.commit.push_hint` | After each commit, Claude Code also pushes to the branch's upstream. Never forced; it stops and tells you if a push is rejected or needs a sign-in. | Après chaque commit, Claude Code pousse aussi vers la branche amont. Jamais en force ; il s'arrête et vous prévient si un push est refusé ou demande une connexion. |
+| `folders.commit.manual_hint` | Claude Code commits only when asked. | Claude Code ne commite que sur demande. |
+| `folders.commit.commit_hint` | Claude Code commits each finished, tested change. | Claude Code commite chaque modification terminée et testée. |
+| `folders.commit.push_hint` | Then pushes to the upstream branch, never forced. It stops if a push fails. | Puis pousse vers la branche amont, jamais en force. Il s'arrête si un push échoue. |
 | `folders.commit.as_user` | Commit in my name, without Co-Authored-By Claude | Commiter en mon nom, sans Co-Authored-By Claude |
 | `folders.commit.on_default` | Also on {branch} | Aussi sur {branch} |
-| `folders.commit.identity` | Commits use your git identity: {name}. | Les commits utilisent votre identité git : {name}. |
-| `folders.commit.no_identity` | Git has no user name for this folder, so commits will fail. Acta does not set it. | Git n'a pas de nom d'utilisateur pour ce dossier : les commits échoueront. Acta ne le définit pas. |
-| `folders.commit.file` | Acta writes these rules to .claude/settings.local.json in this folder, kept out of git. | Acta écrit ces règles dans le .claude/settings.local.json de ce dossier, exclu de git. |
-| `folders.commit.tracked` | This folder's .claude/settings.local.json is tracked by git, so Acta does not write it: Claude Code will ask before each commit. | Le .claude/settings.local.json de ce dossier est suivi par git, Acta ne l'écrit donc pas : Claude Code demandera avant chaque commit. |
-| `folders.commit.user_key` | Your own {key} setting in .claude/settings.local.json is kept. | Votre propre réglage {key} dans .claude/settings.local.json est conservé. |
-| `folders.commit.root_wins` | The repository's own local settings set attribution, and that setting wins. | Les réglages locaux du dépôt définissent attribution, et ce réglage l'emporte. |
-| `terminal.missing.body.topic` | Claude Code was not started. This is the active folder of topic {name}, and it is not on this computer: | Claude Code n'a pas été lancé. C'est le dossier actif du sujet {name}, et il n'est pas sur cet ordinateur : |
-| `terminal.missing.body.epic` | Claude Code was not started. This is the active folder of epic {name}, and it is not on this computer: | Claude Code n'a pas été lancé. C'est le dossier actif de l'epic {name}, et il n'est pas sur cet ordinateur : |
-| `terminal.missing.body.project` | Claude Code was not started. This is the active folder of project {name}, and it is not on this computer: | Claude Code n'a pas été lancé. C'est le dossier actif du projet {name}, et il n'est pas sur cet ordinateur : |
+| `folders.commit.identity` | Commits as {name}. | Commits au nom de : {name}. |
+| `folders.commit.no_identity` | Git has no user name here, so commits will fail. | Git n'a pas de nom d'utilisateur ici : les commits échoueront. |
+| `folders.commit.file` | Saved in .claude/settings.local.json, kept out of git. | Enregistré dans .claude/settings.local.json, exclu de git. |
+| `folders.commit.tracked` | .claude/settings.local.json is tracked by git here, so Acta leaves it alone. Claude Code will ask before each commit. | .claude/settings.local.json est suivi par git ici, Acta n'y touche donc pas. Claude Code demandera avant chaque commit. |
+| `folders.commit.user_key` | Your own {key} setting is kept. | Votre propre réglage {key} est conservé. |
+| `folders.commit.root_wins` | The repository's own attribution setting wins. | Le réglage attribution du dépôt l'emporte. |
+| `terminal.missing.body.topic` | Claude Code was not started: the active folder of topic {name} is not on this computer. | Claude Code n'a pas été lancé : le dossier actif du sujet {name} n'est pas sur cet ordinateur. |
+| `terminal.missing.body.epic` | Claude Code was not started: the active folder of epic {name} is not on this computer. | Claude Code n'a pas été lancé : le dossier actif de l'epic {name} n'est pas sur cet ordinateur. |
+| `terminal.missing.body.project` | Claude Code was not started: the active folder of project {name} is not on this computer. | Claude Code n'a pas été lancé : le dossier actif du projet {name} n'est pas sur cet ordinateur. |
 | `terminal.missing.other` | Or start in another folder: | Ou démarrer dans un autre dossier : |
 | `terminal.running_in` | (running in {name}) | (lancé dans {name}) |
 | `terminal.restart_in` | Restart in {name} | Redémarrer dans {name} |
@@ -828,8 +828,8 @@ New with ADR 0011 (2026-11-21). They stay here, outside the table the tests read
 | `cmd.commit_mode.commit` | Commit automatically | Commiter automatiquement |
 | `cmd.commit_mode.push` | Commit and push automatically | Commiter et pousser automatiquement |
 | `settings.auto_commit` | Automatic commits | Commits automatiques |
-| `settings.auto_commit.hint` | The default for folders set to commit automatically. Each folder can choose otherwise in its folder settings. Commits always use your own git identity. | La valeur par défaut des dossiers qui commitent automatiquement. Chaque dossier peut en décider autrement dans ses réglages. Les commits utilisent toujours votre propre identité git. |
-| `import.auto_commit` | {n} working folder lets Claude Code commit automatically. Acta writes its rules only once the folder is found on this computer. · {n} working folders let Claude Code commit automatically. Acta writes their rules only once each folder is found on this computer. | {n} dossier de travail laisse Claude Code commiter automatiquement. Acta n'écrit ses règles qu'une fois le dossier trouvé sur cet ordinateur. · {n} dossiers de travail laissent Claude Code commiter automatiquement. Acta n'écrit leurs règles qu'une fois chaque dossier trouvé sur cet ordinateur. |
+| `settings.auto_commit.hint` | Default for folders that commit automatically. | Par défaut pour les dossiers qui commitent automatiquement. |
+| `import.auto_commit` | {n} working folder will commit automatically once found on this computer. · {n} working folders will commit automatically once found on this computer. | {n} dossier de travail commitera automatiquement une fois trouvé sur cet ordinateur. · {n} dossiers de travail commiteront automatiquement une fois trouvés sur cet ordinateur. |
 
 The checkbox of `settings.auto_commit` reuses `folders.commit.as_user`. `{branch}` is the default branch's name as git has it, never translated; `{key}` is a settings key (`attribution`, `env`), never translated.
 
@@ -854,7 +854,7 @@ New with questions and Report to (2026-11-21; components-questions.md 5, data.md
 | `questions.more_epic_overdue` | {n} more open in the topics of this epic, {late} overdue | {n} autre en suspens dans les sujets de cet epic, en retard · {n} autres en suspens dans les sujets de cet epic, dont {late} en retard |
 | `questions.more_project` | {n} more open in this project's epics and topics | {n} autre en suspens dans les epics et sujets de ce projet · {n} autres en suspens dans les epics et sujets de ce projet |
 | `questions.more_project_overdue` | {n} more open in this project's epics and topics, {late} overdue | {n} autre en suspens dans les epics et sujets de ce projet, en retard · {n} autres en suspens dans les epics et sujets de ce projet, dont {late} en retard |
-| `questions.empty` | Nothing to ask yet. Note here what you are waiting to hear from someone. | Aucune question pour l'instant. Notez ici ce que vous attendez d'apprendre de quelqu'un. |
+| `questions.empty` | No questions yet. Note what you are waiting to hear. | Aucune question pour l'instant. Notez ce que vous attendez d'apprendre. |
 | `questions.scope` | {scope} · {counts} | {scope} · {counts} |
 | `count.questions_open` | {n} open | {n} en suspens |
 | `count.questions_closed` | {n} closed | {n} close · {n} closes |
@@ -949,8 +949,8 @@ New with attachments (2026-11-21; components-attachments.md 5, ADR 0012, data.md
 | `attach.pasted_name` | Pasted image {date} {time}.png | Image collée {date} {time}.png |
 | `attach.too_large` | {name} is {size}; the limit is 25 MB per file. | {name} pèse {size} ; la limite est de 25 Mo par fichier. |
 | `attach.too_many` | 20 files is the most a note, an entry or a description can hold. | Une note, une entrée ou une description contient 20 fichiers au plus. |
-| `attach.read_failed` | Could not read {name}. It may have moved, or another app may be holding it. | Impossible de lire {name}. Il a peut-être été déplacé, ou une autre application le bloque. |
-| `attach.large_notice` | Files over 10 MB are kept in the database and in each of its snapshots. | Les fichiers de plus de 10 Mo sont conservés dans la base et dans chacun de ses instantanés. |
+| `attach.read_failed` | Could not read {name}. It may have moved or be in use. | Impossible de lire {name}. Il a peut-être été déplacé, ou il est utilisé. |
+| `attach.large_notice` | Files over 10 MB are also kept in every snapshot. | Les fichiers de plus de 10 Mo sont aussi conservés dans chaque instantané. |
 | `attach.count` | {n} file · {n} files | {n} fichier · {n} fichiers |
 | `attach.view` | View | Afficher |
 | `attach.save_as` | Save as... | Enregistrer sous... |
@@ -967,7 +967,7 @@ New with attachments (2026-11-21; components-attachments.md 5, ADR 0012, data.md
 | `attach.next` | Next file | Fichier suivant |
 | `attach.fit` | Fit | Ajuster |
 | `attach.actual` | Actual size | Taille réelle |
-| `attach.truncated` | Showing the first 1 MB. Save the file to see all of it. | Seul le premier Mo est affiché. Enregistrez le fichier pour le voir en entier. |
+| `attach.truncated` | First 1 MB shown. Save the file to see all of it. | Premier Mo affiché. Enregistrez le fichier pour le voir en entier. |
 | `settings.attachments` | Attached files: {size} in {count} | Fichiers joints : {size} dans {count} (`{count}` is `attach.count`) |
 | `export.include_files` | Include attached files ({size}) | Inclure les fichiers joints ({size}) |
 | `import.files_missing` | {n} file was not in the export. · {n} files were not in the export. | {n} fichier n'était pas dans l'export. · {n} fichiers n'étaient pas dans l'export. |
@@ -983,7 +983,7 @@ New with ADR 0013 (2026-11-22; components-app.md 5, screens.md 8.26). They stay 
 | Key | English | French |
 |---|---|---|
 | `ready.title` | Ready for Claude Code | Prêt pour Claude Code |
-| `ready.hint` | What Claude Code uses on this computer. Acta installs nothing without your click, and only from the publisher or your system's package manager. | Ce que Claude Code utilise sur cet ordinateur. Acta n'installe rien sans votre clic, et seulement depuis l'éditeur ou le gestionnaire de paquets de votre système. |
+| `ready.hint` | What Claude Code uses on this computer. Nothing is installed without your click. | Ce que Claude Code utilise sur cet ordinateur. Rien n'est installé sans votre clic. |
 | `ready.claude` | Claude Code | Claude Code |
 | `ready.claude.why` | Runs in Acta's terminal and does the work. Required. | S'exécute dans le terminal d'Acta et fait le travail. Requis. |
 | `ready.signin` | Signed in to Claude | Connecté à Claude |
@@ -1102,7 +1102,7 @@ New with dictation (2026-11-22; components-voice.md 5, screens.md 8.27). They st
 | `voice.download.offline` | There is no connection. | Il n'y a pas de connexion. |
 | `voice.settings.title` | Voice | Voix |
 | `voice.settings.engine` | Dictation | Dictée |
-| `voice.settings.engine_hint` | Turns what you say into text in notes, descriptions and documents. Your voice never leaves this computer and is never saved. | Transforme ce que vous dites en texte dans les notes, les descriptions et les documents. Votre voix ne quitte jamais cet ordinateur et n'est jamais enregistrée. |
+| `voice.settings.engine_hint` | Dictation in notes, descriptions and documents. Your voice never leaves this computer. | Dictée dans les notes, les descriptions et les documents. Votre voix ne quitte jamais cet ordinateur. |
 | `voice.engine.whisper` | Whisper, on this computer | Whisper, sur cet ordinateur |
 | `voice.engine.macos` | macOS recogniser, on this computer (M) | Reconnaissance de macOS, sur cet ordinateur (M) |
 | `voice.engine.off` | Off | Désactivée |
@@ -1139,3 +1139,73 @@ New with dictation (2026-11-22; components-voice.md 5, screens.md 8.27). They st
 | `cmd.voice_settings` | Voice settings | Paramètres de la voix |
 
 The macOS `Info.plist` usage strings (ADR 0014, 8) live with the bundle (`InfoPlist.strings`), not in this catalogue: `NSMicrophoneUsageDescription` "Acta turns what you say into text, on this Mac." / "Acta transforme ce que vous dites en texte, sur ce Mac."; `NSSpeechRecognitionUsageDescription` "Lets the macOS recogniser turn what you say into text, on this Mac." / "Permet à la reconnaissance de macOS de transformer ce que vous dites en texte, sur ce Mac." The delete dialog's buttons and "Show in Explorer" (Finder, file manager) reuse their existing keys.
+
+### 10.4.10 Clarity pass and the timeline without a composer, pending
+
+From the clarity review of 2026-11-22 ([reviews/2026-11-22-clarity.md](reviews/2026-11-22-clarity.md)) and the user's decision of the same day that only Claude Code adds timeline entries (components-records.md 5). 10.4 is read by the tests against `catalogue.rs`, so these changes wait here; the implementing change applies the three lists to 10.4 and to `catalogue.rs` in one commit. The rule of the pass: one idea per line; what a person needs once (how a setting works, what setup writes, memory use) goes in a tooltip or behind "Details", never on screen at rest.
+
+**Removed** from 10.4: `composer.placeholder`, `composer.hint`, `composer.add`, `cmd.add_entry` (no hand-written entries); `settings.theme.hint` (the segment "System" says it); `usage.no_data` (the status bar shows nothing until there is a number; `usage.no_data.tip` becomes the tooltip of the Settings row "Show plan usage in the status bar" while no report has arrived); `kb.empty.epic` and `kb.empty.project` (one text for every level, `kb.empty`).
+
+**Changed** text in 10.4:
+
+| Key | English | French |
+|---|---|---|
+| `timeline.empty` | No entries yet. Claude Code logs progress here as it works. | Aucune entrée pour l'instant. Claude Code consigne ici l'avancement au fil du travail. |
+| `topic.empty_project` | No topics yet. Capture a note, or create a topic. | Aucun sujet pour l'instant. Saisissez une note ou créez un sujet. |
+| `inbox.empty` | Inbox is empty. Captured notes wait here until they are filed. | La boîte de réception est vide. Les notes saisies attendent ici d'être classées. |
+| `inbox.filed_empty` | No filed notes yet. | Aucune note classée pour l'instant. |
+| `kb.empty` | No documents or memories yet. | Aucun document ni mémoire pour l'instant. |
+| `overview.idle` | {n} active topic idle for 7 days · {n} active topics idle for 7 days | {n} sujet en cours inactif depuis 7 jours · {n} sujets en cours inactifs depuis 7 jours |
+| `overview.inbox` | {n} note in the inbox for {days} days · {n} notes in the inbox, oldest {days} days | {n} note dans la boîte de réception depuis {days} jours · {n} notes dans la boîte de réception, la plus ancienne depuis {days} jours |
+| `overview.week.none` | Nothing done, decided or opened this week. Last activity {when}. | Rien de terminé, décidé ni ouvert cette semaine. Dernière activité {when}. |
+| `statusbar.no_folder` | Claude Code: no folder | Claude Code : aucun dossier |
+| `update.ready` | Restart to update | Redémarrer pour mettre à jour |
+| `settings.text_size.hint` | Timelines, notes and documents. | Journaux, notes et documents. |
+| `settings.reading_width.hint` | Maximum page width. | Largeur maximale des pages. |
+| `settings.language.hint` | What you and Claude Code write is never translated. | Ce que vous et Claude Code écrivez n'est jamais traduit. |
+| `settings.layout.desc` | Puts every view back in its default place. | Remet chaque vue à sa place par défaut. |
+| `settings.setup.hint` | Installs Acta's plugin, permissions and status line in Claude Code. | Installe le plugin, les autorisations et la ligne d'état d'Acta dans Claude Code. |
+| `settings.resume.hint` | Resumes the conversation last held on that page. /clear starts a new one. | Reprend la dernière conversation menée sur cette page. /clear en commence une nouvelle. |
+| `settings.flash_waiting.hint` | Only while Acta is in the background. It never takes the focus. | Seulement quand Acta est en arrière-plan. Il ne prend jamais le focus. |
+| `settings.usage.hint` | Your plan's 5-hour and 7-day limits, as Claude Code last reported them. | Les limites sur 5 heures et sur 7 jours de votre forfait, selon le dernier relevé de Claude Code. |
+| `settings.plugin.hint` | Sessions started in Acta's terminal always load Acta's plugin. To stop that, set "acta@inline": false under enabledPlugins. | Les sessions lancées dans le terminal d'Acta chargent toujours le plugin d'Acta. Pour l'éviter, mettez "acta@inline": false sous enabledPlugins. |
+| `settings.snapshots.today` | {n} snapshot, from today, {time} · {n} snapshots, newest today, {time} | {n} instantané, d'aujourd'hui à {time} · {n} instantanés, le plus récent d'aujourd'hui à {time} |
+| `settings.snapshots.older` | {n} snapshot, from {datetime} · {n} snapshots, newest {datetime} | {n} instantané, du {datetime} · {n} instantanés, le plus récent du {datetime} |
+| `settings.setup.body` | Acta adds its plugin, two permissions and its status line to ~/.claude/settings.json. Your own status line still shows first. | Acta ajoute son plugin, deux autorisations et sa ligne d'état à ~/.claude/settings.json. Votre propre ligne d'état reste affichée en premier. |
+| `settings.remove.body` | Removes Acta's plugin, permissions and status line from Claude Code, and turns its own memory back on. Your projects stay in Acta. | Retire de Claude Code le plugin, les autorisations et la ligne d'état d'Acta, et réactive sa propre mémoire. Vos projets restent dans Acta. |
+| `chat.start.title` | Chat with Claude | Discuter avec Claude |
+| `chat.start.body` | claude.ai in a panel, signed in with your own account. Acta never reads the page. | claude.ai dans un panneau, avec votre propre compte. Acta ne lit jamais la page. |
+| `chat.start.memory` | Uses about 400 MB of memory once opened. | Utilise environ 400 Mo de mémoire une fois ouvert. |
+| `chat.signin` | Sign in by email: open the link, then type the code it shows here. Google or Apple sign-in may be refused. | Connectez-vous par e-mail : ouvrez le lien, puis saisissez ici le code affiché. La connexion Google ou Apple peut être refusée. |
+| `chat.signout.body` | Signs you out of claude.ai here. Your conversations stay in your Claude account. | Vous déconnecte de claude.ai ici. Vos conversations restent dans votre compte Claude. |
+| `chat.runtime.body` | WebView2 is not installed, so claude.ai cannot show here. Everything else works. | WebView2 n'est pas installé : claude.ai ne peut pas s'afficher ici. Tout le reste fonctionne. |
+| `browser.address` | Address | Adresse |
+| `browser.idle.body` | Claude Code opens pages here: your dev server, or sites you signed into here. It never opens claude.ai and never types passwords. | Claude Code ouvre ses pages ici : votre serveur de développement, ou les sites auxquels vous vous êtes connecté ici. Il n'ouvre jamais claude.ai et ne saisit jamais de mot de passe. |
+| `browser.idle.memory` | Uses about 150 MB of memory while in use. | Utilise environ 150 Mo de mémoire pendant son utilisation. |
+| `browser.runtime.body` | WebView2 is not installed, so the browser cannot start. Everything else works. | WebView2 n'est pas installé : le navigateur ne peut pas démarrer. Tout le reste fonctionne. |
+| `sessions.empty` | No Claude Code session is running. | Aucune session Claude Code en cours. |
+| `export.warning` | The file is not encrypted: anyone who opens it can read these projects. | Le fichier n'est pas chiffré : quiconque l'ouvre peut lire ces projets. |
+| `export.suggest` | Everything is on this computer only. An export is your copy if the keychain is lost. | Tout est sur cet ordinateur uniquement. Un export est votre copie si le trousseau est perdu. |
+| `import.safe` | Nothing will be deleted. Skipped records are the same as Acta's, or older. | Rien ne sera supprimé. Les éléments ignorés sont identiques à ceux d'Acta, ou plus anciens. |
+| `firstrun.body` | A project is a folder you work on with Claude Code. Acta keeps its topics, decisions and notes. | Un projet est un dossier sur lequel vous travaillez avec Claude Code. Acta en garde les sujets, les décisions et les notes. |
+| `folders.also_topic` | Also attached to topic {name}. | Également rattaché au sujet {name}. |
+| `folders.also_epic` | Also attached to epic {name}. | Également rattaché à l'epic {name}. |
+| `folders.located_for` | {folder} located for epic {name} and everything under it. | {folder} localisé pour l'epic {name} et tout ce qu'il contient. |
+
+**New**, placed after the keys of their family:
+
+| Key | English | French |
+|---|---|---|
+| `folders.also.tip` | A session started in this folder outside Acta opens on {level} and is told about both. | Une session lancée dans ce dossier hors d'Acta s'ouvre sur : {level}, et est informée des deux. |
+| `settings.status.ready` | Acta is set up in Claude Code | Acta est configuré dans Claude Code |
+| `settings.status.partial` | Setup incomplete: {n} of 3 step done · Setup incomplete: {n} of 3 steps done | Configuration incomplète : {n} étape sur 3 faite · Configuration incomplète : {n} étapes sur 3 faites |
+| `settings.status.unknown` | Could not check the setup | Impossible de vérifier la configuration |
+| `settings.setup.what` | What setup changes | Ce que change la configuration |
+| `settings.setup.details` | Setup installs Acta's plugin in Claude Code, adds two permission lines (Acta and its browser) and Acta's status line to ~/.claude/settings.json (after your own status line, if you have one), and turns Claude Code's own memory off in the open project's folders. Remove undoes all of it. | La configuration installe le plugin d'Acta dans Claude Code, ajoute deux lignes d'autorisation (Acta et son navigateur) et la ligne d'état d'Acta à ~/.claude/settings.json (après votre propre ligne d'état, si vous en avez une), et désactive la mémoire propre à Claude Code dans les dossiers du projet ouvert. Retirer annule tout cela. |
+| `settings.chat_data` | Chat data | Données du chat |
+| `settings.restore` | Restore... | Restaurer... |
+| `prop.add_due` | Due date | Échéance |
+| `prop.add_report_to` | Report to | À rapporter à |
+| `meta.record` | {id} · Updated {when} by {author} | {id} · Modifié {when} par {author} |
+
+`{level}` in `folders.also.tip` is a `level.*` string ("Epic Terminal", « Epic Terminal »), which is why the French follows a colon. `prop.add_due` and `prop.add_report_to` label the hover-revealed add chips of an unset optional property (components-records.md 5, Properties block). `meta.record` is the one meta line under the properties block that replaces the Id and Updated rows; `{id}` is in `type.code`. `settings.setup.details` (the former text of `settings.setup.hint`) is the body behind "What setup changes", followed by `settings.plugin.hint`. The Settings rows Snapshots, Trash and Keyboard shortcuts take `settings.restore`, `common.open` and `common.open` as their buttons, so a label is never repeated on its own button.

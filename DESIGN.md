@@ -57,7 +57,7 @@ Load only the part a task needs. Section numbers are global: "4.7" or "DESIGN 4.
 | [interaction.md](docs/design/interaction.md) | 6 | Keyboard map (6.1), focus (6.2), motion and latency budgets (6.3), writes, undo and confirmation (6.4), changes from other processes (6.5). |
 | [screens.md](docs/design/screens.md) | 8 | Wireframes: topic page (8.1), inbox (8.2), palette (8.3), terminal (8.4), first run (8.5), knowledge (8.6, 8.7, 8.10), import preview (8.8), key loss (8.9), working folders (8.11), settings (8.12), chat (8.13), epic (8.14), tab bar (8.15), updater (8.16), workbench with the right sidebar (8.17), dragging a view (8.18), split page area and views moved (8.19), project page with its Overview (8.20), questions and Report to on a topic (8.21), questions page (8.22), person page (8.23), quick capture with Report to (8.24), a note with files and the viewer (8.25), Ready for Claude Code (8.26), dictation (8.27). |
 | [copy.md](docs/design/copy.md) | 7, 10.1 to 10.3 | Voice; languages, French conventions, dates, times and numbers, due dates and typed dates (10.2.1), layout under longer text. |
-| [catalogue.md](docs/design/catalogue.md) | 10.4 to 10.4.9 | Every UI string by key, English and French. Code and tests read 10.4; 10.4.1, 10.4.2, 10.4.4 and 10.4.5 note how keys moved into it; 10.4.3, 10.4.6, 10.4.7, 10.4.8 and 10.4.9 hold keys pending implementation. |
+| [catalogue.md](docs/design/catalogue.md) | 10.4 to 10.4.10 | Every UI string by key, English and French. Code and tests read 10.4; 10.4.1, 10.4.2, 10.4.4 and 10.4.5 note how keys moved into it; 10.4.3 and 10.4.6 to 10.4.10 hold keys pending implementation. |
 | [data.md](docs/design/data.md) | 11 | What model data every element shows; data model requests. |
 
 Sections 1 (principles), 9 (review checklist) and the Direction are in this file. The token table (2.1), the contrast table (2.2) and the catalogue (10.4) are parsed by tests in `crates/acta-app` (`theme.rs`, `i18n/mod.rs`): keep their headings and table shapes.
@@ -115,7 +115,7 @@ Run against every screen, in dark and in light, in English and in French. One fa
 - [ ] Empty: no project shows "No projects yet." and "New project..."; an expanded empty epic shows the "New topic" ghost row; nothing else is added for emptiness.
 
 **Due dates** (run with no date anywhere, then with topics overdue, due today, due in 2 and in 30 days, and a closed topic with a past date, at 23:59 and after midnight)
-- [ ] Nothing about dates shows until a record has one, except the always-present Due row ("None"); the Due column and the Overdue and Next 7 days segments appear only while a listed topic has a date.
+- [ ] Nothing about dates shows until a record has one: no Due row while unset (its add chip appears only on hover or keyboard focus of the properties block); the Due column and the Overdue and Next 7 days segments appear only while a listed topic has a date.
 - [ ] Overdue reads in greyscale everywhere: words on the page ("Overdue by 3 days"), `clock-alert` plus `warning` in the table, the `clock-alert` shape in the tree. A closed topic, or a complete epic or project, is never overdue anywhere, agent output included.
 - [ ] Tree: only overdue and due today are drawn, neutral (`text.secondary`, `text.tertiary`), in the trailing slot, after the hover `plus` and the unread dot; never rolled up into a folded row; no date text and no colour.
 - [ ] Picker: reachable by `D`, `Enter` on the row and "Set due date..."; every action works from the keyboard; the preview line shows the exact day before `Enter`; `Esc` and a click outside change nothing; English and French words parse in both languages; day-month order only.
@@ -137,18 +137,20 @@ Run against every screen, in dark and in light, in English and in French. One fa
 - [ ] Every action works from the keyboard: `Q` adds, `A` answers, `E` edits, `D` dates, `M` moves, `R` sets Report to, `Space` marks reported on the person page; all are in the palette; each change is one `Mod+Z` step (an answer and its decision entry together), with a toast only for delete.
 - [ ] The decision checkbox appears only for a question on a topic; the entry it writes holds only the question and the answer, no words of Acta's.
 - [ ] People: one key per person (case, accents, spacing ignored) in suggestions, filters, the person page and `find(person)`; the person is shown as written, never translated, in French always after a colon; no person page is restored after a restart.
-- [ ] Report to: on topics and epics only, its row always shown ("None"); "Not reported yet" only on closed work; a note's person carries to the topic or epic made from it; reported is never inferred.
+- [ ] Report to: on topics and epics only, its row shown only when set; "Not reported yet" only on closed work; a note's person carries to the topic or epic made from it; reported is never inferred.
 - [ ] Agent side: `brief`, `find` and the session briefing stay within budgets with 50 overdue questions per topic and 80-char names; question, answer and person text is inside the data fence; projects refuse `report_to`.
 
 **Attachments** (run with a note holding 20 files: images, a PDF, a text file, a 24 MB archive; a filed note; at 880 x 560)
-- [ ] Paste, drop and the `paperclip` button each add files in quick capture, the inbox capture, a note, the timeline composer and a description; text on the clipboard always pastes as text; `Mod+Shift+A` exists only in those editors.
+- [ ] No composer on the timeline: only Claude Code adds entries; every entry can be edited, retyped and deleted with undo.
+- [ ] One idea per line: no description wraps past one line at 560 in English; explanations of how something works live in tooltips or behind "Details".
+- [ ] Paste, drop and the `paperclip` button each add files in quick capture, the inbox capture, a note, a timeline entry being edited and a description; text on the clipboard always pastes as text; `Mod+Shift+A` exists only in those editors.
 - [ ] Every file action works from the keyboard (strip stop, `Left` / `Right`, `Enter`, `Mod+S`, `Delete`, `Shift+F10`); adding and removing are one `Mod+Z` step each, with a toast only for remove.
 - [ ] Nothing decrypted touches the disk except Save as, chosen by the person, and, only once ADR 0012, 8, is accepted, the Open copy under `<data dir>/open`, deleted at quit and at the next start.
 - [ ] Refusals name the file, its size and the limit; nothing over 400 ms spins; the UI never waits on a file being stored.
 - [ ] Viewer: images fit and never upscale; GIFs do not animate; text shows at most 1 MB with the notice; `Esc` returns focus to the file; web views are hidden under it.
 - [ ] Agent side: names and sizes only in `find`, `brief` and `entries`; `attachment` returns fenced text within 6,000 chars, one image within the pixel cap, or one line for a binary.
 
-**Dictation** (components-voice.md 5; run with no model, while downloading, listening, writing, with the microphone blocked, at 880 x 560 in the timeline composer and quick capture)
+**Dictation** (components-voice.md 5; run with no model, while downloading, listening, writing, with the microphone blocked, at 880 x 560 in the inbox capture and quick capture)
 - [ ] The microphone is in each multi-line editor and nowhere else; the footer does not move when it changes state; with Dictation off it is absent.
 - [ ] Every state reads in greyscale (icon shape and words); no red and no accent for listening; the level bar follows the sound and nothing else moves.
 - [ ] Text appears only at the anchor, phrase by phrase, never rewritten after it appears; a take is one undo step; `Esc` stops without cancelling the editor.
