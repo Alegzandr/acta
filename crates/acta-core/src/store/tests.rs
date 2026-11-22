@@ -2690,11 +2690,52 @@ fn an_import_leaves_out_network_paths_and_counts_them() {
     let local = moved.folders[0].path.clone();
     moved.folders[0].path = r"\\10.0.0.5\share".into();
     moved.folders[0].stamp.updated_at += 1_000;
+    // Claude Code's import never takes a path: not refused, local path kept.
+    let by_claude = a.store.import_by(&moved, false, C).unwrap();
+    assert_eq!(by_claude.folders_refused, 0);
+    let kept = a.store.export(None).unwrap();
+    assert!(kept.folders.iter().any(|f| f.path == local));
+    assert!(kept.folders.iter().all(|f| !f.path.starts_with(r"\\")));
+    // The human's: the row is kept as it is here, skipped, nothing missing
+    // and so nothing counted as left out.
+    moved.folders[0].stamp.updated_at += 1_000;
     let report = a.store.import(&moved, false).unwrap();
-    assert_eq!(report.folders_refused, 1);
+    assert_eq!(report.folders_refused, 0);
+    assert_eq!(report.folders.updated, 0);
     let after = a.store.export(None).unwrap();
     assert!(after.folders.iter().any(|f| f.path == local));
     assert!(after.folders.iter().all(|f| !f.path.starts_with(r"\\")));
+}
+
+/// A page whose active folder is a left-out network folder has no active
+/// folder after the import: the pointer resolves to nothing.
+#[test]
+fn a_pointer_to_a_left_out_network_folder_is_cleared() {
+    let mut a = open();
+    populate(&mut a.store, a.dir.path());
+    let mut file = a.store.export(None).unwrap();
+    let storage = file
+        .folders
+        .iter_mut()
+        .find(|f| f.name == "Storage repo")
+        .unwrap();
+    let uuid = storage.stamp.uuid.clone();
+    storage.path = r"\\10.0.0.5\storage".into();
+    let keys = file.topics.iter().find(|t| t.title == "Keys").unwrap();
+    assert_eq!(keys.active_folder.as_deref(), Some(uuid.as_str()));
+    let mut b = open();
+    let report = b.store.import(&file, false).unwrap();
+    assert_eq!(report.folders_refused, 1);
+    let active: Option<i64> = b
+        .store
+        .conn
+        .query_row(
+            "SELECT active_folder_id FROM topics WHERE uuid = ?1",
+            [&keys.stamp.uuid],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(active, None);
 }
 
 #[test]

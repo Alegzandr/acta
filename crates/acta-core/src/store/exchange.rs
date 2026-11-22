@@ -259,13 +259,14 @@ pub(super) fn read_capped(path: &std::path::Path, cap: u64) -> Result<String> {
     if size > cap {
         return Err(too_large(size, cap));
     }
-    let mut text = String::new();
-    // The file may grow between the check and the read.
-    file.take(cap + 1).read_to_string(&mut text)?;
-    if text.len() as u64 > cap {
-        return Err(too_large(text.len() as u64, cap));
+    let mut bytes = Vec::new();
+    // The file may grow between the check and the read: never more than
+    // the cap and one byte is read.
+    file.take(cap + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > cap {
+        return Err(too_large(bytes.len() as u64, cap));
     }
-    Ok(text)
+    String::from_utf8(bytes).map_err(|_| Error::Invalid("this is not an Acta export".into()))
 }
 
 /// The largest file an import reads: 512 MiB.
@@ -292,8 +293,10 @@ pub struct ImportReport {
     pub knowledge: ImportCounts,
     pub revisions: ImportCounts,
     pub folders: ImportCounts,
-    /// Folders left out because their path could name another computer
+    /// New folders left out because their path could name another computer
     /// (a network share, a device): see [`crate::folder_path::is_probe_safe`].
+    /// A known folder the file moves to such a path keeps its local row and
+    /// counts as skipped.
     pub folders_refused: i64,
 }
 
@@ -1050,8 +1053,13 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile, author: Author) -> Result<Im
         // A path that could name another computer is never taken from a
         // file: Acta checks every folder's existence, and on Windows that
         // alone sends the user's credentials to the computer named.
+        // A new row is left out and counted (it is missing here); a known
+        // row keeps its local version, so nothing is missing.
         if new_path && !crate::folder_path::is_probe_safe(&x.path) {
-            rep.folders_refused += 1;
+            match action {
+                Action::Insert => rep.folders_refused += 1,
+                _ => rep.folders.skipped += 1,
+            }
             continue;
         }
         count(&mut rep.folders, &action);

@@ -15,13 +15,14 @@ use alacritty_terminal::term::TermMode;
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::vte::ansi::CursorShape;
 use gpui_kit::{
-    App, Bounds, ClipboardItem, Context, CursorStyle, Element, ElementId, ElementInputHandler,
-    Entity, EntityInputHandler, EventEmitter, FocusHandle, Focusable, Font, FontFallbacks,
-    FontStyle, FontWeight, GlobalElementId, Hsla, InspectorElementId, InteractiveElement,
-    IntoElement, KeyDownEvent, LayoutId, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, PaintQuad, ParentElement, Pixels, Point, Render, ScrollEvent, ShapedLine,
-    SharedString, StrikethroughStyle, Styled, Task, TextAlign, TextRun, UTF16Selection,
-    UnderlineStyle, Window, div, fill, font, outline, point, px, relative, rgb, rgba, size,
+    AnyWindowHandle, App, Bounds, ClipboardItem, Context, CursorStyle, Element, ElementId,
+    ElementInputHandler, Entity, EntityInputHandler, EventEmitter, FocusHandle, Focusable, Font,
+    FontFallbacks, FontStyle, FontWeight, GlobalElementId, Hsla, InspectorElementId,
+    InteractiveElement, IntoElement, KeyDownEvent, LayoutId, Modifiers, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, Point, Render,
+    ScrollEvent, ShapedLine, SharedString, StrikethroughStyle, Styled, Task, TextAlign, TextRun,
+    UTF16Selection, UnderlineStyle, Window, div, fill, font, outline, point, px, relative, rgb,
+    rgba, size,
 };
 
 use crate::boxes::{BoxGlyph, box_glyph};
@@ -127,6 +128,8 @@ pub struct TerminalView {
     last_output: Instant,
     /// When the user last pressed a key in this terminal (OSC 52 gate).
     last_key: Option<Instant>,
+    /// The window this view was last drawn in (OSC 52 gate).
+    window: Option<AnyWindowHandle>,
     /// Started before the first layout: spawned once the grid size is known.
     start_pending: bool,
     _start: Task<()>,
@@ -166,6 +169,7 @@ impl TerminalView {
             scroll_remainder: 0.0,
             last_output: Instant::now(),
             last_key: None,
+            window: None,
             start_pending: false,
             _start: Task::ready(()),
             _resize: Task::ready(()),
@@ -346,8 +350,28 @@ impl TerminalView {
         self.session = Some(session);
         self._events = cx.spawn(async move |this, cx| {
             while let Ok(event) = events.recv().await {
+                // An OSC 52 store is judged when it arrives: is this
+                // terminal focused in the active window right now?
+                let here = match &event {
+                    SessionEvent::ClipboardStore(_) => {
+                        let Ok((window, focus)) =
+                            this.read_with(cx, |this, _| (this.window, this.focus.clone()))
+                        else {
+                            break;
+                        };
+                        window
+                            .and_then(|w| {
+                                w.update(cx, |_, window, _| {
+                                    window.is_window_active() && focus.is_focused(window)
+                                })
+                                .ok()
+                            })
+                            .unwrap_or(false)
+                    }
+                    _ => false,
+                };
                 if this
-                    .update(cx, |this, cx| this.on_session_event(event, cx))
+                    .update(cx, |this, cx| this.on_session_event(event, here, cx))
                     .is_err()
                 {
                     break;
@@ -356,7 +380,9 @@ impl TerminalView {
         });
     }
 
-    fn on_session_event(&mut self, event: SessionEvent, cx: &mut Context<Self>) {
+    /// `here`: for an OSC 52 store, whether this terminal has the focus in
+    /// the active window as the store arrives.
+    fn on_session_event(&mut self, event: SessionEvent, here: bool, cx: &mut Context<Self>) {
         match event {
             SessionEvent::Wakeup => {
                 self.last_output = Instant::now();
@@ -376,7 +402,7 @@ impl TerminalView {
                 // Dropped unless the user just typed here: see
                 // `clipboard_store_allowed`.
                 if crate::session::clipboard_store_allowed(
-                    self.was_focused,
+                    here,
                     self.last_key,
                     Instant::now(),
                     text.len(),
@@ -682,6 +708,7 @@ impl TerminalView {
     }
 
     fn sync_focus(&mut self, window: &Window) {
+        self.window = Some(window.window_handle());
         let focused = self.focus.is_focused(window);
         if focused != self.was_focused {
             self.was_focused = focused;

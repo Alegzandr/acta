@@ -92,7 +92,8 @@ pub fn contains(os: Os, folder: &str, dir: &str) -> Option<usize> {
 /// Whether a path from somewhere else (an import) may be touched on this
 /// machine: an absolute local path, a Windows drive path (`C:\...`) or a
 /// Unix one (`/...`). Anything that can name another computer (`\\server`,
-/// `//server`, `\\?\UNC\`, a `\\.\` device) is refused whatever this
+/// `//server`, `\\?\UNC\`, a `\\.\` device, `/net/<host>`, `/Network/`)
+/// is refused whatever this
 /// machine's OS: on Windows merely asking whether it exists sends the
 /// user's credentials (NTLM) to that computer. Pure text, so a file from
 /// any OS is judged the same way.
@@ -106,8 +107,13 @@ pub fn is_probe_safe(path: &str) -> bool {
         return true;
     }
     // `/home/...`, but not `//server` or `/\server`, which Windows reads as
-    // a network path.
-    b.first() == Some(&b'/') && !b.get(1).is_some_and(|&c| sep(c))
+    // a network path, nor `/net/<host>` (autofs) or `/Network/...` (macOS),
+    // which reach other computers when looked at.
+    if b.first() != Some(&b'/') || b.get(1).is_some_and(|&c| sep(c)) {
+        return false;
+    }
+    let first = path[1..].split(['/', '\\']).next().unwrap_or("");
+    !first.eq_ignore_ascii_case("net") && !first.eq_ignore_ascii_case("network")
 }
 
 #[cfg(test)]
@@ -122,6 +128,9 @@ mod tests {
             r"Z:\",
             "/home/alexandre/acta",
             "/",
+            "/home/alexandre/net",
+            "/netlify/site",
+            "/Networks",
         ] {
             assert!(is_probe_safe(ok), "{ok}");
         }
@@ -134,6 +143,10 @@ mod tests {
             r"\??\UNC\server\share",
             "//server/share",
             r"/\server\share",
+            "/net/fileserver/home",
+            "/net",
+            "/Network/Servers/host/x",
+            "/network/servers",
             r"\Dev",
             "C:Dev",
             "relative/path",

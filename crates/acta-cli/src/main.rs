@@ -1059,6 +1059,7 @@ fn import(store: &mut acta_core::Store, path: &Path, dry_run: bool) -> Result<St
         },
         match report.folders_refused {
             0 => String::new(),
+            1 => "; 1 folder on a network path left out".to_owned(),
             n => format!("; {n} folders on a network path left out"),
         }
     ))

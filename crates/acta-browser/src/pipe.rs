@@ -102,8 +102,10 @@ fn tag(data_dir: &Path) -> String {
 /// digits of HMAC-SHA256(pipe key, "pipe name v1" and the data directory).
 /// The SID keeps users apart; the data directory keeps a development or test
 /// instance from meeting the installed app; the key, which only the app
-/// and `acta mcp browser` hold, keeps another local user from guessing the
-/// name and creating it first (pipe names are global).
+/// and `acta mcp browser` hold, keeps another local user from computing the
+/// name in advance. Pipe names are listable, so this holds only until the
+/// name is observed; squatting it then is a denial of service, never
+/// impersonation (the first-instance flag and the key handshake).
 pub fn pipe_name(sid: &str, key: &[u8; 32], data_dir: &Path) -> String {
     use hmac::{Hmac, Mac};
     let mut m = <Hmac<Sha256> as Mac>::new_from_slice(key).expect("HMAC takes any key length");

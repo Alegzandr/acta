@@ -4110,14 +4110,20 @@ impl Shell {
             if let (Opened::Ready(store), Some(file)) = (&mut opened, file) {
                 let report = store.import(&file, false);
                 let paths = crate::dialogs::probe_safe_paths(&file);
-                imported = Some((report.ok(), paths));
+                // Commit modes never come from a file: a recovered folder
+                // that committed automatically is Manual now.
+                let had_auto = file
+                    .folders
+                    .iter()
+                    .any(|f| f.commit_mode != acta_core::model::CommitMode::Manual);
+                imported = Some((report.ok(), paths, had_auto));
             }
             (opened, imported)
         });
         self._open = cx.spawn_in(window, async move |shell, cx| {
             let (opened, imported) = opening.await;
             let missing = match &imported {
-                Some((_, paths)) => {
+                Some((_, paths, _)) => {
                     let paths = paths.clone();
                     cx.background_executor()
                         .spawn(async move { crate::workspace::missing_paths(paths).len() as u64 })
@@ -4130,10 +4136,12 @@ impl Shell {
                     Opened::Ready(store) => {
                         shell.start_workbench(Db::new(store), window, cx);
                         let locale = settings::locale(cx);
-                        if let Some((report, _)) = imported {
+                        if let Some((report, _, had_auto)) = imported {
                             let toast = match report {
                                 Some(report) => Toast {
-                                    message: crate::dialogs::import_done(locale, &report, missing),
+                                    message: crate::dialogs::recovery_done(
+                                        locale, &report, missing, had_auto,
+                                    ),
                                     kind: ToastKind::Done,
                                 },
                                 None => Toast {

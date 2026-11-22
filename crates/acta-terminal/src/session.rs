@@ -95,11 +95,17 @@ pub const CLIPBOARD_STORE_MAX: usize = 64 * 1024;
 pub const CLIPBOARD_STORE_WINDOW: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Whether an OSC 52 store from the child reaches the system clipboard:
-/// only while the terminal is focused, within [`CLIPBOARD_STORE_WINDOW`] of
-/// a key pressed in it (Claude Code copies on the user's command), and up
-/// to [`CLIPBOARD_STORE_MAX`] bytes. Otherwise any program printing to the
-/// terminal (a `cat` of a hostile file, a dependency's install script)
-/// could replace what the user is about to paste.
+/// only while the terminal has the focus in the active window (`focused`,
+/// checked as the store arrives), within [`CLIPBOARD_STORE_WINDOW`] of a
+/// key pressed in it (Claude Code copies on the user's command), and up to
+/// [`CLIPBOARD_STORE_MAX`] bytes.
+///
+/// What this stops: stores from a program running in the background or
+/// after a delay, and stores while the user works elsewhere (another pane,
+/// another window, another app), which could swap what they are about to
+/// paste. What it does not stop: output of a command the user has just
+/// typed (`cat` of a hostile file, `npm install` running a script) within
+/// the window; that output can still set the clipboard.
 pub fn clipboard_store_allowed(
     focused: bool,
     last_key: Option<std::time::Instant>,

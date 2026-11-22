@@ -2665,6 +2665,10 @@ catalogue! {
         en: p("{n} working folder on a network path was left out. Add it again from its project, epic or topic.", "{n} working folders on a network path were left out. Add each one again from its project, epic or topic."),
         fr: p("{n} dossier de travail sur un chemin réseau a été écarté. Ajoutez-le de nouveau depuis son projet, son epic ou son sujet.", "{n} dossiers de travail sur un chemin réseau ont été écartés. Ajoutez chacun de nouveau depuis son projet, son epic ou son sujet."),
     }
+    ImportRecoveredManual "import.recovered_manual" {
+        en: t("Commit modes come back as Manual: set them again in each folder\u{2019}s settings."),
+        fr: t("Les modes de commit reviennent en Manuel\u{202f}: redéfinissez-les dans les réglages de chaque dossier."),
+    }
     ImportNewer "import.newer" {
         en: t("This file was made by a newer Acta (format {n}). Update Acta, then import it."),
         fr: t("Ce fichier a été créé par une version plus récente d\u{2019}Acta (format {n}). Mettez Acta à jour, puis importez-le."),
@@ -2674,16 +2678,12 @@ catalogue! {
         fr: t("Ce n\u{2019}est pas un export Acta."),
     }
     ImportTooLarge "import.too_large" {
-        en: t("This file is too large to import ({size}). The limit is {limit}."),
-        fr: t("Ce fichier est trop volumineux pour être importé ({size}). La limite est de {limit}."),
+        en: t("This file is too large to import ({size}). The limit is {limit}. Export one project at a time, then import each file."),
+        fr: t("Ce fichier est trop volumineux pour être importé ({size}). La limite est de {limit}. Exportez un projet à la fois, puis importez chaque fichier."),
     }
     ImportWrongPassphrase "import.wrong_passphrase" {
         en: t("Wrong passphrase."),
         fr: t("Phrase secrète incorrecte."),
-    }
-    ImportAutoCommit "import.auto_commit" {
-        en: p("{n} working folder will commit automatically once found on this computer.", "{n} working folders will commit automatically once found on this computer."),
-        fr: p("{n} dossier de travail commitera automatiquement une fois trouvé sur cet ordinateur.", "{n} dossiers de travail commiteront automatiquement une fois trouvés sur cet ordinateur."),
     }
     TrashHint "trash.hint" {
         en: t("Deleted things stay here for 30 days."),

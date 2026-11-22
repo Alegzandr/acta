@@ -34,23 +34,22 @@ pub fn create_new_private_file(path: &Path) -> io::Result<File> {
     options.open(path)
 }
 
-/// Writes `bytes` to `path` without ever leaving half a file, readable by
-/// the user only: a new file with a random name next to the target
-/// (created exclusively, so nothing planted there, a symlink included, is
-/// followed or reused), flushed, then renamed over the target.
+/// Writes `bytes` to `path` without ever leaving half a file: a new file
+/// with a random name (`.{16 hex}.tmp`) next to the target, created
+/// exclusively so nothing planted there, a symlink included, is followed
+/// or reused; flushed, then renamed over the target. On Unix the file is
+/// 0600. On Windows it inherits the ACL of the directory it is written in:
+/// private in the data directory, as open as that directory elsewhere (an
+/// export the user saves to a shared folder is readable there).
 pub fn write_private_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     use std::io::Write as _;
     let dir = path
         .parent()
         .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
     let mut random = [0u8; 8];
     getrandom::fill(&mut random).map_err(|e| io::Error::other(e.to_string()))?;
     let suffix: String = random.iter().map(|b| format!("{b:02x}")).collect();
-    let temp = dir.join(format!(".{name}.{suffix}.tmp"));
+    let temp = dir.join(format!(".{suffix}.tmp"));
     let mut file = create_new_private_file(&temp)?;
     let written = file.write_all(bytes).and_then(|()| file.sync_all());
     drop(file);

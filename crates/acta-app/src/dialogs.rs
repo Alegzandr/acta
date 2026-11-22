@@ -177,6 +177,23 @@ pub fn import_done(locale: Locale, report: &ImportReport, missing_folders: u64) 
     message
 }
 
+/// The result line of a key-loss recovery: [`import_done`], and, when the
+/// file had folders that committed automatically, that they are Manual
+/// now (commit modes never come from a file, ADR 0011).
+pub fn recovery_done(
+    locale: Locale,
+    report: &ImportReport,
+    missing_folders: u64,
+    had_auto: bool,
+) -> String {
+    let mut message = import_done(locale, report, missing_folders);
+    if had_auto {
+        message.push(' ');
+        message.push_str(&text(locale, Key::ImportRecoveredManual));
+    }
+    message
+}
+
 /// The refusal of a file too large to import, with its size.
 pub fn import_too_large(locale: Locale, size: u64, limit: u64) -> String {
     let limit = tr(
@@ -1057,9 +1074,16 @@ mod tests {
             ),
             "{message}"
         );
+        // Key-loss recovery says commit modes are Manual again, only when
+        // the file had automatic ones.
+        assert_eq!(recovery_done(Locale::En, &report, 0, false), message);
+        assert!(recovery_done(Locale::En, &report, 0, true).ends_with(
+            "Commit modes come back as Manual: set them again in each folder\u{2019}s settings."
+        ));
         assert_eq!(
             import_too_large(Locale::En, 600 * 1024 * 1024, 512 * 1024 * 1024),
-            "This file is too large to import (600.0 MB). The limit is 512 MB."
+            "This file is too large to import (600.0 MB). The limit is 512 MB. \
+             Export one project at a time, then import each file."
         );
     }
 
