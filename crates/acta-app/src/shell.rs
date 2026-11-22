@@ -337,6 +337,7 @@ fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("escape", DismissSidebar, Some("Workbench && !Terminal")),
     ];
     out.extend(crate::due_picker::bindings());
+    out.extend(crate::record_page::questions::bindings());
     // interaction.md 6.1: only Windows has a chat panel to focus.
     if cfg!(windows) {
         out.push(KeyBinding::new(m("cmd-4", "ctrl-4"), FocusChat, None));
@@ -377,6 +378,9 @@ enum PageView {
     Doc(Entity<DocPage>),
     Trash(Entity<TrashPage>),
     Shortcuts(Entity<crate::shortcuts_page::ShortcutsPage>),
+    Questions(Entity<crate::questions_page::QuestionsPage>),
+    Contacts(Entity<crate::contacts_page::ContactsPage>),
+    Contact(Entity<crate::contact_page::ContactPage>),
 }
 
 impl PageView {
@@ -390,6 +394,9 @@ impl PageView {
             PageView::Doc(v) => v.clone().into(),
             PageView::Trash(v) => v.clone().into(),
             PageView::Shortcuts(v) => v.clone().into(),
+            PageView::Questions(v) => v.clone().into(),
+            PageView::Contacts(v) => v.clone().into(),
+            PageView::Contact(v) => v.clone().into(),
         }
     }
 }
@@ -500,6 +507,9 @@ struct Bench {
     /// Where focus returns when the overlay closes.
     return_focus: Option<FocusHandle>,
     capture_draft: String,
+    /// The Questions page opened next starts on this segment (the
+    /// Overview's late answers open it on Overdue).
+    questions_filter: Option<crate::questions_model::Filter>,
     toast: Option<Toast>,
     toast_timer: Task<()>,
     dock: Entity<TerminalDock>,
@@ -768,6 +778,7 @@ impl Shell {
             overlay: None,
             return_focus: None,
             capture_draft: String::new(),
+            questions_filter: None,
             toast: None,
             toast_timer: Task::ready(()),
             dock,
@@ -1149,6 +1160,75 @@ impl Shell {
                     }
                 }
             }
+            // Questions, Report to and contacts (screens.md 8.21 to 8.30),
+            // once the page has loaded: the composer with the picker typed
+            // into (`ACTA_DEV_QUERY`), the answer editor of the first
+            // question, the Report to popover, the closed questions
+            // unfolded, a contact's move refused.
+            #[cfg(debug_assertions)]
+            Ok(
+                which @ ("q-composer" | "q-answer" | "q-closed" | "q-menu" | "q-scroll"
+                | "report-popover" | "contact-move"),
+            ) => {
+                let which = which.to_owned();
+                cx.spawn_in(window, async move |shell, cx| {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(1500))
+                        .await;
+                    let _ = shell.update_in(cx, |shell, window, cx| {
+                        if which == "contact-move" {
+                            if let Some(bench) = shell.bench()
+                                && let PageView::Contact(page) = &bench.page
+                            {
+                                let page = page.clone();
+                                page.update(cx, |page, cx| {
+                                    page.run(crate::commands::ContactCommand::Move, window, cx)
+                                });
+                            }
+                        } else {
+                            let query = std::env::var("ACTA_DEV_QUERY").unwrap_or_default();
+                            shell.with_record(
+                                cx,
+                                |page, window, cx| page.dev_questions(&which, &query, window, cx),
+                                window,
+                            )
+                        }
+                    });
+                })
+                .detach();
+            }
+            // The palette's refusal: Enter on the highlighted (refused) row
+            // of a picker opened by `contact-move`, after it loaded.
+            #[cfg(debug_assertions)]
+            Ok("contact-refused") => {
+                cx.spawn_in(window, async move |shell, cx| {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(1500))
+                        .await;
+                    let _ = shell.update_in(cx, |shell, window, cx| {
+                        if let Some(bench) = shell.bench()
+                            && let PageView::Contact(page) = &bench.page
+                        {
+                            let page = page.clone();
+                            page.update(cx, |page, cx| {
+                                page.run(crate::commands::ContactCommand::Move, window, cx)
+                            });
+                        }
+                    });
+                    cx.background_executor()
+                        .timer(Duration::from_millis(1000))
+                        .await;
+                    let _ = shell.update_in(cx, |shell, window, cx| {
+                        let query = std::env::var("ACTA_DEV_QUERY").unwrap_or_default();
+                        if let Some(bench) = shell.bench()
+                            && let Some(Overlay::Palette(palette)) = &bench.overlay
+                        {
+                            palette.update(cx, |p, cx| p.dev_enter(&query, window, cx));
+                        }
+                    });
+                })
+                .detach();
+            }
             Ok("export") => self.open_export(window, cx),
             Ok("snapshots") => self.open_snapshots(window, cx),
             _ => {}
@@ -1382,6 +1462,28 @@ impl Shell {
                 let page = cx.new(|cx| crate::shortcuts_page::ShortcutsPage::new(window, cx));
                 (PageView::Shortcuts(page), None)
             }
+            Route::Questions(scope) => {
+                let filter = self
+                    .bench()
+                    .and_then(|b| b.questions_filter.take())
+                    .unwrap_or_default();
+                let page =
+                    cx.new(|cx| crate::questions_page::QuestionsPage::new(ws, scope, filter, cx));
+                let sub = Self::page_events(&page, tab, window, cx);
+                (PageView::Questions(page), Some(sub))
+            }
+            Route::Contacts => {
+                let active = self.bench().and_then(|b| b.active_project);
+                let page =
+                    cx.new(|cx| crate::contacts_page::ContactsPage::new(ws, active, window, cx));
+                let sub = Self::page_events(&page, tab, window, cx);
+                (PageView::Contacts(page), Some(sub))
+            }
+            Route::Contact(id) => {
+                let page = cx.new(|cx| crate::contact_page::ContactPage::new(ws, id, cx));
+                let sub = Self::page_events(&page, tab, window, cx);
+                (PageView::Contact(page), Some(sub))
+            }
         }
     }
 
@@ -1449,7 +1551,13 @@ impl Shell {
             Route::Epic(id) => {
                 tree::locate_epic(&projects, id).and_then(|l| l.project.map(|p| p.0))
             }
-            Route::Kb(_) | Route::Trash | Route::Settings | Route::Shortcuts => None,
+            Route::Questions(owner) => bench.ws.read(cx).project_of(owner),
+            Route::Kb(_)
+            | Route::Trash
+            | Route::Settings
+            | Route::Shortcuts
+            | Route::Contacts
+            | Route::Contact(_) => None,
         };
         if let Some(project) = project {
             bench.active_project = Some(project);
@@ -1540,7 +1648,84 @@ impl Shell {
                 self.open_dialog(DialogKind::Confirm(confirm.clone()), window, cx)
             }
             PageEvent::StaleMemories(project) => self.open_stale_memories(*project, window, cx),
+            PageEvent::LateAnswers(scope) => self.open_late_answers(*scope, window, cx),
         }
+    }
+
+    /// "Go to contact...": the palette lists the contacts the active
+    /// project sees, nearest level first, with their details; `Enter`
+    /// opens the contact page.
+    fn pick_contact(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(bench) = self.bench() else { return };
+        let Some(project) = bench.active_project else {
+            return;
+        };
+        let ws = bench.ws.clone();
+        let place = acta_core::model::Place {
+            project,
+            epic: None,
+        };
+        let task = ws
+            .read(cx)
+            .db
+            .run(cx, move |store| store.contacts_visible(place));
+        cx.spawn_in(window, async move |shell, cx| {
+            let Ok(list) = task.await else { return };
+            let _ = shell.update_in(cx, |shell, window, cx| {
+                let locale = settings::locale(cx);
+                let projects = ws.read(cx).projects.clone();
+                let choices = list
+                    .iter()
+                    .map(|c| crate::palette::Choice {
+                        title: c.contact.name.clone(),
+                        detail: [
+                            crate::contacts_model::details(&c.contact),
+                            crate::contacts_model::level_name(locale, c.contact.level, &projects),
+                        ]
+                        .into_iter()
+                        .filter(|s| !s.is_empty())
+                        .collect::<Vec<_>>()
+                        .join(" \u{b7} "),
+                        lead: crate::palette::Lead::Icon(Icon::User),
+                        trailing: String::new(),
+                        refusal: None,
+                    })
+                    .collect();
+                let ids: Vec<acta_core::model::ContactId> =
+                    list.iter().map(|c| c.contact.id).collect();
+                let me = cx.entity().downgrade();
+                let on_pick = crate::palette::OnPick::new(move |i, window, cx| {
+                    if let Some(id) = ids.get(i).copied() {
+                        let _ = me.update(cx, |shell, cx| {
+                            shell.navigate(Route::Contact(id), true, window, cx)
+                        });
+                    }
+                });
+                shell.open_picker(
+                    crate::palette::Picker {
+                        label: text(locale, Key::CmdContactGo),
+                        choices,
+                    },
+                    on_pick,
+                    window,
+                    cx,
+                );
+            });
+        })
+        .detach();
+    }
+
+    /// The Overview's late answers: the Questions page with Overdue.
+    pub(super) fn open_late_answers(
+        &mut self,
+        scope: Owner,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(bench) = self.bench() {
+            bench.questions_filter = Some(crate::questions_model::Filter::Overdue);
+        }
+        self.navigate(Route::Questions(scope), true, window, cx);
     }
 
     /// The Overview's memory line: the knowledge page, Kind Memories, with
@@ -1631,6 +1816,15 @@ impl Shell {
         let Some(bench) = self.bench() else { return };
         let mut collapsed: Vec<String> = bench.folds.collapsed.iter().cloned().collect();
         let mut closed: Vec<String> = bench.folds.closed_shown.iter().cloned().collect();
+        // The Questions sections' folds share the list (record pages write
+        // them): they are kept, never dropped by the tree's.
+        closed.extend(
+            settings::current(cx)
+                .closed_shown
+                .iter()
+                .filter(|k| k.starts_with("questions:"))
+                .cloned(),
+        );
         collapsed.sort();
         closed.sort();
         let pages: Vec<(TabId, String)> = bench
@@ -1854,6 +2048,29 @@ impl Shell {
             Route::Trash => (Icon::Trash2, None, text(locale, Key::TreeTrash)),
             Route::Settings => (Icon::Settings, None, text(locale, Key::TreeSettings)),
             Route::Shortcuts => (Icon::Settings, None, text(locale, Key::CmdShortcuts)),
+            Route::Questions(_) => (
+                Icon::CircleQuestionMark,
+                None,
+                text(locale, Key::SectionQuestions),
+            ),
+            Route::Contacts => (Icon::Users, None, text(locale, Key::ContactsTitle)),
+            Route::Contact(id) => {
+                let name = |view: &PageView| match view {
+                    PageView::Contact(page) => page.read(cx).title(),
+                    _ => None,
+                };
+                let title = if bench.history.current() == Some(route) {
+                    name(&bench.page)
+                } else {
+                    bench
+                        .slots
+                        .values()
+                        .find(|s| s.history.current() == Some(route))
+                        .and_then(|s| s.view.as_ref())
+                        .and_then(name)
+                };
+                (Icon::User, None, title.unwrap_or_else(|| id.to_string()))
+            }
         }
     }
 
@@ -2004,6 +2221,15 @@ impl Shell {
                 PageView::Record(page) => page.read(cx).folder_commands(),
                 _ => commands::FolderCommands::default(),
             },
+            report: match &bench.page {
+                PageView::Record(page) => page.read(cx).report_context(),
+                _ => None,
+            },
+            question: match &bench.page {
+                PageView::Record(page) => page.read(cx).question_context(window),
+                _ => None,
+            },
+            on_contact: matches!(bench.page, PageView::Contact(_)),
         }
     }
 
@@ -2111,6 +2337,16 @@ impl Shell {
                     CreateKind::Epic => {
                         let id = store.create_epic(project, &title, "", Author::Human)?;
                         (Record::Epic(id), Route::Epic(id))
+                    }
+                    // "New contact" from the palette: at the active
+                    // project's level (components-contacts.md 5).
+                    CreateKind::Contact => {
+                        let id = store.create_contact(
+                            &title,
+                            acta_core::model::ContactLevel::Project(project),
+                            Author::Human,
+                        )?;
+                        (Record::Contact(id), Route::Contact(id))
                     }
                 };
                 Ok((crate::workspace::Undo::Delete(record), route))
@@ -2220,6 +2456,72 @@ impl Shell {
                 }
             }
             Command::Show(filter) => self.show_overview_list(filter, window, cx),
+            Command::QuestionNew => {
+                self.with_record(cx, |page, window, cx| page.new_question(window, cx), window)
+            }
+            Command::QuestionsOpen => {
+                let scope = match self.bench().and_then(|b| b.history.current()) {
+                    Some(Route::Epic(e)) => Some(Owner::Epic(e)),
+                    Some(Route::Topic(t)) => Some(Owner::Topic(t)),
+                    _ => self
+                        .bench()
+                        .and_then(|b| b.active_project)
+                        .map(Owner::Project),
+                };
+                if let Some(scope) = scope {
+                    self.navigate(Route::Questions(scope), true, window, cx);
+                }
+            }
+            Command::ShowQuestionsLate => {
+                let scope = match self.bench().and_then(|b| b.history.current()) {
+                    Some(Route::Epic(e)) => Some(Owner::Epic(e)),
+                    _ => self
+                        .bench()
+                        .and_then(|b| b.active_project)
+                        .map(Owner::Project),
+                };
+                if let Some(scope) = scope {
+                    self.open_late_answers(scope, window, cx);
+                }
+            }
+            Command::ReportSet => self.with_record(
+                cx,
+                |page, window, cx| page.open_report_to(window, cx),
+                window,
+            ),
+            Command::ReportClear => self.with_record(
+                cx,
+                |page, _, cx| page.set_report(crate::contact_picker::Value::None, cx),
+                window,
+            ),
+            Command::Reported | Command::Unreported => {
+                let on = command == Command::Reported;
+                self.with_record(cx, |page, _, cx| page.set_reported(on, cx), window)
+            }
+            Command::Question(q) => self.with_record(
+                cx,
+                |page, window, cx| page.run_question(q, window, cx),
+                window,
+            ),
+            Command::ContactsOpen => self.navigate(Route::Contacts, true, window, cx),
+            Command::ContactGo => self.pick_contact(window, cx),
+            Command::ContactNew => self.open_palette(None, Some(CreateKind::Contact), window, cx),
+            Command::Contact(c) => {
+                if let Some(bench) = self.bench()
+                    && let PageView::Contact(page) = &bench.page
+                {
+                    let page = page.clone();
+                    page.update(cx, |page, cx| page.run(c, window, cx));
+                }
+            }
+            Command::ProfileName | Command::ProfileJobTitle => {
+                let name = command == Command::ProfileName;
+                self.open_settings(window, cx);
+                if let Some(bench) = self.bench() {
+                    let settings = bench.settings.clone();
+                    settings.update(cx, |page, cx| page.focus_profile(name, window, cx));
+                }
+            }
             Command::OverviewMore | Command::OverviewLess => {
                 let open = command == Command::OverviewMore;
                 self.with_record(cx, |page, _, cx| page.set_overview_open(open, cx), window)
@@ -4276,6 +4578,18 @@ impl Shell {
             (Some(Route::Trash), _) => vec![crumb(text(locale, Key::TreeTrash), None)],
             (Some(Route::Settings), _) => vec![crumb(text(locale, Key::TreeSettings), None)],
             (Some(Route::Shortcuts), _) => vec![crumb(text(locale, Key::CmdShortcuts), None)],
+            (Some(Route::Questions(owner)), _) => {
+                let project = bench.ws.read(cx).project_of(owner);
+                project
+                    .and_then(project_crumb)
+                    .into_iter()
+                    .chain([crumb(text(locale, Key::SectionQuestions), None)])
+                    .collect()
+            }
+            (Some(Route::Contacts), _) | (Some(Route::Contact(_)), _) => vec![crumb(
+                text(locale, Key::ContactsTitle),
+                Some(Route::Contacts),
+            )],
         }
     }
 
@@ -4868,7 +5182,12 @@ fn key_loss(db: PathBuf, unreadable: bool) -> Content {
 fn seed_if_asked(store: &mut acta_core::Store) {
     let seed = std::env::var("ACTA_DEV_SEED").unwrap_or_default();
     if cfg!(debug_assertions)
-        && (seed == "1" || seed == "bare" || seed == "long" || seed == "due" || seed == "folders")
+        && (seed == "1"
+            || seed == "bare"
+            || seed == "long"
+            || seed == "due"
+            || seed == "folders"
+            || seed == "questions")
         && let Some(dir) = crate::launch_dir()
         && let Err(err) = match seed.as_str() {
             "bare" => crate::dev_seed::bare(store, &dir),
@@ -4877,6 +5196,8 @@ fn seed_if_asked(store: &mut acta_core::Store) {
             "due" => crate::dev_seed::due(store, &dir),
             #[cfg(debug_assertions)]
             "folders" => crate::dev_seed::folders(store, &dir),
+            #[cfg(debug_assertions)]
+            "questions" => crate::dev_seed::questions(store, &dir),
             _ => crate::dev_seed::seed(store, &dir),
         }
     {

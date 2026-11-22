@@ -430,7 +430,13 @@ impl Folds {
             }
             Route::Epic(id) => locate_epic(projects, id),
             Route::Topic(id) => locate_topic(projects, id),
-            Route::Kb(_) | Route::Trash | Route::Settings | Route::Shortcuts => None,
+            Route::Kb(_)
+            | Route::Trash
+            | Route::Settings
+            | Route::Shortcuts
+            | Route::Questions(_)
+            | Route::Contacts
+            | Route::Contact(_) => None,
         };
         let Some(location) = location else { return };
         if let Some((project, _)) = location.project {

@@ -40,6 +40,24 @@ pub enum Command {
     /// "Overview: Show more" / "Overview: Show less".
     OverviewMore,
     OverviewLess,
+    /// Questions and Report to (interaction.md 6.1).
+    QuestionNew,
+    QuestionsOpen,
+    ShowQuestionsLate,
+    ReportSet,
+    ReportClear,
+    Reported,
+    Unreported,
+    /// On the focused question row.
+    Question(QuestionCommand),
+    /// Contacts and the profile (interaction.md 6.1).
+    ContactsOpen,
+    ContactGo,
+    ContactNew,
+    /// On the open contact page.
+    Contact(ContactCommand),
+    ProfileName,
+    ProfileJobTitle,
     Back,
     Forward,
     Undo,
@@ -105,6 +123,38 @@ pub enum Command {
     Claude(ClaudeSetting, bool),
 }
 
+/// What the palette does to the focused question.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum QuestionCommand {
+    Answer,
+    Edit,
+    Date,
+    ClearDate,
+    Drop,
+    Reopen,
+    Move,
+    Delete,
+}
+
+/// What the palette does to the open contact.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ContactCommand {
+    Rename,
+    JobTitle,
+    Company,
+    Address,
+    Move,
+    Merge,
+    Delete,
+}
+
+/// The focused question row: open, and whether it has an answer date.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FocusedQuestion {
+    pub open: bool,
+    pub dated: bool,
+}
+
 /// The Claude Code settings the palette can set.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ClaudeSetting {
@@ -157,6 +207,12 @@ pub struct Context {
     pub overview: Option<bool>,
     /// The working-folder commands the open page offers.
     pub folders: FolderCommands,
+    /// The open topic or epic: whether it has a person, and is reported.
+    pub report: Option<(bool, bool)>,
+    /// A question row has the keyboard.
+    pub question: Option<FocusedQuestion>,
+    /// A contact page is open.
+    pub on_contact: bool,
 }
 
 /// What the open page's folders allow (interaction.md 6.1).
@@ -234,7 +290,59 @@ impl Command {
         }
         if ctx.has_project {
             out.extend(SHOW.map(Command::Show));
+            out.push(Command::ShowQuestionsLate);
         }
+        if ctx.on_record {
+            out.push(Command::QuestionNew);
+        }
+        if ctx.has_project {
+            out.push(Command::QuestionsOpen);
+        }
+        if let Some((person, reported)) = ctx.report {
+            out.push(Command::ReportSet);
+            if person {
+                out.push(Command::ReportClear);
+                out.push(if reported {
+                    Command::Unreported
+                } else {
+                    Command::Reported
+                });
+            }
+        }
+        if let Some(q) = ctx.question {
+            use QuestionCommand as Q;
+            if q.open {
+                out.extend([Q::Answer, Q::Edit, Q::Date].map(Command::Question));
+                if q.dated {
+                    out.push(Command::Question(Q::ClearDate));
+                }
+                out.extend([Q::Drop, Q::Move].map(Command::Question));
+            } else {
+                out.push(Command::Question(Q::Reopen));
+            }
+            out.push(Command::Question(Q::Delete));
+        }
+        out.extend([
+            Command::ContactsOpen,
+            Command::ContactGo,
+            Command::ContactNew,
+        ]);
+        if ctx.on_contact {
+            use ContactCommand as C;
+            out.extend(
+                [
+                    C::Rename,
+                    C::JobTitle,
+                    C::Company,
+                    C::Address,
+                    C::Move,
+                    C::Merge,
+                    C::Delete,
+                ]
+                .map(Command::Contact),
+            );
+        }
+        out.extend([Command::ProfileName, Command::ProfileJobTitle]);
         match ctx.overview {
             Some(false) => out.push(Command::OverviewMore),
             Some(true) => out.push(Command::OverviewLess),
@@ -472,6 +580,37 @@ impl Command {
             },
             Command::OverviewMore => Key::CmdOverviewMore,
             Command::OverviewLess => Key::CmdOverviewLess,
+            Command::QuestionNew => Key::CmdQuestionNew,
+            Command::QuestionsOpen => Key::CmdQuestionsOpen,
+            Command::ShowQuestionsLate => Key::CmdShowQuestionsLate,
+            Command::ReportSet => Key::CmdReportSet,
+            Command::ReportClear => Key::CmdReportClear,
+            Command::Reported => Key::CmdReported,
+            Command::Unreported => Key::CmdUnreported,
+            Command::Question(q) => match q {
+                QuestionCommand::Answer => Key::CmdQuestionAnswer,
+                QuestionCommand::Edit => Key::CmdQuestionEdit,
+                QuestionCommand::Date => Key::CmdQuestionDate,
+                QuestionCommand::ClearDate => Key::CmdQuestionDateClear,
+                QuestionCommand::Drop => Key::CmdQuestionDrop,
+                QuestionCommand::Reopen => Key::CmdQuestionReopen,
+                QuestionCommand::Move => Key::CmdQuestionMove,
+                QuestionCommand::Delete => Key::CmdQuestionDelete,
+            },
+            Command::ContactsOpen => Key::CmdContactsOpen,
+            Command::ContactGo => Key::CmdContactGo,
+            Command::ContactNew => Key::CmdContactNew,
+            Command::Contact(c) => match c {
+                ContactCommand::Rename => Key::CmdContactRename,
+                ContactCommand::JobTitle => Key::CmdContactJobTitle,
+                ContactCommand::Company => Key::CmdContactCompany,
+                ContactCommand::Address => Key::CmdContactAddress,
+                ContactCommand::Move => Key::CmdContactMove,
+                ContactCommand::Merge => Key::CmdContactMerge,
+                ContactCommand::Delete => Key::CmdContactDelete,
+            },
+            Command::ProfileName => Key::CmdProfileName,
+            Command::ProfileJobTitle => Key::CmdProfileJobTitle,
             Command::Theme(setting) => {
                 let value = text(
                     locale,
@@ -551,6 +690,17 @@ impl Command {
             Command::Forward => vec![alt, "\u{2192}"],
             Command::SetStatus(_) => vec!["S"],
             Command::SetDue => vec!["D"],
+            Command::QuestionNew => vec!["Q"],
+            Command::ReportSet => vec!["R"],
+            Command::Question(QuestionCommand::Answer) => vec!["A"],
+            Command::Question(QuestionCommand::Edit) => vec!["E"],
+            Command::Question(QuestionCommand::Date) => vec!["D"],
+            Command::Question(QuestionCommand::Move) => vec!["M"],
+            Command::Question(QuestionCommand::Delete) => {
+                vec![KeyName::Delete.label(locale, macos)]
+            }
+            Command::Contact(ContactCommand::Rename) => vec!["F2"],
+            Command::Contact(ContactCommand::Move) => vec!["M"],
             _ => vec![],
         }
     }
@@ -672,6 +822,56 @@ mod tests {
                 assert!(!label.is_empty() && !label.contains('{'), "{command:?}");
             }
         }
+    }
+
+    #[test]
+    fn question_report_and_contact_commands_follow_their_target() {
+        let page = |report, question, on_contact| {
+            Command::available(Context {
+                has_project: true,
+                on_record: true,
+                report,
+                question,
+                on_contact,
+                ..Context::default()
+            })
+        };
+        let plain = page(None, None, false);
+        assert!(plain.contains(&Command::QuestionNew));
+        assert!(plain.contains(&Command::ContactGo));
+        assert!(
+            !plain.contains(&Command::ReportSet),
+            "a project has no Report to"
+        );
+        let unset = page(Some((false, false)), None, false);
+        assert!(unset.contains(&Command::ReportSet));
+        assert!(!unset.contains(&Command::ReportClear));
+        let set = page(Some((true, false)), None, false);
+        assert!(set.contains(&Command::Reported) && !set.contains(&Command::Unreported));
+        let open = page(
+            None,
+            Some(FocusedQuestion {
+                open: true,
+                dated: false,
+            }),
+            false,
+        );
+        assert!(open.contains(&Command::Question(QuestionCommand::Answer)));
+        assert!(!open.contains(&Command::Question(QuestionCommand::ClearDate)));
+        assert!(!open.contains(&Command::Question(QuestionCommand::Reopen)));
+        let closed = page(None, Some(FocusedQuestion::default()), false);
+        assert!(closed.contains(&Command::Question(QuestionCommand::Reopen)));
+        assert!(!closed.contains(&Command::Question(QuestionCommand::Answer)));
+        assert!(page(None, None, true).contains(&Command::Contact(ContactCommand::Merge)));
+        assert!(!plain.contains(&Command::Contact(ContactCommand::Merge)));
+        assert_eq!(
+            Command::ContactGo.label(Locale::En),
+            "Go to contact\u{2026}"
+        );
+        assert_eq!(
+            Command::Question(QuestionCommand::Answer).shortcut(Locale::En, false),
+            ["A"]
+        );
     }
 
     #[test]

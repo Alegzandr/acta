@@ -1401,6 +1401,8 @@ impl DocPage {
                     )
                 ),
                 lead: crate::palette::Lead::Icon(Icon::FileText),
+                trailing: String::new(),
+                refusal: None,
             })
             .collect();
         let page = cx.entity().downgrade();
@@ -1502,6 +1504,8 @@ impl DocPage {
                             .map_or(acta_core::model::Status::Draft, |x| x.status),
                     ),
                 },
+                trailing: String::new(),
+                refusal: None,
             })
             .collect();
         let ws = self.ws.clone();

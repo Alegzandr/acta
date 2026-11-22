@@ -253,6 +253,22 @@ catalogue! {
         en: t("{author} cleared the due date"),
         fr: t("{author} a supprimé l\u{2019}échéance"),
     }
+    EventReportSet "event.report_set" {
+        en: t("{author} noted to report to {name}"),
+        fr: t("{author} a noté de rapporter à : {name}"),
+    }
+    EventReported "event.reported" {
+        en: t("{author} marked it reported to {name}"),
+        fr: t("{author} l’a marqué comme rapporté à : {name}"),
+    }
+    EventReportUnmarked "event.report_unmarked" {
+        en: t("{author} marked it not reported"),
+        fr: t("{author} l’a marqué comme non rapporté"),
+    }
+    EventReportCleared "event.report_cleared" {
+        en: t("{author} removed Report to"),
+        fr: t("{author} a retiré « À rapporter à »"),
+    }
     PropStatus "prop.status" {
         en: t("Status"),
         fr: t("Statut"),
@@ -281,9 +297,17 @@ catalogue! {
         en: t("Due"),
         fr: t("Échéance"),
     }
+    PropReportTo "prop.report_to" {
+        en: t("Report to"),
+        fr: t("À rapporter à"),
+    }
     PropAddDue "prop.add_due" {
         en: t("Due date"),
         fr: t("Échéance"),
+    }
+    PropAddReportTo "prop.add_report_to" {
+        en: t("Report to"),
+        fr: t("À rapporter à"),
     }
     MetaRecord "meta.record" {
         en: t("{id} \u{b7} Updated {when} by {author}"),
@@ -397,6 +421,10 @@ catalogue! {
         en: t("Description"),
         fr: t("Description"),
     }
+    SectionQuestions "section.questions" {
+        en: t("Questions"),
+        fr: t("Questions"),
+    }
     SectionKnowledge "section.knowledge" {
         en: t("Knowledge"),
         fr: t("Connaissances"),
@@ -472,6 +500,10 @@ catalogue! {
     OverviewMemories "overview.memories" {
         en: p("{n} memory not updated for 90 days", "{n} memories not updated for 90 days"),
         fr: p("{n} mémoire non mise à jour depuis 90 jours", "{n} mémoires non mises à jour depuis 90 jours"),
+    }
+    OverviewQuestionsLate "overview.questions_late" {
+        en: p("{n} question past its answer date", "{n} questions past their answer date"),
+        fr: p("{n} question dont la date de réponse est passée", "{n} questions dont la date de réponse est passée"),
     }
     SectionTimeline "section.timeline" {
         en: t("Timeline"),
@@ -664,6 +696,22 @@ catalogue! {
     TableDue "table.due" {
         en: t("Due"),
         fr: t("Échéance"),
+    }
+    TableQuestions "table.questions" {
+        en: t("Questions"),
+        fr: t("Questions"),
+    }
+    TableQuestionsTip "table.questions_tip" {
+        en: p("{n} open question", "{n} open questions"),
+        fr: p("{n} question en suspens", "{n} questions en suspens"),
+    }
+    TableQuestionsTipOverdue "table.questions_tip_overdue" {
+        en: p("1 open question, overdue", "{n} open questions, {late} overdue"),
+        fr: p("1 question en suspens, en retard", "{n} questions en suspens, dont {late} en retard"),
+    }
+    TableReportTo "table.report_to" {
+        en: t("Report to"),
+        fr: t("À rapporter à"),
     }
     TableFilterOverdue "table.filter.overdue" {
         en: t("Overdue"),
@@ -936,6 +984,430 @@ catalogue! {
     KbNoResults "kb.no_results" {
         en: t("Nothing in this project mentions \"{query}\"."),
         fr: t("Rien dans ce projet ne mentionne «\u{202f}{query}\u{202f}»."),
+    }
+    QuestionsNew "questions.new" {
+        en: t("New question"),
+        fr: t("Nouvelle question"),
+    }
+    QuestionsClosed "questions.closed" {
+        en: t("{n} closed"),
+        fr: p("{n} close", "{n} closes"),
+    }
+    QuestionsMoreEpic "questions.more_epic" {
+        en: t("{n} more open in the topics of this epic"),
+        fr: p("{n} autre en suspens dans les sujets de cet epic", "{n} autres en suspens dans les sujets de cet epic"),
+    }
+    QuestionsMoreEpicOverdue "questions.more_epic_overdue" {
+        en: t("{n} more open in the topics of this epic, {late} overdue"),
+        fr: p("{n} autre en suspens dans les sujets de cet epic, en retard", "{n} autres en suspens dans les sujets de cet epic, dont {late} en retard"),
+    }
+    QuestionsMoreProject "questions.more_project" {
+        en: t("{n} more open in this project’s epics and topics"),
+        fr: p("{n} autre en suspens dans les epics et sujets de ce projet", "{n} autres en suspens dans les epics et sujets de ce projet"),
+    }
+    QuestionsMoreProjectOverdue "questions.more_project_overdue" {
+        en: t("{n} more open in this project’s epics and topics, {late} overdue"),
+        fr: p("{n} autre en suspens dans les epics et sujets de ce projet, en retard", "{n} autres en suspens dans les epics et sujets de ce projet, dont {late} en retard"),
+    }
+    QuestionsEmpty "questions.empty" {
+        en: t("No questions yet. Note what you are waiting to hear."),
+        fr: t("Aucune question pour l’instant. Notez ce que vous attendez d’apprendre."),
+    }
+    QuestionsScope "questions.scope" {
+        en: t("{scope} · {counts}"),
+        fr: t("{scope} · {counts}"),
+    }
+    CountQuestionsOpen "count.questions_open" {
+        en: t("{n} open"),
+        fr: t("{n} en suspens"),
+    }
+    CountQuestionsClosed "count.questions_closed" {
+        en: t("{n} closed"),
+        fr: p("{n} close", "{n} closes"),
+    }
+    QuestionsWholeProject "questions.whole_project" {
+        en: t("Whole project"),
+        fr: t("Tout le projet"),
+    }
+    QuestionsNoneOpen "questions.none_open" {
+        en: t("No open questions in {name}."),
+        fr: t("Aucune question en suspens dans {name}."),
+    }
+    QuestionsNoneOverdue "questions.none_overdue" {
+        en: t("No overdue questions."),
+        fr: t("Aucune question en retard."),
+    }
+    QuestionsNoneClosed "questions.none_closed" {
+        en: t("No closed questions yet."),
+        fr: t("Aucune question close pour l’instant."),
+    }
+    QuestionStateOpen "question.state.open" {
+        en: t("Open question"),
+        fr: t("Question en suspens"),
+    }
+    QuestionStateAnswered "question.state.answered" {
+        en: t("Answered"),
+        fr: t("Répondue"),
+    }
+    QuestionStateDropped "question.state.dropped" {
+        en: t("Dropped"),
+        fr: t("Abandonnée"),
+    }
+    QuestionAsked "question.asked" {
+        en: t("Asked {name}"),
+        fr: t("Posée à : {name}"),
+    }
+    QuestionBy "question.by" {
+        en: t("Answer by {date}"),
+        fr: t("Réponse attendue le {date}"),
+    }
+    QuestionAnsweredBy "question.answered_by" {
+        en: t("Answer recorded {date} by {author}"),
+        fr: t("Réponse notée le {date} par {author}"),
+    }
+    QuestionDroppedBy "question.dropped_by" {
+        en: t("Dropped {date} by {author}"),
+        fr: t("Abandonnée le {date} par {author}"),
+    }
+    QuestionLogged "question.logged" {
+        en: t("Logged as a decision"),
+        fr: t("Consignée comme décision"),
+    }
+    QuestionIn "question.in" {
+        en: t("in {level}"),
+        fr: t("dans : {level}"),
+    }
+    QuestionPlaceholder "question.placeholder" {
+        en: t("What do you need to know?"),
+        fr: t("Que faut-il savoir ?"),
+    }
+    QuestionFieldAsked "question.field.asked" {
+        en: t("Asked"),
+        fr: t("Posée à"),
+    }
+    QuestionFieldBy "question.field.by" {
+        en: t("Answer by"),
+        fr: t("Réponse attendue"),
+    }
+    QuestionMarkAnswered "question.mark_answered" {
+        en: t("Mark answered"),
+        fr: t("Marquer comme répondue"),
+    }
+    QuestionAnswerPlaceholder "question.answer_placeholder" {
+        en: t("What was the answer?"),
+        fr: t("Quelle a été la réponse ?"),
+    }
+    QuestionLogDecision "question.log_decision" {
+        en: t("Also log it as a decision"),
+        fr: t("La consigner aussi comme décision"),
+    }
+    QuestionSaveAnswer "question.save_answer" {
+        en: t("Save answer"),
+        fr: t("Enregistrer la réponse"),
+    }
+    QuestionEditAnswer "question.edit_answer" {
+        en: t("Edit answer"),
+        fr: t("Modifier la réponse"),
+    }
+    QuestionSetDate "question.set_date" {
+        en: t("Set answer date…"),
+        fr: t("Définir la date de réponse…"),
+    }
+    QuestionClearDate "question.clear_date" {
+        en: t("Clear answer date"),
+        fr: t("Effacer la date de réponse"),
+    }
+    QuestionDrop "question.drop" {
+        en: t("Drop question"),
+        fr: t("Abandonner la question"),
+    }
+    QuestionReopen "question.reopen" {
+        en: t("Reopen"),
+        fr: t("Rouvrir"),
+    }
+    QuestionMove "question.move" {
+        en: t("Move to…"),
+        fr: t("Déplacer vers…"),
+    }
+    QuestionDeleted "question.deleted" {
+        en: t("Question deleted."),
+        fr: t("Question supprimée."),
+    }
+    QuestionRestored "question.restored" {
+        en: t("Question restored."),
+        fr: t("Question restaurée."),
+    }
+    QuestionCounter "question.counter" {
+        en: t("{n} / 300"),
+        fr: t("{n} / 300"),
+    }
+    PersonNone "person.none" {
+        en: t("None"),
+        fr: t("Personne"),
+    }
+    CountPersonAsked "count.person_asked" {
+        en: p("{n} question to ask", "{n} questions to ask"),
+        fr: p("{n} question à poser", "{n} questions à poser"),
+    }
+    CountPersonReport "count.person_report" {
+        en: p("{n} thing to report", "{n} things to report"),
+        fr: p("{n} élément à rapporter", "{n} éléments à rapporter"),
+    }
+    PersonSectionAsked "person.section.asked" {
+        en: t("Questions asked"),
+        fr: t("Questions posées"),
+    }
+    PersonSectionReport "person.section.report" {
+        en: t("To report"),
+        fr: t("À rapporter"),
+    }
+    PersonEmpty "person.empty" {
+        en: t("Nothing open with {name}."),
+        fr: t("Rien en cours avec : {name}."),
+    }
+    ReportTo "report.to" {
+        en: t("Report to {name}"),
+        fr: t("À rapporter à : {name}"),
+    }
+    ReportPending "report.pending" {
+        en: t("Not reported yet"),
+        fr: t("Pas encore rapporté"),
+    }
+    ReportDone "report.done" {
+        en: t("Reported {date}"),
+        fr: t("Rapporté le {date}"),
+    }
+    ReportMark "report.mark" {
+        en: t("Mark reported"),
+        fr: t("Marquer comme rapporté"),
+    }
+    ReportUnmark "report.unmark" {
+        en: t("Mark not reported"),
+        fr: t("Marquer comme non rapporté"),
+    }
+    ReportChange "report.change" {
+        en: t("Change person…"),
+        fr: t("Changer de personne…"),
+    }
+    ReportReportedCount "report.reported_count" {
+        en: t("{n} reported"),
+        fr: p("{n} rapporté", "{n} rapportés"),
+    }
+    ReportFilter "report.filter" {
+        en: t("Report to: {name}"),
+        fr: t("À rapporter à : {name}"),
+    }
+    ReportFilterAll "report.filter.all" {
+        en: t("Report to: anyone"),
+        fr: t("À rapporter à : tout le monde"),
+    }
+    ReportFilterAnyone "report.filter.anyone" {
+        en: t("Anyone"),
+        fr: t("Tout le monde"),
+    }
+    ContactPlaceholder "contact.placeholder" {
+        en: t("Search contacts"),
+        fr: t("Rechercher un contact"),
+    }
+    ContactNewNamed "contact.new_named" {
+        en: t("New contact \"{name}\""),
+        fr: t("Nouveau contact : {name}"),
+    }
+    ContactNewIn "contact.new_in" {
+        en: t("in {level}"),
+        fr: t("dans : {level}"),
+    }
+    ContactNewTag "contact.new_tag" {
+        en: t("new"),
+        fr: t("nouveau"),
+    }
+    ContactOutOfScope "contact.out_of_scope" {
+        en: t("{name} is no longer visible here. Choose again."),
+        fr: t("Ce contact n’est plus visible ici : {name}. Choisissez à nouveau."),
+    }
+    ContactLevelAll "contact.level.all" {
+        en: t("All projects"),
+        fr: t("Tous les projets"),
+    }
+    ContactLevelCurrent "contact.level.current" {
+        en: t("Current"),
+        fr: t("Actuel"),
+    }
+    ContactMoveBlocked "contact.move.blocked" {
+        en: t("Used outside"),
+        fr: t("Utilisé ailleurs"),
+    }
+    ContactMoveRefused "contact.move.refused" {
+        en: t("Named outside {level}: {places}. Change those first."),
+        fr: t("Cité hors de ce niveau ({level}) : {places}. Modifiez-les d’abord."),
+    }
+    ContactMovePlace "contact.move.place" {
+        en: t("{id} {title} ({field})"),
+        fr: t("{id} {title} ({field})"),
+    }
+    ContactMoveMore "contact.move.more" {
+        en: t("+{n} more"),
+        fr: p("+{n} autre", "+{n} autres"),
+    }
+    ContactLifted "contact.lifted" {
+        en: t("{name} is now a contact of all projects, so {record} still sees them."),
+        fr: t("Contact étendu à tous les projets pour rester visible depuis {record} : {name}."),
+    }
+    ContactLiftedProject "contact.lifted.project" {
+        en: t("{name} is now a contact of project {project}, so {record} still sees them."),
+        fr: t("Contact étendu au projet {project} pour rester visible depuis {record} : {name}."),
+    }
+    ContactsTitle "contacts.title" {
+        en: t("Contacts"),
+        fr: t("Contacts"),
+    }
+    ContactsCount "contacts.count" {
+        en: p("{n} contact", "{n} contacts"),
+        fr: p("{n} contact", "{n} contacts"),
+    }
+    ContactsFilterProject "contacts.filter.project" {
+        en: t("This project"),
+        fr: t("Ce projet"),
+    }
+    ContactsFilterAll "contacts.filter.all" {
+        en: t("All"),
+        fr: t("Tous"),
+    }
+    ContactsNew "contacts.new" {
+        en: t("New contact"),
+        fr: t("Nouveau contact"),
+    }
+    ContactsNewHere "contacts.new_here" {
+        en: t("New contact here"),
+        fr: t("Nouveau contact ici"),
+    }
+    ContactsEmpty "contacts.empty" {
+        en: t("No contacts yet. A contact is added when you choose who a question is asked of or who to report to."),
+        fr: t("Aucun contact pour l’instant. Un contact s’ajoute quand vous choisissez à qui poser une question ou à qui rapporter."),
+    }
+    ContactsNoMatch "contacts.no_match" {
+        en: t("No contact matches \"{query}\"."),
+        fr: t("Aucun contact ne correspond à « {query} »."),
+    }
+    ContactsNoneHere "contacts.none_here" {
+        en: t("No contacts in {project}."),
+        fr: t("Aucun contact dans {project}."),
+    }
+    ContactNamePlaceholder "contact.name_placeholder" {
+        en: t("Name"),
+        fr: t("Nom"),
+    }
+    ContactNameRequired "contact.name_required" {
+        en: t("A contact needs a name."),
+        fr: t("Un contact doit avoir un nom."),
+    }
+    ContactOpenCount "contact.open_count" {
+        en: t("{n} open"),
+        fr: t("{n} en cours"),
+    }
+    ContactPropJobTitle "contact.prop.job_title" {
+        en: t("Job title"),
+        fr: t("Fonction"),
+    }
+    ContactPropCompany "contact.prop.company" {
+        en: t("Company"),
+        fr: t("Entreprise"),
+    }
+    ContactPropLevel "contact.prop.level" {
+        en: t("Level"),
+        fr: t("Niveau"),
+    }
+    ContactAddJobTitle "contact.add.job_title" {
+        en: t("Job title"),
+        fr: t("Fonction"),
+    }
+    ContactAddCompany "contact.add.company" {
+        en: t("Company"),
+        fr: t("Entreprise"),
+    }
+    ContactAddAddress "contact.add.address" {
+        en: t("How to address them"),
+        fr: t("Comment s’adresser à ce contact"),
+    }
+    ContactSectionAddress "contact.section.address" {
+        en: t("How to address them"),
+        fr: t("Comment s’adresser à ce contact"),
+    }
+    ContactAddressPlaceholder "contact.address_placeholder" {
+        en: t("Formal or first name, tone, what to avoid"),
+        fr: t("Vouvoiement ou tutoiement, prénom ou nom, ton, ce qu’il faut éviter"),
+    }
+    ContactAddressCounter "contact.address_counter" {
+        en: t("{n} / 500"),
+        fr: t("{n} / 500"),
+    }
+    ContactMeta "contact.meta" {
+        en: t("{id} · Added {date} by {author}"),
+        fr: t("{id} · Ajouté le {date} par {author}"),
+    }
+    ContactMetaUpdated "contact.meta_updated" {
+        en: t("{id} · Added {date} by {author} · Updated {when}"),
+        fr: t("{id} · Ajouté le {date} par {author} · Modifié {when}"),
+    }
+    ContactScope "contact.scope" {
+        en: t("{asked}, {report}"),
+        fr: t("{asked}, {report}"),
+    }
+    ContactScopeProjects "contact.scope_projects" {
+        en: t("{asked}, {report} in {n} projects"),
+        fr: t("{asked}, {report} dans {n} projets"),
+    }
+    ContactDuplicate "contact.duplicate" {
+        en: t("Another contact is also named {name}, in {level}."),
+        fr: t("Un autre contact porte aussi ce nom, dans {level} : {name}."),
+    }
+    ContactMergeIntoIt "contact.merge_into_it" {
+        en: t("Merge into it…"),
+        fr: t("Fusionner avec lui…"),
+    }
+    ContactKeepBoth "contact.keep_both" {
+        en: t("Keep both"),
+        fr: t("Garder les deux"),
+    }
+    ContactGo "contact.go" {
+        en: t("Go to {name}"),
+        fr: t("Ouvrir : {name}"),
+    }
+    ContactRename "contact.rename" {
+        en: t("Rename"),
+        fr: t("Renommer"),
+    }
+    ContactMove "contact.move" {
+        en: t("Move to…"),
+        fr: t("Déplacer vers…"),
+    }
+    ContactMerge "contact.merge" {
+        en: t("Merge into…"),
+        fr: t("Fusionner avec…"),
+    }
+    ContactDelete "contact.delete" {
+        en: t("Delete contact"),
+        fr: t("Supprimer le contact"),
+    }
+    ContactMerged "contact.merged" {
+        en: t("Merged into {name}."),
+        fr: t("Fusionné avec : {name}."),
+    }
+    ContactRestoredMerged "contact.restored_merged" {
+        en: t("Contact restored. Its uses stayed with {name}."),
+        fr: t("Contact restauré. Ses usages restent à : {name}."),
+    }
+    ContactDeleted "contact.deleted" {
+        en: t("Contact deleted."),
+        fr: t("Contact supprimé."),
+    }
+    ContactRestored "contact.restored" {
+        en: t("Contact restored."),
+        fr: t("Contact restauré."),
+    }
+    ContactInTrash "contact.in_trash" {
+        en: t("In the trash"),
+        fr: t("Dans la corbeille"),
     }
     DocEditing "doc.editing" {
         en: t("Editing"),
@@ -1889,6 +2361,10 @@ catalogue! {
         en: t("Show memories not updated for 90 days"),
         fr: t("Afficher les mémoires non mises à jour depuis 90 jours"),
     }
+    CmdShowQuestionsLate "cmd.show_questions_late" {
+        en: t("Show questions past their answer date"),
+        fr: t("Afficher les questions dont la date de réponse est passée"),
+    }
     CmdOverviewMore "cmd.overview_more" {
         en: t("Overview: Show more"),
         fr: t("Vue d\u{2019}ensemble\u{a0}: afficher plus"),
@@ -1928,6 +2404,110 @@ catalogue! {
     CmdDueClear "cmd.due_clear" {
         en: t("Clear due date"),
         fr: t("Effacer l\u{2019}échéance"),
+    }
+    CmdQuestionNew "cmd.question_new" {
+        en: t("New question"),
+        fr: t("Nouvelle question"),
+    }
+    CmdQuestionsOpen "cmd.questions_open" {
+        en: t("Go to questions"),
+        fr: t("Aller aux questions"),
+    }
+    CmdReportSet "cmd.report_set" {
+        en: t("Set Report to…"),
+        fr: t("Définir « À rapporter à »…"),
+    }
+    CmdReportClear "cmd.report_clear" {
+        en: t("Clear Report to"),
+        fr: t("Effacer « À rapporter à »"),
+    }
+    CmdReported "cmd.reported" {
+        en: t("Mark reported"),
+        fr: t("Marquer comme rapporté"),
+    }
+    CmdUnreported "cmd.unreported" {
+        en: t("Mark not reported"),
+        fr: t("Marquer comme non rapporté"),
+    }
+    CmdQuestionAnswer "cmd.question_answer" {
+        en: t("Mark question answered"),
+        fr: t("Marquer la question comme répondue"),
+    }
+    CmdQuestionEdit "cmd.question_edit" {
+        en: t("Edit question"),
+        fr: t("Modifier la question"),
+    }
+    CmdQuestionDate "cmd.question_date" {
+        en: t("Set answer date…"),
+        fr: t("Définir la date de réponse…"),
+    }
+    CmdQuestionDateClear "cmd.question_date_clear" {
+        en: t("Clear answer date"),
+        fr: t("Effacer la date de réponse"),
+    }
+    CmdQuestionDrop "cmd.question_drop" {
+        en: t("Drop question"),
+        fr: t("Abandonner la question"),
+    }
+    CmdQuestionReopen "cmd.question_reopen" {
+        en: t("Reopen question"),
+        fr: t("Rouvrir la question"),
+    }
+    CmdQuestionMove "cmd.question_move" {
+        en: t("Move question to…"),
+        fr: t("Déplacer la question vers…"),
+    }
+    CmdQuestionDelete "cmd.question_delete" {
+        en: t("Delete question"),
+        fr: t("Supprimer la question"),
+    }
+    CmdContactsOpen "cmd.contacts_open" {
+        en: t("Go to contacts"),
+        fr: t("Aller aux contacts"),
+    }
+    CmdContactGo "cmd.contact_go" {
+        en: t("Go to contact…"),
+        fr: t("Aller à un contact…"),
+    }
+    CmdContactNew "cmd.contact_new" {
+        en: t("New contact"),
+        fr: t("Nouveau contact"),
+    }
+    CmdContactRename "cmd.contact_rename" {
+        en: t("Rename contact"),
+        fr: t("Renommer le contact"),
+    }
+    CmdContactJobTitle "cmd.contact_job_title" {
+        en: t("Set job title…"),
+        fr: t("Définir la fonction…"),
+    }
+    CmdContactCompany "cmd.contact_company" {
+        en: t("Set company…"),
+        fr: t("Définir l’entreprise…"),
+    }
+    CmdContactAddress "cmd.contact_address" {
+        en: t("Edit how to address them"),
+        fr: t("Modifier comment s’adresser à ce contact"),
+    }
+    CmdContactMove "cmd.contact_move" {
+        en: t("Move contact to…"),
+        fr: t("Déplacer le contact vers…"),
+    }
+    CmdContactMerge "cmd.contact_merge" {
+        en: t("Merge contact into…"),
+        fr: t("Fusionner le contact avec…"),
+    }
+    CmdContactDelete "cmd.contact_delete" {
+        en: t("Delete contact"),
+        fr: t("Supprimer le contact"),
+    }
+    CmdProfileName "cmd.profile_name" {
+        en: t("Set your name"),
+        fr: t("Définir votre nom"),
+    }
+    CmdProfileJobTitle "cmd.profile_job_title" {
+        en: t("Set your job title"),
+        fr: t("Définir votre fonction"),
     }
     CmdSettings "cmd.settings" {
         en: t("Open settings"),
@@ -2545,6 +3125,26 @@ catalogue! {
         en: t("Appearance"),
         fr: t("Apparence"),
     }
+    SettingsProfile "settings.profile" {
+        en: t("Profile"),
+        fr: t("Profil"),
+    }
+    SettingsProfileHint "settings.profile.hint" {
+        en: t("Claude Code sees your name and job title."),
+        fr: t("Claude Code voit votre nom et votre fonction."),
+    }
+    SettingsProfileName "settings.profile.name" {
+        en: t("Name"),
+        fr: t("Nom"),
+    }
+    SettingsProfileNameHint "settings.profile.name_hint" {
+        en: t("Shown on what you write."),
+        fr: t("Affiché sur ce que vous écrivez."),
+    }
+    SettingsProfileJobTitle "settings.profile.job_title" {
+        en: t("Job title"),
+        fr: t("Fonction"),
+    }
     SettingsTheme "settings.theme" {
         en: t("Theme"),
         fr: t("Thème"),
@@ -3008,6 +3608,14 @@ catalogue! {
     TrashEmpty "trash.empty" {
         en: t("Trash is empty."),
         fr: t("La corbeille est vide."),
+    }
+    TrashMergedInto "trash.merged_into" {
+        en: t("Merged into {name}"),
+        fr: t("Fusionné avec : {name}"),
+    }
+    TrashKeptNamed "trash.kept_named" {
+        en: p("Kept: still named in {n} place", "Kept: still named in {n} places"),
+        fr: p("Conservé : encore cité à {n} endroit", "Conservé : encore cité à {n} endroits"),
     }
     SnapshotDaily "snapshot.daily" {
         en: t("Daily"),

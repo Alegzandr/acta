@@ -342,6 +342,8 @@ mod tests {
             "kb.scope"
                 | "import.meta"
                 | "meta.record"
+                | "questions.scope"
+                | "contact.meta"
                 | "ready.state.with_bash"
                 | "ready.state.without_bash"
                 | "ready.state.missing_optional"

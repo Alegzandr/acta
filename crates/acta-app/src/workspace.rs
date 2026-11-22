@@ -16,8 +16,8 @@ use std::time::Duration;
 
 use acta_core::folder_identity::{self, Known, Monitor};
 use acta_core::model::{
-    Author, CommitMode, EpicId, FolderId, KbId, Note, NoteId, Owner, ProjectId, ProjectTree,
-    Record, Status, TopicId,
+    Author, CommitMode, ContactId, ContactLevel, EpicId, FolderId, KbId, Lift, Note, NoteId, Owner,
+    ProjectId, ProjectTree, QuestionId, Record, Status, TopicId,
 };
 use acta_core::store::{EpicPatch, ProjectPatch, TopicPatch, Unread};
 use acta_core::{ChangeWatcher, Store};
@@ -144,8 +144,126 @@ pub enum Undo {
         back: String,
         expect: String,
     },
+    /// A question changed in any way (text, contact asked, answer date,
+    /// answered, dropped, reopened, moved): written back whole.
+    Question {
+        back: Box<acta_core::model::Question>,
+        expect: Box<acta_core::model::Question>,
+    },
+    /// An open question moved among its owner's open questions.
+    QuestionOrder {
+        id: QuestionId,
+        back: usize,
+        expect: usize,
+    },
+    /// Report to of a note, topic or epic, and whether it was reported.
+    ReportTo {
+        record: Record,
+        back: ReportState,
+        expect: ReportState,
+    },
+    /// A contact moved to another level, or lifted by a move.
+    ContactLevel {
+        id: ContactId,
+        back: ContactLevel,
+        expect: ContactLevel,
+    },
+    /// A contact renamed or its details changed.
+    ContactFields {
+        id: ContactId,
+        back: ContactFields,
+        expect: ContactFields,
+    },
+    /// A merge of `from` into `before.id`: take it back, while the
+    /// contact it went into still holds what the merge left (`after`).
+    Unmerge {
+        from: ContactId,
+        before: Box<acta_core::model::Contact>,
+        after: Box<acta_core::model::Contact>,
+        uses: Vec<Record>,
+        trace: acta_core::store::MergeTrace,
+    },
+    /// An unmerge taken back: merge again.
+    Merge {
+        from: ContactId,
+        before: Box<acta_core::model::Contact>,
+        uses: Vec<Record>,
+    },
     /// Several steps taken back as one, all or none.
     Many(Vec<Undo>),
+}
+
+/// Who a record reports to and whether it was marked reported.
+pub type ReportState = (Option<ContactId>, bool);
+
+/// A contact's name, job title, company and address note.
+pub type ContactFields = (String, Option<String>, Option<String>, Option<String>);
+
+pub fn contact_fields(store: &Store, id: ContactId) -> acta_core::Result<ContactFields> {
+    let c = store.contact(id)?;
+    Ok((c.name, c.job_title, c.company, c.address_note))
+}
+
+/// What undo compares of a question: everything but its stamp, its place
+/// among the others and the contact's current name.
+type QuestionKey<'a> = (
+    Owner,
+    &'a str,
+    Option<ContactId>,
+    Option<acta_core::date::Date>,
+    acta_core::model::QuestionStatus,
+    Option<&'a str>,
+    Option<acta_core::model::EntryId>,
+);
+
+fn question_key(q: &acta_core::model::Question) -> QuestionKey<'_> {
+    (
+        q.owner,
+        q.text.as_str(),
+        q.asked_to.as_ref().map(|c| c.id),
+        q.expected_on,
+        q.status,
+        q.answer.as_deref(),
+        q.decision_entry,
+    )
+}
+
+/// Where an open question stands among its owner's open questions.
+pub fn question_index(store: &Store, id: QuestionId) -> acta_core::Result<usize> {
+    let q = store.question(id)?;
+    Ok(store
+        .questions_of(q.owner)?
+        .iter()
+        .filter(|x| x.is_open())
+        .position(|x| x.id == id)
+        .unwrap_or(0))
+}
+
+/// Report to of a note, topic or epic as stored.
+pub fn report_state(store: &Store, record: Record) -> acta_core::Result<ReportState> {
+    Ok(match record {
+        Record::Topic(id) => {
+            let r = store.topic(id)?.report;
+            (r.to.map(|c| c.id), r.at.is_some())
+        }
+        Record::Epic(id) => {
+            let r = store.epic(id)?.report;
+            (r.to.map(|c| c.id), r.at.is_some())
+        }
+        Record::Note(id) => (store.note(id)?.report_to.map(|c| c.id), false),
+        _ => (None, false),
+    })
+}
+
+/// Writes a Report to state: the contact (which resets reported), then
+/// reported when it was.
+pub fn put_report(store: &mut Store, record: Record, state: ReportState) -> acta_core::Result<()> {
+    let me = Author::Human;
+    store.set_report_to(record, state.0, me)?;
+    if state.0.is_some() && !matches!(record, Record::Note(_)) {
+        store.set_reported(record, state.1, me)?;
+    }
+    Ok(())
 }
 
 /// A folder's commit columns: mode, "Commit in my name" (`None`: the
@@ -201,6 +319,37 @@ impl Undo {
                 (e.text, e.kind) == *expect
             }
             Undo::Note { id, expect, .. } => store.note(*id)?.text == *expect,
+            Undo::Question { expect, .. } => {
+                question_key(&store.question(expect.id)?) == question_key(expect)
+            }
+            Undo::QuestionOrder { id, expect, .. } => question_index(store, *id)? == *expect,
+            Undo::ReportTo { record, expect, .. } => report_state(store, *record)? == *expect,
+            Undo::ContactLevel { id, expect, .. } => store.contact(*id)?.level == *expect,
+            Undo::ContactFields { id, expect, .. } => contact_fields(store, *id)? == *expect,
+            Undo::Unmerge {
+                from,
+                before,
+                after,
+                ..
+            } => {
+                let now = store.contact(before.id)?;
+                store.contact_any(*from)?.merged_into == Some(before.id)
+                    && !is_live(store, Record::Contact(*from))?
+                    && (
+                        &now.name,
+                        &now.job_title,
+                        &now.company,
+                        &now.address_note,
+                        now.level,
+                    ) == (
+                        &after.name,
+                        &after.job_title,
+                        &after.company,
+                        &after.address_note,
+                        after.level,
+                    )
+            }
+            Undo::Merge { from, .. } => is_live(store, Record::Contact(*from))?,
             Undo::Unfile(id) => !store.note(*id)?.is_open(),
             Undo::Refile(before) => store.note(before.id)?.is_open(),
             Undo::Many(all) => {
@@ -405,6 +554,82 @@ impl Undo {
                     expect: store.note(*id)?.text,
                 }
             }
+            Undo::Question { back, expect } => {
+                store.put_question(back, me)?;
+                Undo::Question {
+                    back: expect.clone(),
+                    expect: Box::new(store.question(back.id)?),
+                }
+            }
+            Undo::QuestionOrder { id, back, expect } => {
+                store.reorder_question(*id, *back, me)?;
+                Undo::QuestionOrder {
+                    id: *id,
+                    back: *expect,
+                    expect: question_index(store, *id)?,
+                }
+            }
+            Undo::ReportTo {
+                record,
+                back,
+                expect,
+            } => {
+                put_report(store, *record, *back)?;
+                Undo::ReportTo {
+                    record: *record,
+                    back: *expect,
+                    expect: report_state(store, *record)?,
+                }
+            }
+            Undo::ContactLevel { id, back, expect } => {
+                store.move_contact(*id, *back, me)?;
+                Undo::ContactLevel {
+                    id: *id,
+                    back: *expect,
+                    expect: store.contact(*id)?.level,
+                }
+            }
+            Undo::ContactFields { id, back, expect } => {
+                store.update_contact(
+                    *id,
+                    acta_core::store::ContactPatch {
+                        name: Some(back.0.clone()),
+                        job_title: Some(back.1.clone()),
+                        company: Some(back.2.clone()),
+                        address_note: Some(back.3.clone()),
+                    },
+                    me,
+                )?;
+                Undo::ContactFields {
+                    id: *id,
+                    back: expect.clone(),
+                    expect: contact_fields(store, *id)?,
+                }
+            }
+            Undo::Unmerge {
+                from,
+                before,
+                uses,
+                trace,
+                ..
+            } => {
+                store.unmerge_contacts(*from, before, uses, trace, me)?;
+                Undo::Merge {
+                    from: *from,
+                    before: before.clone(),
+                    uses: uses.clone(),
+                }
+            }
+            Undo::Merge { from, before, uses } => {
+                let trace = store.merge_contacts(*from, before.id, me)?;
+                Undo::Unmerge {
+                    from: *from,
+                    before: before.clone(),
+                    after: Box::new(store.contact(before.id)?),
+                    uses: uses.clone(),
+                    trace,
+                }
+            }
             Undo::Unfile(id) => {
                 let filed = store.note(*id)?;
                 store.unfile_note(*id, me)?;
@@ -573,6 +798,9 @@ pub struct Workspace {
     pub db: Db,
     pub bulk: Option<BulkOffer>,
     pub projects: Vec<ProjectTree>,
+    /// How many live contacts exist: the sidebar's Contacts row shows only
+    /// once one does (components-contacts.md 5).
+    pub contacts: usize,
     /// What Claude Code changed since this installation last showed it
     /// (the unread dots; data.md request 1), reloaded with the tree.
     pub unread: Unread,
@@ -666,6 +894,7 @@ impl Workspace {
             db,
             bulk: None,
             projects: Vec::new(),
+            contacts: 0,
             unread: Unread::default(),
             revision: 0,
             git_epoch: 0,
@@ -691,12 +920,16 @@ impl Workspace {
                 load_trees(store)?,
                 store.unread()?,
                 store.monitored_folders()?,
+                store.profile()?.name,
+                store.contact_count()?,
             ))
         });
         self._reload = cx.spawn(async move |this, cx| {
             let loaded = task.await;
             let _ = this.update(cx, |ws, cx| match loaded {
-                Ok((projects, unread, folders)) => {
+                Ok((projects, unread, folders, name, contacts)) => {
+                    crate::when::set_profile_name(name);
+                    ws.contacts = contacts;
                     ws.projects = projects;
                     ws.unread = unread;
                     ws.known_folders = folders;
@@ -1085,8 +1318,9 @@ impl Workspace {
     /// epic), undoably (interaction.md 6.1, `M`).
     pub fn move_topic(&mut self, id: TopicId, epic: Option<EpicId>, cx: &mut Context<Self>) {
         let project = self.project_of(Owner::Topic(id));
-        self.undoable(cx, project, None, move |store| {
+        let task = self.write_undoable(cx, project, None, move |store| {
             let back = store.topic(id)?.epic;
+            store.take_lifts();
             store.update_topic(
                 id,
                 TopicPatch {
@@ -1095,15 +1329,40 @@ impl Workspace {
                 },
                 Author::Human,
             )?;
-            Ok((
-                Undo::TopicEpic {
-                    id,
-                    back,
-                    expect: epic,
-                },
-                (),
-            ))
+            let moved = Undo::TopicEpic {
+                id,
+                back,
+                expect: epic,
+            };
+            with_lifts(store, moved)
         });
+        self.toast_lifts(task, cx);
+    }
+
+    /// Once a move that may have lifted contacts is written, say so with
+    /// Undo (components-contacts.md 5, Levels): one toast per lift.
+    pub fn toast_lifts(
+        &mut self,
+        task: Task<Result<Vec<Lifted>, WriteError>>,
+        cx: &mut Context<Self>,
+    ) {
+        cx.spawn(async move |ws, cx| {
+            let Ok(lifted) = task.await else { return };
+            let _ = ws.update(cx, |ws, cx| {
+                let locale = crate::settings::locale(cx);
+                for l in lifted {
+                    let message = crate::contacts_model::lifted(
+                        locale,
+                        &l.name,
+                        l.to,
+                        &l.record,
+                        &ws.projects,
+                    );
+                    ws.toast(message, ToastKind::Undo, cx);
+                }
+            });
+        })
+        .detach();
     }
 
     /// Delete a record to the trash, with "{kind} deleted." and Undo.
@@ -1407,6 +1666,46 @@ impl Workspace {
     }
 }
 
+/// A contact a move lifted: its name, the level it went to, and the title
+/// of the record that needed it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Lifted {
+    pub name: String,
+    pub to: ContactLevel,
+    pub record: String,
+}
+
+/// Inside a move's transaction, after the move: the lifts it made, as
+/// undo steps taken back after the move's own, and as toasts.
+pub fn with_lifts(store: &mut Store, moved: Undo) -> acta_core::Result<(Undo, Vec<Lifted>)> {
+    let lifts: Vec<Lift> = store.take_lifts();
+    if lifts.is_empty() {
+        return Ok((moved, Vec::new()));
+    }
+    let mut steps = vec![moved];
+    let mut lifted = Vec::new();
+    for l in lifts {
+        steps.push(Undo::ContactLevel {
+            id: l.contact,
+            back: l.from,
+            expect: l.to,
+        });
+        let record = match l.record {
+            Record::Topic(t) => store.topic(t)?.title,
+            Record::Question(q) => store.question(q)?.text,
+            Record::Epic(e) => store.epic(e)?.title,
+            Record::Note(n) => store.note(n)?.text.lines().next().unwrap_or("").to_owned(),
+            other => other.to_string(),
+        };
+        lifted.push(Lifted {
+            name: store.contact(l.contact)?.name,
+            to: l.to,
+            record,
+        });
+    }
+    Ok((Undo::Many(steps), lifted))
+}
+
 /// The toast of a delete, by kind. Folders are removed, not deleted, and
 /// name themselves (components-folders.md 5).
 pub fn deleted_key(record: Record) -> Option<Key> {
@@ -1417,7 +1716,9 @@ pub fn deleted_key(record: Record) -> Option<Key> {
         Record::Entry(_) => Key::EntryDeleted,
         Record::Note(_) => Key::NoteDeleted,
         Record::Kb(_) => Key::KbDeleted,
-        Record::Folder(_) | Record::Question(_) | Record::Contact(_) => return None,
+        Record::Question(_) => Key::QuestionDeleted,
+        Record::Contact(_) => Key::ContactDeleted,
+        Record::Folder(_) => return None,
     })
 }
 
@@ -1783,6 +2084,129 @@ mod tests {
             assert!(step.apply(store).unwrap().is_none());
             assert_eq!(due_on(store, owner).unwrap(), later);
         }
+    }
+
+    #[test]
+    fn an_answer_and_its_decision_are_undone_and_redone_as_one_step() {
+        use acta_core::store::NewQuestion;
+        let mut temp = temp_store();
+        let store = &mut temp.store;
+        let (_, id) = topic(store);
+        let q = store
+            .ask(
+                NewQuestion {
+                    owner: Owner::Topic(id),
+                    text: "Keep v1 until March?".into(),
+                    asked_to: None,
+                    expected_on: None,
+                },
+                Author::Human,
+            )
+            .unwrap();
+        let back = store.question(q).unwrap();
+        let entry = store
+            .answer(q, Some("Yes."), true, Author::Human)
+            .unwrap()
+            .expect("logged");
+        let step = Undo::Many(vec![
+            Undo::Question {
+                back: Box::new(back),
+                expect: Box::new(store.question(q).unwrap()),
+            },
+            Undo::Delete(Record::Entry(entry.id)),
+        ]);
+        let redo = step.apply(store).unwrap().expect("undone");
+        assert!(store.question(q).unwrap().is_open());
+        assert!(store.entry(entry.id).is_err(), "the decision went too");
+        assert!(redo.apply(store).unwrap().is_some());
+        assert!(!store.question(q).unwrap().is_open());
+        assert!(store.entry(entry.id).is_ok());
+    }
+
+    #[test]
+    fn report_to_and_a_contact_made_inline_go_back_together() {
+        use acta_core::model::ContactLevel;
+        let mut temp = temp_store();
+        let store = &mut temp.store;
+        let (project, id) = topic(store);
+        let record = Record::Topic(id);
+        let marie = store
+            .create_contact("Marie", ContactLevel::Project(project), Author::Human)
+            .unwrap();
+        store
+            .set_report_to(record, Some(marie), Author::Human)
+            .unwrap();
+        store.set_reported(record, true, Author::Human).unwrap();
+        let step = Undo::Many(vec![
+            Undo::ReportTo {
+                record,
+                back: (None, false),
+                expect: (Some(marie), true),
+            },
+            Undo::Delete(Record::Contact(marie)),
+        ]);
+        let redo = step.apply(store).unwrap().expect("undone");
+        assert_eq!(report_state(store, record).unwrap(), (None, false));
+        assert!(store.contact(marie).is_err());
+        assert!(redo.apply(store).unwrap().is_some());
+        assert_eq!(report_state(store, record).unwrap(), (Some(marie), true));
+    }
+
+    #[test]
+    fn a_merge_is_undone_with_its_references() {
+        use acta_core::model::ContactLevel;
+        let mut temp = temp_store();
+        let store = &mut temp.store;
+        let (project, id) = topic(store);
+        let level = ContactLevel::Project(project);
+        let a = store.create_contact("Marie", level, Author::Human).unwrap();
+        let b = store
+            .create_contact("Marie Dubois", level, Author::Human)
+            .unwrap();
+        store
+            .set_report_to(Record::Topic(id), Some(a), Author::Human)
+            .unwrap();
+        let before = store.contact(b).unwrap();
+        let uses: Vec<Record> = store
+            .contact_uses(a)
+            .unwrap()
+            .into_iter()
+            .map(|u| u.record)
+            .collect();
+        let trace = store.merge_contacts(a, b, Author::Human).unwrap();
+        let step = Undo::Unmerge {
+            from: a,
+            before: Box::new(before),
+            after: Box::new(store.contact(b).unwrap()),
+            uses,
+            trace,
+        };
+        // Changed since the merge: the undo is skipped.
+        store
+            .update_contact(
+                b,
+                acta_core::store::ContactPatch {
+                    company: Some(Some("Acme".into())),
+                    ..Default::default()
+                },
+                Author::Human,
+            )
+            .unwrap();
+        assert!(step.apply(store).unwrap().is_none());
+        store
+            .update_contact(
+                b,
+                acta_core::store::ContactPatch {
+                    company: Some(None),
+                    ..Default::default()
+                },
+                Author::Human,
+            )
+            .unwrap();
+        let redo = step.apply(store).unwrap().expect("undone");
+        assert_eq!(report_state(store, Record::Topic(id)).unwrap().0, Some(a));
+        assert!(redo.apply(store).unwrap().is_some());
+        assert_eq!(report_state(store, Record::Topic(id)).unwrap().0, Some(b));
     }
 
     #[test]

@@ -3,12 +3,14 @@
 //! note in that project's inbox and closes, with no toast; `Esc` closes and
 //! keeps the draft. It never navigates away from what was being read.
 
-use acta_core::model::{Author, ProjectId};
-use gpui_kit::component::input::{Escape, InputEvent, Textarea, TextareaState};
+use acta_core::model::{Place, ProjectId};
+use gpui_kit::component::input::{Escape, IndentInline, InputEvent, Textarea, TextareaState};
 use gpui_kit::{
-    AppContext, Context, Entity, EventEmitter, InteractiveElement, IntoElement, ParentElement,
-    Render, StatefulInteractiveElement, Styled, Subscription, Window, div, px,
+    AppContext, Context, Entity, EventEmitter, Focusable, InteractiveElement, IntoElement,
+    ParentElement, Render, StatefulInteractiveElement, Styled, Subscription, Window, div, px,
 };
+
+use crate::contact_picker::{ContactPicker, Mode, PickerEvent, Value};
 
 use crate::i18n::{Arg, Key, KeyName, text, tr};
 use crate::settings;
@@ -27,7 +29,9 @@ pub struct Capture {
     project: ProjectId,
     project_title: String,
     editor: Entity<TextareaState>,
-    _sub: Subscription,
+    /// Report to (components-questions.md 5, Notes): empty each time.
+    report: Entity<ContactPicker>,
+    _subs: Vec<Subscription>,
 }
 
 impl EventEmitter<CaptureEvent> for Capture {}
@@ -60,24 +64,47 @@ impl Capture {
                 .default_value(draft)
         });
         editor.update(cx, |state, cx| state.focus(window, cx));
-        let sub = cx.subscribe_in(
-            &editor,
-            window,
-            |capture, _, event: &InputEvent, window, cx| {
-                if let InputEvent::PressEnter {
-                    secondary: true, ..
-                } = event
-                {
-                    capture.save(window, cx);
-                }
-            },
-        );
+        let place = Place {
+            project,
+            epic: None,
+        };
+        let report = {
+            let ws = ws.clone();
+            cx.new(|cx| ContactPicker::new(ws, place, Value::None, Mode::Inline, window, cx))
+        };
+        let subs = vec![
+            cx.subscribe_in(
+                &editor,
+                window,
+                |capture, _, event: &InputEvent, window, cx| {
+                    if let InputEvent::PressEnter {
+                        secondary: true, ..
+                    } = event
+                    {
+                        capture.save(window, cx);
+                    }
+                },
+            ),
+            cx.subscribe_in(
+                &report,
+                window,
+                |capture, _, event: &PickerEvent, window, cx| match event {
+                    PickerEvent::Submit => capture.save(window, cx),
+                    PickerEvent::Cancel => capture.close(cx),
+                    PickerEvent::Tab(true) | PickerEvent::Taken(_, Some(true)) => {
+                        capture.editor.update(cx, |s, cx| s.focus(window, cx))
+                    }
+                    _ => cx.notify(),
+                },
+            ),
+        ];
         Self {
             ws,
             project,
             project_title,
             editor,
-            _sub: sub,
+            report,
+            _subs: subs,
         }
     }
 
@@ -89,9 +116,10 @@ impl Capture {
         self.editor
             .update(cx, |state, cx| state.set_value("", window, cx));
         let project = self.project;
+        let person = self.report.read(cx).value().clone();
         self.ws.update(cx, |ws, cx| {
             ws.write_detached(cx, Key::ErrorSave, move |store| {
-                store.add_note(project, &body, Author::Human)
+                crate::inbox_page::add_note_with(store, project, &body, person)
             });
         });
         cx.emit(CaptureEvent::Close(String::new()));
@@ -127,9 +155,19 @@ impl Render for Capture {
             .border_color(t.border_default)
             .rounded(px(RADIUS_XL))
             .shadow(vec![t.shadow_overlay()])
-            .capture_action(cx.listener(|capture, _: &Escape, _, cx| {
-                capture.close(cx);
-                cx.stop_propagation();
+            .capture_action(cx.listener(|capture, _: &Escape, window, cx| {
+                // The picker's own Esc closes its list first.
+                if !capture.report.focus_handle(cx).contains_focused(window, cx) {
+                    capture.close(cx);
+                    cx.stop_propagation();
+                }
+            }))
+            .capture_action(cx.listener(|capture, _: &IndentInline, window, cx| {
+                // In capture, Tab moves to Report to (it does not indent).
+                if capture.editor.read(cx).focus_handle(cx).is_focused(window) {
+                    capture.report.update(cx, |p, cx| p.focus(window, cx));
+                    cx.stop_propagation();
+                }
             }))
             .child(
                 div().flex().flex_row().child(
@@ -163,6 +201,22 @@ impl Render for Capture {
                     .justify_end()
                     .gap(px(8.))
                     .h(px(28.))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(8.))
+                            .flex_1()
+                            .child(
+                                type_scale::SMALL
+                                    .el()
+                                    .flex_shrink_0()
+                                    .text_color(t.text_tertiary)
+                                    .child(text(locale, Key::PropReportTo)),
+                            )
+                            .child(div().w(px(240.)).child(self.report.clone())),
+                    )
                     .child(type_scale::SMALL.el().text_color(t.text_tertiary).child(tr(
                         locale,
                         Key::ComposerHint,
