@@ -161,6 +161,7 @@ dependencies = [
 name = "acta-terminal"
 version = "0.4.1"
 dependencies = [
+ "acta-core",
  "alacritty_terminal",
  "async-channel",
  "gpui-kit",

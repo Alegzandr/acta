@@ -3,9 +3,14 @@
 //! Nothing here touches GPUI. The existence checks and the `PATH` search read the
 //! file system, so the app calls [`launch_spec_for_claude`] on a background executor.
 
-use std::ffi::OsString;
 use std::fmt;
 use std::path::{Path, PathBuf};
+
+/// The resolver moved into `acta-core` (ADR 0013): one search for the
+/// terminal, the checklist and `acta setup --check`.
+pub use acta_core::prereqs::{
+    ClaudeProgram, claude_session_vars, resolve_claude, resolve_unix, resolve_windows,
+};
 
 /// A program to run in the terminal. `env` is added to the inherited
 /// environment; the session adds `TERM`, `COLORTERM` and `TERM_PROGRAM` itself.
@@ -92,17 +97,6 @@ impl fmt::Display for LaunchError {
 }
 
 impl std::error::Error for LaunchError {}
-
-/// How `claude` is reached on this machine.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ClaudeProgram {
-    /// A native executable, spawned directly.
-    Exe(PathBuf),
-    /// A Windows `.cmd` shim, run through `%ComSpec% /d /s /c`.
-    CmdShim { comspec: String, shim: PathBuf },
-    /// A Unix login shell that resolves `claude` from the user's own `PATH`.
-    LoginShell(String),
-}
 
 /// `claude` with the effective folders of the page it was opened from:
 /// working directory = the first folder, `--add-dir` for each other folder
@@ -309,51 +303,6 @@ fn quote_word(word: &str) -> String {
     format!("\"{word}{}\"", "\\".repeat(trailing))
 }
 
-/// Find `claude` the way ADR 0002 point 3 says, for this platform.
-pub fn resolve_claude() -> Option<ClaudeProgram> {
-    #[cfg(windows)]
-    {
-        let mut dirs: Vec<PathBuf> = std::env::var_os("PATH")
-            .map(|path| std::env::split_paths(&path).collect())
-            .unwrap_or_default();
-        if let Some(home) = std::env::var_os("USERPROFILE") {
-            dirs.push(PathBuf::from(home).join(".local").join("bin"));
-        }
-        let comspec = std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".to_owned());
-        resolve_windows(&dirs, comspec, |path| path.is_file())
-    }
-    #[cfg(not(windows))]
-    {
-        let shell = std::env::var_os("SHELL");
-        let home = std::env::var_os("HOME").map(PathBuf::from);
-        resolve_unix(shell, home.as_deref(), |path| path.is_file())
-    }
-}
-
-/// The variables of a Claude Code session among `names` (an environment's
-/// variable names): what a Claude Code sets for the programs it starts.
-/// An Acta started from a Claude Code shell inherits them, and a `claude`
-/// started in Acta's terminal would then take itself for a child of that
-/// session (no transcript, a nested session). Only when the environment is
-/// such a session's (`CLAUDECODE` set), since a user may set `CLAUDE_CODE_*`
-/// options in their own environment.
-pub fn claude_session_vars<S: AsRef<str>>(names: &[S]) -> Vec<String> {
-    let is = |name: &str, want: &str| name.eq_ignore_ascii_case(want);
-    let in_session = names.iter().any(|n| is(n.as_ref(), "CLAUDECODE"));
-    if !in_session {
-        return Vec::new();
-    }
-    names
-        .iter()
-        .map(AsRef::as_ref)
-        .filter(|name| {
-            let upper = name.to_ascii_uppercase();
-            upper == "CLAUDECODE" || upper == "CLAUDE_PID" || upper.starts_with("CLAUDE_CODE_")
-        })
-        .map(str::to_owned)
-        .collect()
-}
-
 /// Remove [`claude_session_vars`] from this process's environment, so
 /// every program Acta starts (the terminal's shell and `claude`) begins a
 /// session of its own.
@@ -376,55 +325,6 @@ pub unsafe fn scrub_claude_session() {
         // SAFETY: the caller guarantees no other thread runs yet.
         unsafe { std::env::remove_var(name) };
     }
-}
-
-/// `claude.exe` anywhere on the search path wins over a `claude.cmd` shim.
-pub fn resolve_windows(
-    dirs: &[PathBuf],
-    comspec: String,
-    is_file: impl Fn(&Path) -> bool,
-) -> Option<ClaudeProgram> {
-    if let Some(exe) = dirs
-        .iter()
-        .map(|dir| dir.join("claude.exe"))
-        .find(|p| is_file(p))
-    {
-        return Some(ClaudeProgram::Exe(exe));
-    }
-    dirs.iter()
-        .map(|dir| dir.join("claude.cmd"))
-        .find(|p| is_file(p))
-        .map(|shim| ClaudeProgram::CmdShim { comspec, shim })
-}
-
-/// Shells known to take `-l -i -c script $0 args...`; any other `$SHELL`
-/// (fish, nu) falls back to the well-known install locations.
-const POSIX_SHELLS: [&str; 5] = ["bash", "zsh", "sh", "dash", "ksh"];
-
-pub fn resolve_unix(
-    shell: Option<OsString>,
-    home: Option<&Path>,
-    is_file: impl Fn(&Path) -> bool,
-) -> Option<ClaudeProgram> {
-    if let Some(shell) = shell {
-        let path = PathBuf::from(&shell);
-        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        if POSIX_SHELLS.contains(&name) && is_file(&path) {
-            return Some(ClaudeProgram::LoginShell(
-                shell.to_string_lossy().into_owned(),
-            ));
-        }
-    }
-    let mut candidates = Vec::new();
-    if let Some(home) = home {
-        candidates.push(home.join(".local/bin/claude"));
-    }
-    candidates.push(PathBuf::from("/opt/homebrew/bin/claude"));
-    candidates.push(PathBuf::from("/usr/local/bin/claude"));
-    candidates
-        .into_iter()
-        .find(|p| is_file(p))
-        .map(ClaudeProgram::Exe)
 }
 
 #[cfg(test)]
