@@ -2722,7 +2722,7 @@ fn questions_and_contacts_are_resolved_answered_and_refused_exactly() {
         })),
         budget::CREATE,
     );
-    assert_eq!(ack, "ok C-2 Marie (P-1)");
+    assert_eq!(ack, "ok created C-2 Marie (P-1)");
     let r = a.create(one(CreateItem {
         kind: "contact".into(),
         title: "Paul".into(),
@@ -2754,7 +2754,10 @@ fn questions_and_contacts_are_resolved_answered_and_refused_exactly() {
         }),
         budget::CREATE,
     );
-    assert_eq!(ack, "ok C-3 Legal team (E-1) · Q-1 (T-1) · asked C-3");
+    assert_eq!(
+        ack,
+        "ok created C-3 Legal team (E-1) · Q-1 (T-1) · asked C-3 (created in this call)"
+    );
     let ack = ok(
         a.create(q(
             "Can we keep the v1 export format until March?",
@@ -2766,7 +2769,11 @@ fn questions_and_contacts_are_resolved_answered_and_refused_exactly() {
         )),
         budget::CREATE,
     );
-    assert_eq!(ack, "ok Q-2 (T-1) · asked C-2 · by 2026-12-04 (in 13d)");
+    assert_eq!(
+        ack,
+        "ok Q-2 (T-1) · asked C-2 (existing contact) · by 2026-12-04 (in 13d)"
+    );
+    assert!(!ack.contains("created"), "{ack}");
     let ack = ok(
         a.create(q(
             "Budget for the disks?",
@@ -2940,7 +2947,7 @@ fn questions_and_contacts_are_resolved_answered_and_refused_exactly() {
         )),
         budget::ACK,
     );
-    assert_eq!(ack, "ok T-1 · report to C-2");
+    assert_eq!(ack, "ok T-1 · report to C-2 (existing contact)");
     let r = a.update(up(
         "T-1",
         UpdateArgs {
@@ -3012,7 +3019,10 @@ fn questions_and_contacts_are_resolved_answered_and_refused_exactly() {
         )),
         budget::ACK,
     );
-    assert_eq!(ack, "ok E-1 · report to C-3 · reported to C-3");
+    assert_eq!(
+        ack,
+        "ok E-1 · report to C-3 (existing contact) · reported to C-3"
+    );
     // A note sees no epic contact.
     ok(
         a.create(one(CreateItem {

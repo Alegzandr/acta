@@ -1384,7 +1384,10 @@ fn questions_contacts_and_report_to_over_stdio() {
     assert!(ok && out.starts_with("ok T-1"), "{out}{err}");
     // A contact from the CLI, its name on stdin; a note naming it.
     let (ok, out, err) = cli(&data, &repo, &["create", "contact"], "Hélène");
-    assert!(ok && out.trim() == "ok C-1 Hélène (P-1)", "{out}{err}");
+    assert!(
+        ok && out.trim() == "ok created C-1 Hélène (P-1)",
+        "{out}{err}"
+    );
     let (ok, out, err) = cli(
         &data,
         &repo,
@@ -1413,7 +1416,9 @@ fn questions_contacts_and_report_to_over_stdio() {
         json!({"items": [{"kind": "contact", "title": "Marie"}, with_new]}),
     );
     assert!(
-        !err && ack.starts_with("ok C-2 Marie (P-1) · Q-1 (T-1) · asked C-2 · by 2000-01-03 ("),
+        !err && ack.starts_with(
+            "ok created C-2 Marie (P-1) · Q-1 (T-1) · asked C-2 (created in this call) · by 2000-01-03 ("
+        ),
         "{ack}"
     );
     assert!(chars(&ack) <= 320);
@@ -1483,7 +1488,7 @@ fn questions_contacts_and_report_to_over_stdio() {
         json!({"id": "T-1", "report_to": "Marie", "status": "done"}),
     );
     assert!(
-        !err && ack == "ok T-1 updated: status · report to C-2",
+        !err && ack == "ok T-1 updated: status · report to C-2 (existing contact)",
         "{ack}"
     );
     let (_, found) = m.call("find", json!({"person": "C-2"}));
@@ -1537,7 +1542,10 @@ fn questions_contacts_and_report_to_over_stdio() {
         &["create", "contact", "--level", "E-1"],
         "Legal team",
     );
-    assert!(ok && out.trim() == "ok C-3 Legal team (E-1)", "{out}{err}");
+    assert!(
+        ok && out.trim() == "ok created C-3 Legal team (E-1)",
+        "{out}{err}"
+    );
     let (ok, out, err) = cli(
         &data,
         &repo,
@@ -1553,7 +1561,7 @@ fn questions_contacts_and_report_to_over_stdio() {
         r#"{"title": "Which disk vendor?", "asked_to": "legal TEAM"}"#,
     );
     assert!(
-        ok && out.starts_with("ok Q-3 (T-1) · asked C-3 · by 2099-12-04"),
+        ok && out.starts_with("ok Q-3 (T-1) · asked C-3 (existing contact) · by 2099-12-04"),
         "{out}{err}"
     );
     let (ok, out, err) = cli(&data, &repo, &["create", "question"], "Who pays?");
@@ -1589,7 +1597,10 @@ fn questions_contacts_and_report_to_over_stdio() {
         &["update", "E-1", "--field", "report_to"],
         "Legal team",
     );
-    assert!(ok && out.trim() == "ok E-1 · report to C-3", "{out}{err}");
+    assert!(
+        ok && out.trim() == "ok E-1 · report to C-3 (existing contact)",
+        "{out}{err}"
+    );
     let (ok, out, err) = cli(&data, &repo, &["update", "T-1", "--reported", "false"], "");
     assert!(ok && out.trim() == "ok T-1 · not reported", "{out}{err}");
     let (ok, out, err) = cli(&data, &repo, &["update", "C-3", "--level", "P-1"], "");

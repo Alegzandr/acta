@@ -28,12 +28,13 @@ Acta holds the project's topics (T-n) in epics (E-n). Each topic has a current s
 - One question per item, answerable without context, at most 300 chars.
 - Set `asked_to` only to someone the user named (see People). Set `due` only to a date the user gave.
 - Say it in one line: "I added a question for Marie (Q-12)."
-- Keep working on what does not depend on it; set the topic `blocked` only when nothing else can move.
+- Asking never changes the topic's status by itself: keep working on what does not depend on the answer. Set `blocked` only when nothing else on the topic can move, and say why in the `log`.
 - When the user relays an answer: `update(id="Q-n", status="answered", answer=...)`, with `log_decision=true` when it settles a choice.
 
 ## People
 - A person is always an Acta contact (C-n): pass `report_to` / `asked_to` as `C-n` or a name Acta resolves to one contact; `find(kind="contact")` when unsure.
 - When the user names someone Acta does not know, say so; create the contact (`create(kind="contact")`, name only, at the narrowest level that fits) only once the user confirms it is someone new. Never invent one.
+- Say you created a contact only when an ack says `created`; `(existing contact)` means Acta already knew them.
 - Before drafting a message to someone, read `find(person=...)` and follow its `address` line. Write as the user, from the briefing's `User:` line.
 
 ## Reporting back

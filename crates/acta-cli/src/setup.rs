@@ -1052,6 +1052,8 @@ mod tests {
         assert_eq!(section("Reporting back"), 4);
         assert!(section("People") <= 6);
         assert!(text.contains("Never invent one"));
+        assert!(text.contains("Asking never changes the topic's status"));
+        assert!(text.contains("only when an ack says `created`"));
     }
 
     #[test]

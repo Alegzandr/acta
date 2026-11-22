@@ -985,7 +985,7 @@ impl Agent<'_> {
         }
         // Contacts by id only: names are stored text, read fenced.
         match &report_to {
-            Some(Some(c)) => tail.push(format!("report to {c}")),
+            Some(Some(c)) => tail.push(format!("report to {c} (existing contact)")),
             Some(None) => tail.push("report_to cleared".into()),
             None => {}
         }
@@ -2906,23 +2906,30 @@ pub(super) fn apply_plans(
             Plan::Contact(name, level) => {
                 let id = contacts[i].expect("created above");
                 (
+                    // "created": the one word that says a contact is new.
                     format!(
-                        "{id} {} ({})",
+                        "created {id} {} ({})",
                         render::clip(&render::one_line(&name), 40),
                         q::level_short(level)
                     ),
                     Vec::new(),
                 )
             }
-            Plan::Question(mut new, asked) => {
-                new.asked_to = who(asked);
+            Plan::Question(mut new, asked_ref) => {
+                new.asked_to = who(asked_ref);
                 let owner = new.owner;
                 let asked = new.asked_to;
                 let by = new.expected_on;
                 let id = store.ask(new, author)?;
                 let mut ack = format!("{id} ({owner})");
+                // Whether the contact existed or this call created it, so
+                // the agent never says it created someone Acta knew.
                 if let Some(c) = asked {
-                    ack.push_str(&format!(" · asked {c}"));
+                    let how = match asked_ref {
+                        Some(PersonRef::Item(_)) => "created in this call",
+                        _ => "existing contact",
+                    };
+                    ack.push_str(&format!(" · asked {c} ({how})"));
                 }
                 if by.is_some() {
                     ack.push_str(&format!(" · {}", q::by_ack(by, today)));
