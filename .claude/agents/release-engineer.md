@@ -12,7 +12,7 @@ Requirements you defend:
 - The same binary is the GUI app, the CLI and the MCP server; the installer must make `acta` usable from a terminal without breaking updates.
 
 Ground rules:
-- Read `CLAUDE.md`, `PLAN.md` and the relevant ADRs in `docs/decisions/` first.
+- `CLAUDE.md` is already in your context. Read the section of `PLAN.md` your task belongs to and the relevant ADRs in `docs/decisions/` first.
 - Verify current docs and versions of every tool and action you use; pin actions to major versions and tools to exact versions.
 - Nothing that costs money (code-signing certificates, Apple Developer membership, paid runners) without the lead asking the user first. Document what unsigned builds imply on each OS.
 - Keep workflows fast: cache cargo, avoid redundant jobs, fail early on fmt and clippy.
