@@ -162,8 +162,20 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: scripts/ci/windows-perl.ps1
+      - name: libclang for whisper.cpp's bindings (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: scripts/ci/windows-libclang.ps1
+      # whisper.cpp is built with CMake (ADR 0014). For the Intel build on the Apple
+      # silicon runner, CMake must target x86_64: whisper-rs-sys hands CMAKE_*
+      # variables to CMake, and ggml then picks its x86 code paths. The cmake crate
+      # would pass the same value; stating it keeps the cross build explicit.
       - name: cargo build --release
-        run: cargo build --release --locked --target "$TARGET"
+        run: |
+          if [ "$TARGET" = x86_64-apple-darwin ]; then
+            export CMAKE_OSX_ARCHITECTURES=x86_64
+          fi
+          cargo build --release --locked --target "$TARGET"
       # The packaging scripts put this directory into every package.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:

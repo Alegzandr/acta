@@ -220,6 +220,11 @@ mod tree {
     #[cfg(windows)]
     pub struct Tree(Option<windows_sys::Win32::Foundation::HANDLE>);
 
+    // SAFETY: the job handle is owned by this value alone and Win32 job
+    // calls may come from any thread.
+    #[cfg(windows)]
+    unsafe impl Send for Tree {}
+
     #[cfg(windows)]
     impl Tree {
         /// No job: `kill` ends the child alone.
@@ -366,7 +371,7 @@ mod tests {
     fn shell(script: &str) -> Command {
         if cfg!(windows) {
             let mut c = Command::new("cmd");
-            c.args(["/C", script]);
+            c.args(["/C", script]).env("PATH", crate::test_child_path());
             c
         } else {
             let mut c = Command::new("sh");
