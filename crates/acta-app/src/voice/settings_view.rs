@@ -49,6 +49,8 @@ pub struct VoiceSettings {
     microphone_focus: FocusHandle,
     anchors: [AnchorBounds; 3],
     model_anchor: AnchorBounds,
+    /// The pointer is over the Microphone row (its level bar runs).
+    mic_hovered: bool,
 }
 
 /// Debug captures: each model's row state and the free space, forced
@@ -98,6 +100,7 @@ impl VoiceSettings {
             microphone_focus,
             anchors: Default::default(),
             model_anchor: AnchorBounds::default(),
+            mic_hovered: false,
         }
     }
 
@@ -694,19 +697,25 @@ impl Render for VoiceSettings {
                 &t,
                 cx,
             );
-            // The level bar is live while this row is on screen.
-            let preview = self.d.clone();
-            let shown = ui::measure(move |bounds, window| {
-                let viewport = window.viewport_size();
-                let on_screen = bounds.bottom() > px(0.) && bounds.top() < viewport.height;
-                if on_screen {
-                    window.defer_preview(preview.clone());
-                }
-            });
+            // The level bar opens the microphone only while the person is
+            // at this row: the pointer over it, or its dropdown focused or
+            // open. Settings being open is not enough (privacy: the
+            // system's microphone sign and permission prompt).
+            let at_row = self.mic_hovered
+                || self.microphone_focus.contains_focused(window, cx)
+                || self.open == Some(Menu::Microphone);
+            if at_row {
+                window.defer_preview(self.d.clone());
+            }
             // The row's description is the button's level bar, so the
             // right device can be checked by speaking.
             out.push(
                 div()
+                    .id("voice-microphone-row")
+                    .on_hover(cx.listener(|s, hovered: &bool, _, cx| {
+                        s.mic_hovered = *hovered;
+                        cx.notify();
+                    }))
                     .flex()
                     .flex_row()
                     .items_center()
@@ -728,8 +737,7 @@ impl Render for VoiceSettings {
                             .child(super::ui::level_bar(
                                 acta_core::voice::level::bar_fraction(level),
                                 &t,
-                            ))
-                            .child(shown),
+                            )),
                     )
                     .child(div().flex_shrink_0().child(microphone))
                     .into_any_element(),

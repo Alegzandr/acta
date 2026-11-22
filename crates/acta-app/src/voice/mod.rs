@@ -445,10 +445,13 @@ impl Dictation {
             return true;
         }
         let prefs = Self::prefs(cx);
+        // A model being downloaded (or downloaded again over a damaged
+        // file) is not used until its download ends.
+        let replacing = |m: ModelId| self.download.as_ref().is_some_and(|d| d.model == m);
         prefs.engine == Some(EngineChoice::Whisper)
-            && prefs
-                .model
-                .is_some_and(|m| matches!(self.on_disk.get(&m), Some(ModelState::Ready(_))))
+            && prefs.model.is_some_and(|m| {
+                !replacing(m) && matches!(self.on_disk.get(&m), Some(ModelState::Ready(_)))
+            })
     }
 
     /// Where `editor`'s dictation stands.
@@ -723,6 +726,14 @@ impl Dictation {
     /// `choose`: it becomes the model in use (the first-use dialog).
     pub fn start_download(&mut self, model: ModelId, choose: bool, cx: &mut Context<Self>) {
         if self.download.is_some() {
+            return;
+        }
+        // The model a take is using is not replaced under it.
+        let in_use =
+            matches!(&self.engine_for, Some(EngineFor::Whisper { model: m, .. }) if *m == model);
+        if in_use && self.running() {
+            self.refusal = Some(crate::i18n::Key::VoiceModelBusy);
+            cx.refresh_windows();
             return;
         }
         let Some(dir) = Self::models_dir() else {
@@ -1147,8 +1158,9 @@ impl Dictation {
 
     // ---- the Settings level bar ----
 
-    /// The Microphone row is on screen: its level bar runs on the chosen
-    /// device while it stays there.
+    /// The person is at the Microphone row (pointer over it, or its
+    /// dropdown focused or open): its level bar runs on the chosen device
+    /// while they stay there, and stops within a second after.
     pub fn preview_shown(&mut self, cx: &mut Context<Self>) {
         self.preview_seen = Some(Instant::now());
         let engine = Self::prefs(cx).engine;
