@@ -287,6 +287,20 @@ pub enum DockEvent {
     /// the session's page.
     EditFolders(Origin),
     AddFolder(Origin),
+    /// The one-off session of a Ready row ended (ADR 0013): the row
+    /// checks again.
+    OneOffEnded(crate::ready_model::Row),
+}
+
+/// A one-off command session (ADR 0013): a program started directly in
+/// the PTY for a Ready row, with a title; it ends with the process and is
+/// never restarted.
+struct OneOff {
+    row: crate::ready_model::Row,
+    title: String,
+    view: Entity<TerminalView>,
+    ended: bool,
+    _sub: Subscription,
 }
 
 pub struct TerminalDock {
@@ -307,6 +321,9 @@ pub struct TerminalDock {
     /// The header switcher's menu, with its highlighted entry.
     switcher: Option<usize>,
     switch_anchor: crate::menu::AnchorBounds,
+    /// The one-off session, and whether it is the one shown.
+    one_off: Option<OneOff>,
+    show_one_off: bool,
     seen_revision: u64,
     _refresh: Option<gpui_kit::Task<()>>,
     _ws_sub: Option<Subscription>,
@@ -316,6 +333,9 @@ impl EventEmitter<DockEvent> for TerminalDock {}
 
 impl Focusable for TerminalDock {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
+        if let Some(one) = self.one_off.as_ref().filter(|_| self.show_one_off) {
+            return one.view.read(cx).focus_handle(cx);
+        }
         match self.project.and_then(|p| self.panes.get(&p)) {
             Some(Pane::Running { view, .. }) => view.read(cx).focus_handle(cx),
             _ => self.focus.clone(),
@@ -369,6 +389,8 @@ impl TerminalDock {
             pages: HashMap::new(),
             switcher: None,
             switch_anchor: Default::default(),
+            one_off: None,
+            show_one_off: false,
             seen_revision: 0,
             _refresh: None,
             _ws_sub: Some(sub),
@@ -443,6 +465,7 @@ impl TerminalDock {
     /// Show the session of `origin.project`, starting it from `origin` if
     /// there is none.
     pub fn show(&mut self, origin: Origin, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_one_off = false;
         self.project = Some(origin.project);
         if !self.panes.contains_key(&origin.project) {
             self.launch(origin, None, window, cx);
@@ -452,6 +475,7 @@ impl TerminalDock {
 
     /// End the project's session and start it from `origin`.
     pub fn restart(&mut self, origin: Origin, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_one_off = false;
         self.project = Some(origin.project);
         self.launch(origin, None, window, cx);
     }
@@ -635,6 +659,16 @@ impl TerminalDock {
                         &focus_of(owner, project, epic),
                         &options,
                     )?;
+                    // The fresh `PATH` (ADR 0013): a tool installed while Acta
+                    // runs is found by Claude Code.
+                    if let Some(path) = acta_core::prereqs::locate::system_fresh_path() {
+                        acta_terminal::launch::set_path(
+                            &mut launch.spec.env,
+                            cfg!(windows),
+                            &acta_terminal::launch::env_names(),
+                            &path,
+                        );
+                    }
                     // Not found: reported; another checkout: the list says so.
                     let missing = plan
                         .left_out
@@ -799,7 +833,82 @@ impl TerminalDock {
     /// Show the project's terminal session without starting one.
     pub fn select(&mut self, project: ProjectId, cx: &mut Context<Self>) {
         if self.panes.contains_key(&project) {
+            self.show_one_off = false;
             self.project = Some(project);
+            cx.notify();
+        }
+    }
+
+    /// Start a one-off session (ADR 0013) and show it: `spec` runs the
+    /// program itself, ends with it, and Enter does not restart it. A
+    /// previous one-off session ends when this one replaces it.
+    pub fn open_one_off(
+        &mut self,
+        row: crate::ready_model::Row,
+        title: String,
+        spec: acta_terminal::LaunchSpec,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let mode = cx.global::<Appearance>().mode;
+        let size = self.text_size;
+        let ended = text(settings::locale(cx), Key::TerminalEndedOnce);
+        let view = cx.new(|cx| {
+            let mut view = TerminalView::spawn(spec, cx);
+            view.set_theme(theme_for(mode), cx);
+            view.set_text_size(size, cx);
+            view.set_ended_message(ended.into(), cx);
+            view
+        });
+        let sub = cx.subscribe_in(
+            &view,
+            window,
+            move |dock, _, event: &TerminalEvent, _, cx| {
+                match event {
+                    TerminalEvent::Exited(_) => {
+                        if let Some(one) = dock.one_off.as_mut()
+                            && !one.ended
+                        {
+                            one.ended = true;
+                            cx.emit(DockEvent::OneOffEnded(one.row));
+                            cx.notify();
+                        }
+                    }
+                    TerminalEvent::TextSizeChanged(size) => {
+                        dock.text_size = *size;
+                        let stored = size.round() as u8;
+                        settings::change(cx, |prefs| prefs.terminal_text_size = Some(stored));
+                    }
+                    // No restart: it was one command.
+                    _ => {}
+                }
+            },
+        );
+        view.read(cx).focus_handle(cx).focus(window, cx);
+        self.one_off = Some(OneOff {
+            row,
+            title,
+            view,
+            ended: false,
+            _sub: sub,
+        });
+        self.show_one_off = true;
+        cx.notify();
+    }
+
+    /// Show the one-off session, if there is one.
+    pub fn select_one_off(&mut self, cx: &mut Context<Self>) {
+        if self.one_off.is_some() {
+            self.show_one_off = true;
+            cx.notify();
+        }
+    }
+
+    /// Close an ended one-off session: the project's session shows again.
+    fn close_one_off(&mut self, cx: &mut Context<Self>) {
+        if self.one_off.as_ref().is_some_and(|o| o.ended) {
+            self.one_off = None;
+            self.show_one_off = false;
             cx.notify();
         }
     }
@@ -971,13 +1080,30 @@ impl TerminalDock {
                     view.update(cx, |view, cx| view.set_theme(theme_for(mode), cx));
                 }
             }
+            if let Some(one) = &self.one_off {
+                one.view
+                    .update(cx, |view, cx| view.set_theme(theme_for(mode), cx));
+            }
         }
         let pane = self.project.and_then(|p| self.panes.get(&p));
         let surface = match mode {
             Mode::Dark => t.bg_sunken,
             Mode::Light => t.bg_raised,
         };
+        let one_off = self
+            .one_off
+            .as_ref()
+            .filter(|_| self.show_one_off)
+            .map(|o| o.view.clone());
         let body: AnyElement = match pane {
+            // A one-off session of the Ready block (ADR 0013).
+            _ if one_off.is_some() => div()
+                .flex_1()
+                .min_h_0()
+                .p(px(12.))
+                .bg(surface)
+                .children(one_off)
+                .into_any_element(),
             // screens.md 8.4: the grid is inset 12 on every side.
             Some(Pane::Running { view, .. }) => div()
                 .flex_1()
@@ -1302,6 +1428,27 @@ impl TerminalDock {
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let t = cx.global::<Tokens>().clone();
+        // A one-off session: its command (or "Claude Code"), protocol text.
+        if let Some(one) = self.one_off.as_ref().filter(|_| self.show_one_off) {
+            return Some(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(8.))
+                    .min_w_0()
+                    .child(icon(Icon::SquareTerminal, 14., t.text_tertiary))
+                    .child(
+                        type_scale::CODE
+                            .el()
+                            .min_w_0()
+                            .truncate()
+                            .text_color(t.text_secondary)
+                            .child(one.title.clone()),
+                    )
+                    .into_any_element(),
+            );
+        }
         let locale = settings::locale(cx);
         let (origin, _) = self.shown_origin();
         let origin = origin?;
@@ -1577,6 +1724,27 @@ impl TerminalDock {
     pub fn header_buttons(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let t = cx.global::<Tokens>().clone();
         let locale = settings::locale(cx);
+        // A one-off session has no restart; once ended it can be closed.
+        if let Some(one) = self.one_off.as_ref().filter(|_| self.show_one_off) {
+            if !one.ended {
+                return div().into_any_element();
+            }
+            return ui::ghost_icon_button(
+                "terminal-one-off-close",
+                Icon::X,
+                24.,
+                false,
+                false,
+                true,
+                &t,
+            )
+            .tooltip(ui::tip(text(locale, Key::CommonClose)))
+            .on_mouse_down(gpui_kit::MouseButton::Left, |_, _, cx| {
+                cx.stop_propagation()
+            })
+            .on_click(cx.listener(|dock, _, _, cx| dock.close_one_off(cx)))
+            .into_any_element();
+        }
         ui::ghost_icon_button(
             "terminal-restart",
             Icon::RotateCw,

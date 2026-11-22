@@ -42,6 +42,8 @@ mod palette;
 mod palette_model;
 mod paths_view;
 mod preferences;
+mod ready;
+mod ready_model;
 mod record;
 mod record_page;
 mod route;

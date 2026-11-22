@@ -68,6 +68,18 @@ pub enum Kind {
     Confirm(Confirm),
     /// "Remove Acta from Claude Code?" (Settings, Claude Code).
     RemoveSetup,
+    /// "Install Git?" (Ready for Claude Code, ADR 0013): where it comes
+    /// from, the scope, who updates it, and the exact command with Copy.
+    ReadyInstall {
+        tool: acta_core::prereqs::Tool,
+        plan: acta_core::prereqs::Plan,
+        update: bool,
+        platform: acta_core::prereqs::Platform,
+    },
+    /// "Quit Acta?" while an install runs (it has no cancel).
+    QuitInstalling {
+        tool: acta_core::prereqs::Tool,
+    },
     /// "Set up Claude Code?" (Settings, Claude Code): the open project
     /// and how many of its folders setup touches.
     Setup {
@@ -94,6 +106,14 @@ pub enum DialogEvent {
     RemoveSetup,
     /// Setup was confirmed, linking that project's folders.
     Setup(Option<acta_core::model::ProjectId>),
+    /// An install of the Ready block was confirmed.
+    ReadyRun {
+        tool: acta_core::prereqs::Tool,
+        plan: acta_core::prereqs::Plan,
+        update: bool,
+    },
+    /// Quitting while an install runs was confirmed.
+    Quit,
     #[cfg(windows)]
     /// Deleting the chat panel's profile was confirmed.
     ChatSignOut,
@@ -842,6 +862,81 @@ impl Dialog {
                     .into_any_element(),
                 ];
                 (text(locale, Key::SettingsSetupTitle), body, buttons, 440.)
+            }
+            Kind::ReadyInstall {
+                tool,
+                plan,
+                update,
+                platform,
+            } => {
+                let (title, body, confirm) =
+                    crate::ready::dialog_parts(*tool, plan, *update, platform, locale, t);
+                // A command Acta does not run (npm) has Close only.
+                let safe = if confirm.is_some() {
+                    Key::CommonCancel
+                } else {
+                    Key::CommonClose
+                };
+                let mut buttons = vec![
+                    ui::button(
+                        "dialog-cancel",
+                        text(locale, safe),
+                        Variant::Secondary,
+                        false,
+                        t,
+                    )
+                    .track_focus(&self.safe)
+                    .on_click(cx.listener(|d, _, _, cx| d.close(cx)))
+                    .into_any_element(),
+                ];
+                if let Some(confirm) = confirm {
+                    let (tool, plan, update) = (*tool, plan.clone(), *update);
+                    buttons.push(
+                        ui::button("ready-confirm", confirm, Variant::Primary, false, t)
+                            .on_click(cx.listener(move |_, _, _, cx| {
+                                cx.emit(DialogEvent::ReadyRun {
+                                    tool,
+                                    plan: plan.clone(),
+                                    update,
+                                })
+                            }))
+                            .into_any_element(),
+                    );
+                }
+                (title, body, buttons, 440.)
+            }
+            Kind::QuitInstalling { tool } => {
+                let body = type_scale::UI
+                    .el()
+                    .text_color(t.text_secondary)
+                    .child(tr(
+                        locale,
+                        Key::QuitInstalling,
+                        &[("name", Arg::Text(tool.display_name()))],
+                    ))
+                    .into_any_element();
+                let buttons = vec![
+                    ui::button(
+                        "dialog-cancel",
+                        text(locale, Key::CommonCancel),
+                        Variant::Secondary,
+                        false,
+                        t,
+                    )
+                    .track_focus(&self.safe)
+                    .on_click(cx.listener(|d, _, _, cx| d.close(cx)))
+                    .into_any_element(),
+                    ui::button(
+                        "quit-confirm",
+                        text(locale, Key::QuitConfirm),
+                        Variant::Primary,
+                        false,
+                        t,
+                    )
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(DialogEvent::Quit)))
+                    .into_any_element(),
+                ];
+                (text(locale, Key::QuitTitle), body, buttons, 440.)
             }
             Kind::RemoveSetup => {
                 let body = type_scale::UI
