@@ -130,6 +130,9 @@ pub enum Error {
     TooManyFiles {
         limit: i64,
     },
+    /// A file an editor stored ahead of its row is no longer there (a purge
+    /// took it while the editor was open).
+    StagedGone,
     /// An export with files would be larger than an import reads (ADR
     /// 0012, 9); sizes in bytes. The export without files works.
     ExportTooLarge {
@@ -208,6 +211,10 @@ impl fmt::Display for Error {
                 "with its files this export would be about {}, over the {} an import reads; export without files (acta export --no-files): names and sizes stay",
                 crate::files::size_label(*size as i64),
                 crate::files::size_label(*limit as i64)
+            ),
+            Error::StagedGone => write!(
+                f,
+                "the file was removed while the editor was open; add it again"
             ),
             Error::TooManyFiles { limit } => write!(
                 f,

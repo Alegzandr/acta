@@ -794,3 +794,77 @@ fn staging_refuses_too_large_and_saving_refuses_the_twenty_first() {
         Err(Error::TooManyFiles { .. })
     ));
 }
+
+#[test]
+fn a_purge_never_takes_a_file_an_open_editor_holds() {
+    let (mut ts, p, _) = setup();
+    let s = &mut ts.store;
+    let n = s.add_note(p, "Logs from Alexandre", H).unwrap();
+    let data = bytes(11, CHUNK_BYTES + 5);
+    let age = |s: &Store| {
+        s.conn
+            .execute(
+                "UPDATE attachment_blobs SET created_at = 0 WHERE complete = 0",
+                [],
+            )
+            .unwrap();
+    };
+    // Held by this process: kept however old.
+    let staged = s
+        .stage(&AttachSource::Bytes(data.clone()), &mut |_, _| {})
+        .unwrap();
+    age(s);
+    s.purge_attachments(crate::time::now_ms()).unwrap();
+    let a = s
+        .attach_staged(AttachOwner::Note(n), "trace.bin", &staged, H)
+        .unwrap();
+    assert_eq!(content(s, &a), data);
+
+    // Another process's purge (no hold): a touch restarts the blob's age.
+    let other = s
+        .stage(&AttachSource::Bytes(bytes(12, 300)), &mut |_, _| {})
+        .unwrap();
+    s.held.clear();
+    age(s);
+    s.touch_staged(std::slice::from_ref(&other)).unwrap();
+    s.purge_attachments(crate::time::now_ms()).unwrap();
+    s.attach_staged(AttachOwner::Note(n), "kept.bin", &other, H)
+        .unwrap();
+
+    // Neither held nor touched: purged, and saving says so.
+    let gone = s
+        .stage(&AttachSource::Bytes(bytes(13, 300)), &mut |_, _| {})
+        .unwrap();
+    s.held.clear();
+    age(s);
+    s.purge_attachments(crate::time::now_ms()).unwrap();
+    let err = s
+        .attach_staged(AttachOwner::Note(n), "gone.bin", &gone, H)
+        .unwrap_err();
+    assert!(matches!(err, Error::StagedGone));
+    assert_eq!(
+        err.to_string(),
+        "the file was removed while the editor was open; add it again"
+    );
+}
+
+#[test]
+fn staging_through_a_lock_takes_it_once_per_step() {
+    let (mut ts, _, _) = setup();
+    let cell = std::cell::RefCell::new(&mut ts.store);
+    let taken = std::cell::Cell::new(0);
+    let data = bytes(14, 3 * CHUNK_BYTES);
+    let staged = stage_with(
+        || {
+            taken.set(taken.get() + 1);
+            std::cell::RefMut::map(cell.borrow_mut(), |s| &mut **s)
+        },
+        &AttachSource::Bytes(data.clone()),
+        &mut |_, _| {},
+    )
+    .unwrap();
+    assert_eq!(staged.size(), data.len() as u64);
+    // Writable check, lookup, pending blob, one per chunk: never held
+    // across the whole file.
+    assert_eq!(taken.get(), 3 + 3);
+}

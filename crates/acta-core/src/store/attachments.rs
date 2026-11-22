@@ -608,43 +608,36 @@ impl Store {
         source: &AttachSource,
         progress: &mut dyn FnMut(u64, u64),
     ) -> Result<Staged> {
-        self.check_writable()?;
-        let size = source.len()?;
-        if size > MAX_FILE_BYTES {
-            return Err(too_large(size));
+        let cell = std::cell::RefCell::new(self);
+        stage_with(
+            || std::cell::RefMut::map(cell.borrow_mut(), |s| &mut **s),
+            source,
+            progress,
+        )
+    }
+
+    /// Keeps the pending blobs of files open editors still hold: their
+    /// age restarts, so no purge in another process takes them (the app
+    /// calls it every 30 minutes and when the record is saved).
+    pub fn touch_staged(&mut self, staged: &[Staged]) -> Result<()> {
+        let ids: Vec<String> = staged
+            .iter()
+            .filter_map(|s| s.blob)
+            .map(|b| b.to_string())
+            .collect();
+        if ids.is_empty() {
+            return Ok(());
         }
-        let scan = scan(source)?;
-        let stored: Option<(String, Option<i64>, Option<i64>)> = self
-            .conn
-            .query_row(
-                "SELECT media_type, width, height FROM attachment_blobs
-                 WHERE hash = ?1 AND complete = 1",
-                [&scan.hash],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-            )
-            .optional()?;
-        let staged = match stored {
-            Some((media, w, h)) => Staged {
-                hash: scan.hash.clone(),
-                size: scan.size,
-                kind: files::kind_of(&media),
-                pixels: w.zip(h).map(|(w, h)| (w as u32, h as u32)),
-                blob: None,
-            },
-            None => {
-                let (media, info) = describe(&scan);
-                let blob = self.store_pending(source, &scan, progress)?;
-                Staged {
-                    hash: scan.hash.clone(),
-                    size: scan.size,
-                    kind: files::kind_of(media),
-                    pixels: info.map(|i| (i.width, i.height)),
-                    blob: Some(blob),
-                }
-            }
-        };
-        progress(scan.size, scan.size);
-        Ok(staged)
+        let tx = self.write()?;
+        tx.execute(
+            &format!(
+                "UPDATE attachment_blobs SET created_at = ?1 WHERE complete = 0 AND id IN ({})",
+                ids.join(",")
+            ),
+            [now_ms()],
+        )?;
+        tx.commit()?;
+        Ok(())
     }
 
     /// Gives a staged file its row on `owner`, as `name`, in one
@@ -692,11 +685,14 @@ impl Store {
                 )?;
                 ours
             }
-            (None, None) => return Err(changed()),
+            (None, None) => return Err(Error::StagedGone),
         };
         let id = insert_row(&tx, owner, project, blob, &name, author)?;
         let a = read_attachment_row(&tx, id)?;
         tx.commit()?;
+        if let Some(b) = staged.blob {
+            self.held.remove(&b);
+        }
         Ok(a)
     }
 
@@ -707,6 +703,7 @@ impl Store {
         let Some(blob) = staged.blob else {
             return Ok(());
         };
+        self.held.remove(&blob);
         let tx = self.write()?;
         let pending: Option<i64> = tx
             .query_row(
@@ -815,26 +812,7 @@ impl Store {
         progress: &mut dyn FnMut(u64, u64),
     ) -> Result<i64> {
         let (media, info) = describe(scan);
-        let pending = format!("pending:{}", new_uuid());
-        let blob = {
-            let tx = self.write()?;
-            tx.execute(
-                "INSERT INTO attachment_blobs (hash, size, media_type, width, height, thumbnail, complete, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7)",
-                params![
-                    pending,
-                    scan.size as i64,
-                    media,
-                    info.as_ref().map(|i| i.width),
-                    info.as_ref().map(|i| i.height),
-                    info.as_ref().map(|i| i.thumbnail.as_slice()),
-                    now_ms()
-                ],
-            )?;
-            let blob = tx.last_insert_rowid();
-            tx.commit()?;
-            blob
-        };
+        let blob = insert_pending(self, scan, media, info.as_ref())?;
         if let Err(e) = self.write_chunks(blob, source, scan, progress) {
             if let Ok(tx) = self.write() {
                 let _ = drop_blob(&tx, blob).map(|_| tx.commit());
@@ -851,6 +829,116 @@ impl Store {
         scan: &Scan,
         progress: &mut dyn FnMut(u64, u64),
     ) -> Result<()> {
+        let cell = std::cell::RefCell::new(self);
+        write_chunks_with(
+            &mut || std::cell::RefMut::map(cell.borrow_mut(), |s| &mut **s),
+            blob,
+            source,
+            scan,
+            progress,
+        )
+    }
+}
+
+/// A new pending blob for `scan`, in its own transaction.
+fn insert_pending(
+    store: &mut Store,
+    scan: &Scan,
+    media: &str,
+    info: Option<&files::ImageInfo>,
+) -> Result<i64> {
+    let pending = format!("pending:{}", new_uuid());
+    let tx = store.write()?;
+    tx.execute(
+        "INSERT INTO attachment_blobs (hash, size, media_type, width, height, thumbnail, complete, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7)",
+        params![
+            pending,
+            scan.size as i64,
+            media,
+            info.map(|i| i.width),
+            info.map(|i| i.height),
+            info.map(|i| i.thumbnail.as_slice()),
+            now_ms()
+        ],
+    )?;
+    let blob = tx.last_insert_rowid();
+    tx.commit()?;
+    Ok(blob)
+}
+
+/// [`Store::stage`] for a store shared behind a lock: `lock` is taken for
+/// each step and released in between, so the file is read and hashed
+/// without it and other reads of the store run between its 1 MiB chunks.
+/// The pending blob is held by this store until it is attached or
+/// discarded: no purge of this process takes it.
+pub fn stage_with<G: std::ops::DerefMut<Target = Store>>(
+    mut lock: impl FnMut() -> G,
+    source: &AttachSource,
+    progress: &mut dyn FnMut(u64, u64),
+) -> Result<Staged> {
+    lock().check_writable()?;
+    let size = source.len()?;
+    if size > MAX_FILE_BYTES {
+        return Err(too_large(size));
+    }
+    let scan = scan(source)?;
+    let stored: Option<(String, Option<i64>, Option<i64>)> = lock()
+        .conn
+        .query_row(
+            "SELECT media_type, width, height FROM attachment_blobs
+             WHERE hash = ?1 AND complete = 1",
+            [&scan.hash],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .optional()?;
+    if let Some((media, w, h)) = stored {
+        progress(scan.size, scan.size);
+        return Ok(Staged {
+            hash: scan.hash.clone(),
+            size: scan.size,
+            kind: files::kind_of(&media),
+            pixels: w.zip(h).map(|(w, h)| (w as u32, h as u32)),
+            blob: None,
+        });
+    }
+    // The thumbnail is made without the lock.
+    let (media, info) = describe(&scan);
+    let blob = {
+        let mut store = lock();
+        let blob = insert_pending(&mut store, &scan, media, info.as_ref())?;
+        store.held.insert(blob);
+        blob
+    };
+    if let Err(e) = write_chunks_with(&mut lock, blob, source, &scan, progress) {
+        let mut store = lock();
+        store.held.remove(&blob);
+        if let Ok(tx) = store.write() {
+            let _ = drop_blob(&tx, blob).map(|_| tx.commit());
+        }
+        return Err(e);
+    }
+    progress(scan.size, scan.size);
+    Ok(Staged {
+        hash: scan.hash.clone(),
+        size: scan.size,
+        kind: files::kind_of(media),
+        pixels: info.map(|i| (i.width, i.height)),
+        blob: Some(blob),
+    })
+}
+
+/// The second pass over a file: its chunks, each in its own transaction
+/// with the lock taken for that chunk only; re-hashed, so a file that
+/// changed since the first pass is refused.
+fn write_chunks_with<G: std::ops::DerefMut<Target = Store>>(
+    lock: &mut impl FnMut() -> G,
+    blob: i64,
+    source: &AttachSource,
+    scan: &Scan,
+    progress: &mut dyn FnMut(u64, u64),
+) -> Result<()> {
+    {
         let mut reader = source.open()?;
         let mut hasher = Sha256::new();
         let mut buf = vec![0u8; CHUNK_BYTES];
@@ -874,12 +962,15 @@ impl Store {
                 return Err(changed());
             }
             hasher.update(&buf[..filled]);
-            let tx = self.write()?;
-            tx.execute(
-                "INSERT INTO attachment_chunks (blob_id, seq, data) VALUES (?1, ?2, ?3)",
-                params![blob, seq, &buf[..filled]],
-            )?;
-            tx.commit()?;
+            {
+                let mut store = lock();
+                let tx = store.write()?;
+                tx.execute(
+                    "INSERT INTO attachment_chunks (blob_id, seq, data) VALUES (?1, ?2, ?3)",
+                    params![blob, seq, &buf[..filled]],
+                )?;
+                tx.commit()?;
+            }
             seq += 1;
             progress(done, scan.size);
             if filled < CHUNK_BYTES {
@@ -891,7 +982,9 @@ impl Store {
         }
         Ok(())
     }
+}
 
+impl Store {
     /// A live attachment, without its content.
     pub fn attachment(&self, id: AttachmentId) -> Result<Attachment> {
         read_attachment_row(&self.conn, id)
@@ -1043,6 +1136,13 @@ impl Store {
     /// freed pages with `PRAGMA incremental_vacuum` (ADR 0012, 4).
     pub fn purge_attachments(&mut self, now: i64) -> Result<Purged> {
         let cutoff = now - super::TRASH_RETENTION_MS;
+        // Blobs an open editor of this process holds stay too.
+        let held = if self.held.is_empty() {
+            String::new()
+        } else {
+            let ids: Vec<String> = self.held.iter().map(|b| b.to_string()).collect();
+            format!(" AND b.id NOT IN ({})", ids.join(","))
+        };
         let tx = self.write()?;
         let rows = tx.execute(
             "DELETE FROM attachments WHERE deleted_at IS NOT NULL AND deleted_at <= ?1",
@@ -1050,9 +1150,12 @@ impl Store {
         )? as i64;
         // Blobs younger than the grace stay, complete or not: one may be
         // between its lookup and its row in another process.
-        let orphans = "SELECT id FROM attachment_blobs b
+        let orphans = format!(
+            "SELECT id FROM attachment_blobs b
              WHERE NOT EXISTS (SELECT 1 FROM attachments a WHERE a.blob_id = b.id)
-               AND b.created_at <= ?1";
+               AND b.created_at <= ?1{held}"
+        );
+        let orphans = orphans.as_str();
         let (blobs, bytes): (i64, i64) = tx.query_row(
             &format!(
                 "SELECT count(*), coalesce(sum(size), 0) FROM attachment_blobs WHERE id IN ({orphans})"

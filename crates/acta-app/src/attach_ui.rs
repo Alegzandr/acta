@@ -36,6 +36,9 @@ use crate::workspace::{Toast, ToastAction, ToastKind, Undo, Workspace, Workspace
 
 /// How often an editor's files are looked at while they are being stored.
 const TICK: Duration = Duration::from_millis(100);
+/// How often an open editor restarts the age of its pending files (the
+/// purge leaves pending blobs alone for an hour).
+const KEEP_ALIVE: Duration = Duration::from_secs(30 * 60);
 
 /// `Mod` on this platform: Cmd on macOS, Ctrl elsewhere.
 fn mod_key(m: &gpui_kit::Modifiers) -> bool {
@@ -365,14 +368,36 @@ fn write_file(store: &Store, id: AttachmentId, path: &Path) -> std::io::Result<(
     let mut reader = store
         .read_attachment(id)
         .map_err(|e| std::io::Error::other(e.to_string()))?;
+    write_replacing(&mut reader, path)
+}
+
+/// Writes `reader` to a temporary file beside `path`, flushes it to disk,
+/// then renames it over `path`: a failure leaves the file that was there
+/// untouched and removes only the temporary one.
+fn write_replacing(reader: &mut dyn Read, path: &Path) -> std::io::Result<()> {
+    let dir = path.parent().unwrap_or(Path::new("."));
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let temp = dir.join(format!(
+        ".{name}.{}-{}.part",
+        std::process::id(),
+        acta_core::time::now_ms()
+    ));
     let result = (|| {
-        let mut out = std::fs::File::create(path)?;
-        std::io::copy(&mut reader, &mut out)?;
+        let mut out = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)?;
+        std::io::copy(reader, &mut out)?;
         out.flush()?;
-        out.sync_all()
+        out.sync_all()?;
+        drop(out);
+        std::fs::rename(&temp, path)
     })();
     if result.is_err() {
-        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_file(&temp);
     }
     result
 }
@@ -666,25 +691,70 @@ pub struct Tray {
     slots: HashMap<u64, Arc<Mutex<Slot>>>,
     focus: HashMap<u64, FocusHandle>,
     _tick: Task<()>,
+    /// Touches the held pending blobs every 30 minutes.
+    _keep: Task<()>,
     /// A note card at rest: what is dropped on it is attached once stored,
     /// in this project.
     auto: Option<ProjectId>,
 }
 
 impl Tray {
-    pub fn new(ws: Entity<Workspace>, owner: Option<AttachOwner>, cx: &mut Context<Self>) -> Self {
-        let mut tray = Self {
+    /// An editor's files. `held` is what the record being edited already
+    /// holds (none for a new note): shown in the strip, and counted
+    /// toward the 20 from the first file added.
+    pub fn new(
+        ws: Entity<Workspace>,
+        owner: Option<AttachOwner>,
+        held: Vec<Attachment>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut draft = Draft::default();
+        draft.held = held.len();
+        Self {
             ws,
             owner,
-            held: Vec::new(),
-            draft: Draft::default(),
+            held,
+            draft,
             slots: HashMap::new(),
             focus: HashMap::new(),
             _tick: Task::ready(()),
+            _keep: Self::keep(cx),
             auto: None,
-        };
-        tray.load_held(cx);
-        tray
+        }
+    }
+
+    /// Every 30 minutes, the pending blobs of the files this editor holds
+    /// are touched, so a purge in another process never takes them (this
+    /// process's purge skips them anyway).
+    fn keep(cx: &mut Context<Self>) -> Task<()> {
+        cx.spawn(async move |tray, cx| {
+            loop {
+                cx.background_executor().timer(KEEP_ALIVE).await;
+                let Ok(()) = tray.update(cx, |tray, cx| tray.touch(cx)) else {
+                    return;
+                };
+            }
+        })
+    }
+
+    fn touch(&self, cx: &mut Context<Self>) {
+        let staged: Vec<Staged> = self
+            .slots
+            .values()
+            .filter_map(
+                |s| match &s.lock().unwrap_or_else(|p| p.into_inner()).result {
+                    Some(Ok(staged)) => Some(staged.clone()),
+                    _ => None,
+                },
+            )
+            .collect();
+        if !staged.is_empty() {
+            self.ws
+                .read(cx)
+                .db
+                .run(cx, move |store| store.touch_staged(&staged))
+                .detach();
+        }
     }
 
     /// The drop target of a note card at rest (components-attachments.md
@@ -695,19 +765,11 @@ impl Tray {
         owner: AttachOwner,
         project: ProjectId,
         held: Vec<Attachment>,
+        cx: &mut Context<Self>,
     ) -> Self {
-        let mut draft = Draft::default();
-        draft.held = held.len();
-        Self {
-            ws,
-            owner: Some(owner),
-            held,
-            draft,
-            slots: HashMap::new(),
-            focus: HashMap::new(),
-            _tick: Task::ready(()),
-            auto: Some(project),
-        }
+        let mut tray = Self::new(ws, Some(owner), held, cx);
+        tray.auto = Some(project);
+        tray
     }
 
     /// A card's own files changed (a reload).
@@ -732,21 +794,6 @@ impl Tray {
                 )
             })
             .collect()
-    }
-
-    fn load_held(&mut self, cx: &mut Context<Self>) {
-        let Some(owner) = self.owner else { return };
-        let task = self.ws.read(cx).db.run(cx, move |s| s.attachments(owner));
-        cx.spawn(async move |tray, cx| {
-            if let Ok(held) = task.await {
-                let _ = tray.update(cx, |tray, cx| {
-                    tray.draft.held = held.len();
-                    tray.held = held;
-                    cx.notify();
-                });
-            }
-        })
-        .detach();
     }
 
     pub fn is_empty(&self) -> bool {
@@ -920,12 +967,20 @@ impl Tray {
     /// its rows once stored, one undo step per group, in the background
     /// (saving is never blocked). The editor starts empty again.
     pub fn commit(&mut self, owner: AttachOwner, project: ProjectId, cx: &mut Context<Self>) {
+        // Their age restarts now; they keep counting toward the 20 until
+        // the record's files are read again.
+        self.touch(cx);
         let files: Vec<(DraftFile, Arc<Mutex<Slot>>)> = self
             .draft
             .hand_over()
             .into_iter()
             .filter_map(|f| self.slots.remove(&f.key).map(|s| (f, s)))
             .collect();
+        // A record that stays (a card, an edited note) keeps counting them;
+        // a capture's next note starts from none.
+        if self.owner.is_some() {
+            self.draft.held += files.len();
+        }
         cx.notify();
         if files.is_empty() {
             return;
@@ -1222,19 +1277,17 @@ fn stage(db: crate::db::Db, source: AttachSource, name: String, slot: Arc<Mutex<
         }
         other => other,
     };
-    let result = {
-        let mut store = db.lock();
-        let slow = dev_slow();
-        store.stage(&source, &mut |done, _| {
-            {
-                let mut s = slot.lock().unwrap_or_else(|p| p.into_inner());
-                s.done = done;
-            }
-            if let Some(pause) = slow {
-                std::thread::sleep(pause);
-            }
-        })
-    };
+    // The store's lock is taken per chunk, not for the whole file.
+    let slow = dev_slow();
+    let result = acta_core::store::stage_with(|| db.lock(), &source, &mut |done, _| {
+        {
+            let mut s = slot.lock().unwrap_or_else(|p| p.into_inner());
+            s.done = done;
+        }
+        if let Some(pause) = slow {
+            std::thread::sleep(pause);
+        }
+    });
     let mut s = slot.lock().unwrap_or_else(|p| p.into_inner());
     match result {
         Ok(staged) => {
@@ -1997,6 +2050,36 @@ mod tests {
         let bad = temp.dir.path().join("missing").join("quote.bin");
         assert!(write_file(s, a.id, &bad).is_err());
         assert!(!bad.exists());
+    }
+
+    /// A reader that fails after some bytes (a disk or store error mid-copy).
+    struct Failing(usize);
+
+    impl Read for Failing {
+        fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+            if self.0 == 0 {
+                return Err(std::io::Error::other("broken"));
+            }
+            let n = out.len().min(self.0);
+            out[..n].fill(7);
+            self.0 -= n;
+            Ok(n)
+        }
+    }
+
+    #[test]
+    fn a_failed_save_leaves_the_existing_file_and_no_temporary_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("quote.pdf");
+        std::fs::write(&target, b"Alexandre's signed copy").unwrap();
+        assert!(write_replacing(&mut Failing(100_000), &target).is_err());
+        assert_eq!(std::fs::read(&target).unwrap(), b"Alexandre's signed copy");
+        let left: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
+        assert_eq!(left.len(), 1, "only the target");
+        // A good save replaces it.
+        write_replacing(&mut &b"new"[..], &target).unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"new");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
     }
 
     #[test]

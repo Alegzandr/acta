@@ -913,6 +913,10 @@ catalogue! {
         en: t("First 1 MB shown. Save the file to see all of it."),
         fr: t("Premier Mo affiché. Enregistrez le fichier pour le voir en entier."),
     }
+    AttachGone "attach.gone" {
+        en: t("The file was removed while the editor was open; add it again."),
+        fr: t("Le fichier a été retiré pendant que l\u{2019}éditeur était ouvert\u{202f}; ajoutez-le de nouveau."),
+    }
     KbNewDocument "kb.new_document" {
         en: t("New document"),
         fr: t("Nouveau document"),

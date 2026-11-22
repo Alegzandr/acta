@@ -714,7 +714,12 @@ impl RecordPage {
         cx: &mut Context<Self>,
     ) -> Entity<crate::attach_ui::Tray> {
         let ws = self.ws.clone();
-        let tray = cx.new(|cx| crate::attach_ui::Tray::new(ws, Some(owner), cx));
+        let held = self
+            .data
+            .as_ref()
+            .and_then(|d| d.files.get(&owner).cloned())
+            .unwrap_or_default();
+        let tray = cx.new(|cx| crate::attach_ui::Tray::new(ws, Some(owner), held, cx));
         self._subs.push(cx.observe(&tray, |_, _, cx| cx.notify()));
         tray
     }

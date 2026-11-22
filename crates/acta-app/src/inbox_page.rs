@@ -326,7 +326,7 @@ impl InboxPage {
         });
         let capture_tray = {
             let ws = ws.clone();
-            cx.new(|cx| Tray::new(ws, None, cx))
+            cx.new(|cx| Tray::new(ws, None, Vec::new(), cx))
         };
         let subs = vec![
             cx.observe(&capture_tray, |_, _, cx| cx.notify()),
@@ -463,7 +463,7 @@ impl InboxPage {
         }
         let held = self.files.get(&note).cloned().unwrap_or_default();
         let (ws, project) = (self.ws.clone(), self.project);
-        let tray = cx.new(|_| Tray::for_card(ws, AttachOwner::Note(note), project, held));
+        let tray = cx.new(|cx| Tray::for_card(ws, AttachOwner::Note(note), project, held, cx));
         self._subs.push(cx.observe(&tray, |_, _, cx| cx.notify()));
         self.card_trays.insert(note, tray.clone());
         tray
@@ -616,7 +616,8 @@ impl InboxPage {
         state.update(cx, |state, cx| state.focus(window, cx));
         let tray = {
             let ws = self.ws.clone();
-            cx.new(|cx| Tray::new(ws, Some(AttachOwner::Note(id)), cx))
+            let held = self.files.get(&id).cloned().unwrap_or_default();
+            cx.new(|cx| Tray::new(ws, Some(AttachOwner::Note(id)), held, cx))
         };
         self._subs.push(cx.observe(&tray, |_, _, cx| cx.notify()));
         let sub = cx.subscribe_in(
@@ -1206,7 +1207,15 @@ impl Render for InboxPage {
                                     .text_color(t.text_tertiary)
                                     .child(text(locale, Key::PropReportTo)),
                             )
-                            .child(div().w(px(240.)).child(self.report.clone())),
+                            // Narrower down to 140 before the footer wraps
+                            // (the French labels are longer).
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w(px(140.))
+                                    .max_w(px(240.))
+                                    .child(self.report.clone()),
+                            ),
                     )
                     .child(attach_ui::attach_button("inbox", &self.capture_tray, cx))
                     .child(type_scale::SMALL.el().text_color(t.text_tertiary).child(tr(

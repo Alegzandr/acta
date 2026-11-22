@@ -51,7 +51,7 @@ impl Capture {
     ) -> Self {
         let tray = tray.unwrap_or_else(|| {
             let ws = ws.clone();
-            cx.new(|cx| Tray::new(ws, None, cx))
+            cx.new(|cx| Tray::new(ws, None, Vec::new(), cx))
         });
         let locale = settings::locale(cx);
         let project_title = ws
