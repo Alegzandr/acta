@@ -100,8 +100,8 @@ pub struct Ready {
     logs_open: HashSet<Tool>,
     log_scroll: HashMap<Tool, ScrollHandle>,
     polling: bool,
-    /// The quit confirmation was answered Quit.
-    pub quit_confirmed: bool,
+    /// Quitting during an install asks first.
+    pub quit: model::QuitGuard,
     db: Option<Db>,
     #[cfg(debug_assertions)]
     dev: Option<dev::Scenario>,
@@ -131,7 +131,7 @@ impl Default for Ready {
             logs_open: HashSet::new(),
             log_scroll: HashMap::new(),
             polling: false,
-            quit_confirmed: false,
+            quit: model::QuitGuard::default(),
             db: None,
             #[cfg(debug_assertions)]
             dev: None,
@@ -229,9 +229,16 @@ pub fn readiness(cx: &App) -> Readiness {
     })
 }
 
-/// The install running now.
-pub fn busy(cx: &App) -> Option<Tool> {
-    state(cx).and_then(Ready::busy)
+/// The install to name before quitting, when quitting must ask.
+pub fn must_ask_quit(cx: &App) -> Option<Tool> {
+    state(cx).and_then(|r| r.quit.must_ask(r.busy()))
+}
+
+/// Quit was answered: this quit goes through.
+pub fn confirm_quit(cx: &mut App) {
+    if cx.has_global::<Ready>() {
+        cx.global_mut::<Ready>().quit.confirm();
+    }
 }
 
 /// Whether the block has a primary button.
@@ -326,7 +333,13 @@ pub fn check(cx: &mut App) {
                 (d, platform, model::any_github_remote(&folders))
             })
             .await;
-        crate::log::line(&d.summary());
+        // The log keeps only the rows that could not be checked (ADR 0013).
+        if let Some(line) = model::check_failures(
+            [Some(&d.claude), Some(&d.git), Some(&d.gh)],
+            Some(d.sign_in),
+        ) {
+            crate::log::line(&line);
+        }
         cx.update(|cx| {
             let r = cx.global_mut::<Ready>();
             r.checking = false;
@@ -395,13 +408,12 @@ pub fn start(tool: Tool, plan: &Plan, update: bool, cx: &mut App) {
         return;
     }
     r.updating.insert(tool, update);
-    crate::log::line(&format!("prereqs: {} install started", tool.exe_name()));
-    poll(cx);
+    poll(tool, cx);
 }
 
 /// Each second while an install runs: the elapsed time, then the check
 /// once it ends.
-fn poll(cx: &mut App) {
+fn poll(tool: Tool, cx: &mut App) {
     let r = cx.global_mut::<Ready>();
     if r.polling {
         return;
@@ -419,8 +431,14 @@ fn poll(cx: &mut App) {
             }
         }
         cx.update(|cx| {
-            cx.global_mut::<Ready>().polling = false;
-            crate::log::line("prereqs: install ended");
+            let r = cx.global_mut::<Ready>();
+            r.polling = false;
+            // The next install asks again before a quit.
+            r.quit.install_ended();
+            // Only a failure is logged: the tool and the kind, no output.
+            if let Some(Phase::Failed(failure)) = r.installer.phase(tool) {
+                crate::log::line(&model::install_failure_line(tool, failure));
+            }
             check(cx);
         });
     })
@@ -946,12 +964,17 @@ fn log_element(
 
 /// The install confirmation (components-app.md 5, "Confirmation dialog"):
 /// its title, its body (one sentence each, then the exact command with
-/// Copy) and its confirming label, `None` for a command shown only.
+/// Copy) and its confirming label, `None` for a command shown only. How
+/// winget checks what it downloads and the agreements its flags accept
+/// are behind "Details" (`details_open`, toggled by `toggle`).
+#[allow(clippy::too_many_arguments)]
 pub fn dialog_parts(
     tool: Tool,
     plan: &Plan,
     update: bool,
     platform: &Platform,
+    details_open: bool,
+    toggle: impl Fn(&mut gpui_kit::Window, &mut App) + 'static,
     locale: Locale,
     t: &Tokens,
 ) -> (String, AnyElement, Option<String>) {
@@ -966,8 +989,14 @@ pub fn dialog_parts(
         Key::ReadyDialogInstall
     });
     let mut sentences: Vec<String> = Vec::new();
+    let mut details: Vec<String> = Vec::new();
     if let Some(from) = d.from {
-        sentences.push(match from {
+        let to = if d.from_in_details {
+            &mut details
+        } else {
+            &mut sentences
+        };
+        to.push(match from {
             Source::Vendor => named(Key::ReadyFromVendor),
             Source::Winget => named(Key::ReadyFromWinget),
             Source::Homebrew => named(Key::ReadyFromHomebrew),
@@ -986,7 +1015,7 @@ pub fn dialog_parts(
         ));
     }
     if d.agreements {
-        sentences.push(text(locale, Key::ReadyAgreements));
+        details.push(text(locale, Key::ReadyAgreements));
     }
     if let Some(updates) = d.updates {
         sentences.push(text(
@@ -1022,6 +1051,36 @@ pub fn dialog_parts(
                 .text_color(t.text_secondary)
                 .child(s)
         }))
+        .when(!details.is_empty(), |this| {
+            this.child(
+                div().ml(px(-12.)).flex().flex_row().child(
+                    ui::button(
+                        "ready-dialog-details",
+                        text(locale, Key::CommonDetails),
+                        ui::Variant::Ghost,
+                        false,
+                        t,
+                    )
+                    .child(icon(
+                        if details_open {
+                            Icon::ChevronUp
+                        } else {
+                            Icon::ChevronDown
+                        },
+                        14.,
+                        t.text_tertiary,
+                    ))
+                    .on_click(move |_, window, cx| toggle(window, cx)),
+                ),
+            )
+            .when(details_open, |this| {
+                this.children(
+                    details
+                        .into_iter()
+                        .map(|s| type_scale::SMALL.el().text_color(t.text_tertiary).child(s)),
+                )
+            })
+        })
         .child(
             type_scale::LABEL
                 .el()

@@ -100,7 +100,7 @@ States: `ok`, `missing` (required or recommended), `outdated`, `optional` (an op
 - Acta's terminal gains a one-off command session kind (argv, a title, ends with the process) for Linux root installs and `gh auth login`.
 - The command tables are a maintenance point: package ids and vendor commands can change. A weekly CI job (no installs) checks that each winget id resolves with `winget show` on the Windows runner and that the documented Claude Code commands still appear on code.claude.com/docs/en/setup; a failure opens no issue by itself, it fails the job for the lead to read.
 - Elevation can still happen on Windows (Git's installer); it is said in the dialog, and a declined prompt ends as Failed with the log.
-- Nothing about installs is written to disk by Acta; the log lives only in memory.
+- Nothing about installs is written to disk by Acta; the log lives only in memory. The diagnostic log file gets only failures: a row that could not be checked (its name and a compile-time reason) and an install that failed (the tool and the kind: exit code, could not start, not found after install). Never a path, a version, an account or installer output; a successful check or install writes nothing.
 - Revisit when Claude Code adds or drops a dependency (its setup page), when Homebrew or winget change scope behaviour, or if users ask for more rows (each new row needs an agent workflow that uses it, as with tools).
 
 ## Evidence

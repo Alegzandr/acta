@@ -196,6 +196,9 @@ actions!(
         RemoveClaudeSetup,
         /// Settings: "Set up Claude Code" (confirmed, with what it touches).
         SetUpClaude,
+        /// Quit Acta (macOS: Cmd+Q and the app menu): asks first while an
+        /// install runs (ADR 0013).
+        QuitActa,
         /// `Mod+W`, palette "Close tab" (layout.md 4.4).
         CloseTab,
         /// `Ctrl+Tab` / `Ctrl+Shift+Tab`.
@@ -224,6 +227,25 @@ struct ProjectFacts {
 /// have no context.
 pub fn bind_keys(cx: &mut App) {
     cx.bind_keys(key_bindings());
+}
+
+/// Quit Acta, unless an install runs and has not been confirmed: then the
+/// main window asks "Quit Acta?" first, whose Quit closes it (and the app
+/// with its last window). Every app-level quit goes through here.
+pub fn request_quit(cx: &mut App) {
+    if let Some(tool) = crate::ready::must_ask_quit(cx) {
+        for handle in cx.windows() {
+            if let Some(shell) = handle.downcast::<Shell>() {
+                let asked = shell.update(cx, |shell, window, cx| {
+                    shell.open_dialog(DialogKind::QuitInstalling { tool }, window, cx)
+                });
+                if asked.is_ok() {
+                    return;
+                }
+            }
+        }
+    }
+    cx.quit();
 }
 
 fn key_bindings() -> Vec<KeyBinding> {
@@ -576,15 +598,9 @@ impl Shell {
         // asks first.
         let me = cx.entity().downgrade();
         window.on_window_should_close(cx, move |window, cx| {
-            let Some(tool) = crate::ready::busy(cx) else {
+            let Some(tool) = crate::ready::must_ask_quit(cx) else {
                 return true;
             };
-            if cx
-                .try_global::<crate::ready::Ready>()
-                .is_some_and(|r| r.quit_confirmed)
-            {
-                return true;
-            }
             let _ = me.update(cx, |shell, cx| {
                 shell.open_dialog(DialogKind::QuitInstalling { tool }, window, cx)
             });
@@ -2434,9 +2450,8 @@ impl Shell {
                 }
                 DialogEvent::Quit => {
                     shell.close_overlay(window, cx);
-                    if cx.has_global::<crate::ready::Ready>() {
-                        cx.global_mut::<crate::ready::Ready>().quit_confirmed = true;
-                    }
+                    crate::ready::confirm_quit(cx);
+                    // The last window closing quits the app (main.rs).
                     window.remove_window();
                 }
                 #[cfg(windows)]
