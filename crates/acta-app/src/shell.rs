@@ -2300,8 +2300,7 @@ impl Shell {
             let parsed = cx
                 .background_spawn(async move {
                     // The file is read before the store is taken.
-                    let text = std::fs::read_to_string(&path).map_err(acta_core::Error::Io)?;
-                    let file = ExportFile::from_json(&text)?;
+                    let file = ExportFile::read(&path)?;
                     let report = match db {
                         Some(db) => db.lock().import(&file, true)?,
                         None => {
@@ -2334,6 +2333,12 @@ impl Shell {
                                 Key::ImportNewer,
                                 &[("n", Arg::Text(&found.to_string()))],
                             ),
+                        }
+                    }
+                    Err(acta_core::Error::FileTooLarge { size, limit }) => {
+                        DialogKind::ImportRefused {
+                            file_name,
+                            message: crate::dialogs::import_too_large(locale, size, limit),
                         }
                     }
                     Err(_) => DialogKind::ImportRefused {
@@ -3941,7 +3946,7 @@ impl Shell {
             let mut imported = None;
             if let (Opened::Ready(store), Some(file)) = (&mut opened, file) {
                 let report = store.import(&file, false);
-                let paths: Vec<String> = file.folders.iter().map(|f| f.path.clone()).collect();
+                let paths = crate::dialogs::probe_safe_paths(&file);
                 imported = Some((report.ok(), paths));
             }
             (opened, imported)

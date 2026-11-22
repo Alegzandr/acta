@@ -34,6 +34,33 @@ pub fn create_new_private_file(path: &Path) -> io::Result<File> {
     options.open(path)
 }
 
+/// Writes `bytes` to `path` without ever leaving half a file, readable by
+/// the user only: a new file with a random name next to the target
+/// (created exclusively, so nothing planted there, a symlink included, is
+/// followed or reused), flushed, then renamed over the target.
+pub fn write_private_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    use std::io::Write as _;
+    let dir = path
+        .parent()
+        .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let mut random = [0u8; 8];
+    getrandom::fill(&mut random).map_err(|e| io::Error::other(e.to_string()))?;
+    let suffix: String = random.iter().map(|b| format!("{b:02x}")).collect();
+    let temp = dir.join(format!(".{name}.{suffix}.tmp"));
+    let mut file = create_new_private_file(&temp)?;
+    let written = file.write_all(bytes).and_then(|()| file.sync_all());
+    drop(file);
+    let result = written.and_then(|()| fs::rename(&temp, path));
+    if result.is_err() {
+        let _ = fs::remove_file(&temp);
+    }
+    result
+}
+
 /// Sets 0600 on a file SQLite created (the database, its WAL, a snapshot).
 pub fn make_private(path: &Path) -> io::Result<()> {
     #[cfg(unix)]
@@ -46,4 +73,44 @@ pub fn make_private(path: &Path) -> io::Result<()> {
     #[cfg(not(unix))]
     let _ = path;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_private_atomic_write_replaces_the_file_and_leaves_nothing_behind() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("acta-2026-11-21.acta.json");
+        fs::write(&path, "old").unwrap();
+        write_private_atomic(&path, b"{\"format\":\"acta\"}").unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "{\"format\":\"acta\"}");
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+        assert!(write_private_atomic(&dir.path().join("missing").join("x.json"), b"x").is_err());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_temporary_name_is_not_predictable_from_the_process() {
+        // The old scheme used `.{name}.{pid}.tmp`: a symlink planted there
+        // must be neither followed nor written.
+        let dir = tempfile::tempdir().unwrap();
+        let victim = dir.path().join("victim");
+        fs::write(&victim, "keep").unwrap();
+        let path = dir.path().join("out.json");
+        let planted = dir
+            .path()
+            .join(format!(".out.json.{}.tmp", std::process::id()));
+        std::os::unix::fs::symlink(&victim, &planted).unwrap();
+        write_private_atomic(&path, b"new").unwrap();
+        assert_eq!(fs::read_to_string(&victim).unwrap(), "keep");
+        assert_eq!(fs::read_to_string(&path).unwrap(), "new");
+    }
 }

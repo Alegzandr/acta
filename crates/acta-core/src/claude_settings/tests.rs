@@ -483,9 +483,19 @@ fn an_import_and_a_locate_bring_the_files_in_line() {
     );
     let file = a.store.export(None).unwrap();
 
-    // Another database imports it: the folder exists here, so it is written.
+    // Another database imports it: commit settings never come from a file
+    // (security audit), so the folder is Manual there and nothing is
+    // written.
     let mut b = open();
     b.store.import(&file, false).unwrap();
+    let bid = b.store.all_folders().unwrap()[0].id;
+    assert_eq!(b.store.folder(bid).unwrap().commit_mode, CommitMode::Manual);
+    assert!(!PathBuf::from(stored(&f)).join(LOCAL_SETTINGS).exists());
+    // The user sets it here: the rules are written.
+    b.store
+        .set_commit_settings(bid, CommitMode::Commit, Some(false), false, Author::Human)
+        .unwrap();
+    sync_all(&mut b.store).unwrap();
     assert_eq!(read(&PathBuf::from(stored(&f))), commit_json());
     // A Claude Code import changes no commit settings and writes nothing new.
     let mut c = open();

@@ -13,6 +13,11 @@
 //!
 //! Folder paths are machine-specific; they are exported marked `local` and
 //! imported as they are, shown as not found when they do not exist here.
+//! A path that could name another computer (`\\server\share`, `//server`,
+//! a device path) is left out and counted in `folders_refused`: checking
+//! that it exists would send the user's credentials to that computer.
+//! Commit settings are exported but never imported: a folder new here, or
+//! given a new path, is Manual; a known folder keeps its local settings.
 //!
 //! Versions: 1 (0.3.0 to 0.4.x); 2 adds a folder's name, icon and commit
 //! settings, the active folder of projects, epics and topics (as the
@@ -202,25 +207,72 @@ impl ExportFile {
         Ok(s)
     }
 
-    /// Parses a file, refusing a newer format with a clear error.
+    /// Parses a file, refusing a newer format with a clear error. The text
+    /// is parsed whole once; only a file that does not parse is read again
+    /// for its header, to tell a foreign or newer file from a broken one.
     pub fn from_json(text: &str) -> Result<ExportFile> {
         #[derive(Deserialize)]
         struct Header {
             format: String,
             version: i64,
         }
-        let header: Header = serde_json::from_str(text)?;
-        if header.format != FORMAT_NAME {
-            return Err(Error::Invalid("this is not an Acta export".into()));
+        let check = |format: &str, version: i64| {
+            if format != FORMAT_NAME {
+                return Err(Error::Invalid("this is not an Acta export".into()));
+            }
+            if version > FORMAT_VERSION {
+                return Err(Error::FormatTooNew {
+                    found: version,
+                    supported: FORMAT_VERSION,
+                });
+            }
+            Ok(())
+        };
+        match serde_json::from_str::<ExportFile>(text) {
+            Ok(file) => {
+                check(&file.format, file.version)?;
+                Ok(file)
+            }
+            Err(err) => {
+                // A foreign or newer file says so rather than which field
+                // failed.
+                if let Ok(header) = serde_json::from_str::<Header>(text) {
+                    check(&header.format, header.version)?;
+                }
+                Err(err.into())
+            }
         }
-        if header.version > FORMAT_VERSION {
-            return Err(Error::FormatTooNew {
-                found: header.version,
-                supported: FORMAT_VERSION,
-            });
-        }
-        Ok(serde_json::from_str(text)?)
     }
+
+    /// Reads and parses an export file, refusing one larger than
+    /// [`MAX_IMPORT_BYTES`] before reading it.
+    pub fn read(path: &std::path::Path) -> Result<ExportFile> {
+        ExportFile::from_json(&read_capped(path, MAX_IMPORT_BYTES)?)
+    }
+}
+
+/// A text file of at most `cap` bytes; the size is checked before reading.
+pub(super) fn read_capped(path: &std::path::Path, cap: u64) -> Result<String> {
+    use std::io::Read as _;
+    let file = std::fs::File::open(path)?;
+    let size = file.metadata()?.len();
+    if size > cap {
+        return Err(too_large(size, cap));
+    }
+    let mut text = String::new();
+    // The file may grow between the check and the read.
+    file.take(cap + 1).read_to_string(&mut text)?;
+    if text.len() as u64 > cap {
+        return Err(too_large(text.len() as u64, cap));
+    }
+    Ok(text)
+}
+
+/// The largest file an import reads: 512 MiB.
+pub const MAX_IMPORT_BYTES: u64 = 512 * 1024 * 1024;
+
+fn too_large(size: u64, limit: u64) -> Error {
+    Error::FileTooLarge { size, limit }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -240,6 +292,9 @@ pub struct ImportReport {
     pub knowledge: ImportCounts,
     pub revisions: ImportCounts,
     pub folders: ImportCounts,
+    /// Folders left out because their path could name another computer
+    /// (a network share, a device): see [`crate::folder_path::is_probe_safe`].
+    pub folders_refused: i64,
 }
 
 impl ImportReport {
@@ -978,17 +1033,38 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile, author: Author) -> Result<Im
     for x in &f.folders {
         let s = &x.stamp;
         let action = decide(tx, "folders", s)?;
+        // Whether the file gives this row a path this installation has not
+        // known it by: always for a new row; for a known one only when the
+        // path differs (Claude Code's imports keep the local path).
+        let new_path = match &action {
+            Action::Insert => true,
+            Action::Update(l) => {
+                let here: String =
+                    tx.query_row("SELECT path FROM folders WHERE id = ?1", [l.id], |r| {
+                        r.get(0)
+                    })?;
+                !by_claude && here != x.path
+            }
+            Action::Skip => false,
+        };
+        // A path that could name another computer is never taken from a
+        // file: Acta checks every folder's existence, and on Windows that
+        // alone sends the user's credentials to the computer named.
+        if new_path && !crate::folder_path::is_probe_safe(&x.path) {
+            rep.folders_refused += 1;
+            continue;
+        }
         count(&mut rep.folders, &action);
         let project = local_id(tx, "projects", &x.project)?;
         let epic = opt_id(tx, "epics", &x.epic)?;
         let topic = opt_id(tx, "topics", &x.topic)?;
-        // Commit settings are the user's: never taken from a file Claude
-        // Code imports.
-        let (mode, as_user, on_default) = if by_claude {
-            (CommitMode::Manual, None, false)
-        } else {
-            (x.commit_mode, x.commit_as_user, x.commit_on_default)
-        };
+        // Commit settings grant Claude Code `git commit` and `git push` in
+        // the folder, and the file may come from someone else: they are
+        // never taken from it. A folder new here, or given a new path by
+        // the file, is Manual; a known folder at the same path keeps its
+        // local settings.
+        let keep_commit = !new_path;
+        let (mode, as_user, on_default) = (CommitMode::Manual, None::<bool>, false);
         match action {
             Action::Insert => {
                 tx.execute(
@@ -1020,7 +1096,7 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile, author: Author) -> Result<Im
                      WHERE id = ?1",
                     params![l.id, project, epic, topic, x.path, x.position, s.updated_at, s.updated_by, d, db,
                             x.name, icon(&x.icon), mode, as_user, on_default,
-                            old_format, old_format || by_claude, by_claude],
+                            old_format, keep_commit, by_claude],
                 )?;
             }
             Action::Skip => {}

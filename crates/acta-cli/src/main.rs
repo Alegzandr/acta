@@ -997,16 +997,13 @@ fn kb_export(ag: &mut Agent<'_>, id: &str, path: &Path) -> Result<String, String
 
 /// Writes a file that must not exist yet: the check and the creation are
 /// one operation (`create_new`), so nothing already there is overwritten.
+/// The file is readable by the user only: an export is plaintext.
 fn write_new(path: &Path, text: &str) -> Result<(), String> {
     use std::io::Write;
-    let mut f = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-        .map_err(|e| match e.kind() {
-            std::io::ErrorKind::AlreadyExists => "the file exists; choose a new path".to_owned(),
-            k => format!("cannot write: {k}"),
-        })?;
+    let mut f = acta_core::fsutil::create_new_private_file(path).map_err(|e| match e.kind() {
+        std::io::ErrorKind::AlreadyExists => "the file exists; choose a new path".to_owned(),
+        k => format!("cannot write: {k}"),
+    })?;
     f.write_all(text.as_bytes())
         .and_then(|()| f.sync_all())
         .map_err(|e| format!("cannot write: {}", e.kind()))
@@ -1039,13 +1036,14 @@ fn import(store: &mut acta_core::Store, path: &Path, dry_run: bool) -> Result<St
     if author() == Author::Claude {
         return Err("Import is for you to run, not Claude Code.".into());
     }
-    let text =
-        std::fs::read_to_string(path).map_err(|e| format!("cannot read the file: {}", e.kind()))?;
-    let file = ExportFile::from_json(&text).map_err(|e| e.to_string())?;
+    let file = ExportFile::read(path).map_err(|e| match e {
+        acta_core::Error::Io(e) => format!("cannot read the file: {}", e.kind()),
+        e => e.to_string(),
+    })?;
     let report = store.import(&file, dry_run).map_err(|e| e.to_string())?;
     let t = report.total();
     Ok(format!(
-        "{} {} created, {} updated, {} skipped{}",
+        "{} {} created, {} updated, {} skipped{}{}",
         if dry_run {
             "would import:"
         } else {
@@ -1058,6 +1056,10 @@ fn import(store: &mut acta_core::Store, path: &Path, dry_run: bool) -> Result<St
             " (nothing written)"
         } else {
             " (a snapshot was taken first)"
+        },
+        match report.folders_refused {
+            0 => String::new(),
+            n => format!("; {n} folders on a network path left out"),
         }
     ))
 }

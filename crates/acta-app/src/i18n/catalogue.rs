@@ -2321,6 +2321,10 @@ catalogue! {
         en: p("{n} working folder was not found on this computer. Locate it from its project, epic or topic.", "{n} working folders were not found on this computer. Locate each one from its project, epic or topic."),
         fr: p("{n} dossier de travail est introuvable sur cet ordinateur. Localisez-le depuis son projet, son epic ou son sujet.", "{n} dossiers de travail sont introuvables sur cet ordinateur. Localisez chacun depuis son projet, son epic ou son sujet."),
     }
+    ImportNetworkFolders "import.network_folders" {
+        en: p("{n} working folder on a network path was left out. Add it again from its project, epic or topic.", "{n} working folders on a network path were left out. Add each one again from its project, epic or topic."),
+        fr: p("{n} dossier de travail sur un chemin réseau a été écarté. Ajoutez-le de nouveau depuis son projet, son epic ou son sujet.", "{n} dossiers de travail sur un chemin réseau ont été écartés. Ajoutez chacun de nouveau depuis son projet, son epic ou son sujet."),
+    }
     ImportNewer "import.newer" {
         en: t("This file was made by a newer Acta (format {n}). Update Acta, then import it."),
         fr: t("Ce fichier a été créé par une version plus récente d\u{2019}Acta (format {n}). Mettez Acta à jour, puis importez-le."),
@@ -2328,6 +2332,10 @@ catalogue! {
     ImportNotActa "import.not_acta" {
         en: t("This is not an Acta export."),
         fr: t("Ce n\u{2019}est pas un export Acta."),
+    }
+    ImportTooLarge "import.too_large" {
+        en: t("This file is too large to import ({size}). The limit is {limit}."),
+        fr: t("Ce fichier est trop volumineux pour être importé ({size}). La limite est de {limit}."),
     }
     ImportWrongPassphrase "import.wrong_passphrase" {
         en: t("Wrong passphrase."),
