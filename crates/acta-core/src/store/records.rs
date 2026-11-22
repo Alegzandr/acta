@@ -134,7 +134,8 @@ impl Store {
                (SELECT count(*) FROM topics t WHERE t.project_id = p.id AND t.deleted_at IS NULL AND t.status = 'done'),
                (SELECT count(*) FROM topics t WHERE t.project_id = p.id AND t.deleted_at IS NULL AND t.status <> 'dropped'),
                (SELECT count(*) FROM notes n WHERE n.project_id = p.id AND n.deleted_at IS NULL AND n.filed_at IS NULL),
-               (SELECT count(*) FROM kb_entries k WHERE k.project_id = p.id AND k.deleted_at IS NULL)
+               (SELECT count(*) FROM kb_entries k WHERE k.project_id = p.id AND k.deleted_at IS NULL),
+               p.due_on
              FROM projects p WHERE p.deleted_at IS NULL ORDER BY p.position, p.id",
         )?;
         let rows = stmt.query_map([], |r| {
@@ -149,6 +150,7 @@ impl Store {
                 },
                 inbox: r.get(6)?,
                 knowledge: r.get(7)?,
+                due_on: r.get(8)?,
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
@@ -270,6 +272,45 @@ impl Store {
                 author,
                 now,
             )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Sample data for captures (the app's debug dev seed): move a topic
+    /// with its entries, a note, or a knowledge entry `days` back in time,
+    /// so the Overview has idle work, an old inbox and stale memories to
+    /// show. Debug builds only; nothing else rewrites history.
+    #[cfg(debug_assertions)]
+    #[doc(hidden)]
+    pub fn dev_backdate(&mut self, record: Record, days: i64) -> Result<()> {
+        let back = days * crate::time::MS_PER_DAY;
+        let tx = self.write()?;
+        let shift = "SET created_at = created_at - ?2, updated_at = updated_at - ?2";
+        match record {
+            Record::Topic(id) => {
+                tx.execute(
+                    &format!("UPDATE topics {shift} WHERE id = ?1"),
+                    params![id.0, back],
+                )?;
+                tx.execute(
+                    &format!("UPDATE entries {shift} WHERE topic_id = ?1"),
+                    params![id.0, back],
+                )?;
+            }
+            Record::Note(id) => {
+                tx.execute(
+                    &format!("UPDATE notes {shift} WHERE id = ?1"),
+                    params![id.0, back],
+                )?;
+            }
+            Record::Kb(id) => {
+                tx.execute(
+                    &format!("UPDATE kb_entries {shift} WHERE id = ?1"),
+                    params![id.0, back],
+                )?;
+            }
+            other => return Err(Error::Invalid(format!("cannot backdate {other}"))),
         }
         tx.commit()?;
         Ok(())

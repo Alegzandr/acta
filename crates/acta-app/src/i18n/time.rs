@@ -266,6 +266,64 @@ pub fn full(locale: Locale, at: LocalTime) -> String {
     )
 }
 
+/// The calendar-day forms of due dates (copy.md 10.2.1). A day is a
+/// [`LocalTime`] at midnight: only its date is read.
+///
+/// `{date_full}`, the picker's preview line: "Friday 27 November 2026" /
+/// "Vendredi 27 novembre 2026" (it stands alone, so capitalised).
+pub fn day_full(locale: Locale, day: LocalTime) -> String {
+    let (weekday, month) = match locale {
+        Locale::En => (WEEKDAYS_EN_FULL, MONTHS_EN_FULL),
+        Locale::Fr => (WEEKDAYS_FR_FULL, MONTHS_FR_FULL),
+    };
+    capitalize(&format!(
+        "{} {} {} {}",
+        weekday[day.weekday()],
+        day_of_month(locale, day.day),
+        month[month_index(day.month)],
+        day.year
+    ))
+}
+
+/// The picker's month header: "November 2026" / "Novembre 2026".
+pub fn month_year(locale: Locale, year: i32, month: u8) -> String {
+    let name = match locale {
+        Locale::En => MONTHS_EN_FULL[month_index(month)],
+        Locale::Fr => MONTHS_FR_FULL[month_index(month)],
+    };
+    capitalize(&format!("{name} {year}"))
+}
+
+/// The short weekdays, Monday first in both languages (the picker's
+/// weekday row).
+pub fn weekdays_short(locale: Locale) -> [&'static str; 7] {
+    match locale {
+        Locale::En => WEEKDAYS_EN,
+        Locale::Fr => WEEKDAYS_FR,
+    }
+}
+
+/// `{due_short}`, the Due column's compact form, for a day `ahead` days
+/// after `today` (negative when past): "Today", "Tomorrow", the short
+/// weekday from 2 to 6 days ahead ("Fri" / "Ven."), "15 Dec" this year,
+/// "Feb 2027" another year. A past day is always written as a date, never
+/// as a weekday, so it cannot be read as an upcoming one.
+pub fn due_compact(locale: Locale, day: LocalTime, today: LocalTime) -> String {
+    let ahead = day.day_number() - today.day_number();
+    let text = match ahead {
+        0 => tr(locale, Key::DueToday, &[]),
+        1 => tr(locale, Key::DueTomorrow, &[]),
+        2..=6 => weekdays_short(locale)[day.weekday()].to_owned(),
+        _ if day.year == today.year => format!(
+            "{} {}",
+            day_of_month(locale, day.day),
+            month_short(locale, day.month)
+        ),
+        _ => format!("{} {}", month_short(locale, day.month), day.year),
+    };
+    capitalize(&text)
+}
+
 /// How old a moment is, in the bands of the 10.2 table.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Age {
@@ -365,6 +423,37 @@ mod tests {
             compact(EN, then, NOW),
             compact(FR, then, NOW),
         ]
+    }
+
+    #[test]
+    fn calendar_day_forms_of_due_dates() {
+        let day = |m, d| LocalTime::new(2026, m, d, 0, 0);
+        // Friday 27 November 2026; the drawing's today is Saturday 21.
+        assert_eq!(day_full(EN, day(11, 27)), "Friday 27 November 2026");
+        assert_eq!(day_full(FR, day(11, 27)), "Vendredi 27 novembre 2026");
+        assert_eq!(day_full(FR, day(5, 1)), "Vendredi 1er mai 2026");
+        assert_eq!(month_year(EN, 2026, 11), "November 2026");
+        assert_eq!(month_year(FR, 2026, 11), "Novembre 2026");
+        assert_eq!(weekdays_short(FR)[0], "lun.");
+        let today = day(11, 21);
+        let compact = |l, d| due_compact(l, d, today);
+        assert_eq!(compact(EN, day(11, 21)), "Today");
+        assert_eq!(compact(FR, day(11, 21)), "Aujourd\u{2019}hui");
+        assert_eq!(compact(EN, day(11, 22)), "Tomorrow");
+        assert_eq!(compact(FR, day(11, 22)), "Demain");
+        assert_eq!(compact(EN, day(11, 24)), "Tue");
+        assert_eq!(compact(FR, day(11, 27)), "Ven.");
+        assert_eq!(compact(EN, day(11, 28)), "28 Nov");
+        assert_eq!(compact(EN, day(12, 15)), "15 Dec");
+        assert_eq!(compact(FR, day(12, 15)), "15 d\u{e9}c.");
+        assert_eq!(compact(FR, day(12, 1)), "1er d\u{e9}c.");
+        let next_year = LocalTime::new(2027, 2, 3, 0, 0);
+        assert_eq!(compact(EN, next_year), "Feb 2027");
+        assert_eq!(compact(FR, next_year), "F\u{e9}vr. 2027");
+        // A past day is a date, never a weekday or "Yesterday".
+        assert_eq!(compact(EN, day(11, 20)), "20 Nov");
+        assert_eq!(compact(EN, day(11, 18)), "18 Nov");
+        assert_eq!(compact(EN, LocalTime::new(2025, 2, 3, 0, 0)), "Feb 2025");
     }
 
     #[test]

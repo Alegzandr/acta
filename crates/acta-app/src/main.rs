@@ -22,6 +22,8 @@ mod desktop_entry;
 mod dev_seed;
 mod dialogs;
 mod diff;
+mod due;
+mod due_picker;
 mod first_run;
 mod folders_model;
 mod fonts;
@@ -343,6 +345,7 @@ fn run_app(options: Options, pending: Option<Arc<LaunchState>>, launched: Instan
             gpui_kit::init(cx);
             fonts::register(cx);
             settings::init(cx);
+            due::start(cx);
             shell::bind_keys(cx);
 
             cx.on_window_closed(|cx, _| {

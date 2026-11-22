@@ -289,6 +289,7 @@ pub struct ProjectSummary {
     pub inbox: i64,
     /// Knowledge entries at every level of the project.
     pub knowledge: i64,
+    pub due_on: Option<Date>,
     pub updated_at: i64,
 }
 

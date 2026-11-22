@@ -245,6 +245,14 @@ catalogue! {
         en: t("{author} set status to {status}"),
         fr: t("{author} a passé le statut à «\u{202f}{status}\u{202f}»"),
     }
+    EventDueSet "event.due_set" {
+        en: t("{author} set the due date to {date}"),
+        fr: t("{author} a fixé l\u{2019}échéance au {date}"),
+    }
+    EventDueCleared "event.due_cleared" {
+        en: t("{author} cleared the due date"),
+        fr: t("{author} a supprimé l\u{2019}échéance"),
+    }
     PropStatus "prop.status" {
         en: t("Status"),
         fr: t("Statut"),
@@ -276,6 +284,74 @@ catalogue! {
     PropLevel "prop.level" {
         en: t("Level"),
         fr: t("Niveau"),
+    }
+    PropDue "prop.due" {
+        en: t("Due"),
+        fr: t("Échéance"),
+    }
+    DueNone "due.none" {
+        en: t("None"),
+        fr: t("Aucune"),
+    }
+    DueToday "due.today" {
+        en: t("Today"),
+        fr: t("Aujourd\u{2019}hui"),
+    }
+    DueTomorrow "due.tomorrow" {
+        en: t("Tomorrow"),
+        fr: t("Demain"),
+    }
+    DueInDays "due.in_days" {
+        en: p("In {n} day", "In {n} days"),
+        fr: p("Dans {n} jour", "Dans {n} jours"),
+    }
+    DueOverdue "due.overdue" {
+        en: p("Overdue by {n} day", "Overdue by {n} days"),
+        fr: p("En retard de {n} jour", "En retard de {n} jours"),
+    }
+    DueTipToday "due.tip.today" {
+        en: t("Due today"),
+        fr: t("Échéance aujourd\u{2019}hui"),
+    }
+    DueTipTomorrow "due.tip.tomorrow" {
+        en: t("Due tomorrow"),
+        fr: t("Échéance demain"),
+    }
+    DueTipInDays "due.tip.in_days" {
+        en: p("Due {date}, in {n} day", "Due {date}, in {n} days"),
+        fr: p("Échéance le {date}, dans {n} jour", "Échéance le {date}, dans {n} jours"),
+    }
+    DueTipOverdue "due.tip.overdue" {
+        en: p("Overdue by {n} day, due {date}", "Overdue by {n} days, due {date}"),
+        fr: p("En retard de {n} jour, échéance le {date}", "En retard de {n} jours, échéance le {date}"),
+    }
+    DueTipDate "due.tip.date" {
+        en: t("Due {date}"),
+        fr: t("Échéance le {date}"),
+    }
+    DuePickerPlaceholder "due.picker.placeholder" {
+        en: t("fri, in 3d, 15/12, 2026-12-15"),
+        fr: t("ven., dans 3 j, 15/12, 2026-12-15"),
+    }
+    DuePickerInvalid "due.picker.invalid" {
+        en: t("Not a date. Try fri, in 3d, 15/12 or 2026-12-15."),
+        fr: t("Date non reconnue. Essayez ven., dans 3 j, 15/12 ou 2026-12-15."),
+    }
+    DuePickerRange "due.picker.range" {
+        en: t("Choose a date between 2000 and 2099."),
+        fr: t("Choisissez une date entre 2000 et 2099."),
+    }
+    DuePickerNone "due.picker.none" {
+        en: t("No due date"),
+        fr: t("Aucune échéance"),
+    }
+    DuePickerPrev "due.picker.prev" {
+        en: t("Previous month"),
+        fr: t("Mois précédent"),
+    }
+    DuePickerNext "due.picker.next" {
+        en: t("Next month"),
+        fr: t("Mois suivant"),
     }
     PropProgressValue "prop.progress.value" {
         en: p_by("total", "{done} of {total} topic done", "{done} of {total} topics done"),
@@ -316,6 +392,78 @@ catalogue! {
     SectionKnowledge "section.knowledge" {
         en: t("Knowledge"),
         fr: t("Connaissances"),
+    }
+    OverviewTitle "overview.title" {
+        en: t("Overview"),
+        fr: t("Vue d\u{2019}ensemble"),
+    }
+    OverviewClear "overview.clear" {
+        en: t("Nothing needs attention."),
+        fr: t("Rien ne demande votre attention."),
+    }
+    OverviewMore "overview.more" {
+        en: t("More"),
+        fr: t("Plus"),
+    }
+    OverviewLess "overview.less" {
+        en: t("Less"),
+        fr: t("Moins"),
+    }
+    OverviewAttention "overview.attention" {
+        en: t("Needs attention"),
+        fr: t("À traiter"),
+    }
+    OverviewBlocked "overview.blocked" {
+        en: p("{n} blocked topic", "{n} blocked topics"),
+        fr: p("{n} sujet bloqué", "{n} sujets bloqués"),
+    }
+    OverviewOverdue "overview.overdue" {
+        en: p("{n} overdue topic", "{n} overdue topics"),
+        fr: p("{n} sujet en retard", "{n} sujets en retard"),
+    }
+    OverviewIdle "overview.idle" {
+        en: p("{n} active topic with no activity for 7 days", "{n} active topics with no activity for 7 days"),
+        fr: p("{n} sujet actif sans activité depuis 7 jours", "{n} sujets actifs sans activité depuis 7 jours"),
+    }
+    OverviewInbox "overview.inbox" {
+        en: p("{n} note in the inbox for {days} days", "{n} notes in the inbox, the oldest for {days} days"),
+        fr: p("{n} note dans la boîte de réception depuis {days} jours", "{n} notes dans la boîte de réception, la plus ancienne depuis {days} jours"),
+    }
+    OverviewWeek "overview.week" {
+        en: t("Last 7 days"),
+        fr: t("7 derniers jours"),
+    }
+    OverviewWeekDone "overview.week.done" {
+        en: p("{n} topic done", "{n} topics done"),
+        fr: p("{n} sujet terminé", "{n} sujets terminés"),
+    }
+    OverviewWeekDecisions "overview.week.decisions" {
+        en: p("{n} decision", "{n} decisions"),
+        fr: p("{n} décision", "{n} décisions"),
+    }
+    OverviewWeekNew "overview.week.new" {
+        en: p("{n} new topic", "{n} new topics"),
+        fr: p("{n} nouveau sujet", "{n} nouveaux sujets"),
+    }
+    OverviewWeekNone "overview.week.none" {
+        en: t("Nothing done, decided or opened in the last 7 days. Last activity {when}."),
+        fr: t("Rien de terminé, décidé ni ouvert ces 7 derniers jours. Dernière activité {when}."),
+    }
+    OverviewEpics "overview.epics" {
+        en: t("Epics"),
+        fr: t("Epics"),
+    }
+    OverviewEpicsMore "overview.epics.more" {
+        en: p("{n} more epic", "{n} more epics"),
+        fr: p("{n} autre epic", "{n} autres epics"),
+    }
+    OverviewEpicsComplete "overview.epics.complete" {
+        en: p("{n} complete epic", "{n} complete epics"),
+        fr: p("{n} epic terminé", "{n} epics terminés"),
+    }
+    OverviewMemories "overview.memories" {
+        en: p("{n} memory not updated for 90 days", "{n} memories not updated for 90 days"),
+        fr: p("{n} mémoire non mise à jour depuis 90 jours", "{n} mémoires non mises à jour depuis 90 jours"),
     }
     SectionTimeline "section.timeline" {
         en: t("Timeline"),
@@ -512,6 +660,46 @@ catalogue! {
     TableReset "table.reset" {
         en: t("Reset order"),
         fr: t("Rétablir l\u{2019}ordre"),
+    }
+    TableDue "table.due" {
+        en: t("Due"),
+        fr: t("Échéance"),
+    }
+    TableFilterOverdue "table.filter.overdue" {
+        en: t("Overdue"),
+        fr: t("En retard"),
+    }
+    TableFilterWeek "table.filter.week" {
+        en: t("Next 7 days"),
+        fr: t("7 prochains jours"),
+    }
+    FilterBlocked "filter.blocked" {
+        en: t("Blocked"),
+        fr: t("Bloqués"),
+    }
+    FilterIdle "filter.idle" {
+        en: t("No activity for 7 days"),
+        fr: t("Sans activité depuis 7 jours"),
+    }
+    FilterDoneWeek "filter.done_week" {
+        en: t("Done in the last 7 days"),
+        fr: t("Terminés ces 7 derniers jours"),
+    }
+    FilterDecidedWeek "filter.decided_week" {
+        en: t("Decided in the last 7 days"),
+        fr: t("Décidés ces 7 derniers jours"),
+    }
+    FilterCreatedWeek "filter.created_week" {
+        en: t("Created in the last 7 days"),
+        fr: t("Créés ces 7 derniers jours"),
+    }
+    FilterStaleMemories "filter.stale_memories" {
+        en: t("Not updated for 90 days"),
+        fr: t("Non mises à jour depuis 90 jours"),
+    }
+    FilterClear "filter.clear" {
+        en: t("Clear filter"),
+        fr: t("Effacer le filtre"),
     }
     TableGroupProgress "table.group_progress" {
         en: t("{done} of {total} done"),
@@ -1369,6 +1557,38 @@ catalogue! {
         en: t("Go to inbox"),
         fr: t("Aller à la boîte de réception"),
     }
+    CmdShowBlocked "cmd.show_blocked" {
+        en: t("Show blocked topics"),
+        fr: t("Afficher les sujets bloqués"),
+    }
+    CmdShowIdle "cmd.show_idle" {
+        en: t("Show topics with no activity"),
+        fr: t("Afficher les sujets sans activité"),
+    }
+    CmdShowDoneWeek "cmd.show_done_week" {
+        en: t("Show topics done in the last 7 days"),
+        fr: t("Afficher les sujets terminés ces 7 derniers jours"),
+    }
+    CmdShowDecidedWeek "cmd.show_decided_week" {
+        en: t("Show topics with a decision in the last 7 days"),
+        fr: t("Afficher les sujets avec une décision ces 7 derniers jours"),
+    }
+    CmdShowCreatedWeek "cmd.show_created_week" {
+        en: t("Show topics created in the last 7 days"),
+        fr: t("Afficher les sujets créés ces 7 derniers jours"),
+    }
+    CmdShowStaleMemories "cmd.show_stale_memories" {
+        en: t("Show memories not updated for 90 days"),
+        fr: t("Afficher les mémoires non mises à jour depuis 90 jours"),
+    }
+    CmdOverviewMore "cmd.overview_more" {
+        en: t("Overview: Show more"),
+        fr: t("Vue d\u{2019}ensemble\u{202f}: afficher plus"),
+    }
+    CmdOverviewLess "cmd.overview_less" {
+        en: t("Overview: Show less"),
+        fr: t("Vue d\u{2019}ensemble\u{202f}: afficher moins"),
+    }
     CmdBack "cmd.back" {
         en: t("Back"),
         fr: t("Précédent"),
@@ -1392,6 +1612,14 @@ catalogue! {
     CmdSetStatus "cmd.set_status" {
         en: t("Set status: {status}"),
         fr: t("Définir le statut\u{202f}: {status}"),
+    }
+    CmdDueSet "cmd.due_set" {
+        en: t("Set due date\u{2026}"),
+        fr: t("Définir l\u{2019}échéance\u{2026}"),
+    }
+    CmdDueClear "cmd.due_clear" {
+        en: t("Clear due date"),
+        fr: t("Effacer l\u{2019}échéance"),
     }
     CmdSettings "cmd.settings" {
         en: t("Open settings"),

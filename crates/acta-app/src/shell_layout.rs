@@ -3468,6 +3468,7 @@ impl Shell {
                 self.open_picker(picker.clone(), on_pick.clone(), window, cx)
             }
             PageEvent::Triage(project) => self.file_with_claude(*project, window, cx),
+            PageEvent::StaleMemories(project) => self.open_stale_memories(*project, window, cx),
             PageEvent::Saved(_) | PageEvent::Located(_) => cx.notify(),
         }
     }

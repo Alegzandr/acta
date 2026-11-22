@@ -42,6 +42,10 @@ pub struct Preferences {
     pub collapsed: Vec<String>,
     /// Keys of the "3 closed" groups unfolded in the tree (`closed:E-3`).
     pub closed_shown: Vec<String>,
+    /// Record ids of the projects whose Overview shows "More", and of the
+    /// epics whose "Needs attention" is expanded (components-records.md 5,
+    /// Overview section; record ids only).
+    pub overview_open: Vec<String>,
     /// Terminal text size, 11 to 18; `None` is the default 13.
     pub terminal_text_size: Option<u8>,
     /// The size of reading text (typography.md 3.2) and the width of the
@@ -92,6 +96,8 @@ struct Stored {
     collapsed: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     closed_shown: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    overview_open: Vec<String>,
     #[serde(default, skip_serializing)]
     sidebar_hidden: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -298,6 +304,11 @@ pub fn parse(text: &str) -> Result<Preferences, LoadError> {
             .into_iter()
             .filter(|k| is_reference(k))
             .collect(),
+        overview_open: stored
+            .overview_open
+            .into_iter()
+            .filter(|k| is_reference(k))
+            .collect(),
         terminal_text_size: stored
             .terminal_text_size
             .filter(|size| (11..=18).contains(size)),
@@ -323,6 +334,7 @@ pub fn serialize(prefs: &Preferences) -> String {
         page: None,
         collapsed: prefs.collapsed.clone(),
         closed_shown: prefs.closed_shown.clone(),
+        overview_open: prefs.overview_open.clone(),
         sidebar_hidden: false,
         terminal_text_size: prefs.terminal_text_size,
         text_size: text_size_name(prefs.text_size),
@@ -540,6 +552,7 @@ mod tests {
             language: Locale::Fr,
             collapsed: vec!["P-1".into(), "E-3".into()],
             closed_shown: vec!["closed:E-3".into()],
+            overview_open: vec!["P-1".into(), "E-3".into()],
             terminal_text_size: Some(15),
             text_size: TextSize::Large,
             reading_width: ReadingWidth::Narrow,

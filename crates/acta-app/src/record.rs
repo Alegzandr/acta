@@ -4,10 +4,12 @@
 
 use std::collections::HashSet;
 
+use acta_core::date::{Date, Zone};
 use acta_core::model::{
-    Author, Entry, EntryKind, EpicId, Folder, Owner, PageReq, ProjectId, Topic, TopicSummary,
+    Author, Entry, EntryKind, EpicId, Folder, Owner, PageReq, ProjectId, Record, Topic, TopicId,
+    TopicSummary,
 };
-use acta_core::store::{EntryFilter, KbFilter};
+use acta_core::store::{EntryFilter, KbFilter, Overview, OverviewFilter, Scope};
 use acta_core::{Result, Store};
 
 use crate::kb_model::{self, Section};
@@ -130,6 +132,13 @@ pub struct Loaded {
     /// Epic and project pages: entries in the levels below.
     pub kb_below: i64,
     pub folders: Folders,
+    /// The record's own due date (components-records.md 5, Due row).
+    pub due_on: Option<Date>,
+    /// Project and epic pages: the Overview's figures (request 17).
+    pub overview: Option<Overview>,
+    /// The topics behind the table's filter chip, in the list's order:
+    /// the same store query as the figure that opened it.
+    pub chip: Option<Chip>,
 }
 
 impl Loaded {
@@ -142,6 +151,59 @@ impl Loaded {
         }
         crate::table::progress(&all)
     }
+
+    /// Open for due dates: a topic not closed; an epic or a project below
+    /// 100% or with no topic (components-records.md 5).
+    pub fn due_open(&self) -> bool {
+        match &self.topic {
+            Some(topic) => topic.status.is_open(),
+            None => {
+                let (done, total) = self.progress();
+                total == 0 || done < total
+            }
+        }
+    }
+
+    /// Every topic the page lists (an epic's, or a project's in all its
+    /// groups), in the tree's order.
+    pub fn all_topics(&self) -> Vec<TopicSummary> {
+        let mut all = self.topics.clone();
+        all.extend(self.loose.iter().cloned());
+        for (_, _, topics) in &self.groups {
+            all.extend(topics.iter().cloned());
+        }
+        all
+    }
+}
+
+/// A filter chip of the topic table and the topics it lists.
+pub type Chip = (OverviewFilter, Vec<TopicId>);
+
+/// The Overview of an epic or a project page for a reader on `today`, and
+/// the list behind `chip` when the table shows one.
+fn overview(
+    store: &Store,
+    scope: Scope,
+    today: Date,
+    chip: Option<OverviewFilter>,
+) -> Result<(Overview, Option<Chip>)> {
+    let zone = Zone::system();
+    let figures = store.overview(scope, today, zone)?;
+    let chip = match chip {
+        Some(filter) => {
+            let ids = store
+                .overview_list(scope, filter, today, zone)?
+                .into_iter()
+                .filter_map(|item| match item.record {
+                    Record::Topic(id) => Some(id),
+                    _ => None,
+                })
+                .collect();
+            Some((filter, ids))
+        }
+        None => None,
+    };
+    Ok((figures, chip))
 }
 
 fn owner_name(store: &Store, owner: Owner) -> Result<String> {
@@ -209,7 +271,15 @@ const KB_PAGE: PageReq = PageReq {
     limit: 200,
 };
 
-pub fn load(store: &Store, owner: Owner, filter: EntryFilterKind) -> Result<Loaded> {
+/// The page of `owner`. `today` is the reader's local date (the Overview
+/// counts in local days); `chip` the table's filter chip, if any.
+pub fn load(
+    store: &Store,
+    owner: Owner,
+    filter: EntryFilterKind,
+    today: Date,
+    chip: Option<OverviewFilter>,
+) -> Result<Loaded> {
     let kb_scope = store.kb_scope(owner, &KbFilter::default(), KB_PAGE)?.items;
     let kb = kb_model::section(owner, kb_scope);
     let folders = load_folders(store, owner)?;
@@ -232,6 +302,9 @@ pub fn load(store: &Store, owner: Owner, filter: EntryFilterKind) -> Result<Load
                 epic,
                 entries: entries.items,
                 entries_total: entries.total,
+                due_on: topic.due_on,
+                overview: None,
+                chip: None,
                 topic: Some(topic),
                 topics: Vec::new(),
                 loose: Vec::new(),
@@ -255,8 +328,12 @@ pub fn load(store: &Store, owner: Owner, filter: EntryFilterKind) -> Result<Load
                 .kb_rollup(owner, &KbFilter::default(), PageReq::first(1))?
                 .total;
             let own = kb.own.len() as i64;
+            let (figures, chip) = overview(store, Scope::Epic(id), today, chip)?;
             Ok(Loaded {
                 owner,
+                due_on: epic.due_on,
+                overview: Some(figures),
+                chip,
                 title: epic.title.clone(),
                 description: epic.description.clone(),
                 updated_at: epic.stamp.updated_at,
@@ -281,8 +358,12 @@ pub fn load(store: &Store, owner: Owner, filter: EntryFilterKind) -> Result<Load
                 .kb_rollup(owner, &KbFilter::default(), PageReq::first(1))?
                 .total;
             let own = kb.own.len() as i64;
+            let (figures, chip) = overview(store, Scope::Project(id), today, chip)?;
             Ok(Loaded {
                 owner,
+                due_on: project.due_on,
+                overview: Some(figures),
+                chip,
                 title: project.title.clone(),
                 description: project.description.clone(),
                 updated_at: project.stamp.updated_at,
@@ -307,31 +388,53 @@ pub fn load(store: &Store, owner: Owner, filter: EntryFilterKind) -> Result<Load
     }
 }
 
-/// components-records.md 5, System event: consecutive status changes within
-/// 5 minutes of each other read as one line, from the first status to the
-/// last, by the same author. A run that ends where it started (a change and
-/// its undo) leaves no line. `entries` is newest first, as the timeline
-/// shows it.
+/// The entries the timeline shows, newest first: every entry but the
+/// system events that have no line in the catalogue yet (data.md 11,
+/// request 10); status and due date changes are shown, collapsed by
+/// [`collapse_status_events`].
+pub fn timeline_entries(entries: &[Entry]) -> Vec<Entry> {
+    use acta_core::model::EventKind;
+    collapse_status_events(
+        entries
+            .iter()
+            .filter(|e| {
+                e.kind != EntryKind::System
+                    || e.event
+                        .as_ref()
+                        .is_some_and(|ev| matches!(ev.kind, EventKind::Status | EventKind::Due))
+            })
+            .cloned()
+            .collect(),
+    )
+}
+
+/// components-records.md 5, System event: consecutive status changes, or
+/// due date changes, within 5 minutes of each other read as one line, from
+/// the first value to the last, by the same author. A run that ends where
+/// it started (a change and its undo) leaves no line. `entries` is newest
+/// first, as the timeline shows it.
 pub fn collapse_status_events(entries: Vec<Entry>) -> Vec<Entry> {
     use acta_core::model::EventKind;
     const WINDOW_MS: i64 = 5 * 60 * 1000;
-    let is_status = |e: &Entry| {
+    let kind = |e: &Entry| {
         e.event
             .as_ref()
-            .is_some_and(|ev| ev.kind == EventKind::Status)
+            .map(|ev| ev.kind)
+            .filter(|k| matches!(k, EventKind::Status | EventKind::Due))
     };
     let mut out: Vec<Entry> = Vec::with_capacity(entries.len());
     // The time of the oldest change of the run the last line stands for,
-    // while that line is a status change.
+    // while that line is a status or due date change.
     let mut run: Option<i64> = None;
     for entry in entries {
         if let Some(oldest) = run
-            && is_status(&entry)
             && let Some(line) = out.last_mut()
+            && kind(&entry).is_some()
+            && kind(line) == kind(&entry)
             && line.author == entry.author
             && oldest - entry.stamp.created_at <= WINDOW_MS
         {
-            // `entry` is older: the line now starts at its old status.
+            // `entry` is older: the line now starts at its old value.
             let old = entry.event.as_ref().and_then(|e| e.old.clone());
             if let Some(event) = line.event.as_mut() {
                 event.old = old;
@@ -339,14 +442,14 @@ pub fn collapse_status_events(entries: Vec<Entry>) -> Vec<Entry> {
             run = Some(entry.stamp.created_at);
             continue;
         }
-        run = is_status(&entry).then_some(entry.stamp.created_at);
+        run = kind(&entry).is_some().then_some(entry.stamp.created_at);
         out.push(entry);
     }
-    out.retain(|e| {
-        !is_status(e)
-            || e.event
-                .as_ref()
-                .is_none_or(|ev| ev.old.is_none() || ev.old != ev.new)
+    out.retain(|e| match (kind(e), e.event.as_ref()) {
+        (Some(EventKind::Status), Some(ev)) => ev.old.is_none() || ev.old != ev.new,
+        // A date set then cleared (old and new both none) is no change.
+        (Some(EventKind::Due), Some(ev)) => ev.old != ev.new,
+        _ => true,
     });
     out
 }
@@ -381,6 +484,81 @@ mod tests {
                 deleted_by: None,
             },
         }
+    }
+
+    fn due_event(id: i64, at_min: i64, old: Option<&str>, new: Option<&str>) -> Entry {
+        let mut e = status_event(id, at_min, Status::Draft, Status::Draft, Author::Human);
+        e.event = Some(acta_core::model::SystemEvent {
+            kind: acta_core::model::EventKind::Due,
+            old: old.map(Into::into),
+            new: new.map(Into::into),
+        });
+        e
+    }
+
+    #[test]
+    fn due_date_events_reach_the_timeline() {
+        let mut temp = temp_store();
+        let s = &mut temp.store;
+        let me = Author::Human;
+        let project = s.create_project("Acta", "", me).unwrap();
+        let topic = s
+            .create_topic(
+                NewTopic {
+                    project,
+                    epic: None,
+                    title: "Embed the terminal".into(),
+                    description: String::new(),
+                    status: Status::Planned,
+                },
+                me,
+            )
+            .unwrap();
+        let day = acta_core::date::Date::parse_iso("2026-12-15");
+        s.set_due(Owner::Topic(topic), day, me).unwrap();
+        let page = load(s, Owner::Topic(topic), EntryFilterKind::All, today(), None).unwrap();
+        let shown = timeline_entries(&page.entries);
+        let due: Vec<_> = shown
+            .iter()
+            .filter_map(|e| e.event.as_ref())
+            .filter(|ev| ev.kind == acta_core::model::EventKind::Due)
+            .collect();
+        assert_eq!(due.len(), 1);
+        assert_eq!(due[0].new.as_deref(), Some("2026-12-15"));
+        // Other system events (creation) stay hidden.
+        assert!(shown.iter().all(|e| {
+            e.kind != EntryKind::System
+                || e.event
+                    .as_ref()
+                    .is_some_and(|ev| ev.kind == acta_core::model::EventKind::Due)
+        }));
+    }
+
+    #[test]
+    fn due_date_changes_collapse_into_the_last_and_an_undo_leaves_nothing() {
+        // Newest first: set at 10, changed at 12, changed at 13.
+        let entries = vec![
+            due_event(3, 13, Some("2026-12-02"), Some("2026-12-15")),
+            due_event(2, 12, Some("2026-12-01"), Some("2026-12-02")),
+            due_event(1, 10, None, Some("2026-12-01")),
+        ];
+        assert_eq!(
+            lines(&collapse_status_events(entries)),
+            [(None, Some("2026-12-15".into()), 13)]
+        );
+        // Set and cleared within 5 minutes: no line.
+        let undone = vec![
+            due_event(2, 11, Some("2026-12-01"), None),
+            due_event(1, 10, None, Some("2026-12-01")),
+        ];
+        assert!(collapse_status_events(undone).is_empty());
+        // A status change between them breaks the run.
+        let mixed = vec![
+            due_event(3, 12, Some("2026-12-01"), None),
+            status_event(2, 11, Status::Planned, Status::Active, Author::Human),
+            due_event(1, 10, None, Some("2026-12-01")),
+        ];
+        assert_eq!(collapse_status_events(mixed).len(), 3);
     }
 
     fn lines(entries: &[Entry]) -> Vec<(Option<String>, Option<String>, i64)> {
@@ -477,7 +655,7 @@ mod tests {
         .unwrap();
         s.add_folder(Owner::Epic(epic), dir.path(), me).unwrap();
 
-        let mut page = load(s, Owner::Topic(topic), EntryFilterKind::All).unwrap();
+        let mut page = load(s, Owner::Topic(topic), EntryFilterKind::All, today(), None).unwrap();
         page.folders.missing = crate::workspace::missing_paths(page.folders.paths());
         assert_eq!(page.title, "Embed the terminal");
         assert_eq!(page.project.1, "Acta");
@@ -493,9 +671,23 @@ mod tests {
         );
         assert!(page.folders.missing.is_empty());
 
-        let decisions = load(s, Owner::Topic(topic), EntryFilterKind::Decisions).unwrap();
+        let decisions = load(
+            s,
+            Owner::Topic(topic),
+            EntryFilterKind::Decisions,
+            today(),
+            None,
+        )
+        .unwrap();
         assert_eq!(decisions.entries.len(), 1);
-        let progress = load(s, Owner::Topic(topic), EntryFilterKind::Progress).unwrap();
+        let progress = load(
+            s,
+            Owner::Topic(topic),
+            EntryFilterKind::Progress,
+            today(),
+            None,
+        )
+        .unwrap();
         assert!(progress.entries.is_empty());
     }
 
@@ -529,7 +721,7 @@ mod tests {
         s.add_folder(Owner::Project(project), &gone, me).unwrap();
         std::fs::remove_dir(&gone).unwrap();
 
-        let mut page = load(s, Owner::Epic(epic), EntryFilterKind::All).unwrap();
+        let mut page = load(s, Owner::Epic(epic), EntryFilterKind::All, today(), None).unwrap();
         assert!(
             page.folders.missing.is_empty(),
             "nothing checked under the store"
@@ -540,9 +732,104 @@ mod tests {
         let missing = page.folders.primary().unwrap().path.clone();
         assert!(page.folders.is_missing(&missing));
 
-        let page = load(s, Owner::Project(project), EntryFilterKind::All).unwrap();
+        let page = load(
+            s,
+            Owner::Project(project),
+            EntryFilterKind::All,
+            today(),
+            None,
+        )
+        .unwrap();
         assert_eq!(page.groups.len(), 1);
         assert_eq!(page.progress(), (1, 2));
         assert!(page.folders.inherited_from.is_none());
+    }
+
+    fn today() -> Date {
+        Zone::system().today()
+    }
+
+    #[test]
+    fn pages_carry_their_date_the_overview_and_the_chip_list() {
+        let mut temp = temp_store();
+        let s = &mut temp.store;
+        let me = Author::Human;
+        let project = s.create_project("Acta", "", me).unwrap();
+        let epic = s.create_epic(project, "Terminal", "", me).unwrap();
+        let mut topics = Vec::new();
+        for (title, status) in [
+            ("Embed the terminal", Status::Blocked),
+            ("Scrollback", Status::Active),
+            ("Links", Status::Blocked),
+        ] {
+            topics.push(
+                s.create_topic(
+                    NewTopic {
+                        project,
+                        epic: Some(epic),
+                        title: title.into(),
+                        description: String::new(),
+                        status,
+                    },
+                    me,
+                )
+                .unwrap(),
+            );
+        }
+        let yesterday = today().add_days(-1);
+        s.set_due(Owner::Topic(topics[1]), Some(yesterday), me)
+            .unwrap();
+        s.set_due(Owner::Epic(epic), Some(yesterday), me).unwrap();
+
+        let page = load(s, Owner::Epic(epic), EntryFilterKind::All, today(), None).unwrap();
+        assert_eq!(page.due_on, Some(yesterday));
+        assert!(page.due_open(), "no topic done: open");
+        let figures = page.overview.as_ref().unwrap();
+        assert_eq!((figures.blocked, figures.overdue), (2, 1));
+        assert!(page.chip.is_none());
+
+        // The chip's list is the figure's: same count, tree order.
+        let page = load(
+            s,
+            Owner::Project(project),
+            EntryFilterKind::All,
+            today(),
+            Some(OverviewFilter::Blocked),
+        )
+        .unwrap();
+        let (filter, ids) = page.chip.clone().unwrap();
+        assert_eq!(filter, OverviewFilter::Blocked);
+        assert_eq!(ids, [topics[0], topics[2]]);
+        assert_eq!(ids.len(), page.overview.as_ref().unwrap().blocked);
+
+        // A topic page has its date and no Overview.
+        let page = load(
+            s,
+            Owner::Topic(topics[1]),
+            EntryFilterKind::All,
+            today(),
+            None,
+        )
+        .unwrap();
+        assert_eq!(page.due_on, Some(yesterday));
+        assert!(page.overview.is_none());
+        s.update_topic(
+            topics[1],
+            acta_core::store::TopicPatch {
+                status: Some(Status::Done),
+                ..Default::default()
+            },
+            me,
+        )
+        .unwrap();
+        let page = load(
+            s,
+            Owner::Topic(topics[1]),
+            EntryFilterKind::All,
+            today(),
+            None,
+        )
+        .unwrap();
+        assert!(!page.due_open(), "a done topic is closed");
     }
 }

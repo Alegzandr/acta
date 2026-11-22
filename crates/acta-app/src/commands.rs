@@ -4,6 +4,7 @@
 //! keyboard.
 
 use acta_core::model::Status;
+use acta_core::store::OverviewFilter;
 
 use crate::i18n::{Arg, Key, KeyName, Locale, text, tr};
 use crate::layout::{Place, Side, ViewAction, ViewId};
@@ -30,6 +31,16 @@ pub enum Command {
     SaveFile,
     KbMoveTo,
     SetStatus(Status),
+    /// "Set due date..." and "Clear due date" (interaction.md 6.1): the
+    /// focused tree row's record, else the open project, epic or topic.
+    SetDue,
+    ClearDue,
+    /// The Overview's lists (components-records.md 5): "Show blocked
+    /// topics" and the others, on the active page's project, or its epic.
+    Show(OverviewFilter),
+    /// "Overview: Show more" / "Overview: Show less".
+    OverviewMore,
+    OverviewLess,
     Back,
     Forward,
     Undo,
@@ -128,7 +139,22 @@ pub struct Context {
     pub can_split_down: bool,
     /// A layout change can be undone.
     pub layout_undo: bool,
+    /// The due date commands' target exists, and whether it has a date.
+    pub due: Option<bool>,
+    /// The page shows an Overview (a project or an epic), and whether its
+    /// "More" (or "Needs attention") is open.
+    pub overview: Option<bool>,
 }
+
+/// The Overview's lists the palette opens, in the order of 6.1.
+pub const SHOW: [OverviewFilter; 6] = [
+    OverviewFilter::Blocked,
+    OverviewFilter::Idle,
+    OverviewFilter::Done,
+    OverviewFilter::Decided,
+    OverviewFilter::Created,
+    OverviewFilter::StaleMemories,
+];
 
 /// The palette commands of one view, in the order of 4.8.7.
 fn view_commands(view: ViewId, state: ViewState) -> Vec<Command> {
@@ -174,6 +200,20 @@ impl Command {
         if ctx.on_topic {
             out.push(Command::AddEntry);
             out.extend(Status::ALL.into_iter().map(Command::SetStatus));
+        }
+        if let Some(dated) = ctx.due {
+            out.push(Command::SetDue);
+            if dated {
+                out.push(Command::ClearDue);
+            }
+        }
+        if ctx.has_project {
+            out.extend(SHOW.map(Command::Show));
+        }
+        match ctx.overview {
+            Some(false) => out.push(Command::OverviewMore),
+            Some(true) => out.push(Command::OverviewLess),
+            None => {}
         }
         if ctx.on_record {
             out.extend([
@@ -374,6 +414,21 @@ impl Command {
                 let name = text(locale, crate::ui::status_key(status));
                 return tr(locale, Key::CmdSetStatus, &[("status", Arg::Text(&name))]);
             }
+            Command::SetDue => Key::CmdDueSet,
+            Command::ClearDue => Key::CmdDueClear,
+            Command::Show(filter) => match filter {
+                OverviewFilter::Blocked => Key::CmdShowBlocked,
+                OverviewFilter::Idle => Key::CmdShowIdle,
+                OverviewFilter::Done => Key::CmdShowDoneWeek,
+                OverviewFilter::Decided => Key::CmdShowDecidedWeek,
+                OverviewFilter::Created => Key::CmdShowCreatedWeek,
+                OverviewFilter::StaleMemories => Key::CmdShowStaleMemories,
+                // Overdue keeps the table's segment, the inbox "Go to
+                // inbox": never listed (SHOW).
+                OverviewFilter::Overdue | OverviewFilter::Inbox => Key::CmdGoInbox,
+            },
+            Command::OverviewMore => Key::CmdOverviewMore,
+            Command::OverviewLess => Key::CmdOverviewLess,
             Command::Theme(setting) => {
                 let value = text(
                     locale,
@@ -453,6 +508,7 @@ impl Command {
             Command::Back => vec![alt, "\u{2190}"],
             Command::Forward => vec![alt, "\u{2192}"],
             Command::SetStatus(_) => vec!["S"],
+            Command::SetDue => vec!["D"],
             _ => vec![],
         }
     }
@@ -511,6 +567,45 @@ mod tests {
     }
 
     #[test]
+    fn due_and_overview_commands_appear_only_with_their_target() {
+        let page = |due, overview| {
+            Command::available(Context {
+                has_project: true,
+                on_record: true,
+                due,
+                overview,
+                ..Context::default()
+            })
+        };
+        let undated = page(Some(false), None);
+        assert!(undated.contains(&Command::SetDue));
+        assert!(!undated.contains(&Command::ClearDue), "nothing to clear");
+        assert!(page(Some(true), None).contains(&Command::ClearDue));
+        let none = Command::available(Context::default());
+        assert!(!none.contains(&Command::SetDue));
+        assert!(!none.contains(&Command::Show(OverviewFilter::Blocked)));
+        let project = page(Some(false), Some(false));
+        assert!(project.contains(&Command::Show(OverviewFilter::StaleMemories)));
+        assert!(project.contains(&Command::OverviewMore));
+        assert!(!project.contains(&Command::OverviewLess));
+        assert!(page(None, Some(true)).contains(&Command::OverviewLess));
+        assert_eq!(Command::SetDue.label(Locale::En), "Set due date\u{2026}");
+        assert_eq!(
+            Command::ClearDue.label(Locale::Fr),
+            "Effacer l\u{2019}\u{e9}ch\u{e9}ance"
+        );
+        assert_eq!(
+            Command::Show(OverviewFilter::Idle).label(Locale::En),
+            "Show topics with no activity"
+        );
+        assert_eq!(
+            Command::OverviewMore.label(Locale::Fr),
+            "Vue d\u{2019}ensemble\u{202f}: afficher plus"
+        );
+        assert_eq!(Command::SetDue.shortcut(Locale::En, false), ["D"]);
+    }
+
+    #[test]
     fn labels_come_from_the_catalogue_in_both_languages() {
         assert_eq!(
             Command::SetStatus(Status::Blocked).label(Locale::En),
@@ -526,6 +621,8 @@ mod tests {
             on_record: true,
             can_back: true,
             can_forward: true,
+            due: Some(true),
+            overview: Some(false),
             ..Context::default()
         }) {
             for locale in Locale::ALL {
