@@ -41,13 +41,22 @@
 //! database already holds, and leaves out attachment rows whose content is
 //! neither here nor in the file (named as "not in the export"). An older
 //! file imports with no attachments and leaves `filed_entry` as it is.
+//! 5 adds memory quality (ADR 0015, 9): a knowledge entry's verified date
+//! and author, state and successor (UUID), branch context and context
+//! folder (UUID), the topic it was created from (UUID) and its sources
+//! (`links`, records by UUID); a revision's branch; a `kb_pairs` array
+//! (entries by UUID). Claude Code session ids are local and never
+//! exported, nor is the quality log. An older file imports with the
+//! verified date set to `updated_at`, live, with no sources or pairs, and
+//! an update from it moves the verified date to its `updated_at` and
+//! leaves the state, context and sources as they are.
 
 use super::Store;
 use crate::date::Date;
 use crate::error::{Error, Result};
 use crate::model::{
-    Author, ChangeKind, CommitMode, EntryKind, EventKind, KbId, KbKind, ProjectId, QuestionStatus,
-    Status,
+    Author, ChangeKind, CommitMode, EntryKind, EventKind, KbId, KbKind, KbLinkKind, KbPairKind,
+    KbPairState, KbState, ProjectId, QuestionStatus, Status,
 };
 use crate::snapshots::SnapshotKind;
 use rusqlite::{OptionalExtension, params};
@@ -56,11 +65,11 @@ use serde::{Deserialize, Serialize};
 /// The format name written in every file.
 pub const FORMAT_NAME: &str = "acta";
 /// The format version this build writes and the newest it reads.
-pub const FORMAT_VERSION: i64 = 4;
+pub const FORMAT_VERSION: i64 = 5;
 /// The file extension, without the leading dot.
 pub const FILE_EXTENSION: &str = "acta.json";
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ExportFile {
     pub format: String,
     pub version: i64,
@@ -89,6 +98,43 @@ pub struct ExportFile {
     /// Version 4: attached files (ADR 0012).
     #[serde(default)]
     pub attachments: Vec<XAttachment>,
+    /// Version 5: duplicate and conflict pairs (ADR 0015).
+    #[serde(default)]
+    pub kb_pairs: Vec<XKbPair>,
+}
+
+/// Version 5: a source a knowledge entry names: a record (`target_uuid`),
+/// or a commit or a path (`target_text`, a path with its folder's UUID).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct XKbLink {
+    pub uuid: String,
+    pub kind: KbLinkKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_uuid: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blob: Option<String>,
+    pub created_at: i64,
+    pub created_by: Author,
+}
+
+/// Version 5: a pair the checker found, by the entries' UUIDs.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct XKbPair {
+    pub a: String,
+    pub b: String,
+    pub kind: KbPairKind,
+    pub state: KbPairState,
+    pub score: f64,
+    pub created_at: i64,
+    pub created_by: Author,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_by: Option<Author>,
 }
 
 /// Version 4: one distinct content. `content` is base64, absent when the
@@ -301,6 +347,23 @@ pub struct XKb {
     pub rev: i64,
     pub created_by: Author,
     pub revisions: Vec<XRevision>,
+    /// Version 5 (ADR 0015); defaults for older files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verified_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verified_by: Option<Author>,
+    #[serde(default)]
+    pub state: KbState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub superseded_by: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_branch: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_folder: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_topic: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub links: Vec<XKbLink>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -314,6 +377,9 @@ pub struct XRevision {
     pub change: ChangeKind,
     pub section: Option<String>,
     pub created_at: i64,
+    /// Version 5: the branch of the session that wrote it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -746,9 +812,14 @@ impl Store {
         let mut knowledge = collect(
             conn,
             &format!(
-                "SELECT {STAMP_SQL}, p.uuid, e.uuid, t.uuid, x.kind, x.title, x.summary, x.body, x.rev, x.created_by, x.id
+                "SELECT {STAMP_SQL}, p.uuid, e.uuid, t.uuid, x.kind, x.title, x.summary, x.body, x.rev, x.created_by, x.id,
+                        coalesce(x.verified_at, x.updated_at), coalesce(x.verified_by, x.updated_by), x.state,
+                        s.uuid, x.context_branch, f.uuid, ct.uuid
                  FROM kb_entries x JOIN projects p ON p.id = x.project_id
                  LEFT JOIN epics e ON e.id = x.epic_id LEFT JOIN topics t ON t.id = x.topic_id
+                 LEFT JOIN kb_entries s ON s.id = x.superseded_by
+                 LEFT JOIN folders f ON f.id = x.context_folder_id
+                 LEFT JOIN topics ct ON ct.id = x.created_topic_id
                  WHERE 1 = 1{} ORDER BY x.uuid",
                 only("x.project_id")
             ),
@@ -766,6 +837,14 @@ impl Store {
                         rev: r.get(13)?,
                         created_by: r.get(14)?,
                         revisions: Vec::new(),
+                        verified_at: r.get(16)?,
+                        verified_by: r.get(17)?,
+                        state: r.get(18)?,
+                        superseded_by: r.get(19)?,
+                        context_branch: r.get(20)?,
+                        context_folder: r.get(21)?,
+                        created_topic: r.get(22)?,
+                        links: Vec::new(),
                     },
                     r.get::<_, i64>(15)?,
                 ))
@@ -775,7 +854,7 @@ impl Store {
             kb.revisions = collect(
                 conn,
                 &format!(
-                    "SELECT uuid, rev, title, summary, body, author, change, section, created_at
+                    "SELECT uuid, rev, title, summary, body, author, change, section, created_at, branch
                      FROM kb_revisions WHERE entry_id = {id} ORDER BY rev, uuid"
                 ),
                 |r| {
@@ -789,10 +868,55 @@ impl Store {
                         change: r.get(6)?,
                         section: r.get(7)?,
                         created_at: r.get(8)?,
+                        branch: r.get(9)?,
+                    })
+                },
+            )?;
+            kb.links = collect(
+                conn,
+                &format!(
+                    "SELECT l.uuid, l.kind, l.target_uuid, l.target_text, f.uuid, l.blob, l.created_at, l.created_by
+                     FROM kb_links l LEFT JOIN folders f ON f.id = l.folder_id
+                     WHERE l.entry_id = {id} ORDER BY l.uuid"
+                ),
+                |r| {
+                    Ok(XKbLink {
+                        uuid: r.get(0)?,
+                        kind: r.get(1)?,
+                        target_uuid: r.get(2)?,
+                        target_text: r.get(3)?,
+                        folder: r.get(4)?,
+                        blob: r.get(5)?,
+                        created_at: r.get(6)?,
+                        created_by: r.get(7)?,
                     })
                 },
             )?;
         }
+        let kb_pairs = collect(
+            conn,
+            &format!(
+                "SELECT ka.uuid, kb.uuid, x.kind, x.state, x.score, x.created_at, x.created_by,
+                        x.resolved_at, x.resolved_by
+                 FROM kb_pairs x JOIN kb_entries ka ON ka.id = x.a JOIN kb_entries kb ON kb.id = x.b
+                 WHERE 1 = 1{}{} ORDER BY ka.uuid, kb.uuid, x.kind",
+                only("ka.project_id"),
+                only("kb.project_id")
+            ),
+            |r| {
+                Ok(XKbPair {
+                    a: r.get(0)?,
+                    b: r.get(1)?,
+                    kind: r.get(2)?,
+                    state: r.get(3)?,
+                    score: r.get(4)?,
+                    created_at: r.get(5)?,
+                    created_by: r.get(6)?,
+                    resolved_at: r.get(7)?,
+                    resolved_by: r.get(8)?,
+                })
+            },
+        )?;
         let folders = collect(
             conn,
             &format!(
@@ -948,6 +1072,7 @@ impl Store {
             profile,
             blobs,
             attachments,
+            kb_pairs,
         })
     }
 
@@ -1546,6 +1671,11 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile, author: Author) -> Result<Im
         }
     }
 
+    // Version 5: memory quality (ADR 0015). Entries the file wrote get
+    // their successor, context folder and creating topic once every
+    // entry and folder is in (`merge_kb_quality`).
+    let quality = f.version >= 5;
+    let mut applied: Vec<(&XKb, i64)> = Vec::new();
     for x in &f.knowledge {
         let s = &x.stamp;
         let action = decide(tx, "kb_entries", s)?;
@@ -1553,17 +1683,30 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile, author: Author) -> Result<Im
         let project = local_id(tx, "projects", &x.project)?;
         let epic = opt_id(tx, "epics", &x.epic)?;
         let topic = opt_id(tx, "topics", &x.topic)?;
+        // Before version 5 an entry had no verified date: its update is
+        // the best value there is (as the schema 7 backfill).
+        let (verified_at, verified_by) = if quality {
+            (
+                x.verified_at.unwrap_or(s.updated_at),
+                x.verified_by.unwrap_or(s.updated_by),
+            )
+        } else {
+            (s.updated_at, s.updated_by)
+        };
         let id = match action {
             Action::Insert => {
                 tx.execute(
                     "INSERT INTO kb_entries (uuid, project_id, epic_id, topic_id, kind, title, summary, body, rev, created_by,
-                                             created_at, updated_at, updated_by, deleted_at, deleted_by)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                                             created_at, updated_at, updated_by, deleted_at, deleted_by,
+                                             verified_at, verified_by, state, context_branch)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
                     params![s.uuid, project, epic, topic, x.kind, x.title, x.summary, x.body, x.rev, x.created_by,
-                            s.created_at, s.updated_at, s.updated_by, s.deleted_at, s.deleted_by],
+                            s.created_at, s.updated_at, s.updated_by, s.deleted_at, s.deleted_by,
+                            verified_at, verified_by, x.state, x.context_branch],
                 )?;
                 let id = tx.last_insert_rowid();
                 seen_on_import(tx, "kb", id, s.updated_at)?;
+                applied.push((x, id));
                 id
             }
             Action::Update(l) => {
@@ -1576,6 +1719,17 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile, author: Author) -> Result<Im
                     params![l.id, project, epic, topic, x.kind, x.title, x.summary, x.body, x.rev,
                             s.updated_at, s.updated_by, d, db],
                 )?;
+                tx.execute(
+                    "UPDATE kb_entries SET verified_at = ?2, verified_by = ?3 WHERE id = ?1",
+                    params![l.id, verified_at, verified_by],
+                )?;
+                if quality {
+                    tx.execute(
+                        "UPDATE kb_entries SET state = ?2, context_branch = ?3 WHERE id = ?1",
+                        params![l.id, x.state, x.context_branch],
+                    )?;
+                    applied.push((x, l.id));
+                }
                 seen_on_import(tx, "kb", l.id, s.updated_at)?;
                 l.id
             }
@@ -1606,9 +1760,10 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile, author: Author) -> Result<Im
                 r.rev
             };
             tx.execute(
-                "INSERT INTO kb_revisions (uuid, entry_id, rev, title, summary, body, author, change, section, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-                params![r.uuid, id, rev, r.title, r.summary, r.body, r.author, r.change, r.section, r.created_at],
+                "INSERT INTO kb_revisions (uuid, entry_id, rev, title, summary, body, author, change, section, created_at, branch)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                params![r.uuid, id, rev, r.title, r.summary, r.body, r.author, r.change, r.section, r.created_at,
+                        r.branch],
             )?;
             rep.revisions.created += 1;
         }
@@ -1783,6 +1938,9 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile, author: Author) -> Result<Im
     if old_format || by_claude {
         pointers.clear();
     }
+    if quality {
+        merge_kb_quality(tx, f, &applied)?;
+    }
     for (table, id, folder) in pointers {
         let folder: Option<i64> = match folder {
             Some(uuid) => tx
@@ -1799,6 +1957,96 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile, author: Author) -> Result<Im
     }
 
     Ok(rep)
+}
+
+/// Version 5: for the entries the file wrote, the successor, the context
+/// folder and the creating topic (a UUID this database does not have is
+/// dropped); then every entry's sources not known here (by UUID; a folder
+/// not known here leaves a file source out); then pairs, the newer
+/// decision winning (`resolved_at`, else `created_at`).
+fn merge_kb_quality(
+    tx: &rusqlite::Connection,
+    f: &ExportFile,
+    applied: &[(&XKb, i64)],
+) -> Result<()> {
+    let find = |table: &str, uuid: &Option<String>| -> Result<Option<i64>> {
+        Ok(match uuid {
+            Some(u) => tx
+                .query_row(
+                    &format!("SELECT id FROM {table} WHERE uuid = ?1"),
+                    [u],
+                    |r| r.get(0),
+                )
+                .optional()?,
+            None => None,
+        })
+    };
+    for (x, id) in applied {
+        let successor = find("kb_entries", &x.superseded_by)?;
+        let folder = find("folders", &x.context_folder)?;
+        let topic = find("topics", &x.created_topic)?;
+        tx.execute(
+            "UPDATE kb_entries SET superseded_by = ?2, context_folder_id = ?3, created_topic_id = ?4,
+                    context_branch = CASE WHEN ?3 IS NULL THEN NULL ELSE context_branch END
+             WHERE id = ?1",
+            params![id, successor, folder, topic],
+        )?;
+    }
+    for x in &f.knowledge {
+        let Some(id) = find("kb_entries", &Some(x.stamp.uuid.clone()))? else {
+            continue;
+        };
+        for l in &x.links {
+            let known: bool = tx.query_row(
+                "SELECT EXISTS (SELECT 1 FROM kb_links WHERE uuid = ?1)",
+                [&l.uuid],
+                |r| r.get(0),
+            )?;
+            if known || l.target_uuid.is_some() == l.target_text.is_some() {
+                continue;
+            }
+            let folder = find("folders", &l.folder)?;
+            if l.kind == KbLinkKind::File && folder.is_none() {
+                continue;
+            }
+            tx.execute(
+                "INSERT INTO kb_links (uuid, entry_id, kind, target_uuid, target_text, folder_id, blob, created_at, created_by)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![l.uuid, id, l.kind, l.target_uuid, l.target_text, folder, l.blob, l.created_at,
+                        l.created_by],
+            )?;
+        }
+    }
+    for p in &f.kb_pairs {
+        let (Some(x), Some(y)) = (
+            find("kb_entries", &Some(p.a.clone()))?,
+            find("kb_entries", &Some(p.b.clone()))?,
+        ) else {
+            continue;
+        };
+        if x == y {
+            continue;
+        }
+        let (a, b) = if x < y { (x, y) } else { (y, x) };
+        let at = p.resolved_at.unwrap_or(p.created_at);
+        let local: Option<i64> = tx
+            .query_row(
+                "SELECT coalesce(resolved_at, created_at) FROM kb_pairs WHERE a = ?1 AND b = ?2 AND kind = ?3",
+                params![a, b, p.kind],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if local.is_some_and(|l| l >= at) {
+            continue;
+        }
+        tx.execute(
+            "INSERT INTO kb_pairs (a, b, kind, state, score, created_at, created_by, resolved_at, resolved_by)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+             ON CONFLICT (a, b, kind) DO UPDATE SET state = ?4, score = ?5, resolved_at = ?8, resolved_by = ?9",
+            params![a, b, p.kind, p.state, p.score, p.created_at, p.created_by, p.resolved_at, p.resolved_by],
+        )?;
+    }
+    Ok(())
 }
 
 /// Version 4: notes' `filed_entry`, then blobs (hash checked, content this

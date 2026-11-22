@@ -119,6 +119,8 @@ pub struct Session {
     /// Started by Acta's terminal (`ACTA_LAUNCH`), so with the launch
     /// plan's `--add-dir` folders.
     pub in_acta: bool,
+    /// Memory quality state kept between calls (ADR 0015).
+    pub kb: super::kbq::KbSession,
 }
 
 const SESSION_KEY: &str = "focus.session.";
@@ -138,6 +140,7 @@ impl Session {
             today: None,
             dir: None,
             in_acta: false,
+            kb: Default::default(),
         }
     }
 

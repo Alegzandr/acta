@@ -352,6 +352,34 @@ enum KbAction {
     },
     /// Save an entry's body to a new file
     Export { id: String, path: PathBuf },
+    /// Vouch that an entry is still true (the revision you read)
+    Verify {
+        id: String,
+        #[arg(long)]
+        rev: i64,
+    },
+    /// Retire an entry that is no longer true; the reason on stdin or --file
+    Retire {
+        id: String,
+        #[arg(long)]
+        rev: i64,
+        #[command(flatten)]
+        text: TextSource,
+    },
+    /// Find duplicate and conflicting memories among the existing ones
+    Check {
+        /// P-n (default: this folder's project)
+        #[arg(long)]
+        project: Option<String>,
+    },
+    /// Memory quality metrics, from this machine's log and the entries
+    Quality {
+        #[arg(long, default_value_t = 30)]
+        days: i64,
+        /// P-n (default: this folder's project)
+        #[arg(long)]
+        project: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1110,6 +1138,21 @@ fn run_on(store: &mut acta_core::Store, command: Command) -> Result<String, Stri
                 owner,
             }) => kb_import(&mut ag, &path, &kind, level, owner),
             Some(KbAction::Export { id, path }) => kb_export(&mut ag, &id, &path),
+            Some(KbAction::Verify { id, rev }) => ag.kb_write(KbWriteArgs {
+                id: Some(id),
+                rev: Some(rev),
+                op: Some("verify".into()),
+                ..KbWriteArgs::default()
+            }),
+            Some(KbAction::Retire { id, rev, text }) => ag.kb_write(KbWriteArgs {
+                id: Some(id),
+                rev: Some(rev),
+                op: Some("retire".into()),
+                text: read_text(&text)?.trim().to_owned(),
+                ..KbWriteArgs::default()
+            }),
+            Some(KbAction::Check { project }) => ag.kb_scan(project.as_deref()),
+            Some(KbAction::Quality { days, project }) => ag.kb_quality(project.as_deref(), days),
         },
         Command::Attachment {
             id,

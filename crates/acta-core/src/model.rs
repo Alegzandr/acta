@@ -122,6 +122,9 @@ pub enum EventKind {
     /// Marked reported (new is the contact's UUID) or not reported (old
     /// is) (data.md request 19).
     Reported,
+    /// Written by a newer build: shown as a plain system line.
+    #[serde(other)]
+    Unknown,
 }
 
 /// Level a knowledge entry or a folder is attached to.
@@ -277,6 +280,89 @@ pub enum ChangeKind {
     AppendedSection,
     Moved,
     Restored,
+    /// Someone vouched the text is still true (ADR 0015, 1); no new text.
+    Verified,
+    /// Replaced by a successor (ADR 0015, 2); the revision's `section`
+    /// is empty, the entry's `superseded_by` names the successor.
+    Superseded,
+    /// No longer true, no successor; `section` holds the reason.
+    Retired,
+    /// Superseded or retired, then made live again.
+    MadeLive,
+    /// Another entry's body was merged into this one (ADR 0015, 3).
+    Merged,
+    /// Written by a newer build; shown as an edit.
+    #[serde(other)]
+    Unknown,
+}
+
+/// Whether a knowledge entry is current (ADR 0015, 2). Only live entries
+/// appear in briefings, `kb` lists and `kb` search; the others stay
+/// readable by id.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum KbState {
+    #[default]
+    Live,
+    Superseded,
+    Retired,
+}
+
+/// What a pair of entries was found to be (ADR 0015, 2 and 3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum KbPairKind {
+    Duplicate,
+    Conflict,
+}
+
+/// Where a found pair stands: still to look at, kept apart on purpose
+/// ("keep both"), or settled by a supersede or a merge.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum KbPairState {
+    Open,
+    Distinct,
+    Resolved,
+}
+
+/// What the local quality log records (ADR 0015, 8): what history cannot
+/// tell, warnings and their outcomes, stale-rev refusals and automatic
+/// merges.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KbLogEvent {
+    DuplicateWarning,
+    ConflictWarning,
+    RelatedNote,
+    /// A warning's outcome: the agent replaced the old entry.
+    Superseded,
+    /// A warning's outcome: the agent edited the old entry.
+    Fixed,
+    /// A warning's outcome: the identical call repeated ("keep both").
+    KeptBoth,
+    /// A warning's outcome: no write followed within the session.
+    Abandoned,
+    StaleRefused,
+    AutoMerged,
+    /// An agent read an entry that had a flag (metric 5).
+    FlaggedRead,
+    /// Written by a newer build.
+    #[serde(other)]
+    Unknown,
+}
+
+/// What a knowledge entry names as its source (ADR 0015, 5).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum KbLinkKind {
+    Topic,
+    Entry,
+    Question,
+    Note,
+    Kb,
+    Commit,
+    File,
 }
 
 /// Fields every record carries (ADR 0003, 0006; requests 9 and 11).
@@ -729,6 +815,9 @@ pub struct KbSummary {
     pub created_by: Author,
     pub updated_at: i64,
     pub updated_by: Author,
+    /// When someone last asserted the text is true (ADR 0015, 1).
+    pub verified_at: i64,
+    pub state: KbState,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -743,6 +832,20 @@ pub struct KbEntry {
     pub rev: i64,
     pub created_by: Author,
     pub stamp: Stamp,
+    /// ADR 0015, 1: distinct from `stamp.updated_at`; a move or a title
+    /// change does not set it.
+    pub verified_at: i64,
+    pub verified_by: Author,
+    pub state: KbState,
+    pub superseded_by: Option<KbId>,
+    /// ADR 0015, 4: a branch memory is true only on this branch of this
+    /// folder.
+    pub context_branch: Option<String>,
+    pub context_folder: Option<FolderId>,
+    /// ADR 0015, 5: the Claude Code session and focus topic that created
+    /// it (agent writes only).
+    pub created_session: Option<String>,
+    pub created_topic: Option<TopicId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

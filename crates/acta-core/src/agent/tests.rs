@@ -493,11 +493,17 @@ fn near_duplicate_memory_is_refused_once() {
     let summary = "Tests deadlock when cargo runs them in parallel.";
     assert!(memory(&mut a, "Contention test needs --test-threads=1", summary).is_ok());
     let refused = memory(&mut a, "The contention test needs test-threads=1", summary).unwrap_err();
-    assert!(refused.starts_with("not saved: K-1"), "{refused}");
+    assert!(
+        refused.starts_with("not saved: possible duplicate of K-1 rev 1"),
+        "{refused}"
+    );
     assert!(refused.contains("rev=1"), "{refused}");
     // Repeating the same call saves it.
     let again = memory(&mut a, "The contention test needs test-threads=1", summary).unwrap();
-    assert!(again.starts_with("ok K-2"), "{again}");
+    assert!(
+        again.starts_with("ok K-2") && again.ends_with("kept both"),
+        "{again}"
+    );
     // A different memory is not a duplicate.
     let other = memory(
         &mut a,
@@ -538,7 +544,7 @@ fn section_edits_need_the_current_revision() {
     assert!(r.starts_with("ok K-1 rev 2 · section 2 replaced"), "{r}");
     let stale = edit(&mut a, 1).unwrap_err();
     assert!(
-        stale.contains("it is rev 2 now") && stale.contains("1 Overview"),
+        stale.contains("changed since rev 1: rev 2 by") && stale.contains("1 Overview"),
         "{stale}"
     );
     let missing_rev = a
@@ -3138,3 +3144,5 @@ fn questions_and_contacts_are_resolved_answered_and_refused_exactly() {
 
 #[cfg(test)]
 mod attach_tests;
+#[cfg(test)]
+mod kbq_tests;

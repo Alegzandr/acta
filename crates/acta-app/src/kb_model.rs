@@ -218,6 +218,8 @@ pub mod tests {
             created_by: Author::Claude,
             updated_at,
             updated_by: Author::Claude,
+            verified_at: updated_at,
+            state: acta_core::model::KbState::Live,
         }
     }
 

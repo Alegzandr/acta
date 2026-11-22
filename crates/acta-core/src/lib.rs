@@ -13,6 +13,7 @@ pub mod folder_path;
 pub mod fsutil;
 pub mod git_cmd;
 pub mod git_guard;
+pub mod kb_quality;
 pub mod keys;
 pub mod launch_plan;
 pub mod link_index;

@@ -25,7 +25,7 @@ fn str_or_num<'de, D: Deserializer<'de>>(d: D) -> Result<Option<String>, D::Erro
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
 pub struct BriefArgs {
-    /// T-n or E-n. Default: the focus.
+    /// Default: the focus.
     pub id: Option<String>,
     #[serde(default)]
     pub focus: bool,
@@ -51,9 +51,9 @@ pub struct LogArgs {
     /// progress, decision or discussion.
     #[serde(rename = "type")]
     pub kind: String,
-    /// What happened and why; max 1500 chars.
+    /// Max 1500 chars.
     pub text: String,
-    /// What is true now and next; max 600 chars.
+    /// True now, and next; max 600 chars.
     pub state: Option<String>,
     /// draft, planned, active, blocked, done or dropped.
     pub status: Option<String>,
@@ -68,7 +68,7 @@ pub struct UpdateArgs {
     pub title: Option<String>,
     pub description: Option<String>,
     pub state: Option<String>,
-    /// As in log; N: open, dismissed; Q: open, answered, dropped.
+    /// As log; N: open, dismissed; Q: open, answered, dropped.
     pub status: Option<String>,
     /// E-n or none.
     pub epic: Option<String>,
@@ -81,7 +81,7 @@ pub struct UpdateArgs {
     pub log_decision: Option<bool>,
     /// C-n or name.
     pub report_to: Option<String>,
-    /// The user says it was reported.
+    /// The user said so.
     pub reported: Option<bool>,
     /// C: all, P-n or E-n.
     pub level: Option<String>,
@@ -108,12 +108,12 @@ pub struct FindArgs {
 pub struct CreateItem {
     /// topic, epic, note, entry, question or contact.
     pub kind: String,
-    /// Title, note text, question or name.
+    /// Or note text, question, name.
     #[serde(default)]
     pub title: String,
     /// Default with from_notes: their text.
     pub description: Option<String>,
-    /// E-n, or @k: epic item k of this call.
+    /// E-n, or @k: item k of this call.
     pub epic: Option<String>,
     /// T-n, for entry.
     pub topic: Option<String>,
@@ -142,9 +142,8 @@ pub struct CreateArgs {
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
 pub struct KbArgs {
     pub query: Option<String>,
-    /// document or memory.
     pub kind: Option<String>,
-    /// T-n, E-n or P-n. Default: the focus.
+    /// Default: the focus.
     pub id: Option<String>,
     pub cursor: Option<i64>,
 }
@@ -164,26 +163,30 @@ pub struct KbReadArgs {
 pub struct KbWriteArgs {
     /// K-n to edit; omit to create.
     pub id: Option<String>,
-    /// Revision read; needed to change a body.
+    /// The revision read.
     pub rev: Option<i64>,
-    /// replace_body, replace_section or append_section.
+    /// replace_body, replace_section, append_section, verify or retire
+    /// (text: why).
     pub op: Option<String>,
     /// document or memory.
     pub kind: Option<String>,
     pub title: Option<String>,
-    /// What it answers, when to read it; max 120 chars.
+    /// What it answers; max 120 chars.
     pub summary: Option<String>,
-    /// Markdown; a memory max 800 chars.
+    /// Markdown; memory max 800.
     #[serde(default)]
     pub text: String,
-    /// topic (default), epic or project.
+    /// topic (default), epic, project or branch.
     pub level: Option<String>,
-    /// T-n, E-n or P-n instead of level.
+    /// Instead of level.
     pub owner: Option<String>,
     #[serde(default, deserialize_with = "str_or_num")]
     pub section: Option<String>,
-    /// Section heading.
     pub heading: Option<String>,
+    /// K ids it replaces.
+    pub supersedes: Option<String>,
+    /// Max 3: T-12#14, Q-3, commit:sha, a path.
+    pub refs: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]

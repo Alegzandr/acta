@@ -20,7 +20,7 @@
 use crate::db::{self, ChangeWatcher, Mode};
 use crate::error::{OpenError, Result};
 use crate::keys::Key;
-use crate::model::{EpicId, Owner, ProjectId, TopicId};
+use crate::model::{EpicId, KbId, Owner, ProjectId, TopicId};
 use rusqlite::{Connection, OptionalExtension};
 use std::path::{Path, PathBuf};
 
@@ -150,6 +150,16 @@ impl Presence {
             Err(e) => return Err(e),
         };
         conn.execute_batch(SCHEMA)?;
+        // ADR 0015, 6: the knowledge entries the session last touched
+        // (ids, revisions and times only), added to files made before it.
+        let has_recent: bool = conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM pragma_table_info('sessions') WHERE name = 'kb_recent')",
+            [],
+            |r| r.get(0),
+        )?;
+        if !has_recent {
+            conn.execute_batch("ALTER TABLE sessions ADD COLUMN kb_recent TEXT")?;
+        }
         Ok(Presence {
             conn,
             path,
@@ -246,6 +256,59 @@ impl Presence {
         Ok(())
     }
 
+    /// The knowledge entries this session last read or wrote (ADR 0015, 6):
+    /// at most [`KB_RECENT`], newest first.
+    pub fn set_kb_recent(&mut self, id: &str, touched: &[KbTouch]) -> Result<()> {
+        let text: Vec<String> = touched
+            .iter()
+            .take(KB_RECENT)
+            .map(|t| format!("{}:{}:{}", t.id.0, t.rev, t.at))
+            .collect();
+        self.conn.execute(
+            "UPDATE sessions SET kb_recent = ?2 WHERE id = ?1",
+            rusqlite::params![id, text.join(",")],
+        )?;
+        Ok(())
+    }
+
+    /// Other live sessions that touched `entry` since `since`: their focus
+    /// and when (newest first).
+    pub fn kb_touched_elsewhere(
+        &mut self,
+        me: Option<&str>,
+        entry: KbId,
+        since: i64,
+        now: i64,
+    ) -> Result<Vec<(Option<Owner>, i64)>> {
+        let recent: Vec<(String, Option<String>)> = {
+            let mut stmt = self
+                .conn
+                .prepare("SELECT id, kb_recent FROM sessions WHERE kb_recent IS NOT NULL")?;
+            stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+                .collect::<rusqlite::Result<_>>()?
+        };
+        let live = self.live(now)?;
+        let mut out = Vec::new();
+        for (id, text) in recent {
+            if Some(id.as_str()) == me {
+                continue;
+            }
+            let Some(s) = live.iter().find(|l| l.id == id) else {
+                continue;
+            };
+            let at = parse_kb_recent(text.as_deref().unwrap_or(""))
+                .into_iter()
+                .filter(|t| t.id == entry && t.at >= since)
+                .map(|t| t.at)
+                .max();
+            if let Some(at) = at {
+                out.push((s.focus, at));
+            }
+        }
+        out.sort_by_key(|x| std::cmp::Reverse(x.1));
+        Ok(out)
+    }
+
     pub fn get(&self, id: &str) -> Result<Option<LiveSession>> {
         Ok(self
             .conn
@@ -273,6 +336,31 @@ impl Presence {
         }
         Ok(out)
     }
+}
+
+/// Entries a session remembers in its row.
+pub const KB_RECENT: usize = 3;
+
+/// A knowledge entry a session read or wrote, at a revision.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct KbTouch {
+    pub id: KbId,
+    pub rev: i64,
+    pub at: i64,
+}
+
+/// `4:3:1700000000000,9:1:...` (ids, revisions, times; nothing else).
+pub fn parse_kb_recent(text: &str) -> Vec<KbTouch> {
+    text.split(',')
+        .filter_map(|item| {
+            let mut p = item.split(':');
+            Some(KbTouch {
+                id: KbId(p.next()?.trim().parse().ok()?),
+                rev: p.next()?.trim().parse().ok()?,
+                at: p.next()?.trim().parse().ok()?,
+            })
+        })
+        .collect()
 }
 
 const SELECT: &str = "SELECT id, project_id, focus, launch, started_at, activity_at, alive_at,

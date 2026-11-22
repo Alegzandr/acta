@@ -70,13 +70,14 @@ impl Mcp {
     fn start_with(data: &Path, project_dir: &Path, memory_key: bool, env: &[(&str, &str)]) -> Mcp {
         let mut cmd = base_cmd(data);
         cmd.env_remove("ACTA_LAUNCH");
+        cmd.arg("mcp")
+            .env("CLAUDE_PROJECT_DIR", project_dir)
+            .env("CLAUDE_CODE_SESSION_ID", "e2e-session");
+        // Given variables win over the defaults (a second session's id).
         for (k, v) in env {
             cmd.env(k, v);
         }
-        cmd.arg("mcp")
-            .env("CLAUDE_PROJECT_DIR", project_dir)
-            .env("CLAUDE_CODE_SESSION_ID", "e2e-session")
-            .stdin(Stdio::piped())
+        cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
         if memory_key {
@@ -196,7 +197,9 @@ fn tools_list_and_instructions_fit_their_budgets() {
     );
     let list_size = init_again["result"].to_string().len();
     println!("tools/list: {list_size} chars");
-    assert!(list_size < 7_000, "tools/list is {list_size} chars");
+    // ADR 0015, 7: the memory quality fields were paid for by trims; the
+    // target after that change is 6,500.
+    assert!(list_size <= 6_500, "tools/list is {list_size} chars");
     for t in tools {
         let always = t["_meta"]["anthropic/alwaysLoad"] == json!(true);
         assert_eq!(
@@ -1861,4 +1864,307 @@ fn one_page_pdf(text: &str) -> Vec<u8> {
         objs.len() + 1
     ));
     out.into_bytes()
+}
+
+/// A git repository on `main` with one commit holding `src/kb.rs`.
+fn repo_with_file(repo: &Path) {
+    std::fs::create_dir_all(repo.join("src")).unwrap();
+    git(repo, &["init", "-q", "-b", "main"]);
+    std::fs::write(repo.join("src/kb.rs"), "fn one() {}\n").unwrap();
+    git(repo, &["add", "src/kb.rs"]);
+    commit(repo, "First");
+}
+
+fn commit(repo: &Path, msg: &str) {
+    git(
+        repo,
+        &[
+            "-c",
+            "user.name=Alexandre",
+            "-c",
+            "user.email=alexandre@example.com",
+            "commit",
+            "-q",
+            "-m",
+            msg,
+        ],
+    );
+}
+
+/// ADR 0015: create, conflict, supersede, keep both, verify and retire
+/// over stdio, each answer within its budget; a file source flagged after
+/// a commit changes it; the CLI's verify, check and quality.
+#[test]
+fn memory_quality_over_stdio() {
+    let tmp = tempfile::tempdir().unwrap();
+    let data = tmp.path().join("data");
+    let repo = tmp.path().join("repo");
+    repo_with_file(&repo);
+    let (ok, out, err) = cli(&data, &repo, &["link"], "");
+    assert!(ok, "{out}{err}");
+    let (ok, _, _) = cli(&data, &repo, &["create", "topic"], "Encrypted storage");
+    assert!(ok);
+    let mut m = Mcp::start_with(&data, &repo, false, &[("ACTA_TOPIC", "T-1")]);
+
+    let write = |m: &mut Mcp, args: Value| m.call("kb_write", args);
+    let (err, text) = write(
+        &mut m,
+        json!({"kind": "memory", "level": "project", "title": "Tests run in parallel",
+               "summary": "cargo test runs the store tests concurrently",
+               "text": "The store tests are safe to run in parallel.",
+               "refs": "src/kb.rs, T-1"}),
+    );
+    assert!(!err && text.starts_with("ok K-1"), "{text}");
+    let conflicting = json!({"kind": "memory", "title": "Store tests run serially",
+        "summary": "Never run the store tests in parallel: they share a key store",
+        "text": "Do not run the store tests in parallel."});
+    let (err, text) = write(&mut m, conflicting.clone());
+    assert!(
+        err && text.starts_with("not saved: possible conflict with K-1"),
+        "{text}"
+    );
+    assert!(chars(&text) <= 600, "{}", chars(&text));
+    let mut replacing = conflicting.clone();
+    replacing["supersedes"] = json!("K-1");
+    let (err, text) = write(&mut m, replacing);
+    assert!(!err && text.contains("supersedes K-1"), "{text}");
+    assert!(chars(&text) <= 160);
+
+    // Keep both: the identical call, repeated.
+    let dup = json!({"kind": "memory", "title": "Key in the OS keychain",
+        "summary": "The SQLCipher key is stored in the OS keychain",
+        "text": "On first run the key goes to the keychain, entry acta.db."});
+    let (err, _) = write(&mut m, dup.clone());
+    assert!(!err);
+    let mut twin = dup.clone();
+    twin["title"] = json!("The OS keychain holds the key");
+    let (err, text) = write(&mut m, twin.clone());
+    assert!(err && text.contains("possible duplicate of K-3"), "{text}");
+    let (err, text) = write(&mut m, twin);
+    assert!(!err && text.ends_with("kept both"), "{text}");
+
+    // Verify and retire.
+    let (err, text) = write(&mut m, json!({"id": "K-3", "rev": 1, "op": "verify"}));
+    assert_eq!((err, text.as_str()), (false, "ok K-3 verified (rev 2)"));
+    let (err, text) = write(
+        &mut m,
+        json!({"id": "K-4", "rev": 1, "op": "retire", "text": "Merged into K-3 by hand"}),
+    );
+    assert_eq!((err, text.as_str()), (false, "ok K-4 retired (rev 2)"));
+
+    // A file source: a commit that changes it flags the memory.
+    let (_, text) = write(
+        &mut m,
+        json!({"kind": "memory", "title": "Where kb lives",
+               "summary": "The knowledge store is one module", "text": "See the module.",
+               "refs": "src/kb.rs"}),
+    );
+    assert!(text.starts_with("ok K-5"), "{text}");
+    let (_, list) = m.call("kb", json!({}));
+    assert!(!list.contains("?file changed"), "{list}");
+    std::fs::write(repo.join("src/kb.rs"), "fn two() {}\n").unwrap();
+    git(&repo, &["add", "src/kb.rs"]);
+    commit(&repo, "Second");
+    let (_, list) = m.call("kb", json!({}));
+    assert!(chars(&list) <= 1_800);
+    let line = list.lines().find(|l| l.starts_with("K-5")).unwrap();
+    assert!(line.contains("?file changed"), "{list}");
+    let (_, read) = m.call("kb_read", json!({"id": "K-5"}));
+    assert!(read.contains("?file changed src/kb.rs"), "{read}");
+    // Verified again: the new blob is recorded, the flag goes.
+    let (err, text) = write(&mut m, json!({"id": "K-5", "rev": 1, "op": "verify"}));
+    assert!(!err, "{text}");
+    let (_, list) = m.call("kb", json!({}));
+    let line = list.lines().find(|l| l.starts_with("K-5")).unwrap();
+    assert!(!line.contains('?'), "{line}");
+    // Deleted: gone.
+    std::fs::remove_file(repo.join("src/kb.rs")).unwrap();
+    git(&repo, &["add", "-A"]);
+    commit(&repo, "Third");
+    let (_, list) = m.call("kb", json!({}));
+    let line = list.lines().find(|l| l.starts_with("K-5")).unwrap();
+    assert!(line.contains("?file gone"), "{list}");
+    // Fixed, naming its sources again: they replace the old ones.
+    let (err, text) = write(
+        &mut m,
+        json!({"id": "K-5", "rev": 2, "op": "replace_body", "text": "The module was removed.", "refs": "T-1"}),
+    );
+    assert!(!err, "{text}");
+    let (_, list) = m.call("kb", json!({}));
+    let line = list.lines().find(|l| l.starts_with("K-5")).unwrap();
+    assert!(!line.contains('?'), "{line}");
+    m.close();
+
+    // The CLI: verify (the revision read), a stale retire, check, quality.
+    let (ok, out, err) = cli(&data, &repo, &["kb", "verify", "K-5", "--rev", "3"], "");
+    assert!(
+        ok && out.starts_with("ok K-5 verified (rev 4)"),
+        "{out}{err}"
+    );
+    let (ok, out, err) = cli(&data, &repo, &["kb", "retire", "K-5", "--rev", "1"], "gone");
+    assert!(
+        !ok && format!("{out}{err}").contains("changed since rev 1"),
+        "{out}{err}"
+    );
+    let (ok, out, err) = cli(&data, &repo, &["kb", "check"], "");
+    assert!(ok && out.starts_with("Checked "), "{out}{err}");
+    let (ok, out, err) = cli(&data, &repo, &["kb", "quality", "--days", "30"], "");
+    assert!(ok, "{out}{err}");
+    assert_eq!(out.trim().lines().count(), 7, "{out}");
+    assert!(out.contains("4 Warning noise: 1 of 2"), "{out}");
+    assert!(chars(&out) <= 2_000);
+}
+
+/// ADR 0015, 6: two server processes edit one memory and one document.
+/// The second writer is told who changed what, with the current text; a
+/// section edit whose section is untouched is merged; "also open" names
+/// the other session.
+#[test]
+fn two_servers_editing_one_entry() {
+    let tmp = tempfile::tempdir().unwrap();
+    let data = tmp.path().join("data");
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    let (ok, out, err) = cli(&data, &repo, &["link"], "");
+    assert!(ok, "{out}{err}");
+    for t in ["Storage", "Sync"] {
+        let (ok, _, _) = cli(&data, &repo, &["create", "topic"], t);
+        assert!(ok);
+    }
+    let mut a = Mcp::start_with(
+        &data,
+        &repo,
+        false,
+        &[
+            ("ACTA_TOPIC", "T-1"),
+            ("CLAUDE_CODE_SESSION_ID", "session-a"),
+        ],
+    );
+    let mut b = Mcp::start_with(
+        &data,
+        &repo,
+        false,
+        &[
+            ("ACTA_TOPIC", "T-2"),
+            ("CLAUDE_CODE_SESSION_ID", "session-b"),
+        ],
+    );
+    let (err, text) = a.call(
+        "kb_write",
+        json!({"kind": "memory", "level": "project", "title": "Release script",
+               "summary": "How a release is cut", "text": "Run scripts/release.ps1."}),
+    );
+    assert!(!err, "{text}");
+    let (err, text) = a.call(
+        "kb_write",
+        json!({"kind": "document", "level": "project", "title": "Architecture",
+               "summary": "Crates and processes", "text": "# One\na\n# Two\nb\n# Three\nc\n"}),
+    );
+    assert!(!err, "{text}");
+    // Both read rev 1.
+    for m in [&mut a, &mut b] {
+        for id in ["K-1", "K-2"] {
+            let (err, _) = m.call("kb_read", json!({"id": id}));
+            assert!(!err);
+        }
+    }
+    // A writes first.
+    let (err, _) = a.call(
+        "kb_write",
+        json!({"id": "K-1", "rev": 1, "op": "replace_body", "text": "Run scripts/release.ps1 -Sign:$false."}),
+    );
+    assert!(!err);
+    let (err, _) = a.call(
+        "kb_write",
+        json!({"id": "K-2", "rev": 1, "op": "replace_section", "section": "1", "text": "a2"}),
+    );
+    assert!(!err);
+    // B's memory edit is refused with the current text and who.
+    let (err, text) = b.call(
+        "kb_write",
+        json!({"id": "K-1", "rev": 1, "op": "replace_body", "text": "Run the release job."}),
+    );
+    assert!(err, "{text}");
+    assert!(
+        text.starts_with(
+            "not saved: K-1 changed since rev 1: rev 2 by another Claude Code session on T-1, "
+        ),
+        "{text}"
+    );
+    assert!(text.contains("-Sign:$false"), "{text}");
+    assert!(chars(&text) <= 1_600);
+    // A's touches reach its presence row: B is told A has it open.
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        let (_, read) = b.call("kb_read", json!({"id": "K-1"}));
+        if read.contains("K-1 is also open in a session on T-1") {
+            break;
+        }
+        assert!(Instant::now() < deadline, "no also-open line: {read}");
+        std::thread::sleep(Duration::from_millis(300));
+    }
+    // B's section edit of an untouched section is merged.
+    let (err, text) = b.call(
+        "kb_write",
+        json!({"id": "K-2", "rev": 1, "op": "replace_section", "section": "3", "text": "c2"}),
+    );
+    assert!(!err, "{text}");
+    assert_eq!(text, "ok K-2 rev 3 · section replaced · merged over rev 2");
+    let (_, read) = a.call("kb_read", json!({"id": "K-2"}));
+    assert!(read.contains("a2") && read.contains("c2"), "{read}");
+}
+
+/// ADR 0015, 4: a branch memory shows on its branch only; on another
+/// branch the list counts it and search marks it; merged, it is flagged.
+#[test]
+fn a_branch_memory_is_hidden_on_another_branch() {
+    let tmp = tempfile::tempdir().unwrap();
+    let data = tmp.path().join("data");
+    let repo = tmp.path().join("repo");
+    repo_with_file(&repo);
+    let (ok, out, err) = cli(&data, &repo, &["link"], "");
+    assert!(ok, "{out}{err}");
+    let (ok, _, _) = cli(&data, &repo, &["create", "topic"], "Schema work");
+    assert!(ok);
+    let mut m = Mcp::start_with(&data, &repo, false, &[("ACTA_TOPIC", "T-1")]);
+    let branch_memory = json!({"kind": "memory", "level": "branch", "title": "Schema is at V7 here",
+        "summary": "On this branch the schema is at V7", "text": "V7 adds kb_links."});
+    let (err, text) = m.call("kb_write", branch_memory.clone());
+    assert!(
+        err && text == "level=branch needs a feature branch; use topic",
+        "{text}"
+    );
+    git(&repo, &["switch", "-q", "-c", "feature/kb"]);
+    std::fs::write(
+        repo.join("src/schema.rs"),
+        "// V7
+",
+    )
+    .unwrap();
+    git(&repo, &["add", "src/schema.rs"]);
+    commit(&repo, "Schema 7");
+    let (err, text) = m.call("kb_write", branch_memory);
+    assert!(
+        !err && text.starts_with("ok K-1 memory · branch on T-1"),
+        "{text}"
+    );
+    let (_, list) = m.call("kb", json!({}));
+    assert!(list.contains("K-1 "), "{list}");
+    git(&repo, &["switch", "-q", "main"]);
+    let (_, list) = m.call("kb", json!({}));
+    assert!(
+        !list.contains("K-1 ") && list.contains("· 1 on other branches"),
+        "{list}"
+    );
+    let (_, found) = m.call("kb", json!({"query": "schema"}));
+    assert!(found.contains("K-1 ?branch feature/kb"), "{found}");
+    // Merged into main: flagged on its own branch.
+    git(&repo, &["switch", "-q", "feature/kb"]);
+    let (_, list) = m.call("kb", json!({}));
+    assert!(!list.contains("?branch merged"), "{list}");
+    git(&repo, &["switch", "-q", "main"]);
+    git(&repo, &["merge", "-q", "--ff-only", "feature/kb"]);
+    git(&repo, &["switch", "-q", "feature/kb"]);
+    let (_, list) = m.call("kb", json!({}));
+    assert!(list.contains("?branch merged"), "{list}");
 }

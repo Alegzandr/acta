@@ -13,7 +13,7 @@
 //! `project_id` is always set so roll-up queries need no join.
 
 /// Step `i` takes `user_version` from `i` to `i + 1`.
-pub const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6];
+pub const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7];
 
 /// The version this build writes.
 pub const SCHEMA_VERSION: i64 = MIGRATIONS.len() as i64;
@@ -491,4 +491,86 @@ CREATE INDEX attachments_moved ON attachments(moved_from_note_id)
     WHERE moved_from_note_id IS NOT NULL;
 
 ALTER TABLE notes ADD COLUMN filed_entry_id INTEGER REFERENCES entries(id);
+"#;
+
+/// Memory quality (ADR 0015, 9; data.md request 24).
+///
+/// - `kb_entries`: the verified date (backfilled from the last update, the
+///   best value there is), the state (`live`, `superseded`, `retired`) and
+///   the successor, the context narrowing (a branch of a folder) and the
+///   provenance of an agent write (the Claude Code session id, local and
+///   never exported, and the focus topic). `kb_verified` serves the
+///   Overview's count of memories to check.
+/// - `kb_revisions`: the session and branch of each write.
+/// - `kb_links`: the sources an entry names: a record (`target_uuid`), a
+///   commit or a file (`target_text`, with the folder and the git blob id
+///   at the last verification).
+/// - `kb_pairs`: duplicate and conflict pairs found by the checker, open,
+///   kept apart (`distinct`) or settled (`resolved`); `a < b`.
+/// - `kb_quality_log`: warnings and their outcomes for `acta kb quality`.
+///   Local: never exported, pruned after 180 days.
+/// - `meta.min_compatible_version` is raised to 7: a 0.6 build (schema 6)
+///   opens this database read-only, since its writes would skip the
+///   verified date, the state and the pairs (ADR 0015, Migration).
+const V7: &str = r#"
+INSERT INTO meta (key, value) VALUES ('min_compatible_version', '7')
+    ON CONFLICT (key) DO UPDATE SET value = CAST(max(CAST(value AS INTEGER), 7) AS TEXT);
+ALTER TABLE kb_entries ADD COLUMN verified_at INTEGER;
+ALTER TABLE kb_entries ADD COLUMN verified_by TEXT;
+ALTER TABLE kb_entries ADD COLUMN state TEXT NOT NULL DEFAULT 'live'
+    CHECK (state IN ('live', 'superseded', 'retired'));
+ALTER TABLE kb_entries ADD COLUMN superseded_by INTEGER REFERENCES kb_entries(id);
+ALTER TABLE kb_entries ADD COLUMN context_branch TEXT;
+ALTER TABLE kb_entries ADD COLUMN context_folder_id INTEGER REFERENCES folders(id);
+ALTER TABLE kb_entries ADD COLUMN created_session TEXT;
+ALTER TABLE kb_entries ADD COLUMN created_topic_id INTEGER REFERENCES topics(id);
+UPDATE kb_entries SET verified_at = updated_at, verified_by = updated_by;
+CREATE INDEX kb_verified ON kb_entries(project_id, kind, verified_at)
+    WHERE deleted_at IS NULL AND state = 'live';
+CREATE INDEX kb_superseded ON kb_entries(superseded_by) WHERE superseded_by IS NOT NULL;
+
+ALTER TABLE kb_revisions ADD COLUMN session TEXT;
+ALTER TABLE kb_revisions ADD COLUMN branch TEXT;
+
+CREATE TABLE kb_links (
+    id INTEGER PRIMARY KEY,
+    uuid TEXT NOT NULL UNIQUE,
+    entry_id INTEGER NOT NULL REFERENCES kb_entries(id),
+    kind TEXT NOT NULL
+        CHECK (kind IN ('topic', 'entry', 'question', 'note', 'kb', 'commit', 'file')),
+    target_uuid TEXT,
+    target_text TEXT,
+    folder_id INTEGER REFERENCES folders(id),
+    blob TEXT,
+    created_at INTEGER NOT NULL,
+    created_by TEXT NOT NULL,
+    CHECK ((target_uuid IS NULL) <> (target_text IS NULL))
+) STRICT;
+CREATE INDEX kb_links_entry ON kb_links(entry_id);
+
+CREATE TABLE kb_pairs (
+    a INTEGER NOT NULL REFERENCES kb_entries(id),
+    b INTEGER NOT NULL REFERENCES kb_entries(id),
+    kind TEXT NOT NULL CHECK (kind IN ('duplicate', 'conflict')),
+    state TEXT NOT NULL DEFAULT 'open' CHECK (state IN ('open', 'distinct', 'resolved')),
+    score REAL NOT NULL,
+    created_at INTEGER NOT NULL,
+    created_by TEXT NOT NULL,
+    resolved_at INTEGER,
+    resolved_by TEXT,
+    PRIMARY KEY (a, b, kind),
+    CHECK (a < b)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX kb_pairs_b ON kb_pairs(b);
+
+CREATE TABLE kb_quality_log (
+    id INTEGER PRIMARY KEY,
+    at INTEGER NOT NULL,
+    event TEXT NOT NULL,
+    entry_id INTEGER,
+    other_id INTEGER,
+    session TEXT,
+    author TEXT NOT NULL
+) STRICT;
+CREATE INDEX kb_quality_log_at ON kb_quality_log(at);
 "#;

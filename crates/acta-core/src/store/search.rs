@@ -128,7 +128,7 @@ impl Store {
                 "SELECT 'kb', x.id, x.project_id, x.topic_id, x.title,
                         snippet(kb_fts, -1, '{o}', '{c}', '…', 12), bm25(kb_fts)
                  FROM kb_fts JOIN kb_entries x ON x.id = kb_fts.rowid
-                 WHERE kb_fts MATCH ?1 AND x.deleted_at IS NULL{project}"
+                 WHERE kb_fts MATCH ?1 AND x.deleted_at IS NULL AND x.state = 'live'{project}"
             ));
         }
         if parts.is_empty() {
@@ -189,7 +189,8 @@ impl Store {
 impl Store {
     /// Full-text search over the knowledge an agent at `owner` sees (its own,
     /// its epic's, its project's), best match first. Hits carry the entry
-    /// title and a short excerpt.
+    /// title and a short excerpt. Live entries only: superseded and retired
+    /// ones are read by id (ADR 0015, 2).
     pub fn kb_search(
         &self,
         owner: Owner,
@@ -209,7 +210,9 @@ impl Store {
         };
         let kind = kind.map_or(String::new(), |k| format!(" AND k.kind = '{}'", k.as_str()));
         let (o, c) = (SNIPPET_OPEN, SNIPPET_CLOSE);
-        let filter = format!("kb_fts MATCH ?1 AND k.deleted_at IS NULL AND {scope}{kind}");
+        let filter = format!(
+            "kb_fts MATCH ?1 AND k.deleted_at IS NULL AND k.state = 'live' AND {scope}{kind}"
+        );
         let total: i64 = self.conn.query_row(
             &format!(
                 "SELECT count(*) FROM kb_fts JOIN kb_entries k ON k.id = kb_fts.rowid WHERE {filter}"

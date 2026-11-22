@@ -211,7 +211,7 @@ fn a_newer_schema_is_left_alone_and_a_raised_minimum_makes_it_read_only() {
     newer
         .conn
         .execute(
-            "INSERT INTO meta (key, value) VALUES ('min_compatible_version', ?1)",
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('min_compatible_version', ?1)",
             [(crate::schema::SCHEMA_VERSION + 1).to_string()],
         )
         .unwrap();
@@ -572,6 +572,7 @@ fn knowledge_scope_looks_up_and_rollup_looks_down() {
         kind: Some(KbKind::Memory),
         created_by: Some(C),
         level: None,
+        ..KbFilter::default()
     };
     let mine = store
         .kb_rollup(Owner::Project(p), &by_claude, all())
@@ -1235,7 +1236,7 @@ fn a_dry_run_import_works_on_a_read_only_database() {
     b.store
         .conn
         .execute(
-            "INSERT INTO meta (key, value) VALUES ('min_compatible_version', ?1)",
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('min_compatible_version', ?1)",
             [(crate::schema::SCHEMA_VERSION + 1).to_string()],
         )
         .unwrap();
@@ -1270,7 +1271,7 @@ fn search_reports_whether_the_total_is_capped() {
 #[test]
 fn a_fresh_database_has_entry_numbers_unique_and_trash_batches() {
     let t = open();
-    assert_eq!(crate::schema::SCHEMA_VERSION, 6);
+    assert_eq!(crate::schema::SCHEMA_VERSION, 7);
     let count = |sql: &str| -> i64 { t.store.conn.query_row(sql, [], |r| r.get(0)).unwrap() };
     assert_eq!(
         count("SELECT count(*) FROM sqlite_master WHERE name = 'entries_topic_seq'"),

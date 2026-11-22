@@ -7,6 +7,7 @@ pub mod attach;
 pub mod due;
 pub mod folders;
 pub mod git;
+pub mod kbq;
 pub mod presence;
 pub mod questions;
 pub mod render;

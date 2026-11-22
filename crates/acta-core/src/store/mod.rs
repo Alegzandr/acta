@@ -11,6 +11,7 @@ mod attachments;
 mod exchange;
 mod folders;
 mod kb;
+mod kb_quality;
 mod overview;
 mod people;
 mod questions;
@@ -26,11 +27,18 @@ pub use attachments::{
 };
 pub use exchange::{
     ExportFile, FILE_EXTENSION, FORMAT_NAME, FORMAT_VERSION, ImportCounts, ImportReport,
-    MAX_IMPORT_BYTES, XAttachment, XBlob, XContact, XEntry, XEpic, XFolder, XKb, XNote, XProfile,
-    XProject, XQuestion, XReport, XRevision, XStamp, XTopic,
+    MAX_IMPORT_BYTES, XAttachment, XBlob, XContact, XEntry, XEpic, XFolder, XKb, XKbLink, XKbPair,
+    XNote, XProfile, XProject, XQuestion, XReport, XRevision, XStamp, XTopic,
 };
 pub use folders::{AUTO_MEMORY_PREFIX, FolderResolution, VisibleFolder, VisibleFolders};
-pub use kb::{KbCounts, KbEdit, KbFilter, KbRevisionSummary, KbUpdate, NewKb};
+pub use kb::{
+    KbCounts, KbEdit, KbFilter, KbPlace, KbRevisionSummary, KbStates, KbUpdate, KbWriteCtx, NewKb,
+};
+pub use kb_quality::{
+    CANDIDATES, KbBranchTrace, KbCandidate, KbFinding, KbLink, KbLinkTarget, KbLogRow,
+    KbMergeTrace, KbPair, KbQualityReport, KbSource, KbStateTrace, KbSuccessor, KbVerifyTrace,
+    MAX_SUPERSEDES, QUALITY_LOG_DAYS, RETIRE_REASON_MAX, SOURCE_TEXT_MAX, UNMERGE_WINDOW_MS,
+};
 pub use overview::{
     IDLE_DAYS, INBOX_DAYS, Overview, OverviewEpic, OverviewFilter, OverviewItem, STALE_MEMORY_DAYS,
     Scope, WEEK_DAYS,
@@ -532,6 +540,8 @@ pub(crate) mod test_support {
 
 #[cfg(test)]
 mod attachments_tests;
+#[cfg(test)]
+mod kb_quality_tests;
 #[cfg(test)]
 mod questions_tests;
 #[cfg(test)]

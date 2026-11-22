@@ -1031,11 +1031,12 @@ mod tests {
     }
 
     /// ADR 0011, Consequences: the skill has its Commits section and stays
-    /// under 80 lines.
+    /// short: under 80 lines, plus ADR 0015's memory quality block of at
+    /// most 10.
     #[test]
     fn using_acta_stays_short_and_has_the_commit_rules() {
         let (_, text) = SKILLS.iter().find(|(n, _)| *n == "using-acta").unwrap();
-        assert!(text.lines().count() < 80, "{}", text.lines().count());
+        assert!(text.lines().count() < 90, "{}", text.lines().count());
         assert!(text.contains("\n## Commits\n"));
         assert!(text.contains("exactly `git push`"));
         // Data.md requests 18 and 19: the two sections, short.
@@ -1051,6 +1052,8 @@ mod tests {
         assert!(section("Questions for others") < 12);
         assert_eq!(section("Reporting back"), 4);
         assert!(section("People") <= 6);
+        assert!(section("Memory quality") <= 10);
+        assert!(text.contains("op=\"verify\""));
         assert!(text.contains("Never invent one"));
         assert!(text.contains("Asking never changes the topic's status"));
         assert!(text.contains("only when an ack says `created`"));
