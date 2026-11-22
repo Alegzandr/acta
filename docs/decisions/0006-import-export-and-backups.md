@@ -48,3 +48,6 @@ Three mechanisms, each answering one scenario.
 
 ## Evidence
 None yet. The snapshot mechanism depends on the engine chosen in ADR 0003 and is proven there.
+
+## Amendment (2026-11-22): restore snapshots
+Retention keeps the 3 newest `restore` snapshots plus the oldest of the latest run of them (restores with no import or manual snapshot between; daily snapshots, and a migration taken when a restored older schema is reopened, do not break a run). That oldest one is the live state before the user started restoring, so restores in a row can no longer rotate it away. At most 4 restore snapshots are kept.

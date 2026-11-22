@@ -6,9 +6,16 @@
 //! Every run: stdin closed, a time limit, no console window on Windows,
 //! `--no-optional-locks` and `GIT_OPTIONAL_LOCKS=0` (a read never takes
 //! `index.lock`), `GIT_TERMINAL_PROMPT=0` and `GCM_INTERACTIVE=never` (a
-//! sign-in fails instead of waiting), messages in the C locale so the error
-//! kinds can be told apart, and none of the `GIT_DIR`-style variables of a
-//! surrounding git process. Nothing here stashes, forces or edits config.
+//! sign-in fails instead of waiting), `core.fsmonitor` off (a repository's
+//! config could name a command to run on every status or `ls-files`),
+//! messages in the C locale so the error kinds can be told apart, and none
+//! of the `GIT_DIR`-style variables of a surrounding git process. Nothing
+//! here stashes, forces or edits config.
+//!
+//! Not covered: a repository's `filter.<driver>.clean` or `.process` (named
+//! in `.gitattributes`) can still run when `status` looks at a changed
+//! file. No single switch turns every filter off; the user's own git runs
+//! them the same way in that repository.
 
 use crate::process::{Bounded, output_within};
 use std::path::Path;
@@ -77,6 +84,7 @@ pub fn command(dir: &Path) -> Command {
     let mut c = Command::new("git");
     c.current_dir(dir)
         .arg("--no-optional-locks")
+        .args(["-c", "core.fsmonitor=false"])
         .env("GIT_OPTIONAL_LOCKS", "0")
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GCM_INTERACTIVE", "never")
@@ -588,6 +596,34 @@ mod tests {
         let (_, clone) = remote_and_clone(tmp.path());
         assert!(is_tracked(&clone, "a.txt").unwrap());
         assert!(!is_tracked(&clone, ".claude/settings.local.json").unwrap());
+    }
+
+    #[test]
+    fn a_repository_fsmonitor_command_never_runs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (_, clone) = remote_and_clone(tmp.path());
+        // git runs a non-boolean `core.fsmonitor` as a hook, in the worktree.
+        git(
+            &clone,
+            &["config", "core.fsmonitor", "echo ran > fsmonitor-ran"],
+        );
+        let hit = clone.join("fsmonitor-ran");
+        assert!(is_tracked(&clone, "a.txt").unwrap());
+        assert!(status_summary(&clone).is_some());
+        assert!(!hit.exists(), "the repository's fsmonitor ran");
+        // The guard's own config reads still work.
+        git(&clone, &["config", "alias.ci", "commit"]);
+        assert_eq!(alias(&clone, "ci").unwrap().as_deref(), Some("commit"));
+        assert_eq!(alias(&clone, "nope").unwrap(), None);
+        // A plain git, as a user's would, does run it: the test is real.
+        let out = std::process::Command::new("git")
+            .current_dir(&clone)
+            .args(["status", "--porcelain"])
+            .env_remove("GIT_DIR")
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        assert!(hit.exists(), "plain git did not run the fsmonitor hook");
     }
 
     #[test]

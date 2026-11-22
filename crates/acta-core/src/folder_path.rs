@@ -89,9 +89,73 @@ pub fn contains(os: Os, folder: &str, dir: &str) -> Option<usize> {
     inside.then(|| f.split(sep).filter(|s| !s.is_empty()).count())
 }
 
+/// Whether a path from somewhere else (an import) may be touched on this
+/// machine: an absolute local path, a Windows drive path (`C:\...`) or a
+/// Unix one (`/...`). Anything that can name another computer (`\\server`,
+/// `//server`, `\\?\UNC\`, a `\\.\` device, `/net/<host>`, `/Network/`)
+/// is refused whatever this
+/// machine's OS: on Windows merely asking whether it exists sends the
+/// user's credentials (NTLM) to that computer. Pure text, so a file from
+/// any OS is judged the same way.
+pub fn is_probe_safe(path: &str) -> bool {
+    let b = path.as_bytes();
+    let sep = |c: u8| c == b'/' || c == b'\\';
+    if path.contains('\0') {
+        return false;
+    }
+    if b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && sep(b[2]) {
+        return true;
+    }
+    // `/home/...`, but not `//server` or `/\server`, which Windows reads as
+    // a network path, nor `/net/<host>` (autofs) or `/Network/...` (macOS),
+    // which reach other computers when looked at.
+    if b.first() != Some(&b'/') || b.get(1).is_some_and(|&c| sep(c)) {
+        return false;
+    }
+    let first = path[1..].split(['/', '\\']).next().unwrap_or("");
+    !first.eq_ignore_ascii_case("net") && !first.eq_ignore_ascii_case("network")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_local_absolute_paths_are_probe_safe() {
+        for ok in [
+            r"C:\Dev\Acta",
+            "c:/dev",
+            r"Z:\",
+            "/home/alexandre/acta",
+            "/",
+            "/home/alexandre/net",
+            "/netlify/site",
+            "/Networks",
+        ] {
+            assert!(is_probe_safe(ok), "{ok}");
+        }
+        for bad in [
+            r"\\attacker@SSL\x",
+            r"\\10.0.0.5\share",
+            r"\\?\UNC\server\share",
+            r"\\?\C:\Dev",
+            r"\\.\pipe\x",
+            r"\??\UNC\server\share",
+            "//server/share",
+            r"/\server\share",
+            "/net/fileserver/home",
+            "/net",
+            "/Network/Servers/host/x",
+            "/network/servers",
+            r"\Dev",
+            "C:Dev",
+            "relative/path",
+            "",
+            "/home/a\0b",
+        ] {
+            assert!(!is_probe_safe(bad), "{bad}");
+        }
+    }
 
     #[test]
     fn windows_forms() {

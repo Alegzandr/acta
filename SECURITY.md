@@ -27,3 +27,7 @@ update path, and the release workflow of this repository.
 Out of scope: problems that need an attacker who already controls your user account,
 and warnings caused by the builds being unsigned (a documented decision, see
 [docs/install.md](docs/install.md#unsigned-builds)).
+The checks in the command line that tell Claude Code from you (for example refusing
+import, export and snapshot restore to Claude Code) are guard rails against prompt
+injection, not a security boundary: Claude Code runs as your user and could do the same
+things another way.

@@ -398,8 +398,18 @@ const FIND_JSON_REFUSED: &str =
     "find --json is for scripts; in Claude Code use find without --json (stored text is fenced)";
 
 /// The author is Claude Code when it runs the CLI (ADR 0005, section 4).
+/// Any of Claude Code's variables counts: clearing `CLAUDECODE` alone does
+/// not make a call the user's. A guard rail, not a boundary (SECURITY.md).
 fn author() -> Author {
-    if std::env::var("CLAUDECODE").is_ok_and(|v| v == "1") {
+    author_from(|k| std::env::var_os(k))
+}
+
+fn author_from(var: impl Fn(&str) -> Option<std::ffi::OsString>) -> Author {
+    let set = |k: &str| var(k).is_some_and(|v| !v.is_empty());
+    if var("CLAUDECODE").is_some_and(|v| v == "1")
+        || set("CLAUDE_CODE_ENTRYPOINT")
+        || set("CLAUDE_PROJECT_DIR")
+    {
         Author::Claude
     } else {
         Author::Human
@@ -1105,16 +1115,13 @@ fn kb_export(ag: &mut Agent<'_>, id: &str, path: &Path) -> Result<String, String
 
 /// Writes a file that must not exist yet: the check and the creation are
 /// one operation (`create_new`), so nothing already there is overwritten.
+/// The file is readable by the user only: an export is plaintext.
 fn write_new(path: &Path, text: &str) -> Result<(), String> {
     use std::io::Write;
-    let mut f = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-        .map_err(|e| match e.kind() {
-            std::io::ErrorKind::AlreadyExists => "the file exists; choose a new path".to_owned(),
-            k => format!("cannot write: {k}"),
-        })?;
+    let mut f = acta_core::fsutil::create_new_private_file(path).map_err(|e| match e.kind() {
+        std::io::ErrorKind::AlreadyExists => "the file exists; choose a new path".to_owned(),
+        k => format!("cannot write: {k}"),
+    })?;
     f.write_all(text.as_bytes())
         .and_then(|()| f.sync_all())
         .map_err(|e| format!("cannot write: {}", e.kind()))
@@ -1125,6 +1132,10 @@ fn export(
     path: &Path,
     project: Option<String>,
 ) -> Result<String, String> {
+    // An export writes every stored text to a plaintext file.
+    if author() == Author::Claude {
+        return Err("Export is for you to run, not Claude Code.".into());
+    }
     let project = project
         .map(|p| ProjectId::parse(&p).ok_or("--project takes P-n"))
         .transpose()?;
@@ -1147,13 +1158,14 @@ fn import(store: &mut acta_core::Store, path: &Path, dry_run: bool) -> Result<St
     if author() == Author::Claude {
         return Err("Import is for you to run, not Claude Code.".into());
     }
-    let text =
-        std::fs::read_to_string(path).map_err(|e| format!("cannot read the file: {}", e.kind()))?;
-    let file = ExportFile::from_json(&text).map_err(|e| e.to_string())?;
+    let file = ExportFile::read(path).map_err(|e| match e {
+        acta_core::Error::Io(e) => format!("cannot read the file: {}", e.kind()),
+        e => e.to_string(),
+    })?;
     let report = store.import(&file, dry_run).map_err(|e| e.to_string())?;
     let t = report.total();
     Ok(format!(
-        "{} {} created, {} updated, {} skipped{}",
+        "{} {} created, {} updated, {} skipped{}{}",
         if dry_run {
             "would import:"
         } else {
@@ -1166,6 +1178,11 @@ fn import(store: &mut acta_core::Store, path: &Path, dry_run: bool) -> Result<St
             " (nothing written)"
         } else {
             " (a snapshot was taken first)"
+        },
+        match report.folders_refused {
+            0 => String::new(),
+            1 => "; 1 folder on a network path left out".to_owned(),
+            n => format!("; {n} folders on a network path left out"),
         }
     ))
 }
@@ -1191,6 +1208,9 @@ fn snapshot(store: &mut acta_core::Store, action: SnapshotAction) -> Result<Stri
                 .join("\n"))
         }
         SnapshotAction::Restore { name: wanted } => {
+            if author() == Author::Claude {
+                return Err("Restoring a snapshot is for you to run, not Claude Code.".into());
+            }
             let pick = if wanted == "latest" {
                 all.first()
             } else {
@@ -1229,6 +1249,28 @@ fn one_line(rendered: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn any_claude_code_variable_makes_the_author_claude() {
+        use std::ffi::OsString;
+        let with = |pairs: &'static [(&str, &str)]| {
+            author_from(move |k| {
+                pairs
+                    .iter()
+                    .find(|(n, _)| *n == k)
+                    .map(|(_, v)| OsString::from(v))
+            })
+        };
+        assert_eq!(with(&[]), Author::Human);
+        assert_eq!(with(&[("CLAUDECODE", "0")]), Author::Human);
+        assert_eq!(with(&[("CLAUDE_PROJECT_DIR", "")]), Author::Human);
+        assert_eq!(with(&[("CLAUDECODE", "1")]), Author::Claude);
+        assert_eq!(with(&[("CLAUDE_CODE_ENTRYPOINT", "cli")]), Author::Claude);
+        assert_eq!(
+            with(&[("CLAUDE_PROJECT_DIR", "/home/alexandre/acta")]),
+            Author::Claude
+        );
+    }
 
     #[test]
     fn version_line_is_name_and_version() {

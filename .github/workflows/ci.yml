@@ -54,6 +54,26 @@ jobs:
           $issues | Format-Table -AutoSize ScriptName, Line, RuleName, Message
           if ($issues) { exit 1 }
 
+  # RustSec advisories (vulnerable, yanked or unmaintained crates) and crate sources,
+  # against Cargo.lock and deny.toml. Needs no build, so it runs beside lint. A new
+  # advisory can turn it red without a change here: update the crate, or add an ignore
+  # with its reason in deny.toml. release.yml does not run it.
+  deny:
+    name: cargo deny
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Rust toolchain
+        run: scripts/ci/setup-rust.sh
+      - name: Install cargo-deny
+        run: scripts/ci/install-cargo-deny.sh
+      - name: cargo deny check
+        run: cargo deny --locked check advisories sources
+
   test:
     name: clippy, test, build (${{ matrix.os }})
     needs: lint

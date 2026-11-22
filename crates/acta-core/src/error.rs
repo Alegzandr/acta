@@ -116,6 +116,11 @@ pub enum Error {
         found: i64,
         supported: i64,
     },
+    /// A file larger than an import reads; sizes in bytes.
+    FileTooLarge {
+        size: u64,
+        limit: u64,
+    },
     Io(std::io::Error),
     Json(serde_json::Error),
     Db(rusqlite::Error),
@@ -166,6 +171,15 @@ impl fmt::Display for Error {
                 f,
                 "this file is format {found}; this Acta reads up to format {supported}. Update Acta."
             ),
+            Error::FileTooLarge { size, limit } => {
+                let mib = |b: &u64| b.div_ceil(1024 * 1024);
+                write!(
+                    f,
+                    "the file is too large to import ({} MiB; the limit is {} MiB)",
+                    mib(size),
+                    mib(limit)
+                )
+            }
             Error::Io(e) => write!(f, "{e}"),
             Error::Json(e) => write!(f, "{e}"),
             Error::Db(e) => write!(f, "{e}"),

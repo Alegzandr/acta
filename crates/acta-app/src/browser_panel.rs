@@ -428,7 +428,7 @@ impl BrowserPanel {
                     return;
                 }
             };
-            let name = acta_browser::pipe::pipe_name(&sid, &data_dir);
+            let name = acta_browser::pipe::pipe_name(&sid, &key, &data_dir);
             let spawned = std::thread::Builder::new()
                 .name("acta-browser-pipe".into())
                 .spawn(move || serve_pipe(&name, &sid, key, host));

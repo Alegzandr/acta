@@ -21,6 +21,7 @@ fn base_cmd(data: &Path) -> Command {
         .env_remove("ACTA_TOPIC")
         .env_remove("CLAUDE_CODE_SESSION_ID")
         .env_remove("CLAUDECODE")
+        .env_remove("CLAUDE_CODE_ENTRYPOINT")
         .env_remove("CLAUDE_CONFIG_DIR")
         .env_remove("CLAUDE_PROJECT_DIR")
         // Ready for Claude Code searches only here: no test finds, or
@@ -595,6 +596,41 @@ fn link_remove_restores_auto_memory_and_export_import_round_trip() {
         !out.status.success() && err.contains("Import is for you to run, not Claude Code"),
         "{err}"
     );
+    // Export and restore are the user's too, whichever Claude Code
+    // variable gives the agent away; the snapshot list stays open.
+    let other = tmp.path().join("other.acta.json");
+    for (var, value) in [
+        ("CLAUDECODE", "1"),
+        ("CLAUDE_CODE_ENTRYPOINT", "cli"),
+        ("CLAUDE_PROJECT_DIR", repo.to_str().unwrap()),
+    ] {
+        let run = |args: &[&str]| {
+            let out = base_cmd(&data)
+                .env(var, value)
+                .args(args)
+                .current_dir(&repo)
+                .stdin(Stdio::null())
+                .output()
+                .unwrap();
+            (
+                out.status.success(),
+                String::from_utf8_lossy(&out.stdout).into_owned(),
+                String::from_utf8_lossy(&out.stderr).into_owned(),
+            )
+        };
+        let (ok, _, err) = run(&["export", other.to_str().unwrap()]);
+        assert!(
+            !ok && err.contains("Export is for you to run"),
+            "{var}: {err}"
+        );
+        assert!(!other.exists(), "{var}");
+        let (ok, _, err) = run(&["snapshot", "restore", "latest"]);
+        assert!(!ok && err.contains("is for you to run"), "{var}: {err}");
+        let (ok, _, err) = run(&["import", file.to_str().unwrap()]);
+        assert!(!ok && err.contains("Import is for you"), "{var}: {err}");
+        let (ok, out, err) = run(&["snapshot", "list"]);
+        assert!(ok, "{var}: {out}{err}");
+    }
     let (ok, out, _) = cli(&data, &repo, &["snapshot", "list"], "");
     assert!(ok, "{out}");
 }

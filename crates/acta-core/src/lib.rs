@@ -9,7 +9,7 @@ pub mod db;
 pub mod error;
 pub mod folder_identity;
 pub mod folder_path;
-mod fsutil;
+pub mod fsutil;
 pub mod git_cmd;
 pub mod git_guard;
 pub mod keys;

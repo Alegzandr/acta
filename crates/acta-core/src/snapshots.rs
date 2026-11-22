@@ -4,9 +4,10 @@
 //!
 //! Taken before every migration, import and snapshot restore, and once per
 //! day of use. Retention: the 7 newest daily snapshots, then the newest of
-//! each of the 4 weeks before them, the 3 newest `restore` snapshots, and
-//! the newest of every other kind. A snapshot being restored is never
-//! removed by retention.
+//! each of the 4 weeks before them, the 3 newest `restore` snapshots plus
+//! the oldest of the latest run of them (see [`KEEP_RESTORE`]), and the
+//! newest of every other kind. A snapshot being restored is never removed
+//! by retention.
 
 use crate::error::Result;
 use crate::fsutil;
@@ -18,6 +19,14 @@ use std::path::{Path, PathBuf};
 pub const SNAPSHOT_DIR: &str = "snapshots";
 const KEEP_DAILY: usize = 7;
 const KEEP_WEEKLY: usize = 4;
+/// `restore` snapshots kept: the 3 newest, plus the oldest of the latest
+/// run. Restores in a row each snapshot the state before them, so by count
+/// alone a fourth restore would remove the first one, the only copy of the
+/// live state before the user started restoring. A run is the restore
+/// snapshots with no import or manual snapshot between them (daily ones,
+/// and a migration taken when a restored older schema is reopened, do not
+/// break it): its oldest is that live state, kept
+/// however many restores follow. At most 4 files.
 const KEEP_RESTORE: usize = 3;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -155,6 +164,17 @@ pub(crate) fn expired(all: &[Snapshot]) -> Vec<Snapshot> {
     let mut weeks: Vec<i64> = Vec::new();
     let mut other_seen: Vec<SnapshotKind> = Vec::new();
     let mut restore_seen = 0;
+    // The oldest restore snapshot of the latest run (the list is newest
+    // first): restores until an import or manual snapshot appears.
+    let mut run_oldest = None;
+    for (i, s) in all.iter().enumerate() {
+        match s.kind {
+            SnapshotKind::Restore => run_oldest = Some(i),
+            SnapshotKind::Daily | SnapshotKind::Migration => {}
+            SnapshotKind::Import | SnapshotKind::Manual if run_oldest.is_some() => break,
+            SnapshotKind::Import | SnapshotKind::Manual => {}
+        }
+    }
     for (i, s) in all.iter().enumerate() {
         if s.kind == SnapshotKind::Daily {
             if daily_seen < KEEP_DAILY {
@@ -168,7 +188,7 @@ pub(crate) fn expired(all: &[Snapshot]) -> Vec<Snapshot> {
                 }
             }
         } else if s.kind == SnapshotKind::Restore {
-            if restore_seen < KEEP_RESTORE {
+            if restore_seen < KEEP_RESTORE || run_oldest == Some(i) {
                 restore_seen += 1;
                 keep[i] = true;
             }
@@ -255,8 +275,70 @@ mod tests {
             .iter()
             .filter(|s| s.kind == SnapshotKind::Restore)
             .collect();
-        assert_eq!(restores.len(), 3);
+        // The 3 newest, and the oldest of their run.
+        assert_eq!(restores.len(), 4);
         assert!(restores.contains(&&&snap(SnapshotKind::Restore, today - 50)));
+        assert!(restores.contains(&&&snap(SnapshotKind::Restore, today - 54)));
+        assert!(!restores.contains(&&&snap(SnapshotKind::Restore, today - 53)));
+    }
+
+    #[test]
+    fn restores_in_a_row_keep_the_state_before_the_first() {
+        // Alexandre restores six times in a row, over two days: each restore
+        // snapshots the state before it, the first one the live state.
+        let today = 20_778;
+        let base = today * MS_PER_DAY;
+        let restore = |t: i64| Snapshot {
+            path: PathBuf::from(file_name(SnapshotKind::Restore, t)),
+            kind: SnapshotKind::Restore,
+            taken_at: t,
+        };
+        let mut all: Vec<Snapshot> = (0..6).map(|k| restore(base + k * 60_000)).collect();
+        all.push(snap(SnapshotKind::Daily, today));
+        all.push(restore(base + MS_PER_DAY));
+        all.push(snap(SnapshotKind::Daily, today + 1));
+        // An older run, before an import: only the count protects it.
+        all.push(restore(base - 2 * MS_PER_DAY));
+        all.push(restore(base - 3 * MS_PER_DAY));
+        all.push(snap(SnapshotKind::Import, today - 1));
+        all.sort_by_key(|s| std::cmp::Reverse(s.taken_at));
+        let dropped = expired(&all);
+        let kept: Vec<i64> = all
+            .iter()
+            .filter(|s| s.kind == SnapshotKind::Restore && !dropped.contains(s))
+            .map(|s| s.taken_at)
+            .collect();
+        assert_eq!(
+            kept,
+            vec![
+                base + MS_PER_DAY,
+                base + 5 * 60_000,
+                base + 4 * 60_000,
+                base
+            ],
+            "3 newest and the first of the run"
+        );
+        // A migration at reopen (an older-schema snapshot restored) does not
+        // end the run: the first restore snapshot stays.
+        let mut migrated = all.clone();
+        migrated.insert(0, snap(SnapshotKind::Migration, today + 1));
+        migrated.sort_by_key(|s| std::cmp::Reverse(s.taken_at));
+        migrated.insert(0, restore(base + 3 * MS_PER_DAY));
+        let dropped = expired(&migrated);
+        assert!(!dropped.contains(&restore(base)));
+        assert!(dropped.contains(&restore(base + 4 * 60_000)));
+        // Bounded however many restores follow.
+        for k in 0..20 {
+            all.insert(0, restore(base + 2 * MS_PER_DAY + k));
+        }
+        let dropped = expired(&all);
+        let kept: Vec<i64> = all
+            .iter()
+            .filter(|s| s.kind == SnapshotKind::Restore && !dropped.contains(s))
+            .map(|s| s.taken_at)
+            .collect();
+        assert_eq!(kept.len(), 4);
+        assert_eq!(kept[3], base);
     }
 
     #[test]

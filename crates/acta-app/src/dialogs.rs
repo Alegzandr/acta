@@ -166,7 +166,60 @@ pub fn import_done(locale: Locale, report: &ImportReport, missing_folders: u64) 
             &[("n", Arg::Count(missing_folders))],
         ));
     }
+    if report.folders_refused > 0 {
+        message.push(' ');
+        message.push_str(&tr(
+            locale,
+            Key::ImportNetworkFolders,
+            &[("n", Arg::Count(report.folders_refused as u64))],
+        ));
+    }
     message
+}
+
+/// The result line of a key-loss recovery: [`import_done`], and, when the
+/// file had folders that committed automatically, that they are Manual
+/// now (commit modes never come from a file, ADR 0011).
+pub fn recovery_done(
+    locale: Locale,
+    report: &ImportReport,
+    missing_folders: u64,
+    had_auto: bool,
+) -> String {
+    let mut message = import_done(locale, report, missing_folders);
+    if had_auto {
+        message.push(' ');
+        message.push_str(&text(locale, Key::ImportRecoveredManual));
+    }
+    message
+}
+
+/// The refusal of a file too large to import, with its size.
+pub fn import_too_large(locale: Locale, size: u64, limit: u64) -> String {
+    let limit = tr(
+        locale,
+        Key::SnapshotSize,
+        &[("size", Arg::Text(&number(locale, limit / (1024 * 1024))))],
+    );
+    tr(
+        locale,
+        Key::ImportTooLarge,
+        &[
+            ("size", Arg::Text(&size_mb(locale, size))),
+            ("limit", Arg::Text(&limit)),
+        ],
+    )
+}
+
+/// The folder paths of an imported file that may be checked for
+/// existence: those the import kept (never one that could name another
+/// computer).
+pub fn probe_safe_paths(file: &ExportFile) -> Vec<String> {
+    file.folders
+        .iter()
+        .map(|f| f.path.clone())
+        .filter(|p| acta_core::folder_path::is_probe_safe(p))
+        .collect()
 }
 
 /// What importing `file` into an empty database does: every record is
@@ -185,34 +238,18 @@ pub fn report_into_empty(file: &ExportFile) -> ImportReport {
         notes: created(file.notes.len()),
         knowledge: created(file.knowledge.len()),
         revisions: created(file.knowledge.iter().map(|k| k.revisions.len()).sum()),
-        folders: created(file.folders.len()),
+        folders: created(probe_safe_paths(file).len()),
+        folders_refused: (file.folders.len() - probe_safe_paths(file).len()) as i64,
         questions: created(file.questions.len()),
         contacts: created(file.contacts.len()),
     }
 }
 
-/// Write `bytes` to `path` without ever leaving half a file: a temporary
-/// file in the same directory, flushed, then renamed over the target.
+/// Write `bytes` to `path` without ever leaving half a file, readable by
+/// the user only (the export is plaintext): see
+/// [`acta_core::fsutil::write_private_atomic`].
 pub fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
-    use std::io::Write as _;
-    let dir = path
-        .parent()
-        .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::InvalidInput))?;
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let temp = dir.join(format!(".{name}.{}.tmp", std::process::id()));
-    let written = (|| {
-        let mut file = std::fs::File::create(&temp)?;
-        file.write_all(bytes)?;
-        file.sync_all()
-    })();
-    let result = written.and_then(|()| std::fs::rename(&temp, path));
-    if result.is_err() {
-        let _ = std::fs::remove_file(&temp);
-    }
-    result
+    acta_core::fsutil::write_private_atomic(path, bytes)
 }
 
 /// The label of a snapshot kind (components-app.md 5, Snapshot restore).
@@ -335,7 +372,7 @@ impl Dialog {
             });
             let Ok(report) = task.await else { return };
             // Existence is checked off the store.
-            let paths: Vec<String> = file.folders.iter().map(|f| f.path.clone()).collect();
+            let paths = probe_safe_paths(&file);
             let missing = cx
                 .background_executor()
                 .spawn(async move { crate::workspace::missing_paths(paths).len() as u64 })
@@ -993,6 +1030,63 @@ mod tests {
         let real = store.import(&file, true).unwrap();
         assert_eq!(real.projects, report.projects);
         assert_eq!(real.notes, report.notes);
+    }
+
+    #[test]
+    fn network_folders_are_counted_and_never_probed() {
+        let mut temp = crate::db::test_support::temp_store();
+        temp.store
+            .create_project("Acta", "", acta_core::model::Author::Human)
+            .unwrap();
+        let mut file = temp.store.export(None).unwrap();
+        let project = file.projects[0].stamp.uuid.clone();
+        let folder = |path: &str, uuid: &str| acta_core::store::XFolder {
+            stamp: acta_core::store::XStamp {
+                uuid: uuid.into(),
+                created_at: 1,
+                updated_at: 1,
+                updated_by: acta_core::model::Author::Human,
+                deleted_at: None,
+                deleted_by: None,
+            },
+            project: project.clone(),
+            epic: None,
+            topic: None,
+            path: path.into(),
+            position: 0,
+            local: true,
+            name: String::new(),
+            icon: String::new(),
+            commit_mode: Default::default(),
+            commit_as_user: None,
+            commit_on_default: false,
+        };
+        file.folders = vec![
+            folder(r"C:\Users\Alexandre\acta", "f1"),
+            folder(r"\\10.0.0.5\share", "f2"),
+        ];
+        assert_eq!(probe_safe_paths(&file), vec![r"C:\Users\Alexandre\acta"]);
+        let report = report_into_empty(&file);
+        assert_eq!((report.folders.created, report.folders_refused), (1, 1));
+        let message = import_done(Locale::En, &report, 0);
+        assert!(
+            message.ends_with(
+                "1 working folder on a network path was left out. \
+                 Add it again from its project, epic or topic."
+            ),
+            "{message}"
+        );
+        // Key-loss recovery says commit modes are Manual again, only when
+        // the file had automatic ones.
+        assert_eq!(recovery_done(Locale::En, &report, 0, false), message);
+        assert!(recovery_done(Locale::En, &report, 0, true).ends_with(
+            "Commit modes come back as Manual: set them again in each folder\u{2019}s settings."
+        ));
+        assert_eq!(
+            import_too_large(Locale::En, 600 * 1024 * 1024, 512 * 1024 * 1024),
+            "This file is too large to import (600.0 MB). The limit is 512 MB. \
+             Export one project at a time, then import each file."
+        );
     }
 
     #[test]

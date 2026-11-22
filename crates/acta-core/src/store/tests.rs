@@ -865,6 +865,13 @@ fn export_import_export_is_lossless() {
     let report = b.store.import(&parsed, false).unwrap();
     assert_eq!(report.total().updated + report.total().skipped, 0);
     assert_eq!(report.topics.created, 4);
+    // Everything but the commit settings, which an import never takes:
+    // folders new here are Manual.
+    let mut first = first;
+    for f in &mut first.folders {
+        (f.commit_mode, f.commit_as_user, f.commit_on_default) = (CommitMode::Manual, None, false);
+    }
+    let text = first.to_json().unwrap();
     let mut second = b.store.export(None).unwrap();
     second.exported_at = first.exported_at;
     assert_eq!(second.to_json().unwrap(), text);
@@ -1012,7 +1019,7 @@ fn database_files_are_private() {
 // ---- review regressions ----
 
 #[test]
-fn restoring_a_restore_snapshot_keeps_it_and_the_last_three() {
+fn restoring_a_restore_snapshot_keeps_it_the_last_three_and_the_first() {
     let mut t = open();
     let p = t.store.create_project("Original", "", H).unwrap();
     let s1 = t.store.snapshot(SnapshotKind::Manual).unwrap();
@@ -1048,7 +1055,9 @@ fn restoring_a_restore_snapshot_keeps_it_and_the_last_three() {
         .into_iter()
         .filter(|s| s.kind == SnapshotKind::Restore)
         .count();
-    assert_eq!(restores, 3);
+    // Five restores in a row: the 3 newest and the first (the live state
+    // before any restore) are kept (snapshots::KEEP_RESTORE).
+    assert_eq!(restores, 4);
 }
 
 #[test]
@@ -2361,7 +2370,9 @@ fn the_new_fields_survive_an_export_and_an_import() {
         .cloned()
         .unwrap();
     assert_eq!(active.folder.name, "Storage repo");
-    assert_eq!(active.folder.commit_mode, CommitMode::Push);
+    // Commit settings are never taken from a file: a folder new here is
+    // Manual.
+    assert_eq!(active.folder.commit_mode, CommitMode::Manual);
 
     // A pointer to a folder the file does not carry is dropped.
     let mut lone = file.clone();
@@ -2580,15 +2591,182 @@ fn an_import_by_claude_code_never_sets_commit_settings_or_pointers() {
         keys.active_folder.as_deref(),
         Some(folder.stamp.uuid.as_str())
     );
-    // A newer one imported by the human does change them.
+    // Nor does a newer one imported by the human: a known folder at the
+    // same path keeps its local settings.
     for f in &mut newer.folders {
         f.stamp.updated_at += 1_000;
     }
     a.store.import(&newer, false).unwrap();
     let mine = a.store.export(None).unwrap();
+    let folder = mine
+        .folders
+        .iter()
+        .find(|f| f.name == "Storage repo")
+        .unwrap();
+    assert_eq!(folder.commit_mode, CommitMode::Push);
     assert!(
         mine.folders
             .iter()
-            .all(|f| f.commit_mode == CommitMode::Commit)
+            .all(|f| f.commit_mode != CommitMode::Commit)
     );
+}
+
+/// A file from someone else must not let Claude Code commit or push in
+/// this user's repositories (security audit): new folders, and known ones
+/// the file moves to another path, come in Manual.
+#[test]
+fn an_import_never_grants_automatic_commits() {
+    let mut a = open();
+    populate(&mut a.store, a.dir.path());
+    let mut file = a.store.export(None).unwrap();
+    for f in &mut file.folders {
+        (f.commit_mode, f.commit_as_user, f.commit_on_default) =
+            (CommitMode::Push, Some(true), true);
+    }
+    let manual = |x: &ExportFile| {
+        x.folders.iter().all(|f| {
+            f.commit_mode == CommitMode::Manual
+                && f.commit_as_user.is_none()
+                && !f.commit_on_default
+        })
+    };
+    // New here.
+    let mut b = open();
+    b.store.import(&file, false).unwrap();
+    assert!(manual(&b.store.export(None).unwrap()));
+    // Known, but the file moves it elsewhere: the local Push is dropped too.
+    let elsewhere = folder_in(a.dir.path(), "elsewhere");
+    let mut moved = a.store.export(None).unwrap();
+    let storage = moved
+        .folders
+        .iter_mut()
+        .find(|f| f.name == "Storage repo")
+        .unwrap();
+    assert_eq!(storage.commit_mode, CommitMode::Push);
+    storage.path = elsewhere.to_string_lossy().into_owned();
+    storage.stamp.updated_at += 1_000;
+    a.store.import(&moved, false).unwrap();
+    let after = a.store.export(None).unwrap();
+    let storage = after
+        .folders
+        .iter()
+        .find(|f| f.name == "Storage repo")
+        .unwrap();
+    assert_eq!(
+        (
+            storage.commit_mode,
+            storage.commit_as_user,
+            storage.commit_on_default
+        ),
+        (CommitMode::Manual, None, false)
+    );
+}
+
+/// A folder path that could name another computer is never taken from a
+/// file (security audit: probing `\\host\share` on Windows sends the
+/// user's NTLM credentials). It is left out and counted.
+#[test]
+fn an_import_leaves_out_network_paths_and_counts_them() {
+    let mut a = open();
+    populate(&mut a.store, a.dir.path());
+    let mut file = a.store.export(None).unwrap();
+    let total = file.folders.len();
+    assert!(total >= 2);
+    file.folders[0].path = r"\\attacker@SSL\share".into();
+    file.folders[1].path = "//10.0.0.5/share".into();
+    let mut b = open();
+    let dry = b.store.import(&file, true).unwrap();
+    assert_eq!(dry.folders_refused, 2);
+    let report = b.store.import(&file, false).unwrap();
+    assert_eq!(report.folders_refused, 2);
+    assert_eq!(report.folders.created as usize, total - 2);
+    let got = b.store.export(None).unwrap();
+    assert_eq!(got.folders.len(), total - 2);
+    assert!(
+        got.folders
+            .iter()
+            .all(|f| crate::folder_path::is_probe_safe(&f.path))
+    );
+    // A known folder the file moves to a network path keeps its local path.
+    let mut moved = a.store.export(None).unwrap();
+    let local = moved.folders[0].path.clone();
+    moved.folders[0].path = r"\\10.0.0.5\share".into();
+    moved.folders[0].stamp.updated_at += 1_000;
+    // Claude Code's import never takes a path: not refused, local path kept.
+    let by_claude = a.store.import_by(&moved, false, C).unwrap();
+    assert_eq!(by_claude.folders_refused, 0);
+    let kept = a.store.export(None).unwrap();
+    assert!(kept.folders.iter().any(|f| f.path == local));
+    assert!(kept.folders.iter().all(|f| !f.path.starts_with(r"\\")));
+    // The human's: the row is kept as it is here, skipped, nothing missing
+    // and so nothing counted as left out.
+    moved.folders[0].stamp.updated_at += 1_000;
+    let report = a.store.import(&moved, false).unwrap();
+    assert_eq!(report.folders_refused, 0);
+    assert_eq!(report.folders.updated, 0);
+    let after = a.store.export(None).unwrap();
+    assert!(after.folders.iter().any(|f| f.path == local));
+    assert!(after.folders.iter().all(|f| !f.path.starts_with(r"\\")));
+}
+
+/// A page whose active folder is a left-out network folder has no active
+/// folder after the import: the pointer resolves to nothing.
+#[test]
+fn a_pointer_to_a_left_out_network_folder_is_cleared() {
+    let mut a = open();
+    populate(&mut a.store, a.dir.path());
+    let mut file = a.store.export(None).unwrap();
+    let storage = file
+        .folders
+        .iter_mut()
+        .find(|f| f.name == "Storage repo")
+        .unwrap();
+    let uuid = storage.stamp.uuid.clone();
+    storage.path = r"\\10.0.0.5\storage".into();
+    let keys = file.topics.iter().find(|t| t.title == "Keys").unwrap();
+    assert_eq!(keys.active_folder.as_deref(), Some(uuid.as_str()));
+    let mut b = open();
+    let report = b.store.import(&file, false).unwrap();
+    assert_eq!(report.folders_refused, 1);
+    let active: Option<i64> = b
+        .store
+        .conn
+        .query_row(
+            "SELECT active_folder_id FROM topics WHERE uuid = ?1",
+            [&keys.stamp.uuid],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(active, None);
+}
+
+#[test]
+fn an_import_refuses_a_file_over_the_cap_before_reading_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("big.acta.json");
+    std::fs::write(&path, vec![b' '; 2 * 1024 * 1024]).unwrap();
+    match super::exchange::read_capped(&path, 1024 * 1024) {
+        Err(Error::FileTooLarge { size, limit }) => {
+            assert_eq!((size, limit), (2 * 1024 * 1024, 1024 * 1024));
+        }
+        other => panic!("expected FileTooLarge, got {other:?}"),
+    }
+    let message = Error::FileTooLarge {
+        size: 600 * 1024 * 1024,
+        limit: MAX_IMPORT_BYTES,
+    }
+    .to_string();
+    assert!(
+        message.contains("600 MiB") && message.contains("512 MiB"),
+        "{message}"
+    );
+    // Under the cap it reads and parses as before.
+    let mut t = open();
+    t.store.create_project("Acta", "", H).unwrap();
+    let small = dir.path().join("small.acta.json");
+    std::fs::write(&small, t.store.export(None).unwrap().to_json().unwrap()).unwrap();
+    assert_eq!(ExportFile::read(&small).unwrap().projects.len(), 1);
+    // A broken file still says what is wrong with it.
+    std::fs::write(&small, "{\"format\":\"acta\",\"version\":2}").unwrap();
+    assert!(matches!(ExportFile::read(&small), Err(Error::Json(_))));
 }
