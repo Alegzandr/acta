@@ -13,14 +13,14 @@ fn main() {
         // still be able to build the app.
         println!("cargo:warning=could not embed the Windows icon: {err}");
     }
-    // Release links on MSVC warn LNK4099 (a dependency's static library
-    // ships without its PDB). Harmless, and only seen there: silenced for
-    // the release binary alone, so debug builds and their caches are
-    // untouched.
-    if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
-        && std::env::var("PROFILE").as_deref() == Ok("release")
-    {
+    // Links on MSVC warn LNK4099: OpenSSL's static library, vendored for the
+    // database (ADR 0003), ships without its PDB. Harmless; rustc reports the
+    // linker's message as a warning (`linker_messages`). Silenced for this
+    // crate's executable and its integration tests (the dictation worker's),
+    // in every profile.
+    if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
         println!("cargo:rustc-link-arg-bins=/ignore:4099");
+        println!("cargo:rustc-link-arg-tests=/ignore:4099");
     }
 }
 

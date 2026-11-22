@@ -134,6 +134,7 @@ enum Job {
         phrase: AudioBuf,
     },
     Stop,
+    Release(Sender<()>),
 }
 
 enum Outcome {
@@ -298,6 +299,26 @@ impl Controller {
             };
             self.dropped_below.fetch_max(bar, Ordering::SeqCst);
         }
+    }
+
+    /// Before a model file is downloaded over, replaced or deleted: every
+    /// take stops (unwritten phrases are dropped, as with `Esc`) and the
+    /// engine lets go of the model (the worker process exits). `false` when
+    /// the engine did not confirm within `limit`; the caller must then not
+    /// touch the file.
+    pub fn release_engine(&mut self, limit: std::time::Duration) -> bool {
+        let editors: Vec<EditorId> = self
+            .active
+            .iter()
+            .chain(self.finishing.iter())
+            .map(|t| t.editor)
+            .collect();
+        for editor in editors {
+            self.escape(editor);
+        }
+        let (done, confirmed) = mpsc::channel();
+        self.send(Job::Release(done));
+        confirmed.recv_timeout(limit).is_ok()
     }
 
     /// The editor closed: its take stops; text that comes back is dropped
@@ -510,6 +531,11 @@ fn run_engine(
                 let result = engine.feed(phrase.as_slice());
                 phrase.wipe();
                 let _ = outcomes.send(Outcome::Text { take, seq, result });
+            }
+            Job::Release(done) => {
+                engine.release();
+                running = false;
+                let _ = done.send(());
             }
             Job::Stop => {
                 // Every phrase of the stopped take was queued before this
@@ -808,6 +834,27 @@ mod tests {
         assert_eq!(c.active_editor(), None);
         c.closed(1);
         assert_eq!(c.state(1), TakeState::Idle);
+    }
+
+    #[test]
+    fn releasing_the_engine_stops_takes_and_waits_for_it() {
+        let texts = Texts::with(&[(1, "")]);
+        let engine = FakeEngine::new(vec![FakeStep::Stall(
+            Duration::from_millis(200),
+            "Dropped.".into(),
+        )]);
+        let released = std::sync::Arc::clone(&engine.released);
+        let mut c = Controller::new(Box::new(engine));
+        c.start(1, 0, Lang::English);
+        c.capture_started();
+        c.phrase(phrase());
+        // Waits behind the stalled phrase, then confirms.
+        assert!(c.release_engine(WAIT));
+        assert_eq!(released.load(Ordering::SeqCst), 1);
+        assert_eq!(c.active_editor(), None);
+        assert_eq!(c.state(1), TakeState::Idle);
+        assert!(settle(&mut c, &texts).is_empty());
+        assert_eq!(texts.get(1), "");
     }
 
     #[test]

@@ -9,6 +9,10 @@
 //! modification time, compared at each load ([`check_model`]): any
 //! difference re-hashes before use.
 //!
+//! The model being replaced or deleted must not be in use: the caller
+//! first calls `take::Controller::release_engine`, which ends the worker
+//! process, and touches the file only when it returned `true`.
+//!
 //! Redirects are followed by hand, at most five, each target checked
 //! against the [`Policy`]: HTTPS only in the app. Model files are public
 //! weights, not user data: plaintext on disk is fine (ADR 0014, 4). Nothing

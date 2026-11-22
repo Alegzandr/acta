@@ -69,6 +69,9 @@ pub trait Engine: Send {
     fn feed(&mut self, phrase: &[f32]) -> Result<String, EngineError>;
     /// The take ends; context from it is dropped.
     fn stop(&mut self);
+    /// Lets go of the model: the worker process exits, so its file can be
+    /// replaced or deleted. The next `start` loads it again.
+    fn release(&mut self) {}
 }
 
 /// What [`FakeEngine`] does for one phrase.
@@ -95,6 +98,8 @@ pub struct FakeEngine {
     /// Phrase lengths fed, for assertions (never the samples).
     pub fed: Vec<usize>,
     pub fail_start: bool,
+    /// How many times `release` was called.
+    pub released: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl FakeEngine {
@@ -146,6 +151,12 @@ impl Engine for FakeEngine {
 
     fn stop(&mut self) {
         self.started = None;
+    }
+
+    fn release(&mut self) {
+        self.started = None;
+        self.released
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }
 }
 

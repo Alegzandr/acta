@@ -345,6 +345,15 @@ impl Engine for WorkerClient {
             let _ = r.send(&Request::Stop);
         }
     }
+
+    /// Ends the worker (and with it any hold on the model file); a model
+    /// that failed to load is tried again at the next start.
+    fn release(&mut self) {
+        if let Some(r) = self.running.take() {
+            r.end();
+        }
+        self.model_failed = false;
+    }
 }
 
 impl Drop for WorkerClient {

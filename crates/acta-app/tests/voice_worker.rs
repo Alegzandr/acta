@@ -1,6 +1,8 @@
 //! The dictation worker end to end: the real GUI executable started with
 //! `--voice-worker`, driven over its pipes with the fake engine. No model,
 //! no microphone, no audio from anywhere but these generated buffers.
+//! The fake engine exists only in debug builds of the executable.
+#![cfg(debug_assertions)]
 
 use std::io::BufReader;
 use std::path::PathBuf;
@@ -183,5 +185,19 @@ fn a_worker_that_idled_out_is_replaced_at_the_next_take() {
     std::thread::sleep(Duration::from_millis(1_500));
     client.start(Lang::English).unwrap();
     assert_ne!(client.pid().unwrap(), first);
+    assert_eq!(client.feed(&tone(1_600)).unwrap(), "One.");
+}
+
+#[test]
+fn release_ends_the_worker_and_the_next_take_starts_one() {
+    let spec = EngineSpec::Fake {
+        script: vec![FakeStep::Text("One.".into())],
+    };
+    let mut client = WorkerClient::new(exe(), spec);
+    client.start(Lang::English).unwrap();
+    assert_eq!(client.feed(&tone(1_600)).unwrap(), "One.");
+    client.release();
+    assert_eq!(client.pid(), None, "the model file is free");
+    client.start(Lang::English).unwrap();
     assert_eq!(client.feed(&tone(1_600)).unwrap(), "One.");
 }

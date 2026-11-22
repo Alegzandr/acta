@@ -12,7 +12,7 @@
 use std::fs::File;
 use std::path::Path;
 
-use acta_core::voice::engine::{Engine, EngineError, FakeEngine, Lang};
+use acta_core::voice::engine::{Engine, EngineError, Lang};
 use acta_core::voice::protocol::{EXIT_ENGINE_GONE, EngineSpec};
 use acta_core::voice::worker::{ServeEnd, serve};
 use whisper_rs::{
@@ -49,11 +49,19 @@ fn make(spec: &EngineSpec) -> Result<Box<dyn Engine>, EngineError> {
             *threads,
             *gpu,
         )?)),
-        EngineSpec::Fake { script } => Ok(Box::new(FakeEngine::new(script.clone()))),
+        // The scripted engine of the end-to-end tests, which run a debug
+        // build; a release build does not contain it.
+        #[cfg(debug_assertions)]
+        EngineSpec::Fake { script } => Ok(Box::new(acta_core::voice::engine::FakeEngine::new(
+            script.clone(),
+        ))),
+        #[cfg(not(debug_assertions))]
+        EngineSpec::Fake { .. } => Err(EngineError::Model),
     }
 }
 
-/// Crash reports without memory contents.
+/// Crash reports without memory contents: no heap in Windows error
+/// reports, no core file on Unix, not dumpable on Linux.
 fn harden() {
     #[cfg(windows)]
     {
@@ -63,6 +71,19 @@ fn harden() {
         // SAFETY: a flag on this process; no pointers.
         unsafe {
             WerSetFlags(WER_FAULT_REPORTING_FLAG_NOHEAP);
+        }
+    }
+    #[cfg(unix)]
+    {
+        // No core file on any Unix: a crash leaves no memory image (audio,
+        // text) on disk.
+        let none = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        // SAFETY: a valid struct on this frame.
+        unsafe {
+            libc::setrlimit(libc::RLIMIT_CORE, &none);
         }
     }
     #[cfg(target_os = "linux")]
