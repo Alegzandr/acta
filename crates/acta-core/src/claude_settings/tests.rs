@@ -582,6 +582,61 @@ fn the_exclude_line_uses_canonical_paths() {
     );
 }
 
+/// A directory link: a junction on Windows (no privilege needed), a
+/// symbolic link elsewhere.
+fn dir_link(target: &Path, link: &Path) {
+    #[cfg(windows)]
+    {
+        let out = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "mklink /J failed");
+    }
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(target, link).unwrap();
+}
+
+#[test]
+fn nothing_is_written_through_a_link() {
+    let mut t = open();
+    let tmp = tempfile::tempdir().unwrap();
+    let s = &mut t.store;
+    let other = tmp.path().join("other");
+    fs::create_dir_all(other.join(".claude")).unwrap();
+    let f = tmp.path().join("alexandre");
+    fs::create_dir_all(&f).unwrap();
+    dir_link(&other.join(".claude"), &f.join(".claude"));
+    let e = apply(s, &f, mode(CommitMode::Push, false)).unwrap_err();
+    assert!(e.contains("link"), "{e}");
+    assert!(e.len() < 80, "{e}");
+    assert!(!other.join(LOCAL_SETTINGS).exists());
+    assert!(s.local_values(LEDGER_PREFIX).unwrap().is_empty());
+
+    // The settings file itself a link to a file elsewhere.
+    let g = tmp.path().join("second");
+    fs::create_dir_all(g.join(".claude")).unwrap();
+    let elsewhere = other.join("settings.json");
+    fs::write(&elsewhere, "{}").unwrap();
+    #[cfg(unix)]
+    let linked = std::os::unix::fs::symlink(&elsewhere, g.join(LOCAL_SETTINGS)).is_ok();
+    // A file symbolic link needs a privilege on Windows: skipped without it.
+    #[cfg(windows)]
+    let linked = std::os::windows::fs::symlink_file(&elsewhere, g.join(LOCAL_SETTINGS)).is_ok();
+    if linked {
+        assert!(apply(s, &g, mode(CommitMode::Push, false)).is_err());
+        assert_eq!(fs::read_to_string(&elsewhere).unwrap(), "{}");
+    }
+
+    // A plain folder still gets its file.
+    let h = tmp.path().join("plain");
+    fs::create_dir_all(&h).unwrap();
+    apply(s, &h, mode(CommitMode::Push, false)).unwrap();
+    assert!(h.join(LOCAL_SETTINGS).is_file());
+}
+
 #[test]
 fn the_form_tells_the_users_own_entries_and_a_tracked_file() {
     let mut t = open();

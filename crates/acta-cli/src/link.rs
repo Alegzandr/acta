@@ -93,7 +93,7 @@ pub fn run(store: &mut Store, a: LinkArgs, cwd: &Path, author: Author) -> Result
     let stored =
         folder_path::canonical(&path).map_err(|e| format!("cannot use this folder: {e}"))?;
     if a.remove {
-        return unlink(store, &a, &stored);
+        return unlink(store, &a, &stored, author);
     }
     let owner = owner_of(store, &a, Path::new(&stored), author)?;
     let existing = store.folders(owner).map_err(|e| e.to_string())?;
@@ -130,7 +130,7 @@ pub fn run(store: &mut Store, a: LinkArgs, cwd: &Path, author: Author) -> Result
     Ok(msg)
 }
 
-fn unlink(store: &mut Store, a: &LinkArgs, stored: &str) -> Result<String, String> {
+fn unlink(store: &mut Store, a: &LinkArgs, stored: &str, author: Author) -> Result<String, String> {
     let mut removed = Vec::new();
     for f in store.all_folders().map_err(|e| e.to_string())? {
         if f.stamp.deleted_at.is_some() || !folder_path::same(Os::CURRENT, &f.path, stored) {
@@ -144,7 +144,7 @@ fn unlink(store: &mut Store, a: &LinkArgs, stored: &str) -> Result<String, Strin
         };
         if wanted {
             store
-                .delete(Record::Folder(f.id), Author::Human)
+                .delete(Record::Folder(f.id), author)
                 .map_err(|e| e.to_string())?;
             removed.push(f.owner.to_string());
         }
@@ -258,4 +258,48 @@ fn auto_memory_off(store: &mut Store, folder: &Path) -> Result<bool, String> {
         return Err(format!("{LOCAL_SETTINGS} is tracked by git"));
     }
     Ok(o.added.iter().any(|a| a == "autoMemoryEnabled"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use acta_core::StoreConfig;
+    use acta_core::keys::MemoryKeyStore;
+    use acta_core::model::PageReq;
+
+    fn args(remove: bool) -> LinkArgs {
+        LinkArgs {
+            path: None,
+            project: None,
+            epic: None,
+            topic: None,
+            add: false,
+            remove,
+            keep_auto_memory: true,
+        }
+    }
+
+    #[test]
+    fn unlink_records_who_did_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let keys = MemoryKeyStore::new();
+        let mut store = Store::open(&StoreConfig {
+            data_dir: tmp.path().join("data"),
+            keys: keys.stores(),
+        })
+        .unwrap();
+        let folder = tmp.path().join("alexandre-repo");
+        std::fs::create_dir_all(&folder).unwrap();
+        run(&mut store, args(false), &folder, Author::Human).unwrap();
+        let out = run(&mut store, args(true), &folder, Author::Claude).unwrap();
+        assert!(out.starts_with("ok unlinked"), "{out}");
+        let trash = store.trash(PageReq::first(10)).unwrap();
+        let gone: Vec<_> = trash
+            .items
+            .iter()
+            .filter(|t| matches!(t.record, Record::Folder(_)))
+            .collect();
+        assert_eq!(gone.len(), 1);
+        assert_eq!(gone[0].deleted_by, Author::Claude);
+    }
 }

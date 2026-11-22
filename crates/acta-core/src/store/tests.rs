@@ -1012,7 +1012,7 @@ fn database_files_are_private() {
 // ---- review regressions ----
 
 #[test]
-fn restoring_a_restore_snapshot_keeps_it_and_the_last_three() {
+fn restoring_a_restore_snapshot_keeps_it_the_last_three_and_the_first() {
     let mut t = open();
     let p = t.store.create_project("Original", "", H).unwrap();
     let s1 = t.store.snapshot(SnapshotKind::Manual).unwrap();
@@ -1048,7 +1048,9 @@ fn restoring_a_restore_snapshot_keeps_it_and_the_last_three() {
         .into_iter()
         .filter(|s| s.kind == SnapshotKind::Restore)
         .count();
-    assert_eq!(restores, 3);
+    // Five restores in a row: the 3 newest and the first (the live state
+    // before any restore) are kept (snapshots::KEEP_RESTORE).
+    assert_eq!(restores, 4);
 }
 
 #[test]

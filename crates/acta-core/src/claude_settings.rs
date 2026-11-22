@@ -493,6 +493,7 @@ pub fn apply(store: &mut Store, folder: &Path, wanted: Wanted) -> Result<Outcome
     }
 
     let file = folder.join(LOCAL_SETTINGS);
+    no_links(folder)?;
     let (mut obj, existed) = match fs::read_to_string(&file) {
         Ok(t) => match serde_json::from_str::<Value>(&t) {
             Ok(Value::Object(o)) => (o, true),
@@ -528,7 +529,9 @@ pub fn apply(store: &mut Store, folder: &Path, wanted: Wanted) -> Result<Outcome
                 ledger.dir_created = true;
             }
             let text = serde_json::to_string_pretty(&Value::Object(obj)).expect("json") + "\n";
-            write_atomic(&file, &text).map_err(|e| e.kind().to_string())?;
+            // Checked again just before: nothing is written through a link.
+            no_links(folder)?;
+            write_in_place(&file, &text).map_err(|e| e.kind().to_string())?;
             if !existed {
                 ledger.created = true;
                 outcome.exclude_failed = !exclude_from_git(folder);
@@ -537,6 +540,43 @@ pub fn apply(store: &mut Store, folder: &Path, wanted: Wanted) -> Result<Outcome
     }
     save_ledger(store, folder, &ledger).map_err(|e| e.to_string())?;
     Ok(outcome)
+}
+
+/// Refuses a `.claude` directory or settings file that is a link (symbolic
+/// link or junction), or that resolves outside the
+/// folder: a tracked `.claude -> ../other/.claude` would otherwise get
+/// commit rules written into another repository.
+fn no_links(folder: &Path) -> Result<(), String> {
+    let dir = folder.join(".claude");
+    for p in [&dir, &folder.join(LOCAL_SETTINGS)] {
+        match fs::symlink_metadata(p) {
+            Ok(m) if is_link(&m) => {
+                return Err(format!("{LOCAL_SETTINGS} goes through a link; not written"));
+            }
+            Ok(_) => {}
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => return Err(format!("cannot read {LOCAL_SETTINGS}: {}", e.kind())),
+        }
+    }
+    if dir.exists() {
+        let inside = match (fs::canonicalize(&dir), fs::canonicalize(folder)) {
+            (Ok(d), Ok(f)) => d.starts_with(&f),
+            _ => false,
+        };
+        if !inside {
+            return Err(format!(
+                "{LOCAL_SETTINGS} is outside the folder; not written"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// A symbolic link, or on Windows a junction (Rust reports both). Other
+/// reparse points (OneDrive placeholders, deduplicated files) are plain
+/// files; where they lead is judged by the containment check.
+fn is_link(m: &fs::Metadata) -> bool {
+    m.file_type().is_symlink()
 }
 
 /// What Acta recorded adding to a folder's file: its top-level keys and
@@ -970,12 +1010,27 @@ fn exclude_from_git(folder: &Path) -> bool {
 }
 
 /// Replaces a file atomically (a temporary file beside it, then a rename),
-/// following a symbolic link and keeping the file's permissions.
+/// following a symbolic link and keeping the file's permissions. For the
+/// user's own settings, which may be a dotfiles link.
 pub fn write_atomic(path: &Path, text: &str) -> io::Result<()> {
     let target = match fs::symlink_metadata(path) {
         Ok(m) if m.file_type().is_symlink() => fs::canonicalize(path)?,
         _ => path.to_path_buf(),
     };
+    replace(&target, text)
+}
+
+/// [`write_atomic`] without following a link: a link at `path` is refused.
+/// For a folder's settings, which a repository may point anywhere.
+fn write_in_place(path: &Path, text: &str) -> io::Result<()> {
+    if fs::symlink_metadata(path).is_ok_and(|m| is_link(&m)) {
+        return Err(io::ErrorKind::PermissionDenied.into());
+    }
+    replace(path, text)
+}
+
+fn replace(target: &Path, text: &str) -> io::Result<()> {
+    let target = target.to_path_buf();
     let permissions = fs::metadata(&target).ok().map(|m| m.permissions());
     let name = target
         .file_name()

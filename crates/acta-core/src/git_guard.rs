@@ -153,7 +153,16 @@ pub fn check(command: &str, cx: &Context) -> Option<String> {
                         return Some(UNKNOWN.to_owned());
                     };
                     let reason = if c.sub == "commit" {
-                        check_commit(&c.args, &settings, &git)
+                        check_commit(
+                            &c.args,
+                            &dir,
+                            Reads {
+                                stdin: a.stdin,
+                                links: a.links,
+                            },
+                            &settings,
+                            &git,
+                        )
                     } else {
                         check_push(&c.args, &settings, &git)
                     };
@@ -266,6 +275,8 @@ const ENV: &str =
     "Acta: no environment variables on a commit or push here (LANG, LC_*, TZ, TERM only).";
 const DIR: &str = "Acta: run git in this folder (no cd to a variable, ~ or -, no --git-dir).";
 const FAIL: &str = "Acta cannot read this folder's commit mode. Ask the user before committing.";
+const READS: &str =
+    "Acta: -F, -t and pathspec files must be in this repository; -C/-c take a commit.";
 
 fn short(name: &str) -> String {
     name.chars().take(30).collect()
@@ -318,8 +329,99 @@ const COMMIT_LONG_VALUE: &[&str] = &[
     "--pathspec-from-file",
 ];
 
-fn check_commit(args: &[String], folder: &CommitSettings, git: &GitInfo) -> Option<String> {
+/// What a value of `git commit` is read as.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ValueKind {
+    /// Read from a file (`-F`, `--pathspec-from-file`); `-` is stdin.
+    File,
+    /// A message template file (`-t`): no stdin.
+    Template,
+    /// A commit whose message is reused (`-C`, `-c`).
+    Commit,
+}
+
+/// Long options whose value names a file or a commit, and how it is read.
+const COMMIT_READ_VALUE: &[(&str, ValueKind)] = &[
+    ("file", ValueKind::File),
+    ("pathspec-from-file", ValueKind::File),
+    ("template", ValueKind::Template),
+    ("reuse-message", ValueKind::Commit),
+    ("reedit-message", ValueKind::Commit),
+];
+
+/// The read option a long option name stands for. git takes any
+/// unambiguous prefix; an ambiguous one is an error in git, so taking it
+/// for the read option only refuses what would fail anyway.
+fn read_option(name: &str) -> Option<ValueKind> {
+    if name.is_empty() {
+        return None;
+    }
+    COMMIT_READ_VALUE
+        .iter()
+        .find(|(o, _)| o.starts_with(name))
+        .map(|&(_, k)| k)
+}
+
+/// What else in the command bears on a file a commit reads.
+#[derive(Clone, Copy, Default)]
+struct Reads {
+    /// Something other than a heredoc feeds a stdin: a pipe, `<`, `<<<`.
+    stdin: bool,
+    /// The command makes links (`ln`, `mklink`): a file inside the
+    /// worktree may lead anywhere once it runs.
+    links: bool,
+}
+
+/// Whether a value of a read option stays in the repository: a file inside
+/// the worktree (`-` for stdin where git allows it, unless something other
+/// than a heredoc feeds it), or a commit name that is not a shell
+/// expansion or an absolute path. A missing value is refused for files:
+/// `<(...)` is read as a redirection and leaves none.
+fn value_allowed(kind: ValueKind, value: Option<&str>, dir: &Path, root: &Path, r: Reads) -> bool {
+    let Some(value) = value else {
+        return kind == ValueKind::Commit;
+    };
+    let shellish = value.is_empty() || value.starts_with('~') || value.contains(['$', '`']);
+    match kind {
+        ValueKind::File if value == "-" => !r.stdin,
+        ValueKind::File | ValueKind::Template => {
+            !shellish && !r.links && inside(&walk(dir, &[value.to_owned()]), root)
+        }
+        ValueKind::Commit => {
+            let p = msys(value);
+            !shellish && !Path::new(&p).has_root() && !Path::new(&p).is_absolute()
+        }
+    }
+}
+
+/// `path` is inside `root`, on the text (`..` already folded by [`walk`]).
+/// When both exist, also once links are resolved; a path that does not
+/// exist yet is judged on the text alone.
+fn inside(path: &Path, root: &Path) -> bool {
+    if !path.starts_with(root) {
+        return false;
+    }
+    match (std::fs::canonicalize(path), std::fs::canonicalize(root)) {
+        (Ok(p), Ok(r)) => p.starts_with(r),
+        _ => true,
+    }
+}
+
+/// `dir` is where the commit runs: relative files are read from there.
+fn check_commit(
+    args: &[String],
+    dir: &Path,
+    r: Reads,
+    folder: &CommitSettings,
+    git: &GitInfo,
+) -> Option<String> {
     let mut no_verify = false;
+    let mut reads = false;
+    let mut check_value = |kind: ValueKind, value: Option<&String>| {
+        if !value_allowed(kind, value.map(String::as_str), dir, &git.root, r) {
+            reads = true;
+        }
+    };
     let mut i = 0;
     while i < args.len() {
         let a = args[i].as_str();
@@ -328,12 +430,23 @@ fn check_commit(args: &[String], folder: &CommitSettings, git: &GitInfo) -> Opti
             break;
         }
         if let Some(long) = a.strip_prefix("--") {
-            let name = long.split('=').next().unwrap_or("");
+            let (name, attached) = match long.split_once('=') {
+                Some((n, v)) => (n, Some(v.to_owned())),
+                None => (long, None),
+            };
             // git takes any unambiguous prefix of a long option.
             if name.len() >= 5 && "no-verify".starts_with(name) {
                 no_verify = true;
             }
-            if !a.contains('=') && COMMIT_LONG_VALUE.contains(&a) {
+            if let Some(kind) = read_option(name) {
+                match attached {
+                    Some(v) => check_value(kind, Some(&v)),
+                    None => {
+                        check_value(kind, args.get(i));
+                        i += 1;
+                    }
+                }
+            } else if attached.is_none() && COMMIT_LONG_VALUE.contains(&a) {
                 i += 1;
             }
         } else if let Some(cluster) = a.strip_prefix('-')
@@ -344,8 +457,21 @@ fn check_commit(args: &[String], folder: &CommitSettings, git: &GitInfo) -> Opti
                     'n' => no_verify = true,
                     // Value taken from the rest, or the next word.
                     'm' | 'F' | 'C' | 'c' | 't' => {
-                        if k + 1 == cluster.len() {
+                        let rest = &cluster[k + 1..];
+                        let value = if rest.is_empty() {
                             i += 1;
+                            args.get(i - 1).cloned()
+                        } else {
+                            Some(rest.to_owned())
+                        };
+                        let kind = match c {
+                            'F' => Some(ValueKind::File),
+                            't' => Some(ValueKind::Template),
+                            'C' | 'c' => Some(ValueKind::Commit),
+                            _ => None,
+                        };
+                        if let Some(kind) = kind {
+                            check_value(kind, value.as_ref());
                         }
                         break;
                     }
@@ -358,6 +484,9 @@ fn check_commit(args: &[String], folder: &CommitSettings, git: &GitInfo) -> Opti
     }
     if no_verify {
         return Some(NO_VERIFY.to_owned());
+    }
+    if reads {
+        return Some(READS.to_owned());
     }
     branch_rule(folder, git)
 }
@@ -453,6 +582,10 @@ struct Analysis {
     cds: Vec<Option<String>>,
     /// git could not say whether a subcommand is an alias.
     alias_failed: bool,
+    /// A pipe or a non-heredoc input redirection somewhere in the command.
+    stdin: bool,
+    /// A command that makes links (`ln`, `mklink`).
+    links: bool,
 }
 
 const MAX_DEPTH: usize = 6;
@@ -619,6 +752,11 @@ fn analyze(src: &str, depth: usize, out: &mut Analysis) {
     if parsed.incomplete {
         out.opaque = true;
     }
+    out.stdin |= parsed.stdin;
+    out.links |= parsed.commands.iter().flatten().any(|w| {
+        let b = basename(w).to_ascii_lowercase();
+        b == "ln" || b == "ln.exe" || b == "mklink"
+    });
     for words in &parsed.commands {
         simple(words, depth, out);
     }
@@ -994,6 +1132,8 @@ fn is_assignment(w: &str) -> bool {
 struct Parsed {
     commands: Vec<Vec<String>>,
     incomplete: bool,
+    /// A pipe or an input redirection other than a heredoc.
+    stdin: bool,
 }
 
 fn parse_all(src: &str) -> Parsed {
@@ -1003,11 +1143,13 @@ fn parse_all(src: &str) -> Parsed {
         i: 0,
         out: Vec::new(),
         incomplete: false,
+        stdin: false,
     };
     p.parse(false);
     Parsed {
         commands: p.out,
         incomplete: p.incomplete,
+        stdin: p.stdin,
     }
 }
 
@@ -1047,6 +1189,8 @@ struct Parser<'a> {
     out: Vec<Vec<String>>,
     /// The text ended inside a quote, a substitution or a heredoc.
     incomplete: bool,
+    /// A pipe or an input redirection other than a heredoc was seen.
+    stdin: bool,
 }
 
 impl Parser<'_> {
@@ -1074,6 +1218,13 @@ impl Parser<'_> {
                 }
                 ';' | '|' => {
                     self.i += 1;
+                    if c == '|' {
+                        if self.peek(0) == Some('|') {
+                            self.i += 1;
+                        } else {
+                            self.stdin = true;
+                        }
+                    }
                     a.end_command(&mut self.out);
                 }
                 '&' => {
@@ -1161,6 +1312,7 @@ impl Parser<'_> {
                     heredocs.push((self.word(), strip));
                 }
                 '>' | '<' => {
+                    self.stdin |= c == '<';
                     if a.cur.chars().all(|c| c.is_ascii_digit()) && a.in_word {
                         a.cur.clear();
                         a.in_word = false;
@@ -1303,8 +1455,8 @@ mod tests {
 
     fn git(branch: Option<&str>) -> GitInfo {
         GitInfo {
-            root: PathBuf::from("r"),
-            main_root: Some(PathBuf::from("r")),
+            root: PathBuf::from("/w/acta"),
+            main_root: Some(PathBuf::from("/w/acta")),
             branch: branch.map(str::to_owned),
             head_known: true,
             common_dir: PathBuf::from("r/.git"),
@@ -1684,6 +1836,80 @@ mod tests {
     }
 
     #[test]
+    fn commit_reads_only_inside_the_repository() {
+        let g = git(Some("t"));
+        for mode in [COMMIT, PUSH] {
+            let f = folder(mode, false);
+            for cmd in [
+                "git commit --allow-empty -F ~/.ssh/id_ed25519",
+                "git commit -F /home/alexandre/.ssh/id_ed25519",
+                "git commit -F ../other/secret",
+                "git commit -F sub/../../secret",
+                "git commit -F$HOME/.netrc",
+                "git commit -aF /etc/passwd",
+                "git commit --file /etc/passwd",
+                "git commit --file=/etc/passwd",
+                "git commit --fil /etc/passwd",
+                "git commit --pathspec-from-file=/etc/passwd",
+                "git commit --pathspec-f /etc/passwd",
+                "git commit -t /etc/passwd",
+                "git commit --template=../x",
+                "git commit --temp /etc/passwd",
+                "git commit -C /etc/passwd",
+                "git commit -c /home/alexandre/x",
+                "git commit --reedit-message ~/x",
+                "git commit -C$HOME",
+                "git commit -C`cat x`",
+                // stdin fed by something other than a heredoc.
+                "git commit -F - < ~/.ssh/id_ed25519",
+                "git commit -F- 0<~/.ssh/id_ed25519",
+                "cat ~/.ssh/id_ed25519 | git commit -F -",
+                "cat ~/.ssh/id_ed25519 |& git commit --file=-",
+                "git commit -F - <<< \"$(cat ~/.ssh/id_ed25519)\"",
+                "git commit --pathspec-from-file=- < /etc/passwd",
+                "bash -c 'git commit -F -' < ~/.ssh/id_ed25519",
+                // A link made in the same command; a process substitution.
+                "ln -s ~/.ssh/id_ed25519 m && git commit -F m",
+                "/usr/bin/ln -s ~/.ssh/id_ed25519 t; git commit -t t",
+                "git commit -F <(cat ~/.ssh/id_ed25519)",
+                "git commit --file",
+                "git -C sub commit -F ../../x",
+                "cd sub && git commit -F ../../x",
+            ] {
+                assert_eq!(check(cmd, &f, &g).as_deref(), Some(READS), "{cmd}");
+            }
+            for cmd in [
+                "git commit -F msg.txt",
+                "git commit -F -",
+                "git commit -F- <<'EOF'\nMessage\nEOF",
+                "git commit --file=./notes/msg",
+                "git commit -F sub/../msg",
+                "git commit --pathspec-from-file=-",
+                "git commit -t .gitmessage",
+                "git commit -C HEAD",
+                "git commit --reuse-message=HEAD~1",
+                "git commit -c abc1234",
+                "git commit -C origin/main",
+                "git commit -c feature/x",
+                "git commit --reuse-message=HEAD:notes/msg",
+                "git commit -c ../x",
+                "git log -1 | head -1 || true; git commit -F msg.txt",
+                "false || git commit -F -",
+                "git commit -m \"-F /etc/passwd\"",
+                "git commit -m x -- -F",
+                "git -C sub commit -F ../msg",
+            ] {
+                assert_eq!(check(cmd, &f, &g), None, "{cmd}");
+            }
+        }
+        // Manual folders are not guarded at all.
+        assert_eq!(
+            check("git commit -F /etc/passwd", &folder(MANUAL, false), &g),
+            None
+        );
+    }
+
+    #[test]
     fn aliases_are_resolved() {
         let g = git(Some("t"));
         let f = folder(PUSH, false);
@@ -1905,6 +2131,7 @@ mod tests {
             ENV,
             DIR,
             FAIL,
+            READS,
             long.as_str(),
             m.as_str(),
             o.as_str(),

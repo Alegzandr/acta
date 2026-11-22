@@ -74,6 +74,10 @@ The terminal starts `claude` in the primary effective folder with, in this order
 
 The terminal's header names its session "Claude · T-12 Embed the terminal" and adds "waiting for you" while it waits; the Sessions view's "End session" ends the terminal's process (the conversation stays resumable).
 
+## Amendment (2026-11-22): the pre-check hashes are obscured, not secret
+The salted SHA-256 hashes in the plaintext pre-check file (`link_index.rs`) keep folder paths from being read off the disk, but the salt sits beside them. Anyone with a copy of the data directory can hash guessed paths and confirm, offline, which ones are attached. Accepted: the file exists so hooks can exit before the keychain, and the paths it confirms are the user's own folders, which the same account can list anyway. It is not to be described as protecting paths from someone holding the data directory.
+
 ## Changelog
 - 2026-11-21: "Live files" added: no handle held on user folders, presence polled, renamed or moved folders followed by identity, Acta leaves its launch directory.
 - 2026-11-21: ADR 0011 replaces the primary folder with an active folder chosen per page, makes inheritance unconditional (the include-inherited switch and its ruling are withdrawn; another checkout of the same repository as the active folder is left out instead), and adds names, icons and commit modes. Path identity, reverse resolution, not-found and repair, the empty case and the process-argument ruling stand. `--add-dir` confirmed in `claude --help` 2.1.330.
+- 2026-11-22: amendment: the pre-check hashes are obscured, not secret.
