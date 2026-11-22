@@ -26,6 +26,7 @@ Part of the Acta design system. [DESIGN.md](../../DESIGN.md) is the index: direc
 | Next / previous tab | `Ctrl+Tab` / `Ctrl+Shift+Tab` | `Ctrl+Tab` / `Ctrl+Shift+Tab` |
 | Toggle terminal (show and focus; if focused, hide) | ``Ctrl+` `` or `Ctrl+Shift+J` | ``Ctrl+` `` or `Cmd+Shift+J` |
 | Toggle chat (same rule; on Linux, opens claude.ai in the browser) | `Ctrl+Shift+H` | `Cmd+Shift+H` |
+| Toggle Files / Toggle Commits (same rule; components-repo.md 5.R.11) | `Ctrl+Shift+E` / `Ctrl+Shift+G` | `Cmd+Shift+E` / `Cmd+Shift+G` |
 | Maximize the focused area or group over the body, and back (4.8) | `Ctrl+Shift+Enter` | `Cmd+Shift+Enter` |
 | Toggle left sidebar | `Ctrl+B` | `Cmd+B` |
 | Toggle right sidebar | `Ctrl+Shift+B` | `Cmd+Shift+B` |

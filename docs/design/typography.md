@@ -39,7 +39,7 @@ Two weights of the sans: 400 and 600 (Segoe UI Variable's Regular and Semibold i
 
 **Why page sections are 14, not 12** (clarity review 2026-11-22). A page reads title 24, property labels 14, section header, body 16. At 12 the section headers were smaller than the property labels above them and than every row under them, so the eye read "Description" as a caption and the page as one long run; at 14 / 600 in `text.secondary` they sit one clear step under the title and over the rows, with no new size. The rendered set of sizes on a record page is then 24, 16, 14 and 12, plus 13 for mono, and no role is used out of its row of this table.
 
-**Mono beside sans.** `type.code` is 13 / 20 and sits on a 14 / 20 line, so ids and paths in a sans row share its baseline grid; where mono is a value among sans metadata at 12 (the meta line's id), it is set at 12 / 16, the one place mono takes the small size.
+**Mono beside sans.** `type.code` is 13 / 20 and sits on a 14 / 20 line, so ids and paths in a sans row share its baseline grid; where mono is a value among sans metadata at 12 (the meta line's id), it is set at 12 / 16, the one case where mono takes the small size: the meta line's id, and the hashes and paths among `type.small` in components-repo.md (commit rows, the viewer's strip, the path chip, a commit's facts).
 
 Sentence case everywhere, in both languages. No uppercase, no italics for UI (italics are for Markdown emphasis only). Minimum text size is 12px; nothing smaller.
 
