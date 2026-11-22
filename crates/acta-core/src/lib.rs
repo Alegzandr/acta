@@ -28,6 +28,7 @@ mod sql;
 pub mod store;
 pub mod time;
 pub mod usage;
+pub mod voice;
 
 pub use db::ChangeWatcher;
 pub use error::{Error, OpenError, Result};
