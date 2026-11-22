@@ -124,6 +124,11 @@ mod tree {
     #[cfg(windows)]
     pub struct Tree(Option<windows_sys::Win32::Foundation::HANDLE>);
 
+    // SAFETY: the job handle is owned by this value alone and Win32 job
+    // calls may come from any thread.
+    #[cfg(windows)]
+    unsafe impl Send for Tree {}
+
     #[cfg(windows)]
     impl Tree {
         /// No job: `kill` ends the child alone.

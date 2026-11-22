@@ -75,6 +75,7 @@ mod update;
 mod update_source;
 mod updater_window;
 mod user_path;
+mod voice_worker;
 #[cfg(windows)]
 mod webview_build;
 mod when;
@@ -150,7 +151,15 @@ pub fn launch_dir() -> Option<std::path::PathBuf> {
 }
 
 fn main() {
-    // SAFETY: first thing in `main`, before any thread exists.
+    // The dictation worker (ADR 0014, 5): before anything else, so it never
+    // opens a window, takes the single-instance lock or looks for updates.
+    if std::env::args_os().nth(1).as_deref()
+        == Some(std::ffi::OsStr::new(acta_core::voice::protocol::WORKER_ARG))
+    {
+        std::process::exit(voice_worker::run());
+    }
+    // SAFETY: first thing in `main` after the worker check, before any
+    // thread exists.
     unsafe { acta_terminal::launch::scrub_claude_session() };
     let launched = Instant::now();
     log::rotate();
