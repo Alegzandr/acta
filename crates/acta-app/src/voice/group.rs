@@ -7,8 +7,19 @@
 //! `Mod+Z` pressed while the editor still holds exactly the text the take
 //! left takes back all its phrases at once (the key's own undo plus one
 //! more per extra phrase, sent to the editor), and `Mod+Shift+Z` right
-//! after puts them all back the same way. Anything else (typing during or
-//! after the take, an undo past it) leaves the editor's own undo alone.
+//! after puts them all back the same way. The group ends at the first key
+//! or edit in that editor after the take other than undo and redo, and
+//! typing during the take never groups: the editor's own undo is then left
+//! alone.
+
+/// Whether a key pressed in an editor keeps its take's group: `Mod+Z`,
+/// `Mod+Shift+Z` (and `Ctrl+Y` off macOS), or a modifier alone. `secondary`
+/// is the platform's `Mod` held.
+pub fn keeps_group(key: &str, secondary: bool, shift: bool, macos: bool) -> bool {
+    matches!(key, "shift" | "control" | "alt" | "platform" | "function")
+        || (secondary && key == "z")
+        || (secondary && !shift && !macos && key == "y")
+}
 
 /// The last take of an editor.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -44,6 +55,12 @@ impl TakeGroup {
 
     /// The person edited the editor while the take was writing.
     pub fn typed(&mut self) {
+        self.clean = false;
+    }
+
+    /// A key other than undo or redo, or an edit, in the editor after the
+    /// take: the group ends; undo is the editor's own again.
+    pub fn end(&mut self) {
         self.clean = false;
     }
 
@@ -109,5 +126,27 @@ mod tests {
         // A redo without the grouped undo first is the editor's own.
         let mut fresh = take(&["One. ", "Two."]);
         assert_eq!(fresh.redo("Note: "), 0);
+        // A key after the take (an arrow, even one that changes nothing)
+        // ends the group, before or after a grouped undo.
+        let mut moved = take(&["One. ", "Two."]);
+        moved.end();
+        assert_eq!(moved.undo("Note: One. Two."), 0);
+        let mut back = take(&["One. ", "Two."]);
+        assert_eq!(back.undo("Note: One. Two."), 1);
+        back.end();
+        assert_eq!(back.redo("Note: "), 0);
+    }
+
+    #[test]
+    fn undo_and_redo_keys_keep_the_group_and_others_end_it() {
+        assert!(keeps_group("z", true, false, false));
+        assert!(keeps_group("z", true, true, false));
+        assert!(keeps_group("y", true, false, false));
+        assert!(keeps_group("shift", false, true, false));
+        assert!(!keeps_group("z", false, false, false));
+        assert!(!keeps_group("left", false, false, false));
+        assert!(!keeps_group("a", false, true, false));
+        // On macOS redo is Cmd+Shift+Z only.
+        assert!(!keeps_group("y", true, false, true));
     }
 }

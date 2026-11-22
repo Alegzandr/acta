@@ -5959,6 +5959,7 @@ impl Render for Shell {
             // Dictation (components-voice.md 5): push-to-talk ends on the
             // key's release, wherever the focus is.
             .capture_key_up(crate::voice::key_up)
+            .capture_key_down(crate::voice::any_key_down)
             // One take, one undo step: the window sees an editor's undo
             // and redo first (voice/group.rs).
             .capture_action(|_: &gpui_kit::component::input::Undo, window, cx| {

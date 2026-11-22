@@ -41,8 +41,8 @@ use acta_core::voice::take::{Controller, EditorId, Editors, Output, StopReason, 
 use acta_core::voice::worker::WorkerClient;
 use gpui_kit::component::input::{InputEditsEvent, InputEvent, TextareaState};
 use gpui_kit::{
-    AnyWindowHandle, App, AppContext as _, Context, Entity, Focusable as _, Global, KeyUpEvent,
-    KeystrokeEvent, Subscription, Task, WeakEntity, Window, actions,
+    AnyWindowHandle, App, AppContext as _, Context, Entity, Focusable as _, Global, KeyDownEvent,
+    KeyUpEvent, KeystrokeEvent, Subscription, Task, WeakEntity, Window, actions,
 };
 
 use self::capture::{CaptureError, Device};
@@ -156,6 +156,14 @@ pub fn init(cx: &mut App) {
             d.update(cx, |d, cx| d.request_stop(StopReason::Asked, cx));
         }
     });
+}
+
+/// The window's listener for keys, before any element: a key other than
+/// undo or redo ends the focused editor's take group ([`group`]).
+pub fn any_key_down(event: &KeyDownEvent, window: &mut Window, cx: &mut App) {
+    if let Some(d) = get(cx) {
+        d.update(cx, |d, cx| d.key_in_editor(event, window, cx));
+    }
 }
 
 /// The window's listener for an editor's undo and redo ([`group`]).
@@ -336,6 +344,9 @@ pub struct Dictation {
     /// window's listener lets through.
     groups: HashMap<EditorId, group::TakeGroup>,
     passing: (usize, usize),
+    /// The editor an undo or redo key acted on since its last other key:
+    /// the edits that follow are that undo's, not the person's.
+    replaying: Option<EditorId>,
     last_focused: Option<EditorId>,
     level: f32,
     pub machine: Option<Machine>,
@@ -382,6 +393,7 @@ impl Dictation {
             save_after: None,
             groups: HashMap::new(),
             passing: (0, 0),
+            replaying: None,
             last_focused: None,
             level: acta_core::voice::level::FLOOR_DBFS,
             machine: None,
@@ -567,6 +579,7 @@ impl Dictation {
         let Some(editor) = self.focused_editor(window, cx) else {
             return;
         };
+        self.replaying = Some(editor);
         let Some(state) = self.editors.get(&editor).and_then(|s| s.state.upgrade()) else {
             return;
         };
@@ -593,6 +606,27 @@ impl Dictation {
                     handle.dispatch_action(&gpui_kit::component::input::Redo, window, cx);
                 }
             });
+        }
+    }
+
+    /// A key pressed in the editor with the focus: any but undo, redo or
+    /// a modifier alone ends that editor's take group.
+    pub fn key_in_editor(&mut self, event: &KeyDownEvent, window: &Window, cx: &App) {
+        let k = &event.keystroke;
+        let macos = cfg!(target_os = "macos");
+        let secondary = if macos {
+            k.modifiers.platform
+        } else {
+            k.modifiers.control
+        };
+        if group::keeps_group(&k.key, secondary, k.modifiers.shift, macos) {
+            return;
+        }
+        self.replaying = None;
+        if let Some(editor) = self.focused_editor(window, cx)
+            && let Some(g) = self.groups.get_mut(&editor)
+        {
+            g.end();
         }
     }
 
@@ -1222,14 +1256,21 @@ impl Dictation {
                 slot.own.pop_front();
                 continue;
             }
-            if let Some(c) = &mut self.controller {
-                // Typing while the take writes: its phrases are no longer
-                // the newest steps, back to back.
-                if c.state(editor) != TakeState::Idle
-                    && let Some(g) = self.groups.get_mut(&editor)
-                {
+            // Typing while the take writes: its phrases are no longer the
+            // newest steps, back to back. Any other edit after it, but an
+            // undo's or a redo's, ends the group.
+            let running = self
+                .controller
+                .as_ref()
+                .is_some_and(|c| c.state(editor) != TakeState::Idle);
+            if let Some(g) = self.groups.get_mut(&editor) {
+                if running {
                     g.typed();
+                } else if self.replaying != Some(editor) {
+                    g.end();
                 }
+            }
+            if let Some(c) = &mut self.controller {
                 c.edited(editor, at, removed, inserted);
             }
         }
