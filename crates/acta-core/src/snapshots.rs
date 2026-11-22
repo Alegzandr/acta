@@ -4,9 +4,10 @@
 //!
 //! Taken before every migration, import and snapshot restore, and once per
 //! day of use. Retention: the 7 newest daily snapshots, then the newest of
-//! each of the 4 weeks before them, the `restore` snapshots (see
-//! [`KEEP_RESTORE_MS`]), and the newest of every other kind. A snapshot
-//! being restored is never removed by retention.
+//! each of the 4 weeks before them, the 3 newest `restore` snapshots plus
+//! the oldest of the latest run of them (see [`KEEP_RESTORE`]), and the
+//! newest of every other kind. A snapshot being restored is never removed
+//! by retention.
 
 use crate::error::Result;
 use crate::fsutil;
@@ -18,14 +19,14 @@ use std::path::{Path, PathBuf};
 pub const SNAPSHOT_DIR: &str = "snapshots";
 const KEEP_DAILY: usize = 7;
 const KEEP_WEEKLY: usize = 4;
-const KEEP_RESTORE: usize = 3;
-/// `restore` snapshots are kept by count (the 3 newest) and also by age:
-/// every one taken less than 7 days before the newest snapshot stays.
-/// Restores in a row each snapshot the state before them, so by count
+/// `restore` snapshots kept: the 3 newest, plus the oldest of the latest
+/// run. Restores in a row each snapshot the state before them, so by count
 /// alone a fourth restore would remove the first one, the only copy of the
-/// live state before the user started restoring. By age, that copy stays
-/// for a week however many restores follow.
-const KEEP_RESTORE_MS: i64 = 7 * time::MS_PER_DAY;
+/// live state before the user started restoring. A run is the restore
+/// snapshots with no import, migration or manual snapshot between them
+/// (daily ones do not break it): its oldest is that live state, kept
+/// however many restores follow. At most 4 files.
+const KEEP_RESTORE: usize = 3;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SnapshotKind {
@@ -162,7 +163,17 @@ pub(crate) fn expired(all: &[Snapshot]) -> Vec<Snapshot> {
     let mut weeks: Vec<i64> = Vec::new();
     let mut other_seen: Vec<SnapshotKind> = Vec::new();
     let mut restore_seen = 0;
-    let newest = all.iter().map(|s| s.taken_at).max().unwrap_or(0);
+    // The oldest restore snapshot of the latest run (the list is newest
+    // first): restores until another kind other than daily appears.
+    let mut run_oldest = None;
+    for (i, s) in all.iter().enumerate() {
+        match s.kind {
+            SnapshotKind::Restore => run_oldest = Some(i),
+            SnapshotKind::Daily => {}
+            _ if run_oldest.is_some() => break,
+            _ => {}
+        }
+    }
     for (i, s) in all.iter().enumerate() {
         if s.kind == SnapshotKind::Daily {
             if daily_seen < KEEP_DAILY {
@@ -176,7 +187,7 @@ pub(crate) fn expired(all: &[Snapshot]) -> Vec<Snapshot> {
                 }
             }
         } else if s.kind == SnapshotKind::Restore {
-            if restore_seen < KEEP_RESTORE || newest - s.taken_at < KEEP_RESTORE_MS {
+            if restore_seen < KEEP_RESTORE || run_oldest == Some(i) {
                 restore_seen += 1;
                 keep[i] = true;
             }
@@ -263,43 +274,61 @@ mod tests {
             .iter()
             .filter(|s| s.kind == SnapshotKind::Restore)
             .collect();
-        assert_eq!(restores.len(), 3);
+        // The 3 newest, and the oldest of their run.
+        assert_eq!(restores.len(), 4);
         assert!(restores.contains(&&&snap(SnapshotKind::Restore, today - 50)));
+        assert!(restores.contains(&&&snap(SnapshotKind::Restore, today - 54)));
+        assert!(!restores.contains(&&&snap(SnapshotKind::Restore, today - 53)));
     }
 
     #[test]
     fn restores_in_a_row_keep_the_state_before_the_first() {
-        // Alexandre restores six times in one afternoon: each restore
+        // Alexandre restores six times in a row, over two days: each restore
         // snapshots the state before it, the first one the live state.
         let today = 20_778;
         let base = today * MS_PER_DAY;
-        let mut all: Vec<Snapshot> = (0..6)
-            .map(|k| Snapshot {
-                path: PathBuf::from(file_name(SnapshotKind::Restore, base + k * 60_000)),
-                kind: SnapshotKind::Restore,
-                taken_at: base + k * 60_000,
-            })
-            .collect();
-        all.push(snap(SnapshotKind::Daily, today));
-        all.sort_by_key(|s| std::cmp::Reverse(s.taken_at));
-        let first = all.iter().find(|s| s.taken_at == base).unwrap().clone();
-        assert!(expired(&all).is_empty(), "all within the week");
-        // Eight days later, the count rule alone remains.
-        let later = Snapshot {
-            path: PathBuf::from(file_name(SnapshotKind::Restore, base + 8 * MS_PER_DAY)),
+        let restore = |t: i64| Snapshot {
+            path: PathBuf::from(file_name(SnapshotKind::Restore, t)),
             kind: SnapshotKind::Restore,
-            taken_at: base + 8 * MS_PER_DAY,
+            taken_at: t,
         };
-        all.insert(0, later);
+        let mut all: Vec<Snapshot> = (0..6).map(|k| restore(base + k * 60_000)).collect();
+        all.push(snap(SnapshotKind::Daily, today));
+        all.push(restore(base + MS_PER_DAY));
+        all.push(snap(SnapshotKind::Daily, today + 1));
+        // An older run, before an import: only the count protects it.
+        all.push(restore(base - 2 * MS_PER_DAY));
+        all.push(restore(base - 3 * MS_PER_DAY));
+        all.push(snap(SnapshotKind::Import, today - 1));
+        all.sort_by_key(|s| std::cmp::Reverse(s.taken_at));
         let dropped = expired(&all);
-        assert!(dropped.contains(&first));
+        let kept: Vec<i64> = all
+            .iter()
+            .filter(|s| s.kind == SnapshotKind::Restore && !dropped.contains(s))
+            .map(|s| s.taken_at)
+            .collect();
         assert_eq!(
-            dropped
-                .iter()
-                .filter(|s| s.kind == SnapshotKind::Restore)
-                .count(),
-            4
+            kept,
+            vec![
+                base + MS_PER_DAY,
+                base + 5 * 60_000,
+                base + 4 * 60_000,
+                base
+            ],
+            "3 newest and the first of the run"
         );
+        // Bounded however many restores follow.
+        for k in 0..20 {
+            all.insert(0, restore(base + 2 * MS_PER_DAY + k));
+        }
+        let dropped = expired(&all);
+        let kept: Vec<i64> = all
+            .iter()
+            .filter(|s| s.kind == SnapshotKind::Restore && !dropped.contains(s))
+            .map(|s| s.taken_at)
+            .collect();
+        assert_eq!(kept.len(), 4);
+        assert_eq!(kept[3], base);
     }
 
     #[test]
