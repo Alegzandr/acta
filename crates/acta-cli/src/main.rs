@@ -299,6 +299,18 @@ enum SnapshotAction {
 
 #[derive(Subcommand)]
 enum FoldersAction {
+    /// The folders a page sees (default: the focus), numbered, the active one marked
+    List {
+        /// T-n, E-n or P-n
+        id: Option<String>,
+    },
+    /// Show the page's active folder, or set it: a number from list, a name, or default
+    Active {
+        folder: Option<String>,
+        /// T-n, E-n or P-n (default: the focus)
+        #[arg(long)]
+        id: Option<String>,
+    },
     /// Set an attached folder's commit mode: manual, commit or push
     Commit {
         /// manual, commit (commit automatically) or push (commit and push automatically)
@@ -344,6 +356,11 @@ fn main() -> ExitCode {
         }
     }
 }
+
+/// `find --json` carries stored titles without the fence, so it is for
+/// scripts, not for Claude Code.
+const FIND_JSON_REFUSED: &str =
+    "find --json is for scripts; in Claude Code use find without --json (stored text is fenced)";
 
 /// The author is Claude Code when it runs the CLI (ADR 0005, section 4).
 fn author() -> Author {
@@ -649,6 +666,14 @@ fn run_on(store: &mut acta_core::Store, command: Command) -> Result<String, Stri
             return link::run(store, args, &cwd, session.author);
         }
         Command::Folders {
+            action: FoldersAction::List { id },
+        } => return folders::list(store, &session, id.as_deref()),
+        Command::Folders {
+            action: FoldersAction::Active { folder, id },
+        } => {
+            return folders::active(store, &session, id.as_deref(), folder.as_deref(), author());
+        }
+        Command::Folders {
             action:
                 FoldersAction::Commit {
                     mode,
@@ -767,6 +792,10 @@ fn run_on(store: &mut acta_core::Store, command: Command) -> Result<String, Stri
                 limit,
                 cursor,
             };
+            if json && ag.session.author == Author::Claude {
+                // Titles in JSON are not fenced: Claude Code reads the text.
+                return Err(FIND_JSON_REFUSED.into());
+            }
             if json { ag.find_json(a) } else { ag.find(a) }
         }
         Command::Create {
