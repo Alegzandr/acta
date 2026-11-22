@@ -477,7 +477,12 @@ impl Dictation {
         // What the button shows depends on the model being on disk, or on
         // the macOS recogniser working on the device.
         self.refresh_models(false, cx);
-        self.detect(cx);
+        // Only for the macOS recogniser: elsewhere detection starts a worker
+        // to probe the graphics card, which must not run unless the person
+        // is setting up or using Whisper (ADR 0014, addendum).
+        if Self::prefs(cx).engine == Some(EngineChoice::MacOs) {
+            self.detect(cx);
+        }
         id
     }
 
