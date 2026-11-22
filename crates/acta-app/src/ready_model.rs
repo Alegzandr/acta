@@ -582,6 +582,57 @@ fn tool_view(f: &Facts, row: Row, r: &ToolRow, activity: Activity) -> RowView {
     }
 }
 
+/// What the diagnostic log keeps of a full check: only the rows that could
+/// not be checked, by name and reason (compile-time text: never a path, a
+/// version or an account). `None` when every row answered.
+pub fn check_failures(rows: [Option<&ToolRow>; 3], sign_in: Option<SignIn>) -> Option<String> {
+    let mut parts: Vec<String> = rows
+        .iter()
+        .flatten()
+        .filter(|r| r.state == State::Unknown)
+        .map(|r| format!("{} ({})", r.tool.exe_name(), r.reason.unwrap_or("unknown")))
+        .collect();
+    if let Some(SignIn::Unknown(why)) = sign_in {
+        parts.push(format!("signed in ({why})"));
+    }
+    (!parts.is_empty()).then(|| format!("prereqs: could not check {}", parts.join(", ")))
+}
+
+/// The log line of an install that failed: the tool and the kind of
+/// failure, nothing of its output.
+pub fn install_failure_line(tool: Tool, failure: Failure) -> String {
+    let what = match failure {
+        Failure::Exit(Some(code)) => format!("exit code {code}"),
+        Failure::Exit(None) => "stopped by a signal".to_owned(),
+        Failure::NoStart => "could not start".to_owned(),
+        Failure::NotFound => "not found after install".to_owned(),
+    };
+    format!("prereqs: {} install failed: {what}", tool.exe_name())
+}
+
+/// Quitting while an install runs asks first (ADR 0013: an install has no
+/// cancel). A Quit answered once lets that quit through; the next install
+/// asks again.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct QuitGuard {
+    confirmed: bool,
+}
+
+impl QuitGuard {
+    /// The tool to name in the confirmation, when one is needed.
+    pub fn must_ask(&self, busy: Option<Tool>) -> Option<Tool> {
+        busy.filter(|_| !self.confirmed)
+    }
+
+    pub fn confirm(&mut self) {
+        self.confirmed = true;
+    }
+
+    pub fn install_ended(&mut self) {
+        self.confirmed = false;
+    }
+}
+
 /// The sentences of the install confirmation (components-app.md 5,
 /// "Confirmation dialog"), by role; `ready.rs` turns them into copy.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -592,6 +643,9 @@ pub struct Dialog {
     pub scope: Option<ScopeText>,
     /// winget's agreements are accepted by the flags: said once.
     pub agreements: bool,
+    /// How the source checks what it downloads, and the agreements, are
+    /// mechanics (copy.md 7): behind "Details" rather than in the body.
+    pub from_in_details: bool,
     pub updates: Option<Source>,
     /// How to remove it later; `None` for the native install's steps.
     pub uninstall: Option<Uninstall>,
@@ -661,6 +715,7 @@ pub fn dialog(tool: Tool, plan: &Plan, update: bool, platform: &Platform) -> Dia
         from,
         scope,
         agreements: plan.source == Source::Winget,
+        from_in_details: plan.source == Source::Winget,
         updates: from,
         uninstall,
         command: plan.display(),
@@ -1105,6 +1160,10 @@ mod tests {
         };
         let d = dialog(Tool::Git, &plan, false, &p);
         assert_eq!(d.from, Some(Source::Winget));
+        assert!(
+            d.from_in_details,
+            "the hash and the licence are behind Details"
+        );
         assert_eq!(d.scope, Some(ScopeText::UserMayAsk));
         assert!(d.agreements);
         assert_eq!(d.updates, Some(Source::Winget));
@@ -1120,6 +1179,7 @@ mod tests {
         };
         let d = dialog(Tool::Claude, &plan, false, &p);
         assert_eq!(d.from, Some(Source::Vendor));
+        assert!(!d.from_in_details);
         assert_eq!(d.scope, Some(ScopeText::User));
         assert!(!d.agreements);
         assert_eq!(d.uninstall, Some(Uninstall::Native));
@@ -1145,6 +1205,42 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn the_log_keeps_only_failures_without_paths() {
+        let r = all_found();
+        let rows = [Some(&r.claude), Some(&r.git), Some(&r.gh)];
+        assert_eq!(check_failures(rows, Some(SIGNED)), None);
+        let git = ToolRow {
+            path: Some(PathBuf::from(r"C:\Users\alexandre\git.exe")),
+            ..tool(Tool::Git, State::Unknown, Kind::Unknown, None)
+        };
+        let line = check_failures(
+            [Some(&r.claude), Some(&git), None],
+            Some(SignIn::Unknown("no answer within 10 s")),
+        )
+        .unwrap();
+        assert_eq!(
+            line,
+            "prereqs: could not check git (no answer within 5 s), signed in (no answer within 10 s)"
+        );
+        assert!(!line.contains("alexandre"));
+        assert_eq!(
+            install_failure_line(Tool::Gh, Failure::Exit(Some(1603))),
+            "prereqs: gh install failed: exit code 1603"
+        );
+    }
+
+    #[test]
+    fn quitting_asks_during_an_install_until_answered_and_again_next_time() {
+        let mut q = QuitGuard::default();
+        assert_eq!(q.must_ask(None), None);
+        assert_eq!(q.must_ask(Some(Tool::Git)), Some(Tool::Git));
+        q.confirm();
+        assert_eq!(q.must_ask(Some(Tool::Git)), None);
+        q.install_ended();
+        assert_eq!(q.must_ask(Some(Tool::Gh)), Some(Tool::Gh));
     }
 
     #[test]

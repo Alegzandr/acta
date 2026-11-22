@@ -129,6 +129,8 @@ pub struct Dialog {
     focus: FocusHandle,
     /// Cancel (or Close): the safe button, focused when the dialog opens.
     safe: FocusHandle,
+    /// The install confirmation's "Details" are unfolded.
+    details_open: bool,
 }
 
 impl EventEmitter<DialogEvent> for Dialog {}
@@ -308,6 +310,7 @@ impl Dialog {
             kind,
             focus,
             safe,
+            details_open: false,
         }
     }
 
@@ -869,8 +872,23 @@ impl Dialog {
                 update,
                 platform,
             } => {
-                let (title, body, confirm) =
-                    crate::ready::dialog_parts(*tool, plan, *update, platform, locale, t);
+                let me = cx.entity().downgrade();
+                let toggle = move |_: &mut Window, cx: &mut App| {
+                    let _ = me.update(cx, |d, cx| {
+                        d.details_open = !d.details_open;
+                        cx.notify();
+                    });
+                };
+                let (title, body, confirm) = crate::ready::dialog_parts(
+                    *tool,
+                    plan,
+                    *update,
+                    platform,
+                    self.details_open,
+                    toggle,
+                    locale,
+                    t,
+                );
                 // A command Acta does not run (npm) has Close only.
                 let safe = if confirm.is_some() {
                     Key::CommonCancel

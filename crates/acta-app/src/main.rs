@@ -350,6 +350,14 @@ fn run_app(options: Options, pending: Option<Arc<LaunchState>>, launched: Instan
             settings::init(cx);
             due::start(cx);
             shell::bind_keys(cx);
+            // App-level quit asks first while an install runs (ADR 0013).
+            cx.on_action(|_: &shell::QuitActa, cx| shell::request_quit(cx));
+            if cfg!(target_os = "macos") {
+                let quit = i18n::text(settings::locale(cx), i18n::Key::QuitConfirm);
+                cx.set_menus([gpui_kit::Menu::new(acta_core::APP_NAME)
+                    .items([gpui_kit::MenuItem::action(quit, shell::QuitActa)])]);
+                cx.bind_keys([gpui_kit::KeyBinding::new("cmd-q", shell::QuitActa, None)]);
+            }
 
             cx.on_window_closed(|cx, _| {
                 if cx.windows().is_empty() {
