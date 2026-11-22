@@ -67,6 +67,7 @@ struct BranchMenu {
 
 impl FolderUi {
     /// A menu or form of the folders is open (the chat's web view hides).
+    #[cfg(windows)]
     pub(super) fn any_open(&self) -> bool {
         self.switcher.is_some() || self.row_menu.is_some() || self.branch_menu.is_some()
     }
@@ -117,6 +118,7 @@ impl RecordPage {
         cx.notify();
     }
 
+    #[cfg(windows)]
     pub(super) fn folder_menu_open(&self) -> bool {
         self.folder_ui.any_open()
     }
