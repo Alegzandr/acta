@@ -19,6 +19,8 @@ pub mod capture;
 #[cfg(debug_assertions)]
 pub mod dev;
 pub mod machine;
+#[cfg(target_os = "macos")]
+pub mod macos;
 pub mod settings_view;
 pub mod setup;
 pub mod ui;
@@ -64,12 +66,53 @@ actions!(
 
 // ---- settings ----
 
-/// Settings > Voice > Dictation. The macOS recogniser comes with the macOS
-/// step of PLAN.md; until then Whisper and Off are the choices.
+/// Settings > Voice > Dictation. The macOS recogniser is offered only on
+/// a Mac where it works on the device ([`OnDevice`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EngineChoice {
     Whisper,
+    /// `SFSpeechRecognizer` on the device ([`macos`]); never stored on
+    /// another system.
+    MacOs,
     Off,
+}
+
+/// Which of Acta's languages the macOS recogniser takes without the
+/// network (ADR 0014, 3). All false on Windows and Linux, and in a macOS
+/// build that is not an app bundle.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct OnDevice {
+    pub en: bool,
+    pub fr: bool,
+}
+
+impl OnDevice {
+    pub fn any(self) -> bool {
+        self.en || self.fr
+    }
+
+    /// For the take's language; "detected" is the interface's language,
+    /// the recogniser having no detection.
+    pub fn supports(self, language: Lang, french_interface: bool) -> bool {
+        match language {
+            Lang::English => self.en,
+            Lang::French => self.fr,
+            Lang::Detect if french_interface => self.fr,
+            Lang::Detect => self.en,
+        }
+    }
+
+    /// Read off the UI thread (a few milliseconds on macOS).
+    fn detect() -> OnDevice {
+        #[cfg(target_os = "macos")]
+        {
+            macos::on_device()
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            OnDevice::default()
+        }
+    }
 }
 
 /// What `preferences.json` holds for dictation (layout.md 4.7): settings,
@@ -106,6 +149,7 @@ impl VoicePrefs {
         VoicePrefs {
             engine: match engine {
                 Some("whisper") => Some(EngineChoice::Whisper),
+                Some("macos") if cfg!(target_os = "macos") => Some(EngineChoice::MacOs),
                 Some("off") => Some(EngineChoice::Off),
                 _ => None,
             },
@@ -122,6 +166,7 @@ impl VoicePrefs {
     pub fn engine_key(&self) -> Option<&'static str> {
         self.engine.map(|e| match e {
             EngineChoice::Whisper => "whisper",
+            EngineChoice::MacOs => "macos",
             EngineChoice::Off => "off",
         })
     }
@@ -289,6 +334,10 @@ enum EngineFor {
         model: ModelId,
         gpu: bool,
     },
+    /// The macOS recogniser; "detected" takes the interface's language.
+    MacOs {
+        french_interface: bool,
+    },
     #[cfg(debug_assertions)]
     Fake,
 }
@@ -326,6 +375,9 @@ pub struct Dictation {
     last_focused: Option<EditorId>,
     level: f32,
     pub machine: Option<Machine>,
+    /// Where the macOS recogniser works on the device; read with the
+    /// machine.
+    pub system: OnDevice,
     detecting: bool,
     /// Free bytes on the models' disk.
     pub free: Option<u64>,
@@ -370,6 +422,7 @@ impl Dictation {
             last_focused: None,
             level: acta_core::voice::level::FLOOR_DBFS,
             machine: None,
+            system: OnDevice::default(),
             detecting: false,
             free: None,
             on_disk: HashMap::new(),
@@ -421,8 +474,10 @@ impl Dictation {
             },
         );
         self.last_focused = Some(id);
-        // What the button shows depends on the model being on disk.
+        // What the button shows depends on the model being on disk, or on
+        // the macOS recogniser working on the device.
         self.refresh_models(false, cx);
+        self.detect(cx);
         id
     }
 
@@ -445,6 +500,10 @@ impl Dictation {
             return true;
         }
         let prefs = Self::prefs(cx);
+        if prefs.engine == Some(EngineChoice::MacOs) {
+            let french = settings::locale(cx) == crate::i18n::Locale::Fr;
+            return self.system.supports(prefs.language, french);
+        }
         // A model being downloaded (or downloaded again over a damaged
         // file) is not used until its download ends.
         let replacing = |m: ModelId| self.download.as_ref().is_some_and(|d| d.model == m);
@@ -603,11 +662,12 @@ impl Dictation {
             return;
         }
         self.detecting = true;
-        let task = cx.background_spawn(async { machine::detect() });
+        let task = cx.background_spawn(async { (machine::detect(), OnDevice::detect()) });
         cx.spawn(async move |d, cx| {
-            let m = task.await;
+            let (m, system) = task.await;
             let _ = d.update(cx, |d, cx| {
                 d.machine = Some(m);
+                d.system = system;
                 d.detecting = false;
                 cx.notify();
                 cx.refresh_windows();
@@ -893,6 +953,11 @@ impl Dictation {
             return Some(EngineFor::Fake);
         }
         let prefs = Self::prefs(cx);
+        if prefs.engine == Some(EngineChoice::MacOs) {
+            return Some(EngineFor::MacOs {
+                french_interface: settings::locale(cx) == crate::i18n::Locale::Fr,
+            });
+        }
         let model = prefs.model?;
         let metal = self.machine.is_some_and(|m| m.metal);
         Some(EngineFor::Whisper {
@@ -906,11 +971,16 @@ impl Dictation {
             EngineFor::Whisper { model, gpu } => {
                 let exe = std::env::current_exe().ok()?;
                 let path = Self::models_dir()?.join(model.file().file);
-                // Silero VAD comes with the package, next to the executable.
-                let vad = exe
-                    .parent()
-                    .map(|dir| dir.join(models::SILERO_VAD.file))
-                    .filter(|p| p.is_file());
+                // Silero VAD comes with the package: next to the executable,
+                // or in the bundle's Resources on macOS (Contents/MacOS holds
+                // code only).
+                let vad = exe.parent().and_then(|dir| {
+                    let resources = dir.join("../Resources");
+                    [dir, resources.as_path()]
+                        .into_iter()
+                        .map(|d| d.join(models::SILERO_VAD.file))
+                        .find(|p| p.is_file())
+                });
                 let cores = self.machine.map_or(4, |m| m.physical_cores);
                 Some(Box::new(WorkerClient::new(
                     exe,
@@ -922,6 +992,12 @@ impl Dictation {
                     },
                 )))
             }
+            #[cfg(target_os = "macos")]
+            EngineFor::MacOs { french_interface } => {
+                Some(Box::new(macos::MacRecognizer::new(*french_interface)))
+            }
+            #[cfg(not(target_os = "macos"))]
+            EngineFor::MacOs { .. } => None,
             #[cfg(debug_assertions)]
             EngineFor::Fake => Some(Box::new(self.dev.fake_engine())),
         }
@@ -1164,7 +1240,8 @@ impl Dictation {
     pub fn preview_shown(&mut self, cx: &mut Context<Self>) {
         self.preview_seen = Some(Instant::now());
         let engine = Self::prefs(cx).engine;
-        if self.run.is_some() || self.pending.is_some() || engine != Some(EngineChoice::Whisper) {
+        let listens = matches!(engine, Some(EngineChoice::Whisper | EngineChoice::MacOs));
+        if self.run.is_some() || self.pending.is_some() || !listens {
             return;
         }
         let (tx, events) = mpsc::channel();
@@ -1448,5 +1525,36 @@ impl Snapshot {
 impl Editors for Snapshot {
     fn text_and_caret(&self, editor: EditorId) -> Option<(&str, usize)> {
         self.0.get(&editor).map(|(t, c)| (t.as_str(), *c))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_macos_recogniser_follows_the_take_language() {
+        let fr_only = OnDevice {
+            en: false,
+            fr: true,
+        };
+        assert!(fr_only.any());
+        assert!(fr_only.supports(Lang::French, false));
+        assert!(!fr_only.supports(Lang::English, true));
+        // "Detected" is the interface's language.
+        assert!(fr_only.supports(Lang::Detect, true));
+        assert!(!fr_only.supports(Lang::Detect, false));
+        assert!(!OnDevice::default().any());
+    }
+
+    #[test]
+    fn the_macos_choice_is_kept_only_on_macos() {
+        let prefs = VoicePrefs::from_stored(Some("macos"), None, None, false);
+        if cfg!(target_os = "macos") {
+            assert_eq!(prefs.engine, Some(EngineChoice::MacOs));
+            assert_eq!(prefs.engine_key(), Some("macos"));
+        } else {
+            assert_eq!(prefs.engine, None);
+        }
     }
 }

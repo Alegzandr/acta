@@ -1,0 +1,4 @@
+/* Shown by macOS when Acta first asks for the microphone (ADR 0014, 8). */
+"NSMicrophoneUsageDescription" = "Acta turns what you say into text, on this Mac.";
+/* Shown by macOS when the macOS recogniser is first used (ADR 0014, 3 and 8). */
+"NSSpeechRecognitionUsageDescription" = "Acta uses the macOS recogniser to turn what you say into text, on this Mac. Your voice is not sent anywhere.";

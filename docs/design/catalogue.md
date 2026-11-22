@@ -257,6 +257,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `voice.error.model` | The dictation model is missing or damaged. | Le modèle de dictée est absent ou endommagé. |
 | `voice.error.download_again` | Download again | Télécharger à nouveau |
 | `voice.error.engine` | Dictation stopped unexpectedly. Your text is safe. | La dictée s'est arrêtée de façon inattendue. Votre texte est intact. |
+| `voice.error.speech_blocked` | Acta is not allowed to use the macOS recogniser. (M) | Acta n'est pas autorisé à utiliser la reconnaissance de macOS. (M) |
 | `voice.setup.title` | Dictate with your voice | Dicter avec votre voix |
 | `voice.setup.body` | Acta turns what you say into text on this computer. Your voice never leaves it and is never saved. | Acta transforme ce que vous dites en texte sur cet ordinateur. Votre voix n'en sort jamais et n'est jamais enregistrée. |
 | `voice.setup.cpu` | {size} download · works on this computer's processor | Téléchargement de {size} · fonctionne avec le processeur de cet ordinateur |

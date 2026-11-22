@@ -50,6 +50,15 @@ sysinfo = { version = "0.40", default-features = false, features = ["system"] }
 [target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
 whisper-rs = { version = "0.16", features = ["metal"] }
 
+# The macOS recogniser (ADR 0014, 3): `SFSpeechRecognizer` on the device only.
+# The same objc2 generation as cpal's CoreAudio and GPUI's AppKit bindings.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+block2 = "0.6"
+objc2-foundation = "0.3"
+objc2-avf-audio = "0.3"
+objc2-speech = "0.3.2"
+
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"
 # The chat panel (ADR 0009): the system web view, Windows only for now (macOS and

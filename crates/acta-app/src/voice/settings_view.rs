@@ -68,11 +68,24 @@ fn language_key(l: Lang) -> Key {
     }
 }
 
-const ENGINES: [EngineChoice; 2] = [EngineChoice::Whisper, EngineChoice::Off];
+/// The Dictation dropdown: the macOS recogniser only where it works on the
+/// device (or while it is the choice, so the dropdown shows what is set).
+fn engines(d: &Dictation, chosen: Option<EngineChoice>) -> Vec<EngineChoice> {
+    let mac = d.system.any() || chosen == Some(EngineChoice::MacOs);
+    [
+        EngineChoice::Whisper,
+        EngineChoice::MacOs,
+        EngineChoice::Off,
+    ]
+    .into_iter()
+    .filter(|e| *e != EngineChoice::MacOs || mac)
+    .collect()
+}
 
 fn engine_key(e: EngineChoice) -> Key {
     match e {
         EngineChoice::Whisper => Key::VoiceEngineWhisper,
+        EngineChoice::MacOs => Key::VoiceEngineMacos,
         EngineChoice::Off => Key::VoiceEngineOff,
     }
 }
@@ -108,16 +121,14 @@ impl VoiceSettings {
     fn items(&self, menu: Menu, locale: Locale, cx: &App) -> (Vec<String>, usize) {
         let prefs = settings::current(cx).voice;
         match menu {
-            Menu::Engine => (
-                ENGINES
-                    .iter()
-                    .map(|e| text(locale, engine_key(*e)))
-                    .collect(),
-                match prefs.engine {
-                    Some(EngineChoice::Off) => 1,
-                    _ => 0,
-                },
-            ),
+            Menu::Engine => {
+                let list = engines(self.d.read(cx), prefs.engine);
+                let chosen = prefs.engine.unwrap_or(EngineChoice::Whisper);
+                (
+                    list.iter().map(|e| text(locale, engine_key(*e))).collect(),
+                    list.iter().position(|e| *e == chosen).unwrap_or(0),
+                )
+            }
             Menu::Language => (
                 LANGUAGES
                     .iter()
@@ -149,8 +160,9 @@ impl VoiceSettings {
         let d = self.d.clone();
         match menu {
             Menu::Engine => {
-                if let Some(e) = ENGINES.get(index) {
-                    d.update(cx, |d, cx| d.set_engine(*e, cx));
+                let chosen = settings::current(cx).voice.engine;
+                if let Some(e) = engines(d.read(cx), chosen).get(index).copied() {
+                    d.update(cx, |d, cx| d.set_engine(e, cx));
                 }
             }
             Menu::Language => {
@@ -475,7 +487,7 @@ impl Render for VoiceSettings {
         });
         let d = self.d.read(cx);
         let rec = d.recommendation();
-        let whisper = prefs.engine != Some(EngineChoice::Off);
+        let whisper = !matches!(prefs.engine, Some(EngineChoice::Off | EngineChoice::MacOs));
         let downloading = d.download_progress().map(|(m, p)| {
             (
                 m,
