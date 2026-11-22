@@ -368,8 +368,18 @@ const FIND_JSON_REFUSED: &str =
     "find --json is for scripts; in Claude Code use find without --json (stored text is fenced)";
 
 /// The author is Claude Code when it runs the CLI (ADR 0005, section 4).
+/// Any of Claude Code's variables counts: clearing `CLAUDECODE` alone does
+/// not make a call the user's. A guard rail, not a boundary (SECURITY.md).
 fn author() -> Author {
-    if std::env::var("CLAUDECODE").is_ok_and(|v| v == "1") {
+    author_from(|k| std::env::var_os(k))
+}
+
+fn author_from(var: impl Fn(&str) -> Option<std::ffi::OsString>) -> Author {
+    let set = |k: &str| var(k).is_some_and(|v| !v.is_empty());
+    if var("CLAUDECODE").is_some_and(|v| v == "1")
+        || set("CLAUDE_CODE_ENTRYPOINT")
+        || set("CLAUDE_PROJECT_DIR")
+    {
         Author::Claude
     } else {
         Author::Human
@@ -1017,6 +1027,10 @@ fn export(
     path: &Path,
     project: Option<String>,
 ) -> Result<String, String> {
+    // An export writes every stored text to a plaintext file.
+    if author() == Author::Claude {
+        return Err("Export is for you to run, not Claude Code.".into());
+    }
     let project = project
         .map(|p| ProjectId::parse(&p).ok_or("--project takes P-n"))
         .transpose()?;
@@ -1083,6 +1097,9 @@ fn snapshot(store: &mut acta_core::Store, action: SnapshotAction) -> Result<Stri
                 .join("\n"))
         }
         SnapshotAction::Restore { name: wanted } => {
+            if author() == Author::Claude {
+                return Err("Restoring a snapshot is for you to run, not Claude Code.".into());
+            }
             let pick = if wanted == "latest" {
                 all.first()
             } else {
@@ -1121,6 +1138,28 @@ fn one_line(rendered: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn any_claude_code_variable_makes_the_author_claude() {
+        use std::ffi::OsString;
+        let with = |pairs: &'static [(&str, &str)]| {
+            author_from(move |k| {
+                pairs
+                    .iter()
+                    .find(|(n, _)| *n == k)
+                    .map(|(_, v)| OsString::from(v))
+            })
+        };
+        assert_eq!(with(&[]), Author::Human);
+        assert_eq!(with(&[("CLAUDECODE", "0")]), Author::Human);
+        assert_eq!(with(&[("CLAUDE_PROJECT_DIR", "")]), Author::Human);
+        assert_eq!(with(&[("CLAUDECODE", "1")]), Author::Claude);
+        assert_eq!(with(&[("CLAUDE_CODE_ENTRYPOINT", "cli")]), Author::Claude);
+        assert_eq!(
+            with(&[("CLAUDE_PROJECT_DIR", "/home/alexandre/acta")]),
+            Author::Claude
+        );
+    }
 
     #[test]
     fn version_line_is_name_and_version() {
