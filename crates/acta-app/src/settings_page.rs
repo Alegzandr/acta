@@ -274,8 +274,6 @@ impl SettingsPage {
         cx.notify();
     }
 
-    /// Debug builds: the language menu open, for captures.
-    #[cfg(debug_assertions)]
     /// Debug builds: the page scrolled to its end (the Data section), for
     /// captures.
     #[cfg(debug_assertions)]
@@ -286,6 +284,8 @@ impl SettingsPage {
         cx.notify();
     }
 
+    /// Debug builds: the language menu open, for captures.
+    #[cfg(debug_assertions)]
     pub fn dev_open_language(&mut self, cx: &mut Context<Self>) {
         self.language_menu_open = true;
         cx.notify();
