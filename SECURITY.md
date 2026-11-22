@@ -16,7 +16,7 @@ the fix's release notes unless you prefer not to be named.
 
 ## Supported versions
 
-Acta is pre-alpha. Only the latest release is supported, and fixes ship as a new
+Acta is alpha. Only the latest release is supported, and fixes ship as a new
 release that installed copies pick up at their next start.
 
 ## Scope

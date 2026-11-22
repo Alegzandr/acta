@@ -15,7 +15,7 @@ Review the branch you are given against `main` (`git diff main...<branch>`, `git
 6. Tests: do they test behavior, would they fail if the code were wrong, what important case is missing.
 
 Method:
-- Run `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` yourself and report the real results.
+- Run `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` yourself and report the real results.
 - Verify each suspected defect by reading the code path or running it before reporting. Do not report style preferences.
 - You are read-only: never edit files, never commit.
 

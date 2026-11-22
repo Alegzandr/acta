@@ -82,7 +82,7 @@ gh run download <run-id> --dir dry-run      # the packages of the four channels
 A dry run packages the current workspace version, whatever it is. Dry runs on `main`
 are the only runs that save the cargo cache, and only dry runs read it.
 
-Locally, for the current machine:
+Locally, for the current machine (build prerequisites in [building.md](building.md)):
 
 ```sh
 cargo build --release --locked
@@ -278,7 +278,8 @@ First tag (`v0.1.0`):
 - [ ] `actions/attest-build-provenance` accepts `subject-checksums` with every asset,
       and `gh attestation verify` succeeds on a downloaded one.
 - [ ] `vpk upload github --merge` called four times from one job, with no checkout,
-      fills a single draft; `--targetCommitish` is accepted for an existing tag.
+      fills the single draft that `gh release create --verify-tag --draft` made on the
+      existing tag, with no target.
 - [ ] `publish` receives the digest of `SHA256SUMS` from `collect` and accepts it.
 - [x] The `releases.<channel>.json` feeds vpk uploads are byte-identical to the ones
       the build wrote. Wrong as soon as a previous release exists (v0.1.2): vpk writes
