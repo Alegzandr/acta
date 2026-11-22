@@ -27,4 +27,8 @@ accepted = [
     # (lb-wry -> gtk/system-deps -> cfg-expr). Apache-2.0 with the LLVM exception
     # only waives conditions on binaries; nothing beyond Apache-2.0 is asked.
     "Apache-2.0 WITH LLVM-exception",
+    # whisper-rs and whisper-rs-sys (ADR 0014, dictation): a public domain
+    # dedication, no condition at all. The whisper.cpp sources they compile are
+    # MIT; their notice is in scripts/licenses/third-party.
+    "Unlicense",
 ]

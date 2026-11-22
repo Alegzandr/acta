@@ -48,7 +48,7 @@ jobs:
           # -Path takes a single string, so each file is analyzed on its own.
           # ParseError is a severity of its own: without it a script that does not even
           # parse is only reported on the error stream and the loop collects nothing.
-          $issues = foreach ($file in 'install.ps1', 'scripts/package.ps1', 'scripts/ci/update-e2e.ps1', 'scripts/ci/windows-perl.ps1') {
+          $issues = foreach ($file in 'install.ps1', 'scripts/package.ps1', 'scripts/ci/update-e2e.ps1', 'scripts/ci/windows-perl.ps1', 'scripts/ci/windows-libclang.ps1', 'scripts/ci/windows-sde-start.ps1') {
             Invoke-ScriptAnalyzer -Path $file -Severity ParseError, Error, Warning -ExcludeRule PSAvoidUsingWriteHost
           }
           $issues | Format-Table -AutoSize ScriptName, Line, RuleName, Message
@@ -101,6 +101,10 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: scripts/ci/windows-perl.ps1
+      - name: libclang for whisper.cpp's bindings (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: scripts/ci/windows-libclang.ps1
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: cargo test
@@ -110,6 +114,18 @@ jobs:
       # release.yml, which also runs as a dry run on main.
       - name: cargo build
         run: cargo build --workspace --locked
+      # whisper.cpp is compiled in with AVX2 (ADR 0014, amendment); Acta itself must
+      # still start on an older processor. Intel SDE emulates one without AVX2. By
+      # using SDE the workflow accepts Intel's SDE licence (CI only, nothing shipped).
+      - name: Intel SDE (Windows)
+        if: runner.os == 'Windows'
+        uses: petarpetrovt/setup-sde@6d2773bc0ef3005fd52e0ae0bb91782321793aec # v6.0
+        with:
+          sdeVersion: 10.13.1
+      - name: Acta starts without AVX2 (Windows, emulated)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: scripts/ci/windows-sde-start.ps1 -Exe target/debug/Acta.exe
       # Fails when a dependency has a licence about.toml does not accept or a font has
       # no licence file, long before a release would.
       - name: Third-party notices (Linux)

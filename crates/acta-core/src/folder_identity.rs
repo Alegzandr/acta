@@ -767,19 +767,28 @@ mod tests {
         fs::create_dir_all(&a).unwrap();
         let folders = vec![known(1, &a)];
         let stop = Arc::new(AtomicBool::new(false));
+        let started = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let polling = {
             let stop = Arc::clone(&stop);
+            let started = Arc::clone(&started);
             std::thread::spawn(move || {
                 let mut monitor = Monitor::new();
                 let mut passes = 0;
                 while !stop.load(Ordering::Relaxed) {
                     monitor.pass(&folders, false);
                     passes += 1;
+                    started.store(passes, Ordering::Relaxed);
                     std::thread::sleep(std::time::Duration::from_millis(5));
                 }
                 passes
             })
         };
+        // The renames must race real passes: wait for the first one (a
+        // loaded runner can start the thread late).
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while started.load(Ordering::Relaxed) == 0 && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
         // A search for the folder just renamed lists the directory above
         // it for a moment, as Explorer does; a rename that lands in that
         // moment is tried once more, as Explorer offers. Nothing is held

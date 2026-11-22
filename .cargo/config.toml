@@ -1,0 +1,20 @@
+# Build settings for whisper.cpp, compiled into the GUI executable for
+# dictation (ADR 0014). whisper-rs-sys forwards WHISPER_*, GGML_* and CMAKE_*
+# variables to CMake. A variable already set in the environment wins.
+#
+# The bindings are generated at build time (bindgen, which needs libclang:
+# LLVM on Windows, clang on Linux, Xcode on macOS; all on GitHub's images).
+# The bindings bundled with whisper-rs-sys (WHISPER_DONT_GENERATE_BINDINGS)
+# are laid out for an LP64 C ABI and fail to compile on Windows, where a C
+# `long` is 4 bytes.
+[env]
+# Never tune for the build machine: a release built on a CI runner must run
+# on the users' processors.
+GGML_NATIVE = "OFF"
+# x86-64: AVX2, FMA and F16C (Haswell, 2013, and later), the paths that make
+# Whisper fast enough on a CPU. Ignored on arm64. A processor without them
+# cannot run the worker (ADR 0014, amendment of 2026-11-22).
+GGML_AVX = "ON"
+GGML_AVX2 = "ON"
+GGML_FMA = "ON"
+GGML_F16C = "ON"

@@ -13,7 +13,7 @@ name = "Acta"
 path = "src/main.rs"
 
 [dependencies]
-acta-core.workspace = true
+acta-core = { workspace = true, features = ["voice-download"] }
 acta-terminal = { path = "../acta-terminal" }
 # Local UTC offset for the time forms of docs/design/copy.md 10.2.
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
@@ -33,6 +33,16 @@ velopack = { version = "=1.2.161", features = ["public-utils"] }
 # requested here because `Error::Rustls` exists only with it. If velopack moves to
 # another major, the match no longer type-checks against `velopack::NetworkError`.
 ureq = { version = "3.5", default-features = false, features = ["rustls"] }
+# Dictation (ADR 0014): whisper.cpp compiled into this executable and run in
+# its `--voice-worker` mode only. Built with the bundled bindings and portable
+# CPU flags (.cargo/config.toml). Metal on Apple Silicon below.
+whisper-rs = "0.16"
+zeroize = "1"
+# The worker's private stdout and its crash-dump settings (voice_worker.rs).
+libc = "0.2"
+
+[target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
+whisper-rs = { version = "0.16", features = ["metal"] }
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"
@@ -49,13 +59,15 @@ async-channel = "2"
 # Acta, focus, and failed navigations (chat_windows.rs). Same versions as lb-wry's.
 webview2-com = "=0.38.2"
 windows = "0.61"
-# The agent browser (ADR 0010): its operations, policy and pipe, and the
-# pipe key wiped from memory when dropped.
+# The agent browser (ADR 0010): its operations, policy and pipe (its key is
+# wiped from memory with `zeroize`, a dependency above).
 acta-browser = { path = "../acta-browser" }
-zeroize = "1"
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Console",
     "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_ErrorReporting",
     "Win32_System_Threading",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
@@ -66,3 +78,5 @@ tempfile = "3"
 
 [build-dependencies]
 winresource = "0.1.34"
+# The packaged Silero VAD's hash, checked at build time (build.rs).
+sha2 = "0.10"
