@@ -1408,3 +1408,24 @@ New with zoom and section folds (2026-11-22; layout.md 4.9, components-records.m
 | `section.fold` | Collapse {section} | Replier « {section} » |
 | `section.unfold` | Expand {section} | Déplier « {section} » |
 | `section.count.entries` | {n} entry · {n} entries | {n} entrée · {n} entrées |
+
+### 10.4.14 Keys of the trash's selection and purge
+
+New with the user's ruling of 2026-11-22 (components-app.md 5, Trash page; data.md 11, request 25; ADR 0006 amendment). Pending: to be moved into 10.4 and `catalogue.rs` with the `trash.*` family when implemented. Palette commands follow the toolbar: "Restore selected", "Delete selected permanently...", "Empty trash..." (on the trash page only).
+
+| Key | English | French |
+|---|---|---|
+| `trash.selected` | {n} selected | {n} sélectionné · {n} sélectionnés |
+| `trash.delete_selected` | Delete permanently... | Supprimer définitivement... |
+| `trash.empty_all` | Empty trash... | Vider la corbeille... |
+| `trash.restored_n` | {n} item restored. · {n} items restored. | {n} élément restauré. · {n} éléments restaurés. |
+| `trash.confirm_title` | Delete {n} item permanently? · Delete {n} items permanently? | Supprimer définitivement {n} élément ? · Supprimer définitivement {n} éléments ? |
+| `trash.confirm_empty_title` | Empty the trash? | Vider la corbeille ? |
+| `trash.confirm_body` | They are removed from Acta's database now and cannot be restored. Snapshots made before today still hold them until they are replaced. | Ils sont retirés dès maintenant de la base de données d'Acta et ne pourront pas être restaurés. Les sauvegardes faites avant aujourd'hui les conservent jusqu'à leur remplacement. |
+| `trash.confirm_project` | {n} project with {content} · {n} projects with {content} | {n} projet avec {content} · {n} projets avec {content} |
+| `trash.confirm_delete` | Delete permanently | Supprimer définitivement |
+| `trash.delete_failed` | Could not delete. The database is busy; try again. | Suppression impossible. La base de données est occupée ; réessayez. |
+| `trash.kept_tip` | Still named in Acta, so it cannot be deleted. | Encore cité dans Acta : il ne peut pas être supprimé. |
+| `cmd.trash_restore` | Restore selected | Restaurer la sélection |
+| `cmd.trash_delete` | Delete selected permanently... | Supprimer définitivement la sélection... |
+| `cmd.trash_empty` | Empty trash... | Vider la corbeille... |

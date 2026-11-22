@@ -106,6 +106,11 @@ Requested by the user on 2026-11-22 (zoom the whole interface with `Mod+=` / `Mo
 - [ ] Agent browser under zoom (integration-engineer): one headless Haiku run on the seeded test project at 150% that takes a screenshot and clicks a link in the agent browser; the click must land (ADR 0010). Count the run in the report.
 - [ ] By hand (needs real input, so the user or a lead session): the keys on a French AZERTY keyboard, `Ctrl+-` reaching Claude Code from the terminal, a pinch on a trackpad changing nothing.
 
+## Trash: selection and permanent delete
+The user's ruling of 2026-11-22 (a click restored; nothing could be deleted for good). Specified on `product-designer/zoom-collapse` (components-app.md 5 Trash page, data.md 11 request 25, ADR 0006 amendment, catalogue 10.4.14).
+- [ ] Store (integration-engineer): `trash_purge(ids)` and `trash_purge_all()` in one transaction with the blob sweep of ADR 0012, 4; contacts still named and ids restored meanwhile skipped. Tests: a project purged with its content and files; a blob shared with a live note survives; a named contact is skipped; the report's counts; nothing reachable from MCP or the agent CLI.
+- [ ] UI (gpui-engineer): click selects, `Mod`/`Shift` multi-selection and keys, the always-present toolbar, Restore of a selection as one undo step, the two confirmations, palette commands, catalogue 10.4.14. Captures in both themes and languages.
+
 ## Settled with the user
 - 2026-11-21: working in Acta must mean the fewest logins possible and Claude Code having, as directly as possible, everything it needs: Acta embeds what Claude Code uses (terminal, browser, chat) in the most practical way; it targets Claude Code on a subscription, not the API. Sessions persist so each login happens once.
 - 2026-11-20: design direction is inspired by Obsidian, Notion and JetBrains IDEs: a workbench (tree, document-like pages, tool windows for the terminal and the chat panel, search everywhere). A "Project Ledger" direction (parchment, serif, engravings) was briefed and withdrawn by the user the same day; do not revive it. Kept from that brief as functional requirements: Light / Dark / System setting, UI in English (default) and French from a central string table. DESIGN.md is being revised on `product-designer/workbench`.
