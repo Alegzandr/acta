@@ -180,7 +180,16 @@ fn tools_list_and_instructions_fit_their_budgets() {
             .copied()
             .collect::<std::collections::BTreeSet<_>>(),
         [
-            "brief", "create", "entries", "find", "kb", "kb_read", "kb_write", "log", "update"
+            "attachment",
+            "brief",
+            "create",
+            "entries",
+            "find",
+            "kb",
+            "kb_read",
+            "kb_write",
+            "log",
+            "update"
         ]
         .into_iter()
         .collect()
@@ -199,7 +208,7 @@ fn tools_list_and_instructions_fit_their_budgets() {
         let read_only = t["annotations"]["readOnlyHint"] == json!(true);
         let expect_ro = matches!(
             t["name"].as_str(),
-            Some("brief" | "entries" | "find" | "kb" | "kb_read")
+            Some("brief" | "entries" | "find" | "kb" | "kb_read" | "attachment")
         );
         assert_eq!(read_only, expect_ro, "{t}");
     }
@@ -1686,4 +1695,100 @@ fn questions_contacts_and_report_to_over_stdio() {
     let v: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(v["status"], "open");
     assert!(v.get("text").is_none(), "{v}");
+}
+
+/// Attachments over stdio (ADR 0012, 10): names and sizes in list lines,
+/// the `attachment` tool returning text, or one image block after its
+/// text line, and `acta attachment` on the CLI. Files reach Acta from the
+/// human (the app); here the test adds them through the store, with the
+/// key file the dev data directory uses.
+#[test]
+fn attachments_over_stdio() {
+    use acta_core::keys::{KEY_FILE, KeyFile, KeyStores};
+    use acta_core::model::{AttachOwner, Author, NoteId};
+    use acta_core::store::{AttachSource, Store, StoreConfig};
+    let tmp = tempfile::tempdir().unwrap();
+    let data = tmp.path().join("data");
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    let (ok, out, err) = cli(&data, &repo, &["link"], "");
+    assert!(ok, "{out}{err}");
+    let (ok, out, _) = cli(
+        &data,
+        &repo,
+        &["create", "note"],
+        "Screenshot from Alexandre",
+    );
+    assert!(ok && out.starts_with("ok N-1"), "{out}");
+    {
+        let config = StoreConfig {
+            data_dir: data.clone(),
+            keys: KeyStores(vec![std::sync::Arc::new(KeyFile::new(data.join(KEY_FILE)))]),
+        };
+        let mut store = Store::open(&config).unwrap();
+        let img = image::RgbImage::from_fn(2000, 1000, |x, y| image::Rgb([x as u8, y as u8, 40]));
+        let mut png = Vec::new();
+        image::DynamicImage::ImageRgb8(img)
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        for (name, bytes) in [
+            ("screenshot.png", png),
+            (
+                "notes.md",
+                b"# Plan
+Ship attachments.
+"
+                .to_vec(),
+            ),
+        ] {
+            store
+                .attach(
+                    AttachOwner::Note(NoteId(1)),
+                    name,
+                    AttachSource::Bytes(bytes),
+                    Author::Human,
+                    &mut |_, _| {},
+                )
+                .unwrap();
+        }
+    }
+    let mut m = Mcp::start(&data, &repo, false);
+    let (err, text) = m.call("find", json!({"kind": "note"}));
+    assert!(!err, "{text}");
+    assert!(
+        text.contains(" · files: A-1 screenshot.png ") && text.contains(", A-2 notes.md 25B"),
+        "{text}"
+    );
+    let (err, text) = m.call("attachment", json!({"id": "A-2"}));
+    assert!(!err && text.contains("Ship attachments."), "{text}");
+    // The image: a text line, then one image block, nothing else.
+    let r = m.request(
+        "tools/call",
+        json!({"name": "attachment", "arguments": {"id": "A-1"}}),
+    );
+    let content = r["result"]["content"].as_array().unwrap();
+    assert_eq!(content.len(), 2, "{r}");
+    let line = content[0]["text"].as_str().unwrap();
+    assert!(line.starts_with("A-1 · image · 2000x1000 · "), "{line}");
+    assert!(line.contains("sent 1092x546"), "{line}");
+    assert_eq!(content[1]["type"], json!("image"));
+    assert_eq!(content[1]["mimeType"], json!("image/png"));
+    let b64 = content[1]["data"].as_str().unwrap();
+    assert!(b64.len() < 2_000_000, "{}", b64.len());
+    let (err, text) = m.call("attachment", json!({"id": "A-1", "lines": "1-2"}));
+    assert!(
+        err && text.contains("lines applies to text files"),
+        "{text}"
+    );
+    m.close();
+    let (ok, out, _) = cli(&data, &repo, &["attachment", "A-2", "--lines", "2-2"], "");
+    assert!(
+        ok && out.contains("Ship attachments.") && !out.contains("# Plan"),
+        "{out}"
+    );
+    let (ok, out, _) = cli(&data, &repo, &["attachment", "A-1"], "");
+    assert!(
+        ok && out.contains("sent 1092x546") && out.contains("MCP"),
+        "{out}"
+    );
 }

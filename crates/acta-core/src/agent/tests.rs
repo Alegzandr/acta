@@ -3135,3 +3135,6 @@ fn questions_and_contacts_are_resolved_answered_and_refused_exactly() {
     );
     assert_eq!(ack, "ok N-1 · report_to cleared");
 }
+
+#[cfg(test)]
+mod attach_tests;

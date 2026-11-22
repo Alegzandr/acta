@@ -62,4 +62,6 @@ Encryption, snapshots, live refresh, export and atomicity with the note come fro
 - ADR 0007 is unchanged: knowledge stays text; a document cannot hold attachments.
 
 ## Evidence
-None yet. Design decision. To prove when built: chunked writes of a 25 MB file off the UI thread on Windows with the database open in the app and in `acta mcp`; an `image` result reaching the model in one headless Haiku run; `incremental_vacuum` returning pages after a purge on SQLCipher.
+Store and agent built on `integration-engineer/attachments` (Windows 11): a 25 MB file attached from disk and read back held at most 1.1 MB (attach) and 2.2 MB (read) of Rust heap (counting allocator; SQLite's own page cache is outside it and capped by `cache_size`); `incremental_vacuum` returned every free page after a purge on SQLCipher (freelist 0, page count down); the upgrade from schema 5 sets `auto_vacuum = INCREMENTAL` with one `VACUUM` after the migration snapshot, and that snapshot restores; an image block reached the model in one headless Haiku run (see the branch report). PDF text: pdf-extract 0.12.1 (MIT, on lopdf 0.42), panics caught. Not yet run: chunked writes with the database open in the app at the same time (needs the UI step).
+
+Planned when designed, to prove when built: chunked writes of a 25 MB file off the UI thread on Windows with the database open in the app and in `acta mcp`; an `image` result reaching the model in one headless Haiku run; `incremental_vacuum` returning pages after a purge on SQLCipher.

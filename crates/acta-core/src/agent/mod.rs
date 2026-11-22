@@ -3,6 +3,7 @@
 //! server and the CLI are thin transports over this module.
 
 pub mod args;
+pub mod attach;
 pub mod due;
 pub mod folders;
 pub mod git;
@@ -12,6 +13,7 @@ pub mod render;
 pub mod session;
 pub mod tools;
 
+pub use attach::{Answer, AttachReply};
 pub use session::{Launch, Session, parse_owner};
 pub use tools::{Agent, INSTRUCTIONS, NOT_LINKED, PRE_COMPACT, Reply, hook_json};
 

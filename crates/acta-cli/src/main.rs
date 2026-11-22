@@ -269,6 +269,23 @@ enum Command {
         path: PathBuf,
         #[arg(long, value_name = "P-n")]
         project: Option<String>,
+        /// Leave attached files' content out (names and sizes stay)
+        #[arg(long)]
+        no_files: bool,
+    },
+    /// Read one attached file (A-n): its text, a PDF's text, or what an
+    /// image is (the picture itself reaches Claude through the MCP tool)
+    Attachment {
+        id: String,
+        /// Text files: e.g. 40-80
+        #[arg(long)]
+        lines: Option<String>,
+        /// PDFs: e.g. 3-5
+        #[arg(long)]
+        pages: Option<String>,
+        /// Images: full for 1568 px
+        #[arg(long)]
+        size: Option<String>,
     },
     /// Merge an .acta.json export into the database
     Import {
@@ -757,7 +774,11 @@ fn run_on(store: &mut acta_core::Store, command: Command) -> Result<String, Stri
             };
             return folders::commit(store, args, &cwd, author());
         }
-        Command::Export { path, project } => return export(store, &path, project),
+        Command::Export {
+            path,
+            project,
+            no_files,
+        } => return export(store, &path, project, !no_files),
         Command::Import { path, dry_run } => return import(store, &path, dry_run),
         Command::Snapshot { action } => return snapshot(store, action),
         Command::Sessions => {
@@ -1014,6 +1035,27 @@ fn run_on(store: &mut acta_core::Store, command: Command) -> Result<String, Stri
             }) => kb_import(&mut ag, &path, &kind, level, owner),
             Some(KbAction::Export { id, path }) => kb_export(&mut ag, &id, &path),
         },
+        Command::Attachment {
+            id,
+            lines,
+            pages,
+            size,
+        } => {
+            let answer = ag.attachment(AttachmentArgs {
+                id,
+                lines,
+                pages,
+                size,
+            })?;
+            Ok(match answer.image {
+                // A terminal cannot show it; the MCP tool sends it.
+                Some(_) => format!(
+                    "{}\nThe image itself reaches Claude through the attachment tool of Acta's MCP server.",
+                    answer.text
+                ),
+                None => answer.text,
+            })
+        }
         Command::Version
         | Command::Mcp { .. }
         | Command::Hook { .. }
@@ -1131,6 +1173,7 @@ fn export(
     store: &mut acta_core::Store,
     path: &Path,
     project: Option<String>,
+    include_files: bool,
 ) -> Result<String, String> {
     // An export writes every stored text to a plaintext file.
     if author() == Author::Claude {
@@ -1139,12 +1182,19 @@ fn export(
     let project = project
         .map(|p| ProjectId::parse(&p).ok_or("--project takes P-n"))
         .transpose()?;
-    let file = store.export(project).map_err(|e| e.to_string())?;
+    let file = store
+        .export_with(project, include_files)
+        .map_err(|e| e.to_string())?;
     let text = file.to_json().map_err(|e| e.to_string())?;
     write_new(path, &text)?;
     store.record_export().map_err(|e| e.to_string())?;
+    let files = match (file.attachments.len(), include_files) {
+        (0, _) => String::new(),
+        (n, true) => format!(", {n} files"),
+        (n, false) => format!(", {n} files (names only)"),
+    };
     Ok(format!(
-        "ok exported {} projects, {} topics, {} entries, {} knowledge entries. The file is plaintext: keep it somewhere private.",
+        "ok exported {} projects, {} topics, {} entries, {} knowledge entries{files}. The file is plaintext: keep it somewhere private.",
         file.projects.len(),
         file.topics.len(),
         file.entries.len(),
@@ -1184,7 +1234,11 @@ fn import(store: &mut acta_core::Store, path: &Path, dry_run: bool) -> Result<St
             1 => "; 1 folder on a network path left out".to_owned(),
             n => format!("; {n} folders on a network path left out"),
         }
-    ))
+    ) + &match report.files_not_in_export.len() {
+        0 => String::new(),
+        1 => "; 1 file not in the export".to_owned(),
+        n => format!("; {n} files not in the export"),
+    })
 }
 
 fn snapshot(store: &mut acta_core::Store, action: SnapshotAction) -> Result<String, String> {
