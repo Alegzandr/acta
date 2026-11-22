@@ -654,6 +654,7 @@ impl Workspace {
                         monitor.pass(&known, deep)
                     })
                     .await;
+                let followed_any = !pass.followed.is_empty();
                 if pass.has_writes() {
                     let db = db.clone();
                     let (learned, followed) = (pass.learned, pass.followed);
@@ -673,6 +674,16 @@ impl Workspace {
                             err_kind(&err)
                         )),
                     }
+                }
+                if pass.changed || followed_any {
+                    // A folder came back or was followed: its Claude Code
+                    // settings are brought in line with the store (ADR 0011).
+                    let db = db.clone();
+                    cx.background_executor()
+                        .spawn(async move {
+                            let _ = acta_core::claude_settings::sync_all(&mut db.lock());
+                        })
+                        .await;
                 }
                 if pass.changed && this.update(cx, |ws, cx| ws.reload(cx)).is_err() {
                     return;

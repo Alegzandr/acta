@@ -8,6 +8,7 @@
 //! visible to other processes (CLAUDE.md).
 
 mod browser;
+mod folders;
 mod hook;
 mod link;
 mod mcp;
@@ -63,8 +64,13 @@ enum Command {
         #[command(subcommand)]
         server: Option<McpServer>,
     },
-    /// Run a Claude Code hook: session-start or pre-compact (hook JSON on stdin)
+    /// Run a Claude Code hook: session-start, pre-compact or pre-git (hook JSON on stdin)
     Hook { event: String },
+    /// Folder settings set by the user
+    Folders {
+        #[command(subcommand)]
+        action: FoldersAction,
+    },
     /// Install Acta in Claude Code: plugin, MCP server, hooks, skills, allow rule
     Setup {
         /// Report each step without changing anything
@@ -153,6 +159,12 @@ enum Command {
         /// E-n, or none
         #[arg(long)]
         epic: Option<String>,
+        /// Due date YYYY-MM-DD, or "" to clear (topics, epics and projects)
+        #[arg(long, value_name = "DATE")]
+        due: Option<String>,
+        /// Print the id, due date and overdue flag as JSON
+        #[arg(long)]
+        json: bool,
         /// title, description or state
         #[arg(long)]
         field: Option<String>,
@@ -169,10 +181,17 @@ enum Command {
         status: Option<String>,
         #[arg(long)]
         epic: Option<String>,
+        /// overdue, or week: open topics and epics due before today, or
+        /// within 7 days, by date
+        #[arg(long)]
+        due: Option<String>,
         #[arg(long)]
         limit: Option<i64>,
         #[arg(long)]
         cursor: Option<i64>,
+        /// Structured output, with due and overdue on topics and epics
+        #[arg(long)]
+        json: bool,
     },
     /// Create a topic, epic or note (first line of stdin is the title, the rest
     /// the description); file notes into a topic's timeline (entry); dismiss
@@ -186,6 +205,9 @@ enum Command {
         /// T-n for entry
         #[arg(long)]
         topic: Option<String>,
+        /// Due date of a new topic or epic: YYYY-MM-DD
+        #[arg(long, value_name = "DATE")]
+        due: Option<String>,
         /// Comma-separated note ids to file into the new item, or to dismiss
         #[arg(long, value_delimiter = ',')]
         from_notes: Vec<String>,
@@ -272,6 +294,23 @@ enum SnapshotAction {
     Restore {
         /// A name from `acta snapshot list`, or "latest"
         name: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum FoldersAction {
+    /// Set an attached folder's commit mode: manual, commit or push
+    Commit {
+        /// manual, commit (commit automatically) or push (commit and push automatically)
+        mode: String,
+        /// The folder (default: this repository)
+        path: Option<PathBuf>,
+        /// Commit in my name, without Co-Authored-By Claude
+        #[arg(long)]
+        as_me: bool,
+        /// Also commit and push automatically on the default branch
+        #[arg(long)]
+        on_default: bool,
     },
 }
 
@@ -609,6 +648,24 @@ fn run_on(store: &mut acta_core::Store, command: Command) -> Result<String, Stri
             };
             return link::run(store, args, &cwd, session.author);
         }
+        Command::Folders {
+            action:
+                FoldersAction::Commit {
+                    mode,
+                    path,
+                    as_me,
+                    on_default,
+                },
+        } => {
+            let cwd = launch.dir.clone().unwrap_or_default();
+            let args = folders::CommitArgs {
+                mode,
+                path,
+                as_me,
+                on_default,
+            };
+            return folders::commit(store, args, &cwd, author());
+        }
         Command::Export { path, project } => return export(store, &path, project),
         Command::Import { path, dry_run } => return import(store, &path, dry_run),
         Command::Snapshot { action } => return snapshot(store, action),
@@ -662,13 +719,16 @@ fn run_on(store: &mut acta_core::Store, command: Command) -> Result<String, Stri
             id,
             status,
             epic,
+            due,
+            json,
             field,
             text,
         } => {
             let mut a = UpdateArgs {
-                id,
+                id: id.clone(),
                 status,
                 epic,
+                due,
                 ..UpdateArgs::default()
             };
             if let Some(f) = field {
@@ -680,34 +740,40 @@ fn run_on(store: &mut acta_core::Store, command: Command) -> Result<String, Stri
                     _ => return Err("--field must be title, description or state".into()),
                 }
             }
-            ag.update(a)
+            let ack = ag.update(a)?;
+            if json { ag.record_json(&id) } else { Ok(ack) }
         }
         Command::Find {
             query,
             kind,
             status,
             epic,
+            due,
             limit,
             cursor,
+            json,
         } => {
             let query = if query {
                 Some(read_text(&TextSource::default())?.trim().to_owned())
             } else {
                 None
             };
-            ag.find(FindArgs {
+            let a = FindArgs {
                 query,
                 kind,
                 status,
                 epic,
+                due,
                 limit,
                 cursor,
-            })
+            };
+            if json { ag.find_json(a) } else { ag.find(a) }
         }
         Command::Create {
             kind,
             epic,
             topic,
+            due,
             from_notes,
             text,
         } => {
@@ -745,6 +811,7 @@ fn run_on(store: &mut acta_core::Store, command: Command) -> Result<String, Stri
                             epic,
                             topic,
                             from_notes: notes,
+                            due,
                         }],
                         dismiss: None,
                     })
@@ -792,6 +859,7 @@ fn run_on(store: &mut acta_core::Store, command: Command) -> Result<String, Stri
         | Command::Hook { .. }
         | Command::Setup { .. }
         | Command::Link { .. }
+        | Command::Folders { .. }
         | Command::Export { .. }
         | Command::Import { .. }
         | Command::Snapshot { .. }

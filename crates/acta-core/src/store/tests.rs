@@ -1630,6 +1630,10 @@ fn a_renamed_folder_is_followed_with_its_links() {
     store
         .set_local_value(&format!("{AUTO_MEMORY_PREFIX}{old}"), Some("created"))
         .unwrap();
+    let ledger = crate::claude_settings::LEDGER_PREFIX;
+    store
+        .set_local_value(&format!("{ledger}{old}"), Some("{}"))
+        .unwrap();
     assert!(linked(dir.path(), &old));
 
     let mut monitor = Monitor::new();
@@ -1656,6 +1660,17 @@ fn a_renamed_folder_is_followed_with_its_links() {
             .as_deref(),
         Some("created"),
         "the auto-memory marker follows"
+    );
+    assert!(
+        store
+            .local_value(&format!("{ledger}{new}"))
+            .unwrap()
+            .is_some()
+            && store
+                .local_value(&format!("{ledger}{old}"))
+                .unwrap()
+                .is_none(),
+        "the settings ledger follows"
     );
     assert_eq!(
         store
@@ -1782,6 +1797,76 @@ fn an_imported_folder_starts_without_an_identity() {
     let known = b.store.monitored_folders().unwrap();
     assert_eq!(known.len(), 1);
     assert_eq!(known[0].identity, None);
+}
+
+/// Locate, its undo and bulk repair carry the path-keyed values (the
+/// settings ledger and the old auto-memory marker) with the folder; a path
+/// still attached elsewhere keeps its own copy.
+#[test]
+fn path_keyed_values_follow_every_path_change() {
+    let TestStore { mut store, dir, .. } = open();
+    let ledger = crate::claude_settings::LEDGER_PREFIX;
+    let p = store.create_project("Acta", "", H).unwrap();
+    let (a, b) = (dir.path().join("a"), dir.path().join("b"));
+    std::fs::create_dir_all(&a).unwrap();
+    std::fs::create_dir_all(&b).unwrap();
+    let f = store.add_folder(Owner::Project(p), &a, H).unwrap();
+    let old = store.folder(f).unwrap().path;
+    let new = crate::folder_path::canonical(&b).unwrap();
+    store
+        .set_local_value(&format!("{ledger}{old}"), Some("{\"created\":true}"))
+        .unwrap();
+    store
+        .set_local_value(&format!("{AUTO_MEMORY_PREFIX}{old}"), Some("added"))
+        .unwrap();
+    let at = |s: &Store, path: &str| {
+        (
+            s.local_value(&format!("{ledger}{path}")).unwrap().is_some(),
+            s.local_value(&format!("{AUTO_MEMORY_PREFIX}{path}"))
+                .unwrap()
+                .is_some(),
+        )
+    };
+
+    // Locate.
+    store.set_folder_path(f, &b, H).unwrap();
+    assert_eq!(
+        (at(&store, &new), at(&store, &old)),
+        ((true, true), (false, false))
+    );
+    // Its undo.
+    store.restore_folder_path(f, &old, H).unwrap();
+    assert_eq!(
+        (at(&store, &old), at(&store, &new)),
+        ((true, true), (false, false))
+    );
+    // Bulk repair, both forms.
+    store.set_folder_paths(&[(f, new.clone())], H).unwrap();
+    assert_eq!(at(&store, &new), (true, true));
+    store.restore_folder_path(f, &old, H).unwrap();
+    let root = crate::folder_path::canonical(dir.path()).unwrap();
+    let moved_root = dir.path().join("moved");
+    std::fs::create_dir_all(moved_root.join("a")).unwrap();
+    store.relocate_folders(&root, &moved_root, H).unwrap();
+    let relocated = store.folder(f).unwrap().path;
+    assert_ne!(relocated, old);
+    assert_eq!(
+        (at(&store, &relocated), at(&store, &old)),
+        ((true, true), (false, false))
+    );
+
+    // A path attached at two levels: the one that moves takes a copy.
+    let t = topic(&mut store, p, None, "Alexandre's topic");
+    let g = store
+        .add_folder(Owner::Topic(t), &moved_root.join("a"), H)
+        .unwrap();
+    store.set_folder_path(g, &b, H).unwrap();
+    assert_eq!(
+        at(&store, &relocated),
+        (true, true),
+        "kept for the other folder"
+    );
+    assert_eq!(at(&store, &new), (true, true), "and copied");
 }
 
 // ---- folder sets (ADR 0011) ----

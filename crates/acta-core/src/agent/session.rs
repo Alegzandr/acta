@@ -7,6 +7,7 @@
 //! the launch directory (or, for a linked git worktree, its main checkout).
 
 use super::git;
+use crate::date::{Date, Zone};
 use crate::folder_path;
 use crate::model::{Author, EpicId, Owner, ProjectId, TopicId};
 use crate::paths::Os;
@@ -107,6 +108,11 @@ pub struct Session {
     pub worktree_key: Option<String>,
     /// Topics sharing the attached folder when the folder was ambiguous.
     pub candidates: Vec<TopicId>,
+    /// The reader's time zone: due dates and idle days are local calendar
+    /// days (copy.md 10.2.1).
+    pub zone: Zone,
+    /// A fixed "today" for tests; `None` reads the clock at each call.
+    pub today: Option<Date>,
 }
 
 const SESSION_KEY: &str = "focus.session.";
@@ -122,7 +128,15 @@ impl Session {
             session_id: None,
             worktree_key: None,
             candidates: Vec::new(),
+            zone: Zone::system(),
+            today: None,
         }
+    }
+
+    /// The local date of the process, the day every relative date is
+    /// computed against.
+    pub fn today(&self) -> Date {
+        self.today.unwrap_or_else(|| self.zone.today())
     }
 
     pub fn resolve(store: &Store, launch: &Launch, author: Author) -> Session {

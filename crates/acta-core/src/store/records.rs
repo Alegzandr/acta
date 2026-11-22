@@ -50,6 +50,9 @@ pub struct TopicFilter {
     pub epic: Option<Option<EpicId>>,
     /// Empty means every status.
     pub statuses: Vec<Status>,
+    /// Only topics with a due date before this day, ordered by date, then
+    /// in tree order (`find(due=...)`, data.md request 16).
+    pub due_before: Option<Date>,
 }
 
 const TOPIC_SUMMARY_COLS: &str = "t.id, t.epic_id, t.title, t.status, t.position,
@@ -414,6 +417,18 @@ impl Store {
                 .collect();
             cond.push(format!("t.status IN ({})", list.join(", ")));
         }
+        if let Some(d) = filter.due_before {
+            args.push(d.to_string().into());
+            cond.push(format!(
+                "t.due_on IS NOT NULL AND t.due_on < ?{}",
+                args.len()
+            ));
+        }
+        let by_due = if filter.due_before.is_some() {
+            "t.due_on, "
+        } else {
+            ""
+        };
         let where_ = cond.join(" AND ");
         let total: i64 = self.conn.query_row(
             &format!("SELECT count(*) FROM topics t WHERE {where_}"),
@@ -424,7 +439,7 @@ impl Store {
             "SELECT {TOPIC_SUMMARY_COLS} FROM topics t
              LEFT JOIN epics e ON e.id = t.epic_id
              WHERE {where_}
-             ORDER BY t.project_id, t.epic_id IS NOT NULL, e.position, t.epic_id, t.position, t.id
+             ORDER BY {by_due}t.project_id, t.epic_id IS NOT NULL, e.position, t.epic_id, t.position, t.id
              LIMIT {limit} OFFSET {offset}"
         );
         let mut stmt = self.conn.prepare(&sql)?;

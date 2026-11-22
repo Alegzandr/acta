@@ -77,7 +77,19 @@ pub fn open(config: Option<StoreConfig>) -> Opened {
     };
     let db = config.data_dir.join(acta_core::store::DB_FILE);
     match Store::open(&config) {
-        Ok(store) => Opened::Ready(store),
+        Ok(mut store) => {
+            // Folders changed while Acta was closed (a commit mode set
+            // while a folder was offline): Claude Code's settings follow
+            // the store (ADR 0011).
+            match acta_core::claude_settings::sync_all(&mut store) {
+                Ok((written, _)) if written > 0 => crate::log::line(&format!(
+                    "folders: Claude Code settings brought in line in {written}"
+                )),
+                Ok(_) => {}
+                Err(_) => crate::log::line("folders: Claude Code settings could not be checked"),
+            }
+            Opened::Ready(store)
+        }
         Err(OpenError::KeyMissing { db, .. }) => {
             crate::log::line("store: the database exists and its key is missing");
             Opened::KeyLoss {

@@ -15,9 +15,17 @@ rusqlite = { version = "0.43.0", default-features = false, features = ["bundled-
 [target.'cfg(target_os = "macos")'.dependencies]
 rusqlite = { version = "0.43.0", default-features = false, features = ["bundled-sqlcipher", "backup"] }
 
-# Folder identity and handle-free presence checks (folder_identity.rs).
+# Folder identity and handle-free presence checks (folder_identity.rs); the
+# job object that ends a timed-out process tree (process.rs).
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
 
 [dependencies]
 # The local time zone for "today" and local days (date.rs, Zone::system).
@@ -27,7 +35,8 @@ hmac = "0.12"
 keyring = "4.2.0"
 schemars = "1"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# preserve_order: the settings writer keeps the user's key order.
+serde_json = { version = "1", features = ["preserve_order"] }
 sha2 = "0.10"
 uuid = { version = "1", default-features = false, features = ["std", "v7"] }
 zeroize = "1"

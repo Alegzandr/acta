@@ -64,7 +64,7 @@ pub struct LogArgs {
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
 pub struct UpdateArgs {
-    /// T-n, E-n or N-n.
+    /// T-n, E-n or N-n; P-n for due only.
     pub id: String,
     pub title: Option<String>,
     pub description: Option<String>,
@@ -75,6 +75,8 @@ pub struct UpdateArgs {
     pub status: Option<String>,
     /// Move a topic: E-n, or "none".
     pub epic: Option<String>,
+    /// YYYY-MM-DD, or "" to clear.
+    pub due: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
@@ -86,6 +88,8 @@ pub struct FindArgs {
     pub status: Option<String>,
     /// Only topics of this epic.
     pub epic: Option<String>,
+    /// overdue or week: open topics and epics by due date.
+    pub due: Option<String>,
     /// Default 8, max 20.
     pub limit: Option<i64>,
     pub cursor: Option<i64>,
@@ -106,6 +110,8 @@ pub struct CreateItem {
     pub topic: Option<String>,
     /// Open N-ids this item comes from; they leave the inbox, linked to it.
     pub from_notes: Option<Vec<String>>,
+    /// topic, epic: YYYY-MM-DD.
+    pub due: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]

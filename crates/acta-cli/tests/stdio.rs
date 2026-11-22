@@ -21,7 +21,8 @@ fn base_cmd(data: &Path) -> Command {
         .env_remove("ACTA_TOPIC")
         .env_remove("CLAUDE_CODE_SESSION_ID")
         .env_remove("CLAUDECODE")
-        .env_remove("CLAUDE_CONFIG_DIR");
+        .env_remove("CLAUDE_CONFIG_DIR")
+        .env_remove("CLAUDE_PROJECT_DIR");
     c
 }
 
@@ -840,4 +841,279 @@ fn link_attached_and_setup_remove_round_trip_auto_memory() {
     let stdout = remove();
     assert!(stdout.contains("back on in 1 folder"), "{stdout}");
     assert!(!broken_local.exists());
+}
+
+/// Due dates and the Attention line over stdio (data.md requests 16 and
+/// 17): the agent sets, finds and clears a date; the CLI does the same with
+/// `--due` and reads it back with `--json`. Dates far in the past or the
+/// future keep the test independent of today.
+#[test]
+fn due_dates_set_found_and_cleared_over_stdio() {
+    let tmp = tempfile::tempdir().unwrap();
+    let data = tmp.path().join("data");
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    assert!(cli(&data, &repo, &["link"], "").0);
+    let (ok, out, err) = cli(&data, &repo, &["create", "epic"], "Storage");
+    assert!(ok && out.starts_with("ok E-1"), "{out}{err}");
+    for title in ["Encrypted storage", "Snapshots"] {
+        let (ok, out, err) = cli(&data, &repo, &["create", "topic", "--epic", "E-1"], title);
+        assert!(ok && out.starts_with("ok T-"), "{out}{err}");
+    }
+
+    let mut m = Mcp::start(&data, &repo, false);
+    let (err, ack) = m.call("update", json!({"id": "T-1", "due": "2000-01-03"}));
+    assert!(
+        !err && ack.starts_with("ok T-1 · due 2000-01-03 ("),
+        "{ack}"
+    );
+    assert!(chars(&ack) <= 160);
+    let (err, text) = m.call("update", json!({"id": "T-2", "due": "next friday"}));
+    assert!(err, "{text}");
+    assert_eq!(
+        text,
+        "due must be YYYY-MM-DD (2000-2099) or \"\" to clear, got \"next friday\""
+    );
+    let (err, ack) = m.call("update", json!({"id": "E-1", "due": "2000-01-05"}));
+    assert!(!err && ack.starts_with("ok E-1 · due 2000-01-05"), "{ack}");
+    let (err, ack) = m.call("update", json!({"id": "P-1", "due": "2099-12-31"}));
+    assert!(!err && ack.starts_with("ok P-1 · due 2099-12-31"), "{ack}");
+    let (err, ack) = m.call(
+        "create",
+        json!({"items": [{"kind": "topic", "title": "Backups", "epic": "E-1", "due": "2099-06-01"}]}),
+    );
+    assert!(!err && ack.starts_with("ok T-3"), "{ack}");
+
+    let (err, late) = m.call("find", json!({"due": "overdue"}));
+    assert!(!err && chars(&late) <= 2_000, "{late}");
+    let rows: Vec<&str> = late
+        .lines()
+        .filter(|l| l.starts_with("T-") || l.starts_with("E-"))
+        .collect();
+    assert_eq!(rows.len(), 2, "{late}");
+    assert!(
+        rows[0].starts_with("T-1 planned  Encrypted storage · E-1 · overdue ")
+            && rows[0].ends_with("(due 2000-01-03)"),
+        "{late}"
+    );
+    assert!(rows[1].starts_with("E-1 epic  Storage"), "{late}");
+    assert!(late.ends_with("2 hits"), "{late}");
+
+    let (_, project) = m.call("brief", json!({"id": "P-1"}));
+    assert!(chars(&project) <= 1_200, "{project}");
+    let attention = project
+        .lines()
+        .find(|l| l.starts_with("Attention: "))
+        .unwrap_or_else(|| panic!("{project}"));
+    assert!(
+        attention.starts_with("Attention: overdue T-1 "),
+        "{project}"
+    );
+    assert!(attention.contains(", E-1 "), "{project}");
+    assert!(chars(attention) <= 160);
+    assert!(project.contains("· due 2099-12-31"), "{project}");
+    let (_, topic) = m.call("brief", json!({"id": "T-1"}));
+    assert!(
+        topic.contains("T-1 Encrypted storage · planned · overdue "),
+        "{topic}"
+    );
+    assert!(topic.contains("(due 2000-01-03)"), "{topic}");
+    // The session-start briefing is the brief: it carries the segments.
+    let (_, hook) = m.call("hook", json!({"event": "compact", "session": "e2e-due"}));
+    let v: Value = serde_json::from_str(&hook).unwrap();
+    let ctx = v["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
+    assert!(
+        chars(ctx) <= 1_200 && ctx.contains("Attention: overdue"),
+        "{ctx}"
+    );
+
+    let (err, ack) = m.call("update", json!({"id": "T-1", "due": ""}));
+    assert!(!err && ack == "ok T-1 · due cleared", "{ack}");
+    let (_, late) = m.call("find", json!({"due": "overdue", "kind": "topic"}));
+    assert_eq!(late, "0 hits");
+    drop(m);
+
+    // The CLI: --due sets and clears, --json reads back.
+    let (ok, out, err) = cli(
+        &data,
+        &repo,
+        &["update", "T-2", "--due", "2000-02-01", "--json"],
+        "",
+    );
+    assert!(ok, "{out}{err}");
+    let v: Value = serde_json::from_str(out.trim()).unwrap();
+    assert_eq!(
+        v,
+        json!({"id": "T-2", "due": "2000-02-01", "overdue": true})
+    );
+    let (ok, out, err) = cli(&data, &repo, &["find", "--due", "overdue", "--json"], "");
+    assert!(ok, "{out}{err}");
+    let v: Value = serde_json::from_str(out.trim()).unwrap();
+    let ids: Vec<&str> = v["hits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|h| h["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["E-1", "T-2"], "{out}");
+    assert_eq!(v["hits"][1]["due"], "2000-02-01");
+    assert_eq!(v["hits"][1]["overdue"], true);
+    let (ok, out, err) = cli(&data, &repo, &["update", "T-2", "--due", "friday"], "");
+    assert!(!ok && err.contains("due must be YYYY-MM-DD"), "{out}{err}");
+    let (ok, out, _) = cli(&data, &repo, &["update", "T-2", "--due", ""], "");
+    assert!(ok && out.trim() == "ok T-2 · due cleared", "{out}");
+    let (ok, out, _) = cli(&data, &repo, &["find", "--due", "overdue"], "");
+    assert!(
+        ok && out.contains("E-1 epic  Storage") && out.trim_end().ends_with("1 hit"),
+        "{out}"
+    );
+}
+
+fn git(dir: &Path, args: &[&str]) {
+    let out = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// ADR 0011: `acta folders commit` writes the folder's Claude Code
+/// settings (refused under Claude Code), and `acta hook pre-git` denies
+/// what an automatic mode forbids, silently otherwise, within 200 chars.
+#[test]
+fn commit_modes_and_the_pre_git_guard() {
+    let tmp = tempfile::tempdir().unwrap();
+    let data = tmp.path().join("data");
+    let repo = tmp.path().join("repo");
+    let other = tmp.path().join("other");
+    std::fs::create_dir_all(&repo).unwrap();
+    std::fs::create_dir_all(&other).unwrap();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    git(
+        &repo,
+        &[
+            "-c",
+            "user.name=Alexandre",
+            "-c",
+            "user.email=alexandre@example.com",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "First",
+        ],
+    );
+    git(&repo, &["switch", "-q", "-c", "feature"]);
+    let (ok, out, err) = cli(&data, &repo, &["link"], "");
+    assert!(ok, "{out}{err}");
+
+    // Claude Code cannot set a commit mode.
+    let out = base_cmd(&data)
+        .args(["folders", "commit", "push"])
+        .env("CLAUDECODE", "1")
+        .current_dir(&repo)
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("set by the user in Acta"));
+
+    let (ok, out, err) = cli(&data, &repo, &["folders", "commit", "push", "--as-me"], "");
+    assert!(ok, "{out}{err}");
+    assert!(
+        out.contains("commit and push automatically, in your name, not on main"),
+        "{out}"
+    );
+    let local: Value = serde_json::from_str(
+        &std::fs::read_to_string(repo.join(".claude/settings.local.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(local["autoMemoryEnabled"], json!(false));
+    assert_eq!(local["permissions"]["allow"][2], "Bash(git push)");
+    assert_eq!(local["env"]["GIT_TERMINAL_PROMPT"], "0");
+    assert_eq!(local["attribution"]["sessionUrl"], json!(false));
+
+    let hook = |dir: &Path, command: &str| {
+        let input = json!({
+            "session_id": "s1", "cwd": dir, "hook_event_name": "PreToolUse",
+            "tool_name": "Bash", "tool_input": {"command": command}
+        })
+        .to_string();
+        let (ok, out, err) = cli(&data, dir, &["hook", "pre-git"], &input);
+        assert!(ok && err.is_empty(), "{err}");
+        assert!(chars(out.trim()) <= 200, "{out}");
+        out.trim().to_owned()
+    };
+    let reason = |out: &str| {
+        let v: Value = serde_json::from_str(out).unwrap();
+        assert_eq!(v["hookSpecificOutput"]["permissionDecision"], "deny");
+        v["hookSpecificOutput"]["permissionDecisionReason"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    assert!(reason(&hook(&repo, "git commit --no-verify -m x")).contains("--no-verify"));
+    assert!(reason(&hook(&repo, "git push origin feature")).contains("exactly `git push`"));
+    assert!(reason(&hook(&repo, "git push --force-with-lease")).contains("forced"));
+    let heredoc = "git add a && git commit -m \"$(cat <<'EOF'\nNo --no-verify here\nEOF\n)\"";
+    assert_eq!(hook(&repo, heredoc), "");
+    assert_eq!(hook(&repo, "git push"), "");
+    // Forms that hide the call are read through; an alias is resolved.
+    assert!(reason(&hook(&repo, "{ git commit -n -m x; }")).contains("--no-verify"));
+    assert!(reason(&hook(&repo, "bash -c 'git push --force'")).contains("forced"));
+    assert!(reason(&hook(&repo, "git -c core.hooksPath=/x commit -m x")).contains("GIT_CONFIG"));
+    git(&repo, &["config", "alias.ci", "commit --no-verify"]);
+    assert!(reason(&hook(&repo, "git ci -m x")).contains("--no-verify"));
+    assert_eq!(hook(&repo, "git status && git log -1"), "");
+    // Judged where it acts: a manual folder next door, variables.
+    let manual = tmp.path().join("manual");
+    std::fs::create_dir_all(&manual).unwrap();
+    git(&manual, &["init", "-q", "-b", "main"]);
+    let (ok, out, err) = cli(&data, &manual, &["link", "--add", "--keep-auto-memory"], "");
+    assert!(ok, "{out}{err}");
+    assert!(
+        reason(&hook(&repo, "git -C ../manual commit -m x"))
+            .contains("commits in manual are manual")
+    );
+    assert!(reason(&hook(&repo, "cd ../manual && git commit -m x")).contains("are manual"));
+    assert!(
+        reason(&hook(&repo, "cd \"$HOME\" && git commit -m x")).contains("run git in this folder")
+    );
+    assert!(reason(&hook(&repo, "HUSKY=0 git commit -m x")).contains("environment variables"));
+    git(&repo, &["switch", "-q", "main"]);
+    assert!(reason(&hook(&repo, "git commit -m x")).contains("on main"));
+    let (ok, out, err) = cli(
+        &data,
+        &repo,
+        &["folders", "commit", "push", "--on-default"],
+        "",
+    );
+    assert!(ok && out.contains("also on main"), "{out}{err}");
+    assert_eq!(hook(&repo, "git commit -m x"), "");
+    // An unlinked folder: silent.
+    assert_eq!(hook(&other, "git commit --no-verify -m x"), "");
+
+    // Manual: nothing denied, Acta's commit entries out, auto memory kept.
+    let (ok, out, err) = cli(&data, &repo, &["folders", "commit", "manual"], "");
+    assert!(ok, "{out}{err}");
+    assert_eq!(hook(&repo, "git commit --no-verify -m x"), "");
+    let text = std::fs::read_to_string(repo.join(".claude/settings.local.json")).unwrap();
+    assert_eq!(text, "{\n  \"autoMemoryEnabled\": false\n}\n");
+
+    // Unlink takes out everything Acta wrote.
+    let (ok, _, _) = cli(&data, &repo, &["folders", "commit", "commit"], "");
+    assert!(ok);
+    let (ok, out, err) = cli(&data, &repo, &["link", "--remove"], "");
+    assert!(ok, "{out}{err}");
+    assert!(!repo.join(".claude").exists());
 }
