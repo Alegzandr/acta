@@ -1,0 +1,19 @@
+[package]
+name = "whisper-vulkan-spike"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Throwaway: not part of the workspace (ADR 0014, step 2 spike).
+[workspace]
+
+[features]
+vulkan = ["whisper-rs/vulkan"]
+
+[dependencies]
+whisper-rs = "0.16"
+
+[profile.release]
+lto = "thin"
+strip = true
+codegen-units = 1
