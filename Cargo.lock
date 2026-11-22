@@ -120,7 +120,7 @@ name = "acta-browser"
 version = "0.6.0"
 dependencies = [
  "getrandom 0.4.3",
- "hmac 0.12.1",
+ "hmac 0.13.0",
  "schemars",
  "serde",
  "serde_json",
@@ -154,7 +154,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "getrandom 0.4.3",
- "hmac 0.12.1",
+ "hmac 0.13.0",
  "image",
  "keyring",
  "libc",
