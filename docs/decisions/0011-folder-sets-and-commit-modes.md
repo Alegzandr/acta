@@ -151,3 +151,6 @@ The user asked for a Pull button and a branch selector on git folders. These are
 
 ## Addendum (2026-11-21): live files
 ADR 0008 "Live files" applies to folder sets: a followed folder keeps its name, icon, commit mode and every page's active pointer (they hang on the record, not the path); a name left empty follows the new last segment. The git state is refreshed when the folder monitor reloads the pages and on window focus, never by a watcher on `.git`; `git status` runs with `--no-optional-locks` and `GIT_OPTIONAL_LOCKS=0`. When the settings ledger is keyed by path, it follows the folder in the same step as the auto-memory marker.
+
+## Addendum (2026-11-22): folder paths on Claude Code's command line
+Accepted: the paths of the folders a session sees reach Claude Code as process arguments (`--add-dir`, and the plugin's path in `--plugin-dir`). On Linux and macOS, other local users can read them with `ps`. This extends ADR 0008's process-argument ruling, which weighed only processes of the same user. Paths only: no content, title or key material goes on a command line.
