@@ -23,6 +23,9 @@ Run against every screen, in dark and in light, in English and in French. One fa
 - [ ] Workbench: a page's location (project, epic) appears only in the titlebar breadcrumb; no tab bar with a single tab in a single group; every side area and the bottom panel has its 28 header per group, with view tabs when it holds two views or more; the status bar holds only project, Claude Code status, update and version.
 - [ ] Layout (4.8): every area respects its size range and every view its minimum, in every area it can be moved to; the page area keeps 420 (400 per group); narrow windows give way in the order of 4.8.10 and nothing of it is saved; a page that is not Inbox or Knowledge never leaves the page area.
 
+- [ ] Hover and focus never move anything: every revealed control (chips, `ellipsis`, `plus`, `x`, chevrons) sits in space reserved or empty at rest; move the pointer slowly over the properties block, the folders row, every row and header, and nothing below shifts.
+- [ ] Menus set their items in `type.menu` (13 / 18) on rows of 28; the palette keeps `type.ui` on rows of 32.
+
 **States**
 - [ ] Each interactive element has default, hover, pressed, keyboard focus and disabled, as specified in 5.
 - [ ] Empty, loading (over 400 ms only), error and long-content states exist: a 200-character title, a 500-entry timeline, 0 and 1,000 topics.
@@ -101,10 +104,24 @@ Run against every screen, in dark and in light, in English and in French. One fa
 - [ ] Nothing downloads without a click that names the size; free space is shown first; a model is used only after its hash matched.
 - [ ] No audio, and no dictated text outside the editor, reaches a file, a log, the clipboard or a process argument (ADR 0014, 7).
 
+**Zoom and section folds** (layout.md 4.9, components-records.md 5; run at 90%, 100%, 150% and 200% on a 1920 x 1080 and a 1366 x 768 screen, with the terminal and the chat shown, in both languages)
+- [ ] Everything scales together: type, icons, borders, the terminal grid, the chat and the agent browser; 1px lines stay crisp; no text is a scaled bitmap; the column, the sidebars and the panel keep their proportions.
+- [ ] The layout at each zoom is the layout of the effective size (4.8.10), down to 760 x 480: the right sidebar becomes an overlay only below 820 effective; nothing scrolls horizontally that 4.2 does not allow.
+- [ ] A window that cannot hold a step never takes it; a window made smaller by the system drops to what fits and comes back when it has room; "Zoom 150%" is in the status bar whenever the zoom is not 100% and resets it.
+- [ ] `Mod+=` / `Mod+-` / `Mod+0` work from the page, the tree, the chat and the agent browser; in the terminal on Windows and Linux `Ctrl+-` still reaches Claude Code.
+- [ ] An unfolded page looks exactly as before; a folded section is one header line with its chevron and count; nothing moves when a chevron appears; Claude Code writing inside a folded section shows the dot on its header.
+- [ ] Collapse all and Expand all keep the reader's place; a fold follows the page kind across records and survives a restart; `preferences.json` holds only fixed fold keys and the zoom percent.
+
+**Tools and pages** (layout.md 4.5.1; run with sessions on a topic, its epic and its project, a chat on each, and Claude Code (no project) running)
+- [ ] The Terminal, Chat and Agent browser views show only the current page's instances; navigating never stops, restarts or moves one; every header names its owner first.
+- [ ] Every owning page offers "Start Claude Code here" in one key; a page that owns nothing says so and offers Claude Code (no project).
+- [ ] A session on another page is visible only as signals (tree glyph, status bar, Sessions view, page line) and "Show terminal" opens its own page.
+- [ ] Claude Code (no project) is in the home folder, has no Acta argument, uses the `terminal` icon and its own view, and is never listed as a page's session.
+
 **Behaviour**
 - [ ] Feedback on the next frame; nothing in the "never animates" list animates; budgets in 6.3 hold with 10,000 topics.
 - [ ] Writes are optimistic; failure restores state and keeps the user's text.
-- [ ] Every destructive action is undoable, or is one of the confirmed cases in 6.4. No path deletes for good, overwrites a document without a revision, or writes plaintext to disk without the warning.
+- [ ] Every destructive action is undoable, or is one of the confirmed cases in 6.4. No path deletes for good except the trash's confirmed "Delete permanently..." and "Empty trash...", none overwrites a document without a revision, or writes plaintext to disk without the warning.
 - [ ] Data-safety screens (export, import, trash, snapshots, key loss) state facts and the next step: no red fills, no alarm words, no blame, exact counts and dates.
 - [ ] Memory quality (components-knowledge.md 5; run with a healthy project, then with memories old, in conflict, duplicated, on a merged branch, with a changed and a deleted source file, superseded and retired): a healthy list shows no mark, notice, chip or ghost row; a flagged row shows one `flag` in the signal slot (the unread dot wins), its reasons in the tooltip, never a colour or a count; an entry shows at most one notice; `V` marks as still true from row, unfolded memory and page, and no row leaves the list under the reader; superseded and retired entries are reachable only through the list's last row or the palette, and Make live again brings them back; merge names its direction and is one `Mod+Z` step with Undo; every state change is one undo step; no reason or label names a session id, a score or a blob.
 - [ ] Knowledge: kind icon, summary and author mark visible wherever an entry is listed; inherited and rolled-up entries labelled with their level; every memory written by Claude Code can be read, edited, moved and deleted by the human from the list; document body uses `type.document`, short surfaces use `type.reading`.

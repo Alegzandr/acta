@@ -104,6 +104,7 @@ from the claude.ai profile. Claude in Chrome stays usable alongside; Acta neithe
    opens the pipe with `SECURITY_IDENTIFICATION` (no impersonation). One controlling connection at a time;
    another session's call gets one line, "the browser is in use by another Claude Code session". No TCP
    port, no DevTools port, DevTools UI disabled (`AreDevToolsEnabled = false`).
+   - Amended by the user's request of 2026-11-22: the DevTools UI is enabled on the agent view only, opened by the human from the view menu or `F12` (components-app.md 5, Agent browser, Developer tools). It is an in-process window, not a port; the refusal rules above are unchanged, and no pipe operation opens or reads it. The chat's stays disabled.
    - The app refuses to create the agent view, and says why, if the `AdditionalBrowserArguments` policy
      value for Acta's executable or a `DevToolsActivePort` file in either profile exists.
    - macOS and Linux (later): a Unix socket in a 0700 per-user directory (`$XDG_RUNTIME_DIR/acta` or the

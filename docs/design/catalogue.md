@@ -1385,3 +1385,104 @@ New with memory quality (2026-11-22; components-knowledge.md 5, Memory quality; 
 | `cmd.kb_find_duplicates` | Find duplicate memories | Trouver les mémoires en double |
 
 Notes. *Mémoire* is feminine and *document* masculine, hence the `.document` / `.memory` pairs wherever a participle agrees; conflicts, duplicates and merges concern memories only, so their strings are written in the feminine ("Celle-ci la remplace", "Fusionnée dans"). *Remplacés et obsolètes* and *élément* agree with a mixed set of documents and memories (masculine plural, as `import.safe` already uses *éléments*). "Retired" is the English state word and "Mark as no longer true" the act that produces it; French uses *obsolète* for both, since a literal "retirée" collides with *Retirer* (remove a folder). "Still true" is *toujours valable* rather than *vraie* so that one form fits both kinds. `{id}` is a knowledge id (`K-4`) in `type.code` as the meta line shows it, never translated; `{title}` and `{reason}` are what Claude Code or the human wrote, as written; `{file}` is a file name (the last path segment) and `{branch}` a branch as git has it, both in `type.code`; `{folder}` a working folder's name; `{topic}` a topic id (`T-12`) with its title as the tooltip; `{date}` the absolute date and `{when}` the long form of 10.2; `{days}` is always 90 or more, so the singular form is not needed. The reason lines have no final full stop (they are tooltip and notice lines, one per reason); the notice messages that are sentences do. Agent-facing text (`?old 140d`, `?dup K-4`, `ok K-4 verified (rev 3)`, `K-9 superseded by K-21 on 11-20`) is protocol, English only, and not in this catalogue (10).
+
+### 10.4.13 Keys of zoom and section folds
+
+New with zoom and section folds (2026-11-22; layout.md 4.9, components-records.md 5 Section fold, screens.md 8.34 and 8.35). Pending: to be moved into 10.4 and `catalogue.rs` when they are implemented, `cmd.zoom*` and `cmd.sections_*` after `cmd.reading_width`, `settings.zoom*` after `settings.language.hint`, `zoom.*` beside the status bar's keys, `section.*` after `section.timeline`. `{value}`, `{applied}` and `{chosen}` are percents in the form of 10.2 ("150%", "150 %" with U+202F). `{section}` is the section's own label key (`section.timeline`, ...), in French between « » because it is a name inside a sentence.
+
+**Reused**, not duplicated: the folded Topics count is `table.count`; the stepper of the Zoom row is the Terminal text size row's.
+
+| Key | English | French |
+|---|---|---|
+| `cmd.zoom_in` | Zoom in | Zoom avant |
+| `cmd.zoom_out` | Zoom out | Zoom arrière |
+| `cmd.zoom_reset` | Reset zoom | Réinitialiser le zoom |
+| `cmd.zoom` | Zoom: {value} | Zoom : {value} |
+| `cmd.sections_collapse` | Collapse all sections | Replier toutes les sections |
+| `cmd.sections_expand` | Expand all sections | Déplier toutes les sections |
+| `settings.zoom` | Zoom | Zoom |
+| `settings.zoom.hint` | Everything in the window. | Tout le contenu de la fenêtre. |
+| `zoom.status` | Zoom {value} | Zoom {value} |
+| `zoom.status.tip` | Reset to 100% | Revenir à 100 % |
+| `zoom.limited` | You chose {chosen}. {applied} is the most this window can show. | Vous avez choisi {chosen}. Cette fenêtre ne peut pas afficher plus de {applied}. |
+| `section.fold` | Collapse {section} | Replier « {section} » |
+| `section.unfold` | Expand {section} | Déplier « {section} » |
+| `section.count.entries` | {n} entry · {n} entries | {n} entrée · {n} entrées |
+
+### 10.4.14 Keys of the trash's selection and purge
+
+New with the user's ruling of 2026-11-22 (components-app.md 5, Trash page; data.md 11, request 25; ADR 0006 amendment). Pending: to be moved into 10.4 and `catalogue.rs` with the `trash.*` family when implemented. Palette commands follow the toolbar: "Restore selected", "Delete selected permanently...", "Empty trash..." (on the trash page only).
+
+| Key | English | French |
+|---|---|---|
+| `trash.selected` | {n} selected | {n} sélectionné · {n} sélectionnés |
+| `trash.delete_selected` | Delete permanently... | Supprimer définitivement... |
+| `trash.empty_all` | Empty trash... | Vider la corbeille... |
+| `trash.restored_n` | {n} item restored. · {n} items restored. | {n} élément restauré. · {n} éléments restaurés. |
+| `trash.confirm_title` | Delete {n} item permanently? · Delete {n} items permanently? | Supprimer définitivement {n} élément ? · Supprimer définitivement {n} éléments ? |
+| `trash.confirm_empty_title` | Empty the trash? | Vider la corbeille ? |
+| `trash.confirm_body` | They are removed from Acta's database now and cannot be restored. Snapshots made before today still hold them until they are replaced. | Ils sont retirés dès maintenant de la base de données d'Acta et ne pourront pas être restaurés. Les sauvegardes faites avant aujourd'hui les conservent jusqu'à leur remplacement. |
+| `trash.confirm_project` | {n} project with {content} · {n} projects with {content} | {n} projet avec {content} · {n} projets avec {content} |
+| `trash.confirm_delete` | Delete permanently | Supprimer définitivement |
+| `trash.delete_failed` | Could not delete. The database is busy; try again. | Suppression impossible. La base de données est occupée ; réessayez. |
+| `trash.kept_tip` | Still named in Acta, so it cannot be deleted. | Encore cité dans Acta : il ne peut pas être supprimé. |
+| `cmd.trash_restore` | Restore selected | Restaurer la sélection |
+| `cmd.trash_delete` | Delete selected permanently... | Supprimer définitivement la sélection... |
+| `cmd.trash_empty` | Empty trash... | Vider la corbeille... |
+
+### 10.4.15 Keys of the agent browser's developer tools
+
+New with the user's request of 2026-11-22 (components-app.md 5, Agent browser). Pending: into 10.4 after the `browser.*` keys when implemented.
+
+| Key | English | French |
+|---|---|---|
+| `browser.devtools` | Open developer tools | Ouvrir les outils de développement |
+| `cmd.browser_devtools` | Agent browser: Open developer tools | Navigateur de l'agent : ouvrir les outils de développement |
+
+### 10.4.16 Keys of "who writes what"
+
+From the user's rule of 2026-11-22 (components-records.md 5, Who writes what; data.md 11, request 26). Pending until implemented.
+
+**Removed** from 10.4 when it lands: `state.placeholder`, `description.placeholder`, `question.placeholder`, `question.answer_placeholder`, `question.log_decision`, `question.save_answer`, `questions.new`, `cmd.question_new`, `kb.new_document`, `kb.new_memory`, and the palette commands for New document and New memory.
+
+| Key | English | French |
+|---|---|---|
+| `state.empty` | Claude Code writes where this stands as it works. | Claude Code indique ici où en est le travail, au fil de l'avancement. |
+| `file.as_question` | Question for {path} | Question pour {path} |
+| `file.as_answer` | Answer to {id} | Réponse à {id} |
+| `capture.answer_chip` | Answer to {id} | Réponse à {id} |
+| `inbox.answers` | answers {id} | répond à {id} |
+
+### 10.4.17 Keys of page-bound tools and Claude Code (no project)
+
+From the user's decisions of 2026-11-22 (layout.md 4.5.1, data.md 11 request 27). Pending until implemented. `{level}` is the `level.*` word ("Topic", "Epic", "Project"; in French « Sujet », « Epic », « Projet »), `{id}` the short id, `{title}` the record's title as written, `{folder}` a folder's name, `{n}` the instance number.
+
+**Replaced** when it lands: `cmd.restart_terminal` ("Restart terminal here") by `cmd.claude_restart`; the terminal header's "Restart here" by `tool.restart_in` alone.
+
+| Key | English | French |
+|---|---|---|
+| `tool.owner` | {level} {id} {title} | {level} {id} {title} |
+| `tool.claude_n` | Claude {n} | Claude {n} |
+| `tool.chat_n` | Chat {n} | Chat {n} |
+| `tool.browser_n` | Browser {n} | Navigateur {n} |
+| `tool.browser_for` | Browser for Claude {n} | Navigateur de Claude {n} |
+| `tool.driven_by` | driven by Claude {n} | piloté par Claude {n} |
+| `tool.claude_start` | Start Claude Code here | Démarrer Claude Code ici |
+| `tool.claude_new` | New Claude Code session here | Nouvelle session Claude Code ici |
+| `tool.claude_none` | No Claude Code on this {level_lower} | Pas de Claude Code sur ce {level_lower} · Pas de Claude Code sur cet {level_lower} |
+| `tool.claude_none_body` | Starts in {folder} with what this {level_lower} knows. | Démarre dans {folder} avec ce que sait ce {level_lower}. |
+| `tool.no_owner` | Claude Code belongs to a project, an epic or a topic. Open one to start it or see its sessions. | Claude Code appartient à un projet, un epic ou un sujet. Ouvrez-en un pour le démarrer ou voir ses sessions. |
+| `tool.chat_new` | New chat here | Nouveau chat ici |
+| `tool.browser_new` | New browser here | Nouveau navigateur ici |
+| `tool.restart_in` | Restart in {folder} | Redémarrer dans {folder} |
+| `tool.limit` | {n} is the most on one page. | {n} au maximum sur une même page. |
+| `tool.free` | Claude Code (no project) | Claude Code (sans projet) |
+| `tool.free_context` | In your home folder, without Acta's context | Dans votre dossier personnel, sans le contexte d'Acta |
+| `tool.free_title` | Claude Code without a project | Claude Code sans projet |
+| `tool.free_body` | For work that needs no project: it starts in your home folder and knows nothing about Acta. | Pour un travail sans projet : il démarre dans votre dossier personnel et ne sait rien d'Acta. |
+| `tool.free_start` | Start | Démarrer |
+| `tool.free_new` | New Claude Code (no project) | Nouveau Claude Code (sans projet) |
+| `cmd.claude_restart` | Restart Claude Code | Redémarrer Claude Code |
+| `chat.clear_all_body` | This deletes the cookies and site data of every chat from this computer. Your conversations stay in your Claude account. | Cela supprime de cet ordinateur les cookies et données de site de tous les chats. Vos conversations restent dans votre compte Claude. |
+
+`{level_lower}` is the level word in lower case ("topic", « sujet »); the French form picks "cet" before "epic" (« cet epic »). The commands "Start Claude Code here", "New chat here" and "New browser here" use the `tool.*` labels above as their palette text.
