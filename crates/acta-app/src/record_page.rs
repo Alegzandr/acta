@@ -1037,6 +1037,7 @@ impl RecordPage {
     fn render_properties(
         &self,
         data: &Loaded,
+        due_focused: bool,
         locale: Locale,
         t: &Tokens,
         cx: &mut Context<Self>,
@@ -1107,7 +1108,7 @@ impl RecordPage {
         // The add chips: on one line under the last row, only while the
         // pointer is over the block or the picker they open is open, so the
         // page never moves under a reader who is not pointing at it.
-        let chips = (!due_row && (self.props_hover || self.due_picker.is_some()))
+        let chips = (!due_row && (self.props_hover || self.due_picker.is_some() || due_focused))
             .then(|| self.render_add_chips(locale, t, cx));
         div()
             .id("properties")
@@ -3226,6 +3227,9 @@ impl Render for RecordPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.global::<Tokens>().clone();
         let locale = settings::locale(cx);
+        // The add chip stays while it has the keyboard (the picker closed
+        // back onto it), as it does under the pointer.
+        let due_focused = self.due_focus.is_focused(window);
         // A figure of the Overview was opened: focus the table's first row
         // once it is drawn.
         if self.focus_first_row && self.data.is_some() {
@@ -3265,7 +3269,7 @@ impl Render for RecordPage {
         if let Some(data) = self.data.clone() {
             column = column
                 .child(self.render_title(&data, &t, cx))
-                .child(self.render_properties(&data, locale, &t, cx))
+                .child(self.render_properties(&data, due_focused, locale, &t, cx))
                 .children(self.render_claude_line(locale, &t, cx));
             if self.topic().is_some() {
                 column = column.child(self.render_state(&data, locale, &t, cx));
