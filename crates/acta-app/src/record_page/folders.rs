@@ -39,6 +39,10 @@ pub(super) struct FolderUi {
     _name_sub: Option<Subscription>,
     /// The branch selector of a folder.
     branch_menu: Option<BranchMenu>,
+    /// Where the switcher's, a branch's and a row's menus hang.
+    switch_anchor: menu::AnchorBounds,
+    branch_anchor: menu::AnchorBounds,
+    row_anchor: menu::AnchorBounds,
     /// Disk facts and git state, by stored path.
     disk: HashMap<String, Disk>,
     status: HashMap<String, StatusSummary>,
@@ -1185,7 +1189,9 @@ impl RecordPage {
                     this.font_family(type_scale::CODE.family())
                 })
                 .child(div().min_w_0().truncate().child(label))
-                .tooltip(ui::tip(text(locale, Key::FoldersGitBranchTip)))
+                .when(!open, |this| {
+                    this.tooltip(ui::tip(text(locale, Key::FoldersGitBranchTip)))
+                })
                 .on_click(cx.listener(move |page, _, _, cx| {
                     cx.stop_propagation();
                     if page
@@ -1202,7 +1208,8 @@ impl RecordPage {
                 })),
             )
             .when(open, |this| {
-                this.child(self.render_branch_menu(f, line, locale, t, cx))
+                this.child(self.folder_ui.branch_anchor.measure_keyed(folder.0 as u64))
+                    .child(self.render_branch_menu(f, line, locale, t, cx))
             })
             .into_any_element();
         folders_view::git_state(
@@ -1260,9 +1267,11 @@ impl RecordPage {
                         })),
                     ),
                 );
-            return deferred(anchored().offset(point(px(0.), px(22.))).child(panel))
-                .with_priority(1)
-                .into_any_element();
+            return self
+                .folder_ui
+                .branch_anchor
+                .below_keyed(folder.0 as u64, panel, menu::Align::Start, 1)
+                .unwrap_or_else(|| div().into_any_element());
         }
         if line.upstream {
             let hint = (line.behind > 0).then(|| {
@@ -1368,9 +1377,10 @@ impl RecordPage {
                 .on_click(cx.listener(|page, _, window, cx| page.start_new_branch(window, cx))),
             );
         }
-        deferred(anchored().offset(point(px(0.), px(22.))).child(panel))
-            .with_priority(1)
-            .into_any_element()
+        self.folder_ui
+            .branch_anchor
+            .below_keyed(folder.0 as u64, panel, menu::Align::Start, 1)
+            .unwrap_or_else(|| div().into_any_element())
     }
 
     pub(super) fn render_folders(
@@ -1455,27 +1465,35 @@ impl RecordPage {
                 }
             }
             let tip = tip.join("\n");
-            let button =
-                folders_view::switcher("folder-switcher", glyph, &active.name, active_missing, t)
-                    .tooltip(ui::tip(tip))
-                    .on_click(cx.listener(|page, _, _, cx| {
-                        cx.stop_propagation();
-                        page.folder_ui.switcher = match page.folder_ui.switcher {
-                            Some(_) => None,
-                            None => Some(0),
-                        };
-                        page.folder_ui.row_menu = None;
-                        page.folder_ui.branch_menu = None;
-                        cx.notify();
-                    }));
+            let button = folders_view::switcher(
+                "folder-switcher",
+                glyph,
+                &active.name,
+                active_missing,
+                false,
+                t,
+            )
+            .when(menu_open.is_none(), |this| this.tooltip(ui::tip(tip)))
+            .on_click(cx.listener(|page, _, _, cx| {
+                cx.stop_propagation();
+                page.folder_ui.switcher = match page.folder_ui.switcher {
+                    Some(_) => None,
+                    None => Some(0),
+                };
+                page.folder_ui.row_menu = None;
+                page.folder_ui.branch_menu = None;
+                cx.notify();
+            }));
             let mut wrap = div()
                 .relative()
                 .min_w(px(crate::terminal_dock::SWITCHER_MIN))
-                .child(button.w_full().overflow_hidden());
+                .child(button.w_full().overflow_hidden())
+                .child(self.folder_ui.switch_anchor.measure());
             if menu_open.is_some() {
                 let groups = self.switch_groups(folders, locale);
                 wrap = wrap.child(folders_view::switcher_menu(
                     "folder-switch-menu",
+                    &self.folder_ui.switch_anchor,
                     &groups,
                     menu_open,
                     locale,
@@ -1853,7 +1871,8 @@ impl RecordPage {
                         ),
                 )
                 .when(menu_open, |this| {
-                    this.child(self.render_row_menu(f, folders, locale, t, cx))
+                    this.child(self.folder_ui.row_anchor.measure_keyed(id.0 as u64))
+                        .child(self.render_row_menu(f, folders, locale, t, cx))
                 }),
         );
         let mut row = div()
@@ -1968,28 +1987,39 @@ impl RecordPage {
                 Owner::Epic(_) => Key::FoldersRemoveEpic,
                 Owner::Project(_) => Key::FoldersRemoveProject,
             };
-            panel = panel
-                .child(
-                    item("fm-up", Key::FoldersMoveUp)
-                        .on_click(cx.listener(move |page, _, _, cx| page.move_folder(id, -1, cx))),
-                )
-                .child(
-                    item("fm-down", Key::FoldersMoveDown)
-                        .on_click(cx.listener(move |page, _, _, cx| page.move_folder(id, 1, cx))),
-                )
-                .child(
-                    item("fm-other", Key::FoldersChooseOther).on_click(cx.listener(
-                        move |page, _, _, cx| {
-                            page.folder_ui.row_menu = None;
-                            page.choose_other(id, cx)
-                        },
-                    )),
-                )
-                .child(menu::separator(t))
-                .child(
-                    item("fm-remove", remove_key)
-                        .on_click(cx.listener(move |page, _, _, cx| page.remove_folder(id, cx))),
-                );
+            let own: Vec<FolderId> = folders
+                .items
+                .iter()
+                .filter(|item| item.own)
+                .map(|item| item.id)
+                .collect();
+            let (up, down) = move_options(&own, id);
+            panel =
+                panel
+                    .when(up, |this| {
+                        this.child(item("fm-up", Key::FoldersMoveUp).on_click(
+                            cx.listener(move |page, _, _, cx| page.move_folder(id, -1, cx)),
+                        ))
+                    })
+                    .when(down, |this| {
+                        this.child(item("fm-down", Key::FoldersMoveDown).on_click(
+                            cx.listener(move |page, _, _, cx| page.move_folder(id, 1, cx)),
+                        ))
+                    })
+                    .child(
+                        item("fm-other", Key::FoldersChooseOther).on_click(cx.listener(
+                            move |page, _, _, cx| {
+                                page.folder_ui.row_menu = None;
+                                page.choose_other(id, cx)
+                            },
+                        )),
+                    )
+                    .child(menu::separator(t))
+                    .child(
+                        item("fm-remove", remove_key).on_click(
+                            cx.listener(move |page, _, _, cx| page.remove_folder(id, cx)),
+                        ),
+                    );
         } else {
             let level = folders.level_name(f.origin).to_owned();
             let route = match f.origin {
@@ -2014,9 +2044,10 @@ impl RecordPage {
                 )),
             );
         }
-        deferred(anchored().offset(point(px(-176.), px(26.))).child(panel))
-            .with_priority(1)
-            .into_any_element()
+        self.folder_ui
+            .row_anchor
+            .below_keyed(id.0 as u64, panel, menu::Align::End, 1)
+            .unwrap_or_else(|| div().into_any_element())
     }
 
     /// The folder settings form, unfolded in place under an own folder.
@@ -2096,14 +2127,21 @@ impl RecordPage {
                 ))
                 .tooltip(ui::tip(tip))
         };
+        // Rows of equal length: 14 icons that do not fit on one line go
+        // 7 and 7, never 12 and 2 (QA 2026-11-22). The room is the column
+        // less the list's indent, the label and its gap.
+        let label_w = ui::text_width(type_scale::SMALL, &text(locale, Key::FoldersIcon), cx);
+        let room = ui::column_width() - 24. - label_w - 8. - 16.;
         let mut icons = div()
             .flex()
             .flex_row()
             .flex_wrap()
             .flex_1()
             .min_w_0()
-            .gap(px(2.))
-            .when(ui::two_line_rows(), |this| this.max_w(px(7. * 30.)))
+            .gap(px(ICON_GAP))
+            .when_some(balanced_width(fm::ICONS.len() + 1, room), |this, w| {
+                this.max_w(px(w))
+            })
             .child(
                 toggle(
                     format!("fi-auto-{}", id.0),
@@ -2296,5 +2334,60 @@ impl RecordPage {
             }
         }
         form.into_any_element()
+    }
+}
+
+/// The icon toggles of the folder form: 28 wide, 2 apart.
+const ICON_SIZE: f32 = 28.;
+const ICON_GAP: f32 = 2.;
+
+/// The width that lays `count` icon toggles out in rows of equal length
+/// within `room`: `None` when they fit on one line (or the room is not
+/// known), else the width of the longest balanced row.
+fn balanced_width(count: usize, room: f32) -> Option<f32> {
+    let step = ICON_SIZE + ICON_GAP;
+    let per_line = (((room + ICON_GAP) / step).floor() as usize).max(1);
+    if count <= per_line || !room.is_finite() {
+        return None;
+    }
+    let lines = count.div_ceil(per_line);
+    let per_row = count.div_ceil(lines);
+    Some(per_row as f32 * step - ICON_GAP)
+}
+
+/// Whether "Move up" and "Move down" apply to the own folder `id` among
+/// `own`, in stored order: never for an only folder, never past an end.
+fn move_options(own: &[FolderId], id: FolderId) -> (bool, bool) {
+    match own.iter().position(|f| *f == id) {
+        Some(at) => (at > 0, at + 1 < own.len()),
+        None => (false, false),
+    }
+}
+
+#[cfg(test)]
+mod form_tests {
+    use super::*;
+
+    #[test]
+    fn an_only_folder_moves_nowhere_and_the_ends_move_one_way() {
+        let a = FolderId(1);
+        let b = FolderId(2);
+        let c = FolderId(3);
+        assert_eq!(move_options(&[a], a), (false, false));
+        assert_eq!(move_options(&[a, b, c], a), (false, true));
+        assert_eq!(move_options(&[a, b, c], b), (true, true));
+        assert_eq!(move_options(&[a, b, c], c), (true, false));
+        assert_eq!(move_options(&[a, b], c), (false, false));
+    }
+
+    #[test]
+    fn icons_that_wrap_go_in_rows_of_equal_length() {
+        // Room for 12: 14 icons go 7 and 7.
+        assert_eq!(balanced_width(14, 12. * 30.), Some(7. * 30. - 2.));
+        // Room for all 14: one line.
+        assert_eq!(balanced_width(14, 14. * 30.), None);
+        // Room for 5: 14 go 5, 5, 4.
+        assert_eq!(balanced_width(14, 5. * 30.), Some(5. * 30. - 2.));
+        assert_eq!(balanced_width(14, f32::MAX), None);
     }
 }

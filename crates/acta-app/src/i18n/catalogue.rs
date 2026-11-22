@@ -3,8 +3,8 @@
 //! `i18n` check the two agree.
 //!
 //! Typography is applied here, not in the table: U+2026 for "...", the
-//! typographic apostrophe, and in French U+202F before ; : ! ? » and after
-//! « and before units, U+00A0 before the dash of `update.ready`.
+//! typographic apostrophe, and in French U+00A0 before :, U+202F before
+//! ; ! ? » and after « and before units.
 
 use super::{Msg, p, p_by, t};
 
@@ -265,14 +265,6 @@ catalogue! {
         en: t("Folders"),
         fr: t("Dossiers"),
     }
-    PropId "prop.id" {
-        en: t("Id"),
-        fr: t("Identifiant"),
-    }
-    PropUpdated "prop.updated" {
-        en: t("Updated"),
-        fr: t("Modifié"),
-    }
     PropProgress "prop.progress" {
         en: t("Progress"),
         fr: t("Avancement"),
@@ -288,6 +280,22 @@ catalogue! {
     PropDue "prop.due" {
         en: t("Due"),
         fr: t("Échéance"),
+    }
+    PropAddDue "prop.add_due" {
+        en: t("Due date"),
+        fr: t("Échéance"),
+    }
+    MetaRecord "meta.record" {
+        en: t("{id} \u{b7} Updated {when} by {author}"),
+        fr: t("{id} \u{b7} Modifié {when} par {author}"),
+    }
+    MetaUpdated "meta.updated" {
+        en: t("Updated {when} by {author}"),
+        fr: t("Modifié {when} par {author}"),
+    }
+    MetaCopyId "meta.copy_id" {
+        en: t("Copy id"),
+        fr: t("Copier l\u{2019}identifiant"),
     }
     DueNone "due.none" {
         en: t("None"),
@@ -422,11 +430,11 @@ catalogue! {
         fr: p("{n} sujet en retard", "{n} sujets en retard"),
     }
     OverviewIdle "overview.idle" {
-        en: p("{n} active topic with no activity for 7 days", "{n} active topics with no activity for 7 days"),
-        fr: p("{n} sujet actif sans activité depuis 7 jours", "{n} sujets actifs sans activité depuis 7 jours"),
+        en: p("{n} active topic idle for 7 days", "{n} active topics idle for 7 days"),
+        fr: p("{n} sujet en cours inactif depuis 7 jours", "{n} sujets en cours inactifs depuis 7 jours"),
     }
     OverviewInbox "overview.inbox" {
-        en: p("{n} note in the inbox for {days} days", "{n} notes in the inbox, the oldest for {days} days"),
+        en: p("{n} note in the inbox for {days} days", "{n} notes in the inbox, oldest {days} days"),
         fr: p("{n} note dans la boîte de réception depuis {days} jours", "{n} notes dans la boîte de réception, la plus ancienne depuis {days} jours"),
     }
     OverviewWeek "overview.week" {
@@ -446,8 +454,8 @@ catalogue! {
         fr: p("{n} nouveau sujet", "{n} nouveaux sujets"),
     }
     OverviewWeekNone "overview.week.none" {
-        en: t("Nothing done, decided or opened in the last 7 days. Last activity {when}."),
-        fr: t("Rien de terminé, décidé ni ouvert ces 7 derniers jours. Dernière activité {when}."),
+        en: t("Nothing done, decided or opened this week. Last activity {when}."),
+        fr: t("Rien de terminé, décidé ni ouvert cette semaine. Dernière activité {when}."),
     }
     OverviewEpics "overview.epics" {
         en: t("Epics"),
@@ -509,25 +517,17 @@ catalogue! {
         en: t("Discussion"),
         fr: t("Discussion"),
     }
-    ComposerPlaceholder "composer.placeholder" {
-        en: t("Add an entry\u{2026}"),
-        fr: t("Ajouter une entrée\u{2026}"),
-    }
     ComposerHint "composer.hint" {
         en: t("{keys} to save"),
         fr: t("{keys} pour enregistrer"),
-    }
-    ComposerAdd "composer.add" {
-        en: t("Add entry"),
-        fr: t("Ajouter l\u{2019}entrée"),
     }
     TimelineNew "timeline.new" {
         en: p("{n} new entry", "{n} new entries"),
         fr: p("{n} nouvelle entrée", "{n} nouvelles entrées"),
     }
     TimelineEmpty "timeline.empty" {
-        en: t("No entries yet. Add one, or let Claude Code log progress as it works."),
-        fr: t("Aucune entrée pour l\u{2019}instant. Ajoutez-en une, ou laissez Claude Code consigner l\u{2019}avancement au fil du travail."),
+        en: t("No entries yet. Claude Code logs progress here as it works."),
+        fr: t("Aucune entrée pour l\u{2019}instant. Claude Code consigne ici l\u{2019}avancement au fil du travail."),
     }
     EntryCopyMarkdown "entry.copy_markdown" {
         en: t("Copy as Markdown"),
@@ -606,8 +606,8 @@ catalogue! {
         fr: t("Sujet restauré."),
     }
     TopicEmptyProject "topic.empty_project" {
-        en: t("No topics yet. Capture notes and let Claude Code file them, or start one yourself."),
-        fr: t("Aucun sujet pour l\u{2019}instant. Saisissez des notes et laissez Claude Code les classer, ou créez-en un vous-même."),
+        en: t("Capture a note, or create a topic."),
+        fr: t("Saisissez une note ou créez un sujet."),
     }
     TopicEmptyHeading "topic.empty.heading" {
         en: t("No topics yet"),
@@ -623,11 +623,11 @@ catalogue! {
     }
     UndoChanged "undo.changed" {
         en: t("Not undone: it was changed since."),
-        fr: t("Non annulé\u{202f}: cela a été modifié depuis."),
+        fr: t("Non annulé\u{a0}: cela a été modifié depuis."),
     }
     RedoChanged "redo.changed" {
         en: t("Not redone: it was changed since."),
-        fr: t("Non rétabli\u{202f}: cela a été modifié depuis."),
+        fr: t("Non rétabli\u{a0}: cela a été modifié depuis."),
     }
     TableCount "table.count" {
         en: p("{n} topic", "{n} topics"),
@@ -762,12 +762,12 @@ catalogue! {
         fr: t("Entrée dans {path}"),
     }
     InboxEmpty "inbox.empty" {
-        en: t("Inbox is empty. Notes you capture land here until they become topics."),
-        fr: t("La boîte de réception est vide. Les notes que vous saisissez arrivent ici jusqu\u{2019}à devenir des sujets."),
+        en: t("Inbox is empty. Captured notes wait here until they are filed."),
+        fr: t("La boîte de réception est vide. Les notes saisies attendent ici d\u{2019}être classées."),
     }
     InboxFiledEmpty "inbox.filed_empty" {
-        en: t("No filed notes yet. Notes that become topics or entries are listed here."),
-        fr: t("Aucune note classée pour l’instant. Les notes devenues des sujets ou des entrées sont listées ici."),
+        en: t("No filed notes yet."),
+        fr: t("Aucune note classée pour l\u{2019}instant."),
     }
     KbNewDocument "kb.new_document" {
         en: t("New document"),
@@ -818,24 +818,16 @@ catalogue! {
         fr: t("{n} de plus dans les epics et sujets de ce projet"),
     }
     KbEmpty "kb.empty" {
-        en: t("Nothing here yet. Documents and memories for this topic appear here."),
-        fr: t("Rien ici pour l\u{2019}instant. Les documents et mémoires de ce sujet apparaîtront ici."),
-    }
-    KbEmptyEpic "kb.empty.epic" {
-        en: t("Nothing here yet. Documents and memories for this epic appear here."),
-        fr: t("Rien ici pour l’instant. Les documents et mémoires de cet epic apparaîtront ici."),
-    }
-    KbEmptyProject "kb.empty.project" {
-        en: t("Nothing here yet. Documents and memories for this project appear here."),
-        fr: t("Rien ici pour l’instant. Les documents et mémoires de ce projet apparaîtront ici."),
+        en: t("No documents or memories yet."),
+        fr: t("Aucun document ni mémoire pour l\u{2019}instant."),
     }
     KbSummaryMemory "kb.summary.memory" {
         en: t("One line: the fact, in short"),
-        fr: t("Une ligne\u{202f}: le fait, en bref"),
+        fr: t("Une ligne\u{a0}: le fait, en bref"),
     }
     KbSummaryDocument "kb.summary.document" {
         en: t("One line: what this is and when to read it"),
-        fr: t("Une ligne\u{202f}: ce que c\u{2019}est et quand le lire"),
+        fr: t("Une ligne\u{a0}: ce que c\u{2019}est et quand le lire"),
     }
     KbShowHistory "kb.show_history" {
         en: t("Show history"),
@@ -899,15 +891,15 @@ catalogue! {
     }
     KbFilterLevel "kb.filter.level" {
         en: t("Level: {value}"),
-        fr: t("Niveau\u{202f}: {value}"),
+        fr: t("Niveau\u{a0}: {value}"),
     }
     KbFilterKind "kb.filter.kind" {
         en: t("Kind: {value}"),
-        fr: t("Nature\u{202f}: {value}"),
+        fr: t("Nature\u{a0}: {value}"),
     }
     KbFilterAuthor "kb.filter.author" {
         en: t("Author: {value}"),
-        fr: t("Auteur\u{202f}: {value}"),
+        fr: t("Auteur\u{a0}: {value}"),
     }
     KbValueAll "kb.value.all" {
         en: t("All"),
@@ -1050,16 +1042,20 @@ catalogue! {
         fr: p("{n} introuvable", "{n} introuvables"),
     }
     FoldersAlsoTopic "folders.also_topic" {
-        en: t("Also attached to topic {name}. A session started in this folder outside Acta opens on epic {epic} and is told about both topics."),
-        fr: t("Également rattaché au sujet {name}. Une session lancée dans ce dossier hors d\u{2019}Acta s\u{2019}ouvre sur l\u{2019}epic {epic} et est informée des deux sujets."),
+        en: t("Also attached to topic {name}."),
+        fr: t("Également rattaché au sujet {name}."),
     }
     FoldersAlsoEpic "folders.also_epic" {
-        en: t("Also attached to epic {name}. A session started in this folder outside Acta opens on project {project} and is told about both epics."),
-        fr: t("Également rattaché à l\u{2019}epic {name}. Une session lancée dans ce dossier hors d\u{2019}Acta s\u{2019}ouvre sur le projet {project} et est informée des deux epics."),
+        en: t("Also attached to epic {name}."),
+        fr: t("Également rattaché à l\u{2019}epic {name}."),
     }
     FoldersAlsoMore "folders.also_more" {
         en: t("Also attached to topics {a}, {b} and {n} more."),
         fr: p("Également rattaché aux sujets {a}, {b} et {n} autre.", "Également rattaché aux sujets {a}, {b} et {n} autres."),
+    }
+    FoldersAlsoTip "folders.also.tip" {
+        en: t("A session started in this folder outside Acta opens on {level} and is told about both."),
+        fr: t("Une session lancée dans ce dossier hors d\u{2019}Acta s\u{2019}ouvre sur\u{a0}: {level}, et est informée des deux."),
     }
     FoldersShowW "folders.show.w" {
         en: t("Show in Explorer"),
@@ -1118,8 +1114,8 @@ catalogue! {
         fr: t("{folder} retiré de ce projet."),
     }
     FoldersLocatedFor "folders.located_for" {
-        en: t("{folder} located for epic {name} and everything that inherits from it."),
-        fr: t("{folder} localisé pour l\u{2019}epic {name} et tout ce qui en hérite."),
+        en: t("{folder} located for epic {name} and everything under it."),
+        fr: t("{folder} localisé pour l\u{2019}epic {name} et tout ce qu\u{2019}il contient."),
     }
     FoldersBulk "folders.bulk" {
         en: p("{n} other folder under {root} was not found either. Apply the same change to it?", "{n} other folders under {root} were not found either. Apply the same change to them?"),
@@ -1215,7 +1211,7 @@ catalogue! {
     }
     FoldersIconAutoHint "folders.icon.auto_hint" {
         en: t("Chosen from the folder: worktree, repository or plain folder"),
-        fr: t("Choisie d\u{2019}après le dossier\u{202f}: worktree, dépôt ou dossier simple"),
+        fr: t("Choisie d\u{2019}après le dossier\u{a0}: worktree, dépôt ou dossier simple"),
     }
     FoldersIconFolder "folders.icon.folder" {
         en: t("Folder"),
@@ -1303,11 +1299,11 @@ catalogue! {
     }
     FoldersCommitIdentity "folders.commit.identity" {
         en: t("Commits as {name}."),
-        fr: t("Commits au nom de\u{202f}: {name}."),
+        fr: t("Commits au nom de\u{a0}: {name}."),
     }
     FoldersCommitNoIdentity "folders.commit.no_identity" {
         en: t("Git has no user name here, so commits will fail."),
-        fr: t("Git n\u{2019}a pas de nom d\u{2019}utilisateur ici\u{202f}: les commits échoueront."),
+        fr: t("Git n\u{2019}a pas de nom d\u{2019}utilisateur ici\u{a0}: les commits échoueront."),
     }
     FoldersCommitFile "folders.commit.file" {
         en: t("Saved in .claude/settings.local.json, kept out of git."),
@@ -1379,7 +1375,7 @@ catalogue! {
     }
     FoldersGitErrTimedOut "folders.git.err.timed_out" {
         en: t("Git took too long, so Acta stopped it. Nothing was changed."),
-        fr: t("Git a mis trop de temps\u{202f}: Acta l\u{2019}a arrêté. Rien n\u{2019}a été modifié."),
+        fr: t("Git a mis trop de temps\u{a0}: Acta l\u{2019}a arrêté. Rien n\u{2019}a été modifié."),
     }
     FoldersGitErrNoUpstream "folders.git.err.no_upstream" {
         en: t("{branch} has no upstream branch to pull from. Nothing was changed."),
@@ -1391,11 +1387,11 @@ catalogue! {
     }
     FoldersGitErrDiverged "folders.git.err.diverged" {
         en: t("{branch} and its upstream have diverged, so it cannot be fast-forwarded. Nothing was changed."),
-        fr: t("{branch} et sa branche amont ont divergé\u{202f}: l\u{2019}avance rapide est impossible. Rien n\u{2019}a été modifié."),
+        fr: t("{branch} et sa branche amont ont divergé\u{a0}: l\u{2019}avance rapide est impossible. Rien n\u{2019}a été modifié."),
     }
     FoldersGitErrLocalChanges "folders.git.err.local_changes" {
         en: t("Local changes in {folder} would be overwritten. Nothing was changed: commit them or set them aside first."),
-        fr: t("Des modifications locales de {folder} seraient écrasées. Rien n\u{2019}a été modifié\u{202f}: commitez-les ou mettez-les de côté d\u{2019}abord."),
+        fr: t("Des modifications locales de {folder} seraient écrasées. Rien n\u{2019}a été modifié\u{a0}: commitez-les ou mettez-les de côté d\u{2019}abord."),
     }
     FoldersGitErrSignIn "folders.git.err.sign_in" {
         en: t("The remote asks for a sign-in, and Acta never asks for one. Nothing was changed."),
@@ -1423,7 +1419,7 @@ catalogue! {
     }
     FoldersGitErrOther "folders.git.err.other" {
         en: t("Git refused, and nothing was changed: {message}"),
-        fr: t("Git a refusé, rien n\u{2019}a été modifié\u{202f}: {message}"),
+        fr: t("Git a refusé, rien n\u{2019}a été modifié\u{a0}: {message}"),
     }
     FoldersGitBusyTitle "folders.git.busy.title" {
         en: t("Claude Code is working in {folder}"),
@@ -1527,19 +1523,19 @@ catalogue! {
     }
     TerminalMissingBodyTopic "terminal.missing.body.topic" {
         en: t("Claude Code was not started: the active folder of topic {name} is not on this computer."),
-        fr: t("Claude Code n\u{2019}a pas été lancé\u{202f}: le dossier actif du sujet {name} n\u{2019}est pas sur cet ordinateur."),
+        fr: t("Claude Code n\u{2019}a pas été lancé\u{a0}: le dossier actif du sujet {name} n\u{2019}est pas sur cet ordinateur."),
     }
     TerminalMissingBodyEpic "terminal.missing.body.epic" {
         en: t("Claude Code was not started: the active folder of epic {name} is not on this computer."),
-        fr: t("Claude Code n\u{2019}a pas été lancé\u{202f}: le dossier actif de l\u{2019}epic {name} n\u{2019}est pas sur cet ordinateur."),
+        fr: t("Claude Code n\u{2019}a pas été lancé\u{a0}: le dossier actif de l\u{2019}epic {name} n\u{2019}est pas sur cet ordinateur."),
     }
     TerminalMissingBodyProject "terminal.missing.body.project" {
         en: t("Claude Code was not started: the active folder of project {name} is not on this computer."),
-        fr: t("Claude Code n\u{2019}a pas été lancé\u{202f}: le dossier actif du projet {name} n\u{2019}est pas sur cet ordinateur."),
+        fr: t("Claude Code n\u{2019}a pas été lancé\u{a0}: le dossier actif du projet {name} n\u{2019}est pas sur cet ordinateur."),
     }
     TerminalMissingOther "terminal.missing.other" {
         en: t("Or start in another folder:"),
-        fr: t("Ou démarrer dans un autre dossier\u{202f}:"),
+        fr: t("Ou démarrer dans un autre dossier\u{a0}:"),
     }
     TerminalRunningIn "terminal.running_in" {
         en: t("(running in {name})"),
@@ -1590,16 +1586,16 @@ catalogue! {
         fr: t("Aide à la connexion"),
     }
     ChatStartTitle "chat.start.title" {
-        en: t("Chat with Claude beside your work"),
-        fr: t("Discutez avec Claude à côté de votre travail"),
+        en: t("Chat with Claude"),
+        fr: t("Discuter avec Claude"),
     }
     ChatStartBody "chat.start.body" {
-        en: t("This panel shows claude.ai, the website, in your system\u{2019}s web view. You sign in with your own account, and Acta does not read or change anything on the page."),
-        fr: t("Ce panneau affiche claude.ai, le site web, dans la vue web de votre système. Vous vous connectez avec votre propre compte, et Acta ne lit ni ne modifie rien sur la page."),
+        en: t("claude.ai in a panel, signed in with your own account. Acta never reads the page."),
+        fr: t("claude.ai dans un panneau, avec votre propre compte. Acta ne lit jamais la page."),
     }
     ChatStartMemory "chat.start.memory" {
-        en: t("Once started, the web view uses about 400 MB of memory, also while the panel is hidden."),
-        fr: t("Une fois lancée, la vue web utilise environ 400\u{202f}Mo de mémoire, même quand le panneau est masqué."),
+        en: t("Uses about 400 MB of memory once opened."),
+        fr: t("Utilise environ 400\u{202f}Mo de mémoire une fois ouvert."),
     }
     ChatStartHere "chat.start.here" {
         en: t("Open claude.ai here"),
@@ -1614,8 +1610,8 @@ catalogue! {
         fr: t("Ouverture de claude.ai\u{2026}"),
     }
     ChatSignin "chat.signin" {
-        en: t("Sign in with email: the link in the message opens in your browser and shows a code; type that code here. Signing in with Google or Apple may be refused in this panel."),
-        fr: t("Connectez-vous par e-mail\u{202f}: le lien du message s\u{2019}ouvre dans votre navigateur et affiche un code\u{202f}; saisissez ce code ici. La connexion avec Google ou Apple peut être refusée dans ce panneau."),
+        en: t("Sign in by email: open the link, then type the code it shows here. Google or Apple sign-in may be refused."),
+        fr: t("Connectez-vous par e-mail\u{a0}: ouvrez le lien, puis saisissez ici le code affiché. La connexion Google ou Apple peut être refusée."),
     }
     ChatHidden "chat.hidden" {
         en: t("The chat is hidden while this is open."),
@@ -1626,8 +1622,8 @@ catalogue! {
         fr: t("Le panneau de chat a besoin de WebView2"),
     }
     ChatRuntimeBody "chat.runtime.body" {
-        en: t("Microsoft\u{2019}s WebView2 runtime is not installed on this computer, so Acta cannot show claude.ai here. Everything else in Acta works."),
-        fr: t("Le composant WebView2 de Microsoft n\u{2019}est pas installé sur cet ordinateur\u{202f}; Acta ne peut donc pas afficher claude.ai ici. Tout le reste d\u{2019}Acta fonctionne."),
+        en: t("WebView2 is not installed, so claude.ai cannot show here. Everything else works."),
+        fr: t("WebView2 n\u{2019}est pas installé\u{a0}: claude.ai ne peut pas s\u{2019}afficher ici. Tout le reste fonctionne."),
     }
     ChatRuntimeGet "chat.runtime.get" {
         en: t("Get WebView2"),
@@ -1654,8 +1650,8 @@ catalogue! {
         fr: t("Se déconnecter et effacer les données du chat\u{202f}?"),
     }
     ChatSignoutBody "chat.signout.body" {
-        en: t("This deletes the panel\u{2019}s cookies and site data from this computer. Your conversations stay in your Claude account."),
-        fr: t("Cela supprime de cet ordinateur les cookies et les données de site du panneau. Vos conversations restent dans votre compte Claude."),
+        en: t("Signs you out of claude.ai here. Your conversations stay in your Claude account."),
+        fr: t("Vous déconnecte de claude.ai ici. Vos conversations restent dans votre compte Claude."),
     }
     ChatSignoutConfirm "chat.signout.confirm" {
         en: t("Sign out and clear"),
@@ -1763,23 +1759,23 @@ catalogue! {
     }
     LayoutMovedLeft "layout.moved.left" {
         en: t("View moved to the left sidebar: {view}"),
-        fr: t("Vue déplacée dans la barre latérale gauche\u{202f}: {view}"),
+        fr: t("Vue déplacée dans la barre latérale gauche\u{a0}: {view}"),
     }
     LayoutMovedRight "layout.moved.right" {
         en: t("View moved to the right sidebar: {view}"),
-        fr: t("Vue déplacée dans la barre latérale droite\u{202f}: {view}"),
+        fr: t("Vue déplacée dans la barre latérale droite\u{a0}: {view}"),
     }
     LayoutMovedBottom "layout.moved.bottom" {
         en: t("View moved to the bottom panel: {view}"),
-        fr: t("Vue déplacée dans le panneau du bas\u{202f}: {view}"),
+        fr: t("Vue déplacée dans le panneau du bas\u{a0}: {view}"),
     }
     LayoutMovedPage "layout.moved.page" {
         en: t("View moved to the page area: {view}"),
-        fr: t("Vue déplacée dans la zone des pages\u{202f}: {view}"),
+        fr: t("Vue déplacée dans la zone des pages\u{a0}: {view}"),
     }
     LayoutHidden "layout.hidden" {
         en: t("View hidden: {view}"),
-        fr: t("Vue masquée\u{202f}: {view}"),
+        fr: t("Vue masquée\u{a0}: {view}"),
     }
     LayoutResetDone "layout.reset_done" {
         en: t("Layout reset."),
@@ -1787,7 +1783,7 @@ catalogue! {
     }
     LayoutNoRoom "layout.no_room" {
         en: t("Not enough room: {reason}"),
-        fr: t("Pas assez de place\u{202f}: {reason}"),
+        fr: t("Pas assez de place\u{a0}: {reason}"),
     }
     LayoutNoRoomLeft "layout.no_room.left" {
         en: t("the window is too narrow for both sidebars."),
@@ -1812,6 +1808,10 @@ catalogue! {
     PaletteProjects "palette.projects" {
         en: t("Projects"),
         fr: t("Projets"),
+    }
+    PaletteEpics "palette.epics" {
+        en: t("Epics"),
+        fr: t("Epics"),
     }
     PaletteHintOpen "palette.hint.open" {
         en: t("{keys} open"),
@@ -1853,10 +1853,6 @@ catalogue! {
         en: t("New topic"),
         fr: t("Nouveau sujet"),
     }
-    CmdAddEntry "cmd.add_entry" {
-        en: t("Add entry"),
-        fr: t("Ajouter une entrée"),
-    }
     CmdGoInbox "cmd.go_inbox" {
         en: t("Go to inbox"),
         fr: t("Aller à la boîte de réception"),
@@ -1887,11 +1883,11 @@ catalogue! {
     }
     CmdOverviewMore "cmd.overview_more" {
         en: t("Overview: Show more"),
-        fr: t("Vue d\u{2019}ensemble\u{202f}: afficher plus"),
+        fr: t("Vue d\u{2019}ensemble\u{a0}: afficher plus"),
     }
     CmdOverviewLess "cmd.overview_less" {
         en: t("Overview: Show less"),
-        fr: t("Vue d\u{2019}ensemble\u{202f}: afficher moins"),
+        fr: t("Vue d\u{2019}ensemble\u{a0}: afficher moins"),
     }
     CmdBack "cmd.back" {
         en: t("Back"),
@@ -1915,7 +1911,7 @@ catalogue! {
     }
     CmdSetStatus "cmd.set_status" {
         en: t("Set status: {status}"),
-        fr: t("Définir le statut\u{202f}: {status}"),
+        fr: t("Définir le statut\u{a0}: {status}"),
     }
     CmdDueSet "cmd.due_set" {
         en: t("Set due date\u{2026}"),
@@ -1931,19 +1927,19 @@ catalogue! {
     }
     CmdTheme "cmd.theme" {
         en: t("Theme: {value}"),
-        fr: t("Thème\u{202f}: {value}"),
+        fr: t("Thème\u{a0}: {value}"),
     }
     CmdTextSize "cmd.text_size" {
         en: t("Text size: {value}"),
-        fr: t("Taille du texte\u{202f}: {value}"),
+        fr: t("Taille du texte\u{a0}: {value}"),
     }
     CmdReadingWidth "cmd.reading_width" {
         en: t("Reading width: {value}"),
-        fr: t("Largeur de lecture\u{202f}: {value}"),
+        fr: t("Largeur de lecture\u{a0}: {value}"),
     }
     CmdLanguage "cmd.language" {
         en: t("Language: {value}"),
-        fr: t("Langue\u{202f}: {value}"),
+        fr: t("Langue\u{a0}: {value}"),
     }
     CmdNewProject "cmd.new_project" {
         en: t("New project\u{2026}"),
@@ -1951,7 +1947,7 @@ catalogue! {
     }
     CmdTreeCollapseAll "cmd.tree_collapse_all" {
         en: t("Projects: Collapse all"),
-        fr: t("Projets\u{202f}: tout replier"),
+        fr: t("Projets\u{a0}: tout replier"),
     }
     CmdNewEpic "cmd.new_epic" {
         en: t("New epic\u{2026}"),
@@ -1987,31 +1983,31 @@ catalogue! {
     }
     CmdViewShow "cmd.view_show" {
         en: t("{view}: Show"),
-        fr: t("{view}\u{202f}: afficher"),
+        fr: t("{view}\u{a0}: afficher"),
     }
     CmdViewHide "cmd.view_hide" {
         en: t("{view}: Hide"),
-        fr: t("{view}\u{202f}: masquer"),
+        fr: t("{view}\u{a0}: masquer"),
     }
     CmdViewLeft "cmd.view_left" {
         en: t("{view}: Move to left sidebar"),
-        fr: t("{view}\u{202f}: déplacer dans la barre latérale gauche"),
+        fr: t("{view}\u{a0}: déplacer dans la barre latérale gauche"),
     }
     CmdViewRight "cmd.view_right" {
         en: t("{view}: Move to right sidebar"),
-        fr: t("{view}\u{202f}: déplacer dans la barre latérale droite"),
+        fr: t("{view}\u{a0}: déplacer dans la barre latérale droite"),
     }
     CmdViewBottom "cmd.view_bottom" {
         en: t("{view}: Move to bottom panel"),
-        fr: t("{view}\u{202f}: déplacer dans le panneau du bas"),
+        fr: t("{view}\u{a0}: déplacer dans le panneau du bas"),
     }
     CmdViewPage "cmd.view_page" {
         en: t("{view}: Move to page area"),
-        fr: t("{view}\u{202f}: déplacer dans la zone des pages"),
+        fr: t("{view}\u{a0}: déplacer dans la zone des pages"),
     }
     CmdViewSplitOff "cmd.view_split_off" {
         en: t("{view}: Split from group"),
-        fr: t("{view}\u{202f}: séparer du groupe"),
+        fr: t("{view}\u{a0}: séparer du groupe"),
     }
     CmdSplitRight "cmd.split_right" {
         en: t("Split right"),
@@ -2289,25 +2285,21 @@ catalogue! {
         en: t("Dark"),
         fr: t("Sombre"),
     }
-    SettingsThemeHint "settings.theme.hint" {
-        en: t("System follows your computer\u{2019}s setting."),
-        fr: t("«\u{202f}Système\u{202f}» suit le réglage de votre ordinateur."),
-    }
     SettingsLanguage "settings.language" {
         en: t("Language"),
         fr: t("Langue"),
     }
     SettingsLanguageHint "settings.language.hint" {
-        en: t("Changes Acta\u{2019}s own text. What you and Claude Code write is never translated."),
-        fr: t("Change les textes d\u{2019}Acta. Ce que vous et Claude Code écrivez n\u{2019}est jamais traduit."),
+        en: t("What you and Claude Code write is never translated."),
+        fr: t("Ce que vous et Claude Code écrivez n\u{2019}est jamais traduit."),
     }
     SettingsTextSize "settings.text_size" {
         en: t("Text size"),
         fr: t("Taille du texte"),
     }
     SettingsTextSizeHint "settings.text_size.hint" {
-        en: t("Timelines, notes and documents. The interface keeps its size."),
-        fr: t("Fils, notes et documents. L\u{2019}interface garde sa taille."),
+        en: t("Timelines, notes and documents."),
+        fr: t("Journaux, notes et documents."),
     }
     SettingsTextSizeSmall "settings.text_size.small" {
         en: t("Small"),
@@ -2324,10 +2316,6 @@ catalogue! {
     SettingsReadingWidth "settings.reading_width" {
         en: t("Reading width"),
         fr: t("Largeur de lecture"),
-    }
-    SettingsReadingWidthHint "settings.reading_width.hint" {
-        en: t("How wide pages get in a large window."),
-        fr: t("La largeur maximale des pages dans une grande fenêtre."),
     }
     SettingsReadingWidthNarrow "settings.reading_width.narrow" {
         en: t("Narrow"),
@@ -2346,8 +2334,8 @@ catalogue! {
         fr: t("Disposition"),
     }
     SettingsLayoutDesc "settings.layout.desc" {
-        en: t("Puts every view and panel back where it was on a new install. You can undo it right after."),
-        fr: t("Remet chaque vue et chaque panneau à sa place d’origine. Vous pouvez annuler juste après."),
+        en: t("Puts every view back in its default place."),
+        fr: t("Remet chaque vue à sa place par défaut."),
     }
     SettingsTerminalSize "settings.terminal_size" {
         en: t("Terminal text size"),
@@ -2409,6 +2397,18 @@ catalogue! {
         en: t("Could not check"),
         fr: t("Vérification impossible"),
     }
+    SettingsStatusReady "settings.status.ready" {
+        en: t("Acta is set up in Claude Code"),
+        fr: t("Acta est configuré dans Claude Code"),
+    }
+    SettingsStatusPartial "settings.status.partial" {
+        en: p("Setup incomplete: {n} of 3 step done", "Setup incomplete: {n} of 3 steps done"),
+        fr: p("Configuration incomplète\u{a0}: {n} étape sur 3 faite", "Configuration incomplète\u{a0}: {n} étapes sur 3 faites"),
+    }
+    SettingsStatusUnknown "settings.status.unknown" {
+        en: t("Could not check the setup"),
+        fr: t("Impossible de vérifier la configuration"),
+    }
     SettingsSetup "settings.setup" {
         en: t("Set up Claude Code"),
         fr: t("Configurer Claude Code"),
@@ -2422,6 +2422,14 @@ catalogue! {
         fr: t("Retirer de Claude Code"),
     }
     SettingsSetupHint "settings.setup.hint" {
+        en: t("Lets Claude Code read and update your projects in Acta."),
+        fr: t("Permet à Claude Code de lire et de mettre à jour vos projets dans Acta."),
+    }
+    SettingsSetupWhat "settings.setup.what" {
+        en: t("What setup changes"),
+        fr: t("Ce que change la configuration"),
+    }
+    SettingsSetupDetails "settings.setup.details" {
         en: t("Setup installs Acta\u{2019}s plugin in Claude Code, adds two permission lines (Acta and its browser) and Acta\u{2019}s status line to ~/.claude/settings.json (after your own status line, if you have one), and turns Claude Code\u{2019}s own memory off in the open project\u{2019}s folders. Remove undoes all of it."),
         fr: t("La configuration installe le plugin d\u{2019}Acta dans Claude Code, ajoute deux lignes d\u{2019}autorisation (Acta et son navigateur) et la ligne d\u{2019}état d\u{2019}Acta à ~/.claude/settings.json (après votre propre ligne d\u{2019}état, si vous en avez une), et désactive la mémoire propre à Claude Code dans les dossiers du projet ouvert. Retirer annule tout cela."),
     }
@@ -2430,8 +2438,8 @@ catalogue! {
         fr: t("Retirer Acta de Claude Code\u{202f}?"),
     }
     SettingsRemoveBody "settings.remove.body" {
-        en: t("This uninstalls Acta\u{2019}s plugin, takes out the permission lines and the status line setup added to ~/.claude/settings.json (your own status line comes back), and turns Claude Code\u{2019}s own memory back on where Acta turned it off. Your projects stay in Acta."),
-        fr: t("Cela désinstalle le plugin d\u{2019}Acta, retire les lignes d\u{2019}autorisation et la ligne d\u{2019}état ajoutées par la configuration à ~/.claude/settings.json (votre propre ligne d\u{2019}état revient), et réactive la mémoire propre à Claude Code là où Acta l\u{2019}avait désactivée. Vos projets restent dans Acta."),
+        en: t("Removes Acta\u{2019}s plugin, permissions and status line from Claude Code, and turns its own memory back on. Your projects stay in Acta."),
+        fr: t("Retire de Claude Code le plugin, les autorisations et la ligne d\u{2019}état d\u{2019}Acta, et réactive sa propre mémoire. Vos projets restent dans Acta."),
     }
     SettingsRemoveConfirm "settings.remove.confirm" {
         en: t("Remove"),
@@ -2443,23 +2451,27 @@ catalogue! {
     }
     SettingsExportLast "settings.export.last" {
         en: t("Last export: {days}"),
-        fr: t("Dernier export\u{202f}: {days}"),
+        fr: t("Dernier export\u{a0}: {days}"),
     }
     SettingsExportNever "settings.export.never" {
         en: t("Never exported"),
         fr: t("Jamais exporté"),
     }
     SettingsSnapshotsToday "settings.snapshots.today" {
-        en: p("{n} snapshot kept; the newest is from today, {time}", "{n} snapshots kept; the newest is from today, {time}"),
-        fr: p("{n} instantané conservé\u{202f}; le plus récent date d\u{2019}aujourd\u{2019}hui à {time}", "{n} instantanés conservés\u{202f}; le plus récent date d\u{2019}aujourd\u{2019}hui à {time}"),
+        en: p("{n} snapshot, from today, {time}", "{n} snapshots, newest today, {time}"),
+        fr: p("{n} instantané, d\u{2019}aujourd\u{2019}hui à {time}", "{n} instantanés, le plus récent d\u{2019}aujourd\u{2019}hui à {time}"),
     }
     SettingsSnapshotsOlder "settings.snapshots.older" {
-        en: p("{n} snapshot kept; the newest is from {datetime}", "{n} snapshots kept; the newest is from {datetime}"),
-        fr: p("{n} instantané conservé\u{202f}; le plus récent date du {datetime}", "{n} instantanés conservés\u{202f}; le plus récent date du {datetime}"),
+        en: p("{n} snapshot, from {datetime}", "{n} snapshots, newest {datetime}"),
+        fr: p("{n} instantané, du {datetime}", "{n} instantanés, le plus récent du {datetime}"),
     }
     SettingsSnapshots "settings.snapshots" {
         en: t("Snapshots"),
         fr: t("Instantanés"),
+    }
+    SettingsRestore "settings.restore" {
+        en: t("Restore\u{2026}"),
+        fr: t("Restaurer\u{2026}"),
     }
     SettingsTrashCount "settings.trash_count" {
         en: p("{n} item", "{n} items"),
@@ -2472,6 +2484,10 @@ catalogue! {
     SettingsChat "settings.chat" {
         en: t("Chat"),
         fr: t("Chat"),
+    }
+    SettingsChatData "settings.chat_data" {
+        en: t("Chat data"),
+        fr: t("Données du chat"),
     }
     SettingsAbout "settings.about" {
         en: t("About"),
@@ -2495,19 +2511,19 @@ catalogue! {
     }
     StatusbarNotSetUp "statusbar.not_set_up" {
         en: t("Claude Code: not set up"),
-        fr: t("Claude Code\u{202f}: non configuré"),
+        fr: t("Claude Code\u{a0}: non configuré"),
     }
     StatusbarNotFound "statusbar.not_found" {
         en: t("Claude Code: not found"),
-        fr: t("Claude Code\u{202f}: introuvable"),
+        fr: t("Claude Code\u{a0}: introuvable"),
     }
     StatusbarNoFolder "statusbar.no_folder" {
-        en: t("Claude Code: no folder for this project"),
-        fr: t("Claude Code\u{202f}: aucun dossier pour ce projet"),
+        en: t("Claude Code: no folder"),
+        fr: t("Claude Code\u{a0}: aucun dossier"),
     }
     StatusbarReady "statusbar.ready" {
         en: t("Claude Code: ready"),
-        fr: t("Claude Code\u{202f}: prêt"),
+        fr: t("Claude Code\u{a0}: prêt"),
     }
     StatusbarLastWrote "statusbar.last_wrote" {
         en: t("Last wrote {when} in {topic}"),
@@ -2518,8 +2534,8 @@ catalogue! {
         fr: t("Acta {version}"),
     }
     UpdateReady "update.ready" {
-        en: t("Update ready \u{2013} restart to apply"),
-        fr: t("Mise à jour prête\u{a0}\u{2013} redémarrer pour l\u{2019}appliquer"),
+        en: t("Restart to update"),
+        fr: t("Redémarrer pour mettre à jour"),
     }
     UpdateDone "update.done" {
         en: t("Updated to {version}"),
@@ -2558,8 +2574,8 @@ catalogue! {
         fr: t("Ce projet"),
     }
     ExportWarning "export.warning" {
-        en: t("The file is not encrypted. Anyone who can open it can read these projects. That is what lets you read it without Acta or its key."),
-        fr: t("Le fichier n\u{2019}est pas chiffré. Toute personne pouvant l\u{2019}ouvrir peut lire ces projets. C\u{2019}est ce qui vous permet de le lire sans Acta ni sa clé."),
+        en: t("The file is not encrypted: anyone who opens it can read these projects."),
+        fr: t("Le fichier n\u{2019}est pas chiffré\u{a0}: quiconque l\u{2019}ouvre peut lire ces projets."),
     }
     ExportPassphrase "export.passphrase" {
         en: t("Protect with a passphrase"),
@@ -2582,8 +2598,8 @@ catalogue! {
         fr: t("Afficher dans le dossier"),
     }
     ExportSuggest "export.suggest" {
-        en: t("Everything is stored on this computer only. An export is your copy if the system keychain is ever lost."),
-        fr: t("Tout est stocké sur cet ordinateur uniquement. Un export vous sert de copie si le trousseau du système venait à être perdu."),
+        en: t("Everything is on this computer only. An export is your copy if the keychain is lost."),
+        fr: t("Tout est sur cet ordinateur uniquement. Un export est votre copie si le trousseau est perdu."),
     }
     ImportTitle "import.title" {
         en: t("Import \"{file}\""),
@@ -2634,8 +2650,8 @@ catalogue! {
         fr: t("Mémoires"),
     }
     ImportSafe "import.safe" {
-        en: t("Nothing here will be deleted. Skipped records are the same as, or older than, what Acta already has."),
-        fr: t("Rien ne sera supprimé. Les éléments ignorés sont identiques à ceux qu\u{2019}Acta possède déjà, ou plus anciens."),
+        en: t("Nothing will be deleted. Skipped records are the same as Acta\u{2019}s, or older."),
+        fr: t("Rien ne sera supprimé. Les éléments ignorés sont identiques à ceux d\u{2019}Acta, ou plus anciens."),
     }
     ImportShowChanges "import.show_changes" {
         en: t("Show what changes"),
@@ -2647,7 +2663,7 @@ catalogue! {
     }
     ImportDone "import.done" {
         en: t("Imported: {created}, {updated}. A snapshot from before the import is kept."),
-        fr: t("Import terminé\u{202f}: {created}, {updated}. Un instantané d\u{2019}avant l\u{2019}import est conservé."),
+        fr: t("Import terminé\u{a0}: {created}, {updated}. Un instantané d\u{2019}avant l\u{2019}import est conservé."),
     }
     ImportCountCreated "import.count.created" {
         en: t("{n} created"),
@@ -2667,7 +2683,7 @@ catalogue! {
     }
     ImportRecoveredManual "import.recovered_manual" {
         en: t("Commit modes come back as Manual: set them again in each folder\u{2019}s settings."),
-        fr: t("Les modes de commit reviennent en Manuel\u{202f}: redéfinissez-les dans les réglages de chaque dossier."),
+        fr: t("Les modes de commit reviennent en Manuel\u{a0}: redéfinissez-les dans les réglages de chaque dossier."),
     }
     ImportNewer "import.newer" {
         en: t("This file was made by a newer Acta (format {n}). Update Acta, then import it."),
@@ -2743,7 +2759,7 @@ catalogue! {
     }
     SnapshotBody "snapshot.body" {
         en: t("Acta will restart with its data as of {datetime}. Everything as it is now is saved as a snapshot first, so you can come back."),
-        fr: t("Acta redémarrera avec ses données du {datetime}. La situation actuelle est d\u{2019}abord enregistrée dans un instantané\u{202f}: vous pourrez y revenir."),
+        fr: t("Acta redémarrera avec ses données du {datetime}. La situation actuelle est d\u{2019}abord enregistrée dans un instantané\u{a0}: vous pourrez y revenir."),
     }
     SnapshotRestored "snapshot.restored" {
         en: t("Restored the snapshot from {datetime}."),
@@ -2771,7 +2787,7 @@ catalogue! {
     }
     KeylossBodyUnreadable "keyloss.body.unreadable" {
         en: t("Acta found its key, but the database cannot be read with it: the file may be damaged, or the key belongs to another database. This can follow a disk error or a copy of the file from another computer."),
-        fr: t("Acta a trouvé sa clé, mais elle ne permet pas de lire la base de données\u{202f}: le fichier est peut-être endommagé, ou la clé appartient à une autre base. Cela peut suivre une erreur de disque ou une copie du fichier depuis un autre ordinateur."),
+        fr: t("Acta a trouvé sa clé, mais elle ne permet pas de lire la base de données\u{a0}: le fichier est peut-être endommagé, ou la clé appartient à une autre base. Cela peut suivre une erreur de disque ou une copie du fichier depuis un autre ordinateur."),
     }
     KeychainW "keychain.w" {
         en: t("Windows Credential Manager"),
@@ -2787,7 +2803,7 @@ catalogue! {
     }
     KeylossUntouched "keyloss.untouched" {
         en: t("Acta has not changed the file:"),
-        fr: t("Acta n\u{2019}a pas modifié le fichier\u{202f}:"),
+        fr: t("Acta n\u{2019}a pas modifié le fichier\u{a0}:"),
     }
     KeylossImport "keyloss.import" {
         en: t("Import an export\u{2026}"),
@@ -2822,8 +2838,8 @@ catalogue! {
         fr: t("Commencez par un projet"),
     }
     FirstrunBody "firstrun.body" {
-        en: t("A project is a folder you work on with Claude Code. Acta keeps its topics, decisions and notes next to the work."),
-        fr: t("Un projet est un dossier sur lequel vous travaillez avec Claude Code. Acta garde ses sujets, ses décisions et ses notes à côté du travail."),
+        en: t("A project is a folder you work on with Claude Code. Acta keeps its topics, decisions and notes."),
+        fr: t("Un projet est un dossier sur lequel vous travaillez avec Claude Code. Acta en garde les sujets, les décisions et les notes."),
     }
     FirstrunChoose "firstrun.choose" {
         en: t("Choose a folder"),
@@ -2954,20 +2970,16 @@ catalogue! {
         fr: t("Navigateur de l\u{2019}agent"),
     }
     BrowserAddress "browser.address" {
-        en: t("Type an address and press Enter"),
-        fr: t("Saisissez une adresse et appuyez sur Entrée"),
+        en: t("Address"),
+        fr: t("Adresse"),
     }
     BrowserIdleTitle "browser.idle.title" {
         en: t("Claude Code\u{2019}s browser"),
         fr: t("Le navigateur de Claude Code"),
     }
     BrowserIdleBody "browser.idle.body" {
-        en: t("Claude Code opens pages here when it needs a browser: your local dev server, or a site you signed into here. Sign in to a site once in this view and Claude Code reuses the session. It never opens claude.ai and never types passwords."),
-        fr: t("Claude Code ouvre ici les pages dont il a besoin\u{202f}: votre serveur de développement local, ou un site auquel vous vous êtes connecté ici. Connectez-vous une fois à un site dans cette vue et Claude Code réutilise la session. Il n\u{2019}ouvre jamais claude.ai et ne saisit jamais de mot de passe."),
-    }
-    BrowserIdleMemory "browser.idle.memory" {
-        en: t("The browser starts on first use and uses about 150 MB of memory until it has been unused for 10 minutes."),
-        fr: t("Le navigateur démarre à la première utilisation et occupe environ 150\u{202f}Mo de mémoire jusqu\u{2019}à 10 minutes sans utilisation."),
+        en: t("Claude Code opens pages here: your dev server, or sites you signed into here. It never opens claude.ai and never types passwords."),
+        fr: t("Claude Code ouvre ses pages ici\u{a0}: votre serveur de développement, ou les sites auxquels vous vous êtes connecté ici. Il n\u{2019}ouvre jamais claude.ai et ne saisit jamais de mot de passe."),
     }
     BrowserStarting "browser.starting" {
         en: t("Starting the browser\u{2026}"),
@@ -2991,7 +3003,7 @@ catalogue! {
     }
     BrowserHandoff "browser.handoff" {
         en: t("Claude Code asks you: {message}"),
-        fr: t("Claude Code vous demande\u{202f}: {message}"),
+        fr: t("Claude Code vous demande\u{a0}: {message}"),
     }
     BrowserDone "browser.done" {
         en: t("Done"),
@@ -3047,7 +3059,7 @@ catalogue! {
     }
     BrowserClearBody "browser.clear.body" {
         en: t("This deletes the cookies and site data of Acta\u{2019}s browser from this computer: you are signed out of every site you signed into there."),
-        fr: t("Cela supprime de cet ordinateur les cookies et les données de site du navigateur d\u{2019}Acta\u{202f}: vous êtes déconnecté de tous les sites auxquels vous vous y étiez connecté."),
+        fr: t("Cela supprime de cet ordinateur les cookies et les données de site du navigateur d\u{2019}Acta\u{a0}: vous êtes déconnecté de tous les sites auxquels vous vous y étiez connecté."),
     }
     BrowserClearConfirm "browser.clear.confirm" {
         en: t("Clear data"),
@@ -3070,8 +3082,8 @@ catalogue! {
         fr: t("Le navigateur de l\u{2019}agent a besoin de WebView2"),
     }
     BrowserRuntimeBody "browser.runtime.body" {
-        en: t("Microsoft\u{2019}s WebView2 runtime is not installed on this computer, so Acta cannot open its browser. Everything else in Acta works."),
-        fr: t("Le composant WebView2 de Microsoft n\u{2019}est pas installé sur cet ordinateur\u{202f}; Acta ne peut donc pas ouvrir son navigateur. Tout le reste d\u{2019}Acta fonctionne."),
+        en: t("WebView2 is not installed, so the browser cannot start. Everything else works."),
+        fr: t("WebView2 n\u{2019}est pas installé\u{a0}: le navigateur ne peut pas démarrer. Tout le reste fonctionne."),
     }
     BrowserFailedTitle "browser.failed.title" {
         en: t("The browser could not be started"),
@@ -3079,7 +3091,7 @@ catalogue! {
     }
     BrowserPipeTaken "browser.pipe.taken" {
         en: t("Claude Code cannot reach this browser: another copy of Acta, or another program, already serves it. Close it and restart Acta."),
-        fr: t("Claude Code ne peut pas joindre ce navigateur\u{202f}: une autre copie d\u{2019}Acta, ou un autre programme, le sert déjà. Fermez-le et redémarrez Acta."),
+        fr: t("Claude Code ne peut pas joindre ce navigateur\u{a0}: une autre copie d\u{2019}Acta, ou un autre programme, le sert déjà. Fermez-le et redémarrez Acta."),
     }
     BrowserPipeFailed "browser.pipe.failed" {
         en: t("Claude Code cannot reach this browser. Restart Acta; the log says why."),
@@ -3115,7 +3127,7 @@ catalogue! {
     }
     StatusbarSessions "statusbar.sessions" {
         en: t("Claude Code: {list}"),
-        fr: t("Claude Code\u{202f}: {list}"),
+        fr: t("Claude Code\u{a0}: {list}"),
     }
     SessionsStateWorking "sessions.state.working" {
         en: t("Working"),
@@ -3135,11 +3147,11 @@ catalogue! {
     }
     SessionsLast "sessions.last" {
         en: t("last: {activity}"),
-        fr: t("dernière action\u{202f}: {activity}"),
+        fr: t("dernière action\u{a0}: {activity}"),
     }
     SessionsLastTool "sessions.last_tool" {
         en: t("last tool: {tool}"),
-        fr: t("dernier outil\u{202f}: {tool}"),
+        fr: t("dernier outil\u{a0}: {tool}"),
     }
     SessionsInActa "sessions.in_acta" {
         en: t("in Acta\u{2019}s terminal"),
@@ -3150,8 +3162,8 @@ catalogue! {
         fr: t("dans un autre terminal"),
     }
     SessionsEmpty "sessions.empty" {
-        en: t("No Claude Code session is running. Sessions started in Acta\u{2019}s terminal, or in any terminal inside an attached folder, appear here."),
-        fr: t("Aucune session Claude Code n\u{2019}est en cours. Les sessions lancées dans le terminal d\u{2019}Acta, ou dans n\u{2019}importe quel terminal à l\u{2019}intérieur d\u{2019}un dossier rattaché, apparaissent ici."),
+        en: t("No Claude Code session is running."),
+        fr: t("Aucune session Claude Code en cours."),
     }
     SessionsShowTerminal "sessions.show_terminal" {
         en: t("Show terminal"),
@@ -3181,17 +3193,13 @@ catalogue! {
         en: t("Continue the last conversation of each page"),
         fr: t("Reprendre la dernière conversation de chaque page"),
     }
-    SettingsResumeHint "settings.resume.hint" {
-        en: t("When the terminal starts from a topic, an epic or a project, Claude Code resumes the conversation last held there, if it still has it. /clear in Claude Code starts a new one."),
-        fr: t("Quand le terminal démarre depuis un sujet, un epic ou un projet, Claude Code reprend la dernière conversation menée là, s\u{2019}il l\u{2019}a encore. /clear dans Claude Code en commence une nouvelle."),
-    }
     SettingsFlashWaiting "settings.flash_waiting" {
         en: t("Flash Acta in the taskbar when a session waits for you"),
         fr: t("Faire clignoter Acta dans la barre des tâches quand une session vous attend"),
     }
     SettingsFlashWaitingHint "settings.flash_waiting.hint" {
-        en: t("For sessions started in Acta\u{2019}s terminal, while no Acta window is active. Acta never takes the focus."),
-        fr: t("Pour les sessions lancées dans le terminal d\u{2019}Acta, quand aucune fenêtre d\u{2019}Acta n\u{2019}est active. Acta ne prend jamais le focus."),
+        en: t("Only while Acta is in the background."),
+        fr: t("Seulement quand Acta est en arrière-plan."),
     }
     CmdResumeOn "cmd.resume_on" {
         en: t("Continue the last conversation of each page"),
@@ -3219,11 +3227,11 @@ catalogue! {
     }
     UsageFiveHourTip "usage.five_hour.tip" {
         en: t("5-hour limit: {percent} used"),
-        fr: t("Limite sur 5 heures\u{202f}: {percent} utilisés"),
+        fr: t("Limite sur 5 heures\u{a0}: {percent} utilisés"),
     }
     UsageSevenDayTip "usage.seven_day.tip" {
         en: t("7-day limit: {percent} used"),
-        fr: t("Limite sur 7 jours\u{202f}: {percent} utilisés"),
+        fr: t("Limite sur 7 jours\u{a0}: {percent} utilisés"),
     }
     UsageResetsAt "usage.resets_at" {
         en: t("resets at {time}"),
@@ -3237,10 +3245,6 @@ catalogue! {
         en: t("This window has reset since Claude Code last reported it."),
         fr: t("Cette fenêtre a été réinitialisée depuis le dernier relevé de Claude Code."),
     }
-    UsageNoData "usage.no_data" {
-        en: t("Plan usage: no data yet"),
-        fr: t("Utilisation du forfait\u{202f}: pas encore de données"),
-    }
     UsageNoDataTip "usage.no_data.tip" {
         en: t("Claude Code reports your plan\u{2019}s limits after the first answer of a session (Pro, Max and Ultra plans), through Acta\u{2019}s status line."),
         fr: t("Claude Code signale les limites de votre forfait après la première réponse d\u{2019}une session (forfaits Pro, Max et Ultra), par la ligne d\u{2019}état d\u{2019}Acta."),
@@ -3248,10 +3252,6 @@ catalogue! {
     SettingsUsage "settings.usage" {
         en: t("Show plan usage in the status bar"),
         fr: t("Afficher l\u{2019}utilisation du forfait dans la barre d\u{2019}état"),
-    }
-    SettingsUsageHint "settings.usage.hint" {
-        en: t("The 5-hour and 7-day limits of your Claude plan, as Claude Code last reported them."),
-        fr: t("Les limites sur 5 heures et sur 7 jours de votre forfait Claude, telles que Claude Code les a signalées en dernier."),
     }
     CmdUsageOn "cmd.usage_on" {
         en: t("Show plan usage in the status bar"),
@@ -3266,8 +3266,8 @@ catalogue! {
         fr: t("Configurer Claude Code\u{202f}?"),
     }
     SettingsSetupBody "settings.setup.body" {
-        en: t("Acta installs its plugin in Claude Code and adds two permission lines and its status line to ~/.claude/settings.json; your own status line, if you have one, still shows first."),
-        fr: t("Acta installe son plugin dans Claude Code et ajoute deux lignes d\u{2019}autorisation et sa ligne d\u{2019}état à ~/.claude/settings.json\u{202f}; votre propre ligne d\u{2019}état, si vous en avez une, reste affichée en premier."),
+        en: t("Acta adds its plugin, two permissions and its status line to ~/.claude/settings.json. Your own status line still shows first."),
+        fr: t("Acta ajoute son plugin, deux autorisations et sa ligne d\u{2019}état à ~/.claude/settings.json. Votre propre ligne d\u{2019}état reste affichée en premier."),
     }
     SettingsSetupFolders "settings.setup.folders" {
         en: p("It also turns Claude Code\u{2019}s own memory off in {n} folder of {project}.", "It also turns Claude Code\u{2019}s own memory off in {n} folders of {project}."),
@@ -3278,7 +3278,7 @@ catalogue! {
         fr: t("Configurer"),
     }
     SettingsPluginHint "settings.plugin.hint" {
-        en: t("Sessions started in Acta\u{2019}s terminal load Acta\u{2019}s plugin from this build, set up or not. To turn that off, set \"acta@inline\": false under enabledPlugins in Claude Code\u{2019}s settings."),
-        fr: t("Les sessions lancées dans le terminal d\u{2019}Acta chargent le plugin d\u{2019}Acta de cette version, configuré ou non. Pour l\u{2019}éviter, mettez \"acta@inline\": false sous enabledPlugins dans les réglages de Claude Code."),
+        en: t("Sessions started in Acta\u{2019}s terminal always load Acta\u{2019}s plugin. To stop that, set \"acta@inline\": false under enabledPlugins."),
+        fr: t("Les sessions lancées dans le terminal d\u{2019}Acta chargent toujours le plugin d\u{2019}Acta. Pour l\u{2019}éviter, mettez \"acta@inline\": false sous enabledPlugins."),
     }
 }

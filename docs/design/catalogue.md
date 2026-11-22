@@ -74,12 +74,14 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `prop.status` | Status | Statut |
 | `prop.epic` | Epic | Epic |
 | `prop.folders` | Folders | Dossiers |
-| `prop.id` | Id | Identifiant |
-| `prop.updated` | Updated | Modifié |
 | `prop.progress` | Progress | Avancement |
 | `prop.kind` | Kind | Nature |
 | `prop.level` | Level | Niveau |
 | `prop.due` | Due | Échéance |
+| `prop.add_due` | Due date | Échéance |
+| `meta.record` | {id} · Updated {when} by {author} | {id} · Modifié {when} par {author} |
+| `meta.updated` | Updated {when} by {author} | Modifié {when} par {author} |
+| `meta.copy_id` | Copy id | Copier l'identifiant |
 | `due.none` | None | Aucune |
 | `due.today` | Today | Aujourd'hui |
 | `due.tomorrow` | Tomorrow | Demain |
@@ -113,13 +115,13 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `overview.attention` | Needs attention | À traiter |
 | `overview.blocked` | {n} blocked topic · {n} blocked topics | {n} sujet bloqué · {n} sujets bloqués |
 | `overview.overdue` | {n} overdue topic · {n} overdue topics | {n} sujet en retard · {n} sujets en retard |
-| `overview.idle` | {n} active topic with no activity for 7 days · {n} active topics with no activity for 7 days | {n} sujet actif sans activité depuis 7 jours · {n} sujets actifs sans activité depuis 7 jours |
-| `overview.inbox` | {n} note in the inbox for {days} days · {n} notes in the inbox, the oldest for {days} days | {n} note dans la boîte de réception depuis {days} jours · {n} notes dans la boîte de réception, la plus ancienne depuis {days} jours |
+| `overview.idle` | {n} active topic idle for 7 days · {n} active topics idle for 7 days | {n} sujet en cours inactif depuis 7 jours · {n} sujets en cours inactifs depuis 7 jours |
+| `overview.inbox` | {n} note in the inbox for {days} days · {n} notes in the inbox, oldest {days} days | {n} note dans la boîte de réception depuis {days} jours · {n} notes dans la boîte de réception, la plus ancienne depuis {days} jours |
 | `overview.week` | Last 7 days | 7 derniers jours |
 | `overview.week.done` | {n} topic done · {n} topics done | {n} sujet terminé · {n} sujets terminés |
 | `overview.week.decisions` | {n} decision · {n} decisions | {n} décision · {n} décisions |
 | `overview.week.new` | {n} new topic · {n} new topics | {n} nouveau sujet · {n} nouveaux sujets |
-| `overview.week.none` | Nothing done, decided or opened in the last 7 days. Last activity {when}. | Rien de terminé, décidé ni ouvert ces 7 derniers jours. Dernière activité {when}. |
+| `overview.week.none` | Nothing done, decided or opened this week. Last activity {when}. | Rien de terminé, décidé ni ouvert cette semaine. Dernière activité {when}. |
 | `overview.epics` | Epics | Epics |
 | `overview.epics.more` | {n} more epic · {n} more epics | {n} autre epic · {n} autres epics |
 | `overview.epics.complete` | {n} complete epic · {n} complete epics | {n} epic terminé · {n} epics terminés |
@@ -135,11 +137,9 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `entry.decision` | Decision | Décision |
 | `entry.decisions` | Decisions | Décisions |
 | `entry.discussion` | Discussion | Discussion |
-| `composer.placeholder` | Add an entry... | Ajouter une entrée... |
 | `composer.hint` | {keys} to save | {keys} pour enregistrer |
-| `composer.add` | Add entry | Ajouter l'entrée |
 | `timeline.new` | {n} new entry · {n} new entries | {n} nouvelle entrée · {n} nouvelles entrées |
-| `timeline.empty` | No entries yet. Add one, or let Claude Code log progress as it works. | Aucune entrée pour l'instant. Ajoutez-en une, ou laissez Claude Code consigner l'avancement au fil du travail. |
+| `timeline.empty` | No entries yet. Claude Code logs progress here as it works. | Aucune entrée pour l'instant. Claude Code consigne ici l'avancement au fil du travail. |
 | `entry.copy_markdown` | Copy as Markdown | Copier en Markdown |
 | `entry.change_type` | Change type | Changer le type |
 | `entry.edited` | edited | modifiée |
@@ -159,7 +159,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `epic.deleted` | Epic deleted. | Epic supprimé. |
 | `project.deleted` | Project deleted. | Projet supprimé. |
 | `topic.restored` | Topic restored. | Sujet restauré. |
-| `topic.empty_project` | No topics yet. Capture notes and let Claude Code file them, or start one yourself. | Aucun sujet pour l'instant. Saisissez des notes et laissez Claude Code les classer, ou créez-en un vous-même. |
+| `topic.empty_project` | Capture a note, or create a topic. | Saisissez une note ou créez un sujet. |
 | `topic.empty.heading` | No topics yet | Aucun sujet pour l'instant |
 | `error.save_entry` | Could not save the entry. The database is locked by another process. | Impossible d'enregistrer l'entrée. La base de données est verrouillée par un autre processus. |
 | `error.save` | Could not save the change. Try again. | Impossible d'enregistrer la modification. Réessayez. |
@@ -198,8 +198,8 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `inbox.pick.new_epic` | New epic | Nouvel epic |
 | `inbox.pick.in_epic` | New topic in {path} | Nouveau sujet dans {path} |
 | `inbox.pick.as_entry` | Entry in {path} | Entrée dans {path} |
-| `inbox.empty` | Inbox is empty. Notes you capture land here until they become topics. | La boîte de réception est vide. Les notes que vous saisissez arrivent ici jusqu'à devenir des sujets. |
-| `inbox.filed_empty` | No filed notes yet. Notes that become topics or entries are listed here. | Aucune note classée pour l'instant. Les notes devenues des sujets ou des entrées sont listées ici. |
+| `inbox.empty` | Inbox is empty. Captured notes wait here until they are filed. | La boîte de réception est vide. Les notes saisies attendent ici d'être classées. |
+| `inbox.filed_empty` | No filed notes yet. | Aucune note classée pour l'instant. |
 | `kb.new_document` | New document | Nouveau document |
 | `kb.new_memory` | New memory | Nouvelle mémoire |
 | `kb.written.document` | Written by {author} {when} | Écrit par {author} {when} |
@@ -212,9 +212,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `kb.more_inherited.project` | {n} more from project {name} | {n} autre hérité du projet {name} · {n} autres hérités du projet {name} |
 | `kb.more_epic` | {n} more in the topics of this epic | {n} de plus dans les sujets de cet epic |
 | `kb.more_project` | {n} more in this project's epics and topics | {n} de plus dans les epics et sujets de ce projet |
-| `kb.empty` | Nothing here yet. Documents and memories for this topic appear here. | Rien ici pour l'instant. Les documents et mémoires de ce sujet apparaîtront ici. |
-| `kb.empty.epic` | Nothing here yet. Documents and memories for this epic appear here. | Rien ici pour l'instant. Les documents et mémoires de cet epic apparaîtront ici. |
-| `kb.empty.project` | Nothing here yet. Documents and memories for this project appear here. | Rien ici pour l'instant. Les documents et mémoires de ce projet apparaîtront ici. |
+| `kb.empty` | No documents or memories yet. | Aucun document ni mémoire pour l'instant. |
 | `kb.summary.memory` | One line: the fact, in short | Une ligne : le fait, en bref |
 | `kb.summary.document` | One line: what this is and when to read it | Une ligne : ce que c'est et quand le lire |
 | `kb.show_history` | Show history | Afficher l'historique |
@@ -270,9 +268,10 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `folders.not_found` | Not found on this computer | Introuvable sur cet ordinateur |
 | `folders.locate` | Locate... | Localiser... |
 | `folders.n_not_found` | {n} not found | {n} introuvable · {n} introuvables |
-| `folders.also_topic` | Also attached to topic {name}. A session started in this folder outside Acta opens on epic {epic} and is told about both topics. | Également rattaché au sujet {name}. Une session lancée dans ce dossier hors d'Acta s'ouvre sur l'epic {epic} et est informée des deux sujets. |
-| `folders.also_epic` | Also attached to epic {name}. A session started in this folder outside Acta opens on project {project} and is told about both epics. | Également rattaché à l'epic {name}. Une session lancée dans ce dossier hors d'Acta s'ouvre sur le projet {project} et est informée des deux epics. |
+| `folders.also_topic` | Also attached to topic {name}. | Également rattaché au sujet {name}. |
+| `folders.also_epic` | Also attached to epic {name}. | Également rattaché à l'epic {name}. |
 | `folders.also_more` | Also attached to topics {a}, {b} and {n} more. | Également rattaché aux sujets {a}, {b} et {n} autre. · Également rattaché aux sujets {a}, {b} et {n} autres. |
+| `folders.also.tip` | A session started in this folder outside Acta opens on {level} and is told about both. | Une session lancée dans ce dossier hors d'Acta s'ouvre sur : {level}, et est informée des deux. |
 | `folders.show.w` | Show in Explorer (W) | Afficher dans l'Explorateur |
 | `folders.show.m` | Reveal in Finder (M) | Afficher dans le Finder |
 | `folders.show.l` | Show in file manager (L) | Afficher dans le gestionnaire de fichiers |
@@ -287,7 +286,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `folders.removed.topic` | {folder} removed from this topic. | {folder} retiré de ce sujet. |
 | `folders.removed.epic` | {folder} removed from this epic. | {folder} retiré de cet epic. |
 | `folders.removed.project` | {folder} removed from this project. | {folder} retiré de ce projet. |
-| `folders.located_for` | {folder} located for epic {name} and everything that inherits from it. | {folder} localisé pour l'epic {name} et tout ce qui en hérite. |
+| `folders.located_for` | {folder} located for epic {name} and everything under it. | {folder} localisé pour l'epic {name} et tout ce qu'il contient. |
 | `folders.bulk` | {n} other folder under {root} was not found either. Apply the same change to it? · {n} other folders under {root} were not found either. Apply the same change to them? | {n} autre dossier sous {root} est également introuvable. Lui appliquer le même changement ? · {n} autres dossiers sous {root} sont également introuvables. Leur appliquer le même changement ? |
 | `folders.bulk_apply` | Apply to {n} folder · Apply to {n} folders | Appliquer à {n} dossier · Appliquer à {n} dossiers |
 | `folders.bulk_done` | {n} folder located. · {n} folders located. | {n} dossier localisé. · {n} dossiers localisés. |
@@ -405,23 +404,23 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `chat.open_browser` | Open in browser | Ouvrir dans le navigateur |
 | `chat.reload` | Reload | Recharger |
 | `chat.help` | Sign-in help | Aide à la connexion |
-| `chat.start.title` | Chat with Claude beside your work | Discutez avec Claude à côté de votre travail |
-| `chat.start.body` | This panel shows claude.ai, the website, in your system's web view. You sign in with your own account, and Acta does not read or change anything on the page. | Ce panneau affiche claude.ai, le site web, dans la vue web de votre système. Vous vous connectez avec votre propre compte, et Acta ne lit ni ne modifie rien sur la page. |
-| `chat.start.memory` | Once started, the web view uses about 400 MB of memory, also while the panel is hidden. | Une fois lancée, la vue web utilise environ 400 Mo de mémoire, même quand le panneau est masqué. |
+| `chat.start.title` | Chat with Claude | Discuter avec Claude |
+| `chat.start.body` | claude.ai in a panel, signed in with your own account. Acta never reads the page. | claude.ai dans un panneau, avec votre propre compte. Acta ne lit jamais la page. |
+| `chat.start.memory` | Uses about 400 MB of memory once opened. | Utilise environ 400 Mo de mémoire une fois ouvert. |
 | `chat.start.here` | Open claude.ai here | Ouvrir claude.ai ici |
 | `chat.start.browser` | Open in your browser | Ouvrir dans votre navigateur |
 | `chat.starting` | Opening claude.ai... | Ouverture de claude.ai... |
-| `chat.signin` | Sign in with email: the link in the message opens in your browser and shows a code; type that code here. Signing in with Google or Apple may be refused in this panel. | Connectez-vous par e-mail : le lien du message s'ouvre dans votre navigateur et affiche un code ; saisissez ce code ici. La connexion avec Google ou Apple peut être refusée dans ce panneau. |
+| `chat.signin` | Sign in by email: open the link, then type the code it shows here. Google or Apple sign-in may be refused. | Connectez-vous par e-mail : ouvrez le lien, puis saisissez ici le code affiché. La connexion Google ou Apple peut être refusée. |
 | `chat.hidden` | The chat is hidden while this is open. | Le chat est masqué tant que ceci est ouvert. |
 | `chat.runtime.title` | The chat panel needs WebView2 | Le panneau de chat a besoin de WebView2 |
-| `chat.runtime.body` | Microsoft's WebView2 runtime is not installed on this computer, so Acta cannot show claude.ai here. Everything else in Acta works. | Le composant WebView2 de Microsoft n'est pas installé sur cet ordinateur ; Acta ne peut donc pas afficher claude.ai ici. Tout le reste d'Acta fonctionne. |
+| `chat.runtime.body` | WebView2 is not installed, so claude.ai cannot show here. Everything else works. | WebView2 n'est pas installé : claude.ai ne peut pas s'afficher ici. Tout le reste fonctionne. |
 | `chat.runtime.get` | Get WebView2 | Obtenir WebView2 |
 | `chat.browser` | Open claude.ai in your browser | Ouvrir claude.ai dans votre navigateur |
 | `chat.failed.title` | claude.ai could not be opened here | claude.ai n'a pas pu être ouvert ici |
 | `chat.failed.offline` | There is no connection. | Il n'y a pas de connexion. |
 | `chat.signout` | Sign out and clear chat data... | Se déconnecter et effacer les données du chat... |
 | `chat.signout.title` | Sign out and clear chat data? | Se déconnecter et effacer les données du chat ? |
-| `chat.signout.body` | This deletes the panel's cookies and site data from this computer. Your conversations stay in your Claude account. | Cela supprime de cet ordinateur les cookies et les données de site du panneau. Vos conversations restent dans votre compte Claude. |
+| `chat.signout.body` | Signs you out of claude.ai here. Your conversations stay in your Claude account. | Vous déconnecte de claude.ai ici. Vos conversations restent dans votre compte Claude. |
 | `chat.signout.confirm` | Sign out and clear | Se déconnecter et effacer |
 | `chat.more` | More | Plus |
 | `chat.clear_failed` | The chat data could not be deleted. Acta tries again at the next start. | Les données du chat n'ont pas pu être supprimées. Acta réessaiera au prochain démarrage. |
@@ -461,6 +460,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `palette.topics` | Topics | Sujets |
 | `palette.commands` | Commands | Commandes |
 | `palette.projects` | Projects | Projets |
+| `palette.epics` | Epics | Epics |
 | `palette.hint.open` | {keys} open | {keys} ouvrir |
 | `palette.hint.tab` | {keys} open in new tab | {keys} ouvrir dans un nouvel onglet |
 | `palette.hint.create` | {keys} create | {keys} créer |
@@ -471,7 +471,6 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `cmd.go_topic` | Go to topic... | Aller au sujet... |
 | `cmd.capture` | Capture a note | Saisir une note |
 | `cmd.new_topic` | New topic | Nouveau sujet |
-| `cmd.add_entry` | Add entry | Ajouter une entrée |
 | `cmd.go_inbox` | Go to inbox | Aller à la boîte de réception |
 | `cmd.show_blocked` | Show blocked topics | Afficher les sujets bloqués |
 | `cmd.show_idle` | Show topics with no activity | Afficher les sujets sans activité |
@@ -580,21 +579,19 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `settings.theme.system` | System | Système |
 | `settings.theme.light` | Light | Clair |
 | `settings.theme.dark` | Dark | Sombre |
-| `settings.theme.hint` | System follows your computer's setting. | « Système » suit le réglage de votre ordinateur. |
 | `settings.language` | Language | Langue |
-| `settings.language.hint` | Changes Acta's own text. What you and Claude Code write is never translated. | Change les textes d'Acta. Ce que vous et Claude Code écrivez n'est jamais traduit. |
+| `settings.language.hint` | What you and Claude Code write is never translated. | Ce que vous et Claude Code écrivez n'est jamais traduit. |
 | `settings.text_size` | Text size | Taille du texte |
-| `settings.text_size.hint` | Timelines, notes and documents. The interface keeps its size. | Fils, notes et documents. L'interface garde sa taille. |
+| `settings.text_size.hint` | Timelines, notes and documents. | Journaux, notes et documents. |
 | `settings.text_size.small` | Small | Petit |
 | `settings.text_size.default` | Default | Normal |
 | `settings.text_size.large` | Large | Grand |
 | `settings.reading_width` | Reading width | Largeur de lecture |
-| `settings.reading_width.hint` | How wide pages get in a large window. | La largeur maximale des pages dans une grande fenêtre. |
 | `settings.reading_width.narrow` | Narrow | Étroite |
 | `settings.reading_width.default` | Default | Normale |
 | `settings.reading_width.wide` | Wide | Large |
 | `settings.layout` | Layout | Disposition |
-| `settings.layout.desc` | Puts every view and panel back where it was on a new install. You can undo it right after. | Remet chaque vue et chaque panneau à sa place d'origine. Vous pouvez annuler juste après. |
+| `settings.layout.desc` | Puts every view back in its default place. | Remet chaque vue à sa place par défaut. |
 | `settings.terminal_size` | Terminal text size | Taille du texte du terminal |
 | `settings.folders` | Working folders | Dossiers de travail |
 | `settings.auto_memory` | Turn off Claude Code's own memory in attached folders | Désactiver la mémoire propre à Claude Code dans les dossiers rattachés |
@@ -610,22 +607,29 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `settings.check.done` | Done | Fait |
 | `settings.check.missing` | Missing | À faire |
 | `settings.check.unknown` | Could not check | Vérification impossible |
+| `settings.status.ready` | Acta is set up in Claude Code | Acta est configuré dans Claude Code |
+| `settings.status.partial` | Setup incomplete: {n} of 3 step done · Setup incomplete: {n} of 3 steps done | Configuration incomplète : {n} étape sur 3 faite · Configuration incomplète : {n} étapes sur 3 faites |
+| `settings.status.unknown` | Could not check the setup | Impossible de vérifier la configuration |
 | `settings.setup` | Set up Claude Code | Configurer Claude Code |
 | `settings.setup_again` | Run setup again | Relancer la configuration |
 | `settings.setup_remove` | Remove from Claude Code | Retirer de Claude Code |
-| `settings.setup.hint` | Setup installs Acta's plugin in Claude Code, adds two permission lines (Acta and its browser) and Acta's status line to ~/.claude/settings.json (after your own status line, if you have one), and turns Claude Code's own memory off in the open project's folders. Remove undoes all of it. | La configuration installe le plugin d'Acta dans Claude Code, ajoute deux lignes d'autorisation (Acta et son navigateur) et la ligne d'état d'Acta à ~/.claude/settings.json (après votre propre ligne d'état, si vous en avez une), et désactive la mémoire propre à Claude Code dans les dossiers du projet ouvert. Retirer annule tout cela. |
+| `settings.setup.hint` | Lets Claude Code read and update your projects in Acta. | Permet à Claude Code de lire et de mettre à jour vos projets dans Acta. |
+| `settings.setup.what` | What setup changes | Ce que change la configuration |
+| `settings.setup.details` | Setup installs Acta's plugin in Claude Code, adds two permission lines (Acta and its browser) and Acta's status line to ~/.claude/settings.json (after your own status line, if you have one), and turns Claude Code's own memory off in the open project's folders. Remove undoes all of it. | La configuration installe le plugin d'Acta dans Claude Code, ajoute deux lignes d'autorisation (Acta et son navigateur) et la ligne d'état d'Acta à ~/.claude/settings.json (après votre propre ligne d'état, si vous en avez une), et désactive la mémoire propre à Claude Code dans les dossiers du projet ouvert. Retirer annule tout cela. |
 | `settings.remove.title` | Remove Acta from Claude Code? | Retirer Acta de Claude Code ? |
-| `settings.remove.body` | This uninstalls Acta's plugin, takes out the permission lines and the status line setup added to ~/.claude/settings.json (your own status line comes back), and turns Claude Code's own memory back on where Acta turned it off. Your projects stay in Acta. | Cela désinstalle le plugin d'Acta, retire les lignes d'autorisation et la ligne d'état ajoutées par la configuration à ~/.claude/settings.json (votre propre ligne d'état revient), et réactive la mémoire propre à Claude Code là où Acta l'avait désactivée. Vos projets restent dans Acta. |
+| `settings.remove.body` | Removes Acta's plugin, permissions and status line from Claude Code, and turns its own memory back on. Your projects stay in Acta. | Retire de Claude Code le plugin, les autorisations et la ligne d'état d'Acta, et réactive sa propre mémoire. Vos projets restent dans Acta. |
 | `settings.remove.confirm` | Remove | Retirer |
 | `settings.data` | Data | Données |
 | `settings.export.last` | Last export: {days} (`time.days` or `time.today_word`) | Dernier export : {days} |
 | `settings.export.never` | Never exported | Jamais exporté |
-| `settings.snapshots.today` | {n} snapshot kept; the newest is from today, {time} · {n} snapshots kept; the newest is from today, {time} | {n} instantané conservé ; le plus récent date d'aujourd'hui à {time} · {n} instantanés conservés ; le plus récent date d'aujourd'hui à {time} |
-| `settings.snapshots.older` | {n} snapshot kept; the newest is from {datetime} · {n} snapshots kept; the newest is from {datetime} | {n} instantané conservé ; le plus récent date du {datetime} · {n} instantanés conservés ; le plus récent date du {datetime} |
+| `settings.snapshots.today` | {n} snapshot, from today, {time} · {n} snapshots, newest today, {time} | {n} instantané, d'aujourd'hui à {time} · {n} instantanés, le plus récent d'aujourd'hui à {time} |
+| `settings.snapshots.older` | {n} snapshot, from {datetime} · {n} snapshots, newest {datetime} | {n} instantané, du {datetime} · {n} instantanés, le plus récent du {datetime} |
 | `settings.snapshots` | Snapshots | Instantanés |
+| `settings.restore` | Restore... | Restaurer... |
 | `settings.trash_count` | {n} item · {n} items | {n} élément · {n} éléments |
 | `settings.database` | Database | Base de données |
 | `settings.chat` | Chat | Chat |
+| `settings.chat_data` | Chat data | Données du chat |
 | `settings.about` | About | À propos |
 | `settings.release_notes` | Release notes | Notes de version |
 | `settings.licences` | Licences | Licences |
@@ -633,11 +637,11 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `settings.licences.hint_linux` | Inter and JetBrains Mono under the SIL Open Font License, Lucide under ISC. | Inter et JetBrains Mono sous licence SIL Open Font License, Lucide sous licence ISC. |
 | `statusbar.not_set_up` | Claude Code: not set up | Claude Code : non configuré |
 | `statusbar.not_found` | Claude Code: not found | Claude Code : introuvable |
-| `statusbar.no_folder` | Claude Code: no folder for this project | Claude Code : aucun dossier pour ce projet |
+| `statusbar.no_folder` | Claude Code: no folder | Claude Code : aucun dossier |
 | `statusbar.ready` | Claude Code: ready | Claude Code : prêt |
 | `statusbar.last_wrote` | Last wrote {when} in {topic} | Dernière écriture {when} dans {topic} |
 | `statusbar.version` | Acta {version} | Acta {version} |
-| `update.ready` | Update ready – restart to apply | Mise à jour prête – redémarrer pour l'appliquer (no-break space before the dash) |
+| `update.ready` | Restart to update | Redémarrer pour mettre à jour |
 | `update.done` | Updated to {version} | Mise à jour {version} installée |
 | `update.failed` | Update failed | Échec de la mise à jour |
 | `update.manual` | Download manually | Télécharger manuellement |
@@ -647,13 +651,13 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `export.title` | Export | Exporter |
 | `export.scope.all` | Everything | Tout |
 | `export.scope.project` | This project | Ce projet |
-| `export.warning` | The file is not encrypted. Anyone who can open it can read these projects. That is what lets you read it without Acta or its key. | Le fichier n'est pas chiffré. Toute personne pouvant l'ouvrir peut lire ces projets. C'est ce qui vous permet de le lire sans Acta ni sa clé. |
+| `export.warning` | The file is not encrypted: anyone who opens it can read these projects. | Le fichier n'est pas chiffré : quiconque l'ouvre peut lire ces projets. |
 | `export.passphrase` | Protect with a passphrase | Protéger par une phrase secrète |
 | `export.passphrase.lost` | Acta cannot recover a lost passphrase. | Acta ne peut pas retrouver une phrase secrète perdue. |
 | `export.choose` | Choose location... | Choisir l'emplacement... |
 | `export.done` | Exported {n} project to {file}. · Exported {n} projects to {file}. | {n} projet exporté vers {file}. · {n} projets exportés vers {file}. |
 | `export.show` | Show in folder | Afficher dans le dossier |
-| `export.suggest` | Everything is stored on this computer only. An export is your copy if the system keychain is ever lost. | Tout est stocké sur cet ordinateur uniquement. Un export vous sert de copie si le trousseau du système venait à être perdu. |
+| `export.suggest` | Everything is on this computer only. An export is your copy if the keychain is lost. | Tout est sur cet ordinateur uniquement. Un export est votre copie si le trousseau est perdu. |
 | `import.title` | Import "{file}" | Importer « {file} » |
 | `import.meta` | Exported {date} · format {n} · {projects} (`count.projects`) | Exporté le {date} · format {n} · {projects} |
 | `import.created` | Created | Créés |
@@ -666,7 +670,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `import.kind.notes` | Notes | Notes |
 | `import.kind.documents` | Documents | Documents |
 | `import.kind.memories` | Memories | Mémoires |
-| `import.safe` | Nothing here will be deleted. Skipped records are the same as, or older than, what Acta already has. | Rien ne sera supprimé. Les éléments ignorés sont identiques à ceux qu'Acta possède déjà, ou plus anciens. |
+| `import.safe` | Nothing will be deleted. Skipped records are the same as Acta's, or older. | Rien ne sera supprimé. Les éléments ignorés sont identiques à ceux d'Acta, ou plus anciens. |
 | `import.show_changes` | Show what changes | Afficher ce qui change |
 | `import.confirm` | Import | Importer |
 | `import.done` | Imported: {created}, {updated}. A snapshot from before the import is kept. (`import.count.*`) | Import terminé : {created}, {updated}. Un instantané d'avant l'import est conservé. |
@@ -713,7 +717,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `openfail.nodir` | Acta could not find where to keep its data on this computer. | Acta ne trouve pas où conserver ses données sur cet ordinateur. |
 | `openfail.show_log` | Show the log | Afficher le journal |
 | `firstrun.title` | Start with a project | Commencez par un projet |
-| `firstrun.body` | A project is a folder you work on with Claude Code. Acta keeps its topics, decisions and notes next to the work. | Un projet est un dossier sur lequel vous travaillez avec Claude Code. Acta garde ses sujets, ses décisions et ses notes à côté du travail. |
+| `firstrun.body` | A project is a folder you work on with Claude Code. Acta keeps its topics, decisions and notes. | Un projet est un dossier sur lequel vous travaillez avec Claude Code. Acta en garde les sujets, les décisions et les notes. |
 | `firstrun.choose` | Choose a folder | Choisir un dossier |
 | `firstrun.then` | Then | Ensuite |
 | `firstrun.step1` | Connect Claude Code | Connecter Claude Code |
@@ -746,10 +750,9 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `shortcuts.editor.save` | Save the editor in focus | Enregistrer l'éditeur actif |
 | `shortcuts.editor.cancel` | Cancel the edit | Annuler la modification |
 | `view.agent_browser` | Agent browser | Navigateur de l'agent |
-| `browser.address` | Type an address and press Enter | Saisissez une adresse et appuyez sur Entrée |
+| `browser.address` | Address | Adresse |
 | `browser.idle.title` | Claude Code's browser | Le navigateur de Claude Code |
-| `browser.idle.body` | Claude Code opens pages here when it needs a browser: your local dev server, or a site you signed into here. Sign in to a site once in this view and Claude Code reuses the session. It never opens claude.ai and never types passwords. | Claude Code ouvre ici les pages dont il a besoin : votre serveur de développement local, ou un site auquel vous vous êtes connecté ici. Connectez-vous une fois à un site dans cette vue et Claude Code réutilise la session. Il n'ouvre jamais claude.ai et ne saisit jamais de mot de passe. |
-| `browser.idle.memory` | The browser starts on first use and uses about 150 MB of memory until it has been unused for 10 minutes. | Le navigateur démarre à la première utilisation et occupe environ 150 Mo de mémoire jusqu'à 10 minutes sans utilisation. |
+| `browser.idle.body` | Claude Code opens pages here: your dev server, or sites you signed into here. It never opens claude.ai and never types passwords. | Claude Code ouvre ses pages ici : votre serveur de développement, ou les sites auxquels vous vous êtes connecté ici. Il n'ouvre jamais claude.ai et ne saisit jamais de mot de passe. |
 | `browser.starting` | Starting the browser... | Démarrage du navigateur... |
 | `browser.hidden` | The browser is hidden while this is open. | Le navigateur est masqué tant que ceci est ouvert. |
 | `browser.stop` | Stop Claude Code | Arrêter Claude Code |
@@ -775,7 +778,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `browser.refused.title` | Acta did not start its browser | Acta n'a pas démarré son navigateur |
 | `browser.refused.body` | A debugging port or another WebView2 override is configured for Acta (a WebView2 policy, an environment variable or a DevToolsActivePort file). It could let another program control or read the browser. Remove it, then try again. | Un port de débogage ou un autre réglage WebView2 est configuré pour Acta (une stratégie WebView2, une variable d'environnement ou un fichier DevToolsActivePort). Il pourrait permettre à un autre programme de piloter ou de lire le navigateur. Supprimez-le, puis réessayez. |
 | `browser.runtime.title` | The agent browser needs WebView2 | Le navigateur de l'agent a besoin de WebView2 |
-| `browser.runtime.body` | Microsoft's WebView2 runtime is not installed on this computer, so Acta cannot open its browser. Everything else in Acta works. | Le composant WebView2 de Microsoft n'est pas installé sur cet ordinateur ; Acta ne peut donc pas ouvrir son navigateur. Tout le reste d'Acta fonctionne. |
+| `browser.runtime.body` | WebView2 is not installed, so the browser cannot start. Everything else works. | WebView2 n'est pas installé : le navigateur ne peut pas démarrer. Tout le reste fonctionne. |
 | `browser.failed.title` | The browser could not be started | Le navigateur n'a pas pu être démarré |
 | `browser.pipe.taken` | Claude Code cannot reach this browser: another copy of Acta, or another program, already serves it. Close it and restart Acta. | Claude Code ne peut pas joindre ce navigateur : une autre copie d'Acta, ou un autre programme, le sert déjà. Fermez-le et redémarrez Acta. |
 | `browser.pipe.failed` | Claude Code cannot reach this browser. Restart Acta; the log says why. | Claude Code ne peut pas joindre ce navigateur. Redémarrez Acta ; le journal indique pourquoi. |
@@ -795,7 +798,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `sessions.last_tool` | last tool: {tool} | dernier outil : {tool} |
 | `sessions.in_acta` | in Acta's terminal | dans le terminal d'Acta |
 | `sessions.outside` | in another terminal | dans un autre terminal |
-| `sessions.empty` | No Claude Code session is running. Sessions started in Acta's terminal, or in any terminal inside an attached folder, appear here. | Aucune session Claude Code n'est en cours. Les sessions lancées dans le terminal d'Acta, ou dans n'importe quel terminal à l'intérieur d'un dossier rattaché, apparaissent ici. |
+| `sessions.empty` | No Claude Code session is running. | Aucune session Claude Code en cours. |
 | `sessions.show_terminal` | Show terminal | Afficher le terminal |
 | `sessions.end` | End session | Terminer la session |
 | `sessions.here.working` | Claude Code is working here | Claude Code travaille ici |
@@ -803,9 +806,8 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `sessions.here.idle` | Claude Code is open here | Claude Code est ouvert ici |
 | `sessions.here.many` | {n} Claude Code session here · {n} Claude Code sessions here | {n} session Claude Code ici · {n} sessions Claude Code ici |
 | `settings.resume` | Continue the last conversation of each page | Reprendre la dernière conversation de chaque page |
-| `settings.resume.hint` | When the terminal starts from a topic, an epic or a project, Claude Code resumes the conversation last held there, if it still has it. /clear in Claude Code starts a new one. | Quand le terminal démarre depuis un sujet, un epic ou un projet, Claude Code reprend la dernière conversation menée là, s'il l'a encore. /clear dans Claude Code en commence une nouvelle. |
 | `settings.flash_waiting` | Flash Acta in the taskbar when a session waits for you | Faire clignoter Acta dans la barre des tâches quand une session vous attend |
-| `settings.flash_waiting.hint` | For sessions started in Acta's terminal, while no Acta window is active. Acta never takes the focus. | Pour les sessions lancées dans le terminal d'Acta, quand aucune fenêtre d'Acta n'est active. Acta ne prend jamais le focus. |
+| `settings.flash_waiting.hint` | Only while Acta is in the background. | Seulement quand Acta est en arrière-plan. |
 | `cmd.resume_on` | Continue the last conversation of each page | Reprendre la dernière conversation de chaque page |
 | `cmd.resume_off` | Start a new Claude Code conversation each time | Commencer une nouvelle conversation Claude Code à chaque fois |
 | `cmd.flash_on` | Flash Acta in the taskbar when a session waits for you | Faire clignoter Acta dans la barre des tâches quand une session vous attend |
@@ -817,17 +819,15 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `usage.resets_at` | resets at {time} | réinitialisée à {time} |
 | `usage.resets_on` | resets {day} {time} | réinitialisée {day} à {time} |
 | `usage.stale` | This window has reset since Claude Code last reported it. | Cette fenêtre a été réinitialisée depuis le dernier relevé de Claude Code. |
-| `usage.no_data` | Plan usage: no data yet | Utilisation du forfait : pas encore de données |
 | `usage.no_data.tip` | Claude Code reports your plan's limits after the first answer of a session (Pro, Max and Ultra plans), through Acta's status line. | Claude Code signale les limites de votre forfait après la première réponse d'une session (forfaits Pro, Max et Ultra), par la ligne d'état d'Acta. |
 | `settings.usage` | Show plan usage in the status bar | Afficher l'utilisation du forfait dans la barre d'état |
-| `settings.usage.hint` | The 5-hour and 7-day limits of your Claude plan, as Claude Code last reported them. | Les limites sur 5 heures et sur 7 jours de votre forfait Claude, telles que Claude Code les a signalées en dernier. |
 | `cmd.usage_on` | Show plan usage in the status bar | Afficher l'utilisation du forfait dans la barre d'état |
 | `cmd.usage_off` | Hide plan usage | Masquer l'utilisation du forfait |
 | `settings.setup.title` | Set up Claude Code? | Configurer Claude Code ? |
-| `settings.setup.body` | Acta installs its plugin in Claude Code and adds two permission lines and its status line to ~/.claude/settings.json; your own status line, if you have one, still shows first. | Acta installe son plugin dans Claude Code et ajoute deux lignes d'autorisation et sa ligne d'état à ~/.claude/settings.json ; votre propre ligne d'état, si vous en avez une, reste affichée en premier. |
+| `settings.setup.body` | Acta adds its plugin, two permissions and its status line to ~/.claude/settings.json. Your own status line still shows first. | Acta ajoute son plugin, deux autorisations et sa ligne d'état à ~/.claude/settings.json. Votre propre ligne d'état reste affichée en premier. |
 | `settings.setup.folders` | It also turns Claude Code's own memory off in {n} folder of {project}. · It also turns Claude Code's own memory off in {n} folders of {project}. | Il désactive aussi la mémoire propre à Claude Code dans {n} dossier de {project}. · Il désactive aussi la mémoire propre à Claude Code dans {n} dossiers de {project}. |
 | `settings.setup.confirm` | Set up | Configurer |
-| `settings.plugin.hint` | Sessions started in Acta's terminal load Acta's plugin from this build, set up or not. To turn that off, set "acta@inline": false under enabledPlugins in Claude Code's settings. | Les sessions lancées dans le terminal d'Acta chargent le plugin d'Acta de cette version, configuré ou non. Pour l'éviter, mettez "acta@inline": false sous enabledPlugins dans les réglages de Claude Code. |
+| `settings.plugin.hint` | Sessions started in Acta's terminal always load Acta's plugin. To stop that, set "acta@inline": false under enabledPlugins. | Les sessions lancées dans le terminal d'Acta chargent toujours le plugin d'Acta. Pour l'éviter, mettez "acta@inline": false sous enabledPlugins. |
 
 Strings that exist in the behaviour sections but are not in this table are a defect of the table: add the row in the same change that adds the string.
 
@@ -967,9 +967,6 @@ New with attachments (2026-11-21; components-attachments.md 5, ADR 0012, data.md
 | `attach.view` | View | Afficher |
 | `attach.save_as` | Save as... | Enregistrer sous... |
 | `attach.save_failed` | Could not save {name}. {reason} | Impossible d'enregistrer {name}. {reason} |
-| `attach.open_external` | Open in another app | Ouvrir dans une autre application |
-| `attach.open_title` | Open in another app? | Ouvrir dans une autre application ? |
-| `attach.open_notice` | Acta writes a decrypted copy for the other app and deletes it when Acta quits. | Acta écrit une copie déchiffrée pour l'autre application et la supprime à la fermeture d'Acta. |
 | `attach.remove` | Remove | Retirer |
 | `attach.removed` | File removed. | Fichier retiré. |
 | `attach.restored` | File restored. | Fichier restauré. |
@@ -986,7 +983,7 @@ New with attachments (2026-11-21; components-attachments.md 5, ADR 0012, data.md
 | `cmd.attach` | Attach files... | Joindre des fichiers... |
 | `cmd.attachment_save` | Save file as... | Enregistrer le fichier sous... |
 
-`{date}` and `{time}` in `attach.pasted_name` are `2026-11-21` and `14.05` in both languages: a file name is not localised (10.2). The units B / KB / MB and o / Ko / Mo are formats, not keys. `attach.moved_to` is plural in French because it heads a list of files. The Open dialog's buttons reuse `common.cancel` and `common.open`. Agent-facing text (`· files: A-4 plan.pdf 2.1M`) is protocol, English only, and not in this catalogue (10).
+`{date}` and `{time}` in `attach.pasted_name` are `2026-11-21` and `14.05` in both languages: a file name is not localised (10.2). The units B / KB / MB and o / Ko / Mo are formats, not keys. `attach.moved_to` is plural in French because it heads a list of files. ("Open in another app" was rejected by the user, ADR 0012, 8: its three keys are gone.) Agent-facing text (`· files: A-4 plan.pdf 2.1M`) is protocol, English only, and not in this catalogue (10).
 
 ### 10.4.8 Keys of Ready for Claude Code (ADR 0013), pending
 
@@ -1152,9 +1149,9 @@ New with dictation (2026-11-22; components-voice.md 5, screens.md 8.27). They st
 
 The macOS `Info.plist` usage strings (ADR 0014, 8) live with the bundle (`InfoPlist.strings`), not in this catalogue: `NSMicrophoneUsageDescription` "Acta turns what you say into text, on this Mac." / "Acta transforme ce que vous dites en texte, sur ce Mac."; `NSSpeechRecognitionUsageDescription` "Lets the macOS recogniser turn what you say into text, on this Mac." / "Permet à la reconnaissance de macOS de transformer ce que vous dites en texte, sur ce Mac." The delete dialog's buttons and "Show in Explorer" (Finder, file manager) reuse their existing keys.
 
-### 10.4.10 Clarity pass and the timeline without a composer, pending
+### 10.4.10 Clarity pass and the timeline without a composer
 
-From the clarity review of 2026-11-22 ([reviews/2026-11-22-clarity.md](reviews/2026-11-22-clarity.md)) and the user's decision of the same day that only Claude Code adds timeline entries (components-records.md 5). 10.4 is read by the tests against `catalogue.rs`, so these changes wait here; the implementing change applies the three lists to 10.4 and to `catalogue.rs` in one commit. The rule of the pass: one idea per line; what a person needs once (how a setting works, what setup writes, memory use) goes in a tooltip or behind "Details", never on screen at rest.
+From the clarity review of 2026-11-22 ([reviews/2026-11-22-clarity.md](reviews/2026-11-22-clarity.md)) and the user's decision of the same day that only Claude Code adds timeline entries (components-records.md 5). **Applied to 10.4 and `catalogue.rs`** (branch `gpui-engineer/polish-2`), with these differences from the lists below, all from the user's ruling of copy.md 7 (one plain line or none, never mechanics) and the QA of the same day: `composer.hint` stays (every multi-line editor's footer uses it); `settings.reading_width.hint`, `settings.resume.hint`, `settings.usage.hint` and `browser.idle.memory` are removed rather than shortened (each restated its label or explained mechanics); `settings.setup.hint` reads "Lets Claude Code read and update your projects in Acta." and is the Set up row's label, not a description under a label repeated on the button; `settings.flash_waiting.hint` keeps its first sentence; `topic.empty_project` drops "No topics yet.", which its heading already says; `prop.id` and `prop.updated` are removed (the meta line replaced both rows, on documents too); `meta.updated` ("Updated {when} by {author}", the meta line of a project, which shows no id), `meta.copy_id` ("Copy id", the id's tooltip) and `palette.epics` ("Epics", the palette's group of epics) are new; `prop.add_report_to` stays pending with Report to (10.4.6). The French colon takes U+00A0 (copy.md 10.1). The rule of the pass: one idea per line; what a person needs once (how a setting works, what setup writes, memory use) goes in a tooltip or behind "Details", never on screen at rest.
 
 **Removed** from 10.4: `composer.placeholder`, `composer.hint`, `composer.add`, `cmd.add_entry` (no hand-written entries); `settings.theme.hint` (the segment "System" says it); `usage.no_data` (the status bar shows nothing until there is a number; `usage.no_data.tip` becomes the tooltip of the Settings row "Show plan usage in the status bar" while no report has arrived); `kb.empty.epic` and `kb.empty.project` (one text for every level, `kb.empty`).
 
@@ -1163,7 +1160,7 @@ From the clarity review of 2026-11-22 ([reviews/2026-11-22-clarity.md](reviews/2
 | Key | English | French |
 |---|---|---|
 | `timeline.empty` | No entries yet. Claude Code logs progress here as it works. | Aucune entrée pour l'instant. Claude Code consigne ici l'avancement au fil du travail. |
-| `topic.empty_project` | No topics yet. Capture a note, or create a topic. | Aucun sujet pour l'instant. Saisissez une note ou créez un sujet. |
+| `topic.empty_project` | Capture a note, or create a topic. | Saisissez une note ou créez un sujet. |
 | `inbox.empty` | Inbox is empty. Captured notes wait here until they are filed. | La boîte de réception est vide. Les notes saisies attendent ici d'être classées. |
 | `inbox.filed_empty` | No filed notes yet. | Aucune note classée pour l'instant. |
 | `kb.empty` | No documents or memories yet. | Aucun document ni mémoire pour l'instant. |

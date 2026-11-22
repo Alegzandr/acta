@@ -306,6 +306,7 @@ pub struct TerminalDock {
     pages: HashMap<ProjectId, SessionPage>,
     /// The header switcher's menu, with its highlighted entry.
     switcher: Option<usize>,
+    switch_anchor: crate::menu::AnchorBounds,
     seen_revision: u64,
     _refresh: Option<gpui_kit::Task<()>>,
     _ws_sub: Option<Subscription>,
@@ -367,6 +368,7 @@ impl TerminalDock {
             mode: None,
             pages: HashMap::new(),
             switcher: None,
+            switch_anchor: Default::default(),
             seen_revision: 0,
             _refresh: None,
             _ws_sub: Some(sub),
@@ -1406,11 +1408,14 @@ impl TerminalDock {
                 fm::shown_icon(&active.icon, git.as_ref(), missing),
                 &active.name,
                 missing,
+                true,
                 &t,
             )
             .w_full()
             .overflow_hidden()
-            .tooltip(ui::tip(active.path.clone()))
+            .when(self.switcher.is_none(), |this| {
+                this.tooltip(ui::tip(active.path.clone()))
+            })
             .on_mouse_down(gpui_kit::MouseButton::Left, |_, _, cx| {
                 cx.stop_propagation()
             })
@@ -1433,10 +1438,17 @@ impl TerminalDock {
                 .flex()
                 .flex_row()
                 .items_center()
-                .gap(px(6.))
+                .gap(px(4.))
                 .flex_shrink_0()
                 .w(px(fit.switcher))
-                .child(div().flex_1().min_w_0().child(button))
+                .child(
+                    div()
+                        .relative()
+                        .flex_1()
+                        .min_w_0()
+                        .child(button)
+                        .child(self.switch_anchor.measure()),
+                )
                 .children(alert);
             if self.switcher.is_some() {
                 let groups = self.switch_groups(project, origin.owner, locale);
@@ -1444,6 +1456,7 @@ impl TerminalDock {
                 let (edit_origin, add_origin) = (origin.clone(), origin.clone());
                 wrap = wrap.child(folders_view::switcher_menu(
                     "terminal-switch-menu",
+                    &self.switch_anchor,
                     &groups,
                     self.switcher,
                     locale,

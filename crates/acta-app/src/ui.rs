@@ -5,9 +5,8 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use acta_core::model::{Author, Status};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    BoxShadow, Div, ElementId, FocusHandle, FontWeight, Hsla, InteractiveElement, IntoElement,
-    ParentElement, SharedString, Stateful, StatefulInteractiveElement, Styled, Svg, div, px,
-    transparent_black,
+    BoxShadow, Div, ElementId, FocusHandle, Hsla, InteractiveElement, IntoElement, ParentElement,
+    SharedString, Stateful, StatefulInteractiveElement, Styled, Svg, div, px, transparent_black,
 };
 
 use crate::i18n::Key;
@@ -397,8 +396,9 @@ pub fn author_mark(author: Author, human_initial: &str, tokens: &Tokens) -> Div 
         Author::Human => mark
             .rounded_full()
             .bg(tokens.fill_selected)
-            .text_size(px(12.))
-            .font_weight(FontWeight::SEMIBOLD)
+            .text_size(px(type_scale::LABEL.size))
+            .line_height(px(type_scale::LABEL.line))
+            .font_weight(type_scale::LABEL.weight)
             .text_color(tokens.text_primary)
             .child(human_initial.to_owned()),
         Author::Claude => mark
@@ -467,6 +467,17 @@ pub fn checkbox(checked: bool, t: &Tokens) -> Div {
         .when(!checked, |this| {
             this.border_1().border_color(t.border_strong)
         })
+}
+
+/// The header of a page section ("Current state", "Description",
+/// "Knowledge", "Timeline", "Overview"): `type.ui-strong` in
+/// `text.secondary`, one step under the title and over the rows
+/// (typography.md 3.2).
+pub fn section_header(text: impl Into<SharedString>, tokens: &Tokens) -> Div {
+    type_scale::UI_STRONG
+        .el()
+        .text_color(tokens.text_secondary)
+        .child(text.into())
 }
 
 /// A section label (`type.label`, `text.secondary`): "Current state",
@@ -590,6 +601,25 @@ thread_local! {
     /// The width of the content column being laid out, set the same way
     /// (unknown: as wide as can be).
     static COLUMN_WIDTH: std::cell::Cell<f32> = const { std::cell::Cell::new(f32::MAX) };
+    /// The space between the column and each edge of its page group, side
+    /// padding included (unknown: plenty).
+    static SIDE_SPACE: std::cell::Cell<f32> = const { std::cell::Cell::new(f32::MAX) };
+}
+
+/// How far a decision entry's box hangs into the column's gutter on each
+/// side (components-records.md 5).
+pub const DECISION_HANG: f32 = 17.;
+
+/// Whether a decision box can hang into the gutter: only while the page
+/// keeps 24 beyond it on each side, so the box never comes within 24 of
+/// the page area's edge; otherwise it sits inside the column.
+pub fn decision_hangs(side_space: f32) -> bool {
+    side_space >= DECISION_HANG + 24.
+}
+
+/// The side space of the page being laid out (see [`decision_hangs`]).
+pub fn side_space() -> f32 {
+    SIDE_SPACE.with(|s| s.get())
 }
 
 /// Under this column width, knowledge rows and the folder row take their
@@ -636,6 +666,7 @@ pub struct NarrowPage {
     child: gpui_kit::AnyElement,
     narrow: bool,
     column: f32,
+    side: f32,
 }
 
 impl NarrowPage {
@@ -644,12 +675,19 @@ impl NarrowPage {
             child,
             narrow,
             column: f32::MAX,
+            side: f32::MAX,
         }
     }
 
     /// The width of the content column inside (for the two-line rows).
     pub fn column(mut self, width: f32) -> Self {
         self.column = width;
+        self
+    }
+
+    /// The space between the column and each edge (for the decision box).
+    pub fn side(mut self, space: f32) -> Self {
+        self.side = space;
         self
     }
 }
@@ -683,9 +721,11 @@ impl gpui_kit::Element for NarrowPage {
     ) -> (gpui_kit::LayoutId, ()) {
         let before = PAGE_PADDING.with(|p| p.replace(if self.narrow { 16. } else { 32. }));
         let column = COLUMN_WIDTH.with(|w| w.replace(self.column));
+        let side = SIDE_SPACE.with(|s| s.replace(self.side));
         let id = self.child.request_layout(window, cx);
         PAGE_PADDING.with(|p| p.set(before));
         COLUMN_WIDTH.with(|w| w.set(column));
+        SIDE_SPACE.with(|s| s.set(side));
         (id, ())
     }
 
@@ -917,9 +957,36 @@ pub fn ghost_value(id: impl Into<ElementId>, tokens: &Tokens) -> Stateful<Div> {
         .hover(move |s| s.bg(hover))
 }
 
+/// A bare single-line input set in `role` (no box, no side padding): the
+/// component's own text size is overridden, so editing a title or a
+/// summary never changes its size.
+pub fn role_input(
+    input: gpui_kit::component::input::Input,
+    role: type_scale::TypeRole,
+) -> gpui_kit::component::input::Input {
+    input
+        .appearance(false)
+        .px(px(0.))
+        .py(px(0.))
+        .h(px(role.line()))
+        .text_size(px(role.size()))
+        .line_height(px(role.line()))
+        .font_weight(role.weight)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_decision_box_hangs_only_with_24_to_spare() {
+        // 880 window, page group of 420: side padding 16, no hang.
+        assert!(!decision_hangs(16.));
+        assert!(!decision_hangs(40.));
+        assert!(decision_hangs(41.));
+        // A wide page: the column centres with plenty either side.
+        assert!(decision_hangs(155.));
+    }
 
     #[test]
     fn a_target_is_scrolled_to_the_top_or_just_into_view() {

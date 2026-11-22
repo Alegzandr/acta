@@ -233,6 +233,18 @@ pub(super) struct Menu {
     pub kind: LayoutMenu,
     x: f32,
     y: f32,
+    /// Opened from a button: the button's key in `LayoutUi::menu_anchor`
+    /// and the edge the menu lines up with. A context menu (right click)
+    /// opens at the pointer instead.
+    under: Option<(u64, crate::menu::Align)>,
+}
+
+/// The key of a menu button in `LayoutUi::menu_anchor`.
+pub(super) fn menu_button_key(id: &str) -> u64 {
+    // FNV-1a: stable, and plenty for a few dozen buttons.
+    id.bytes().fold(0xcbf2_9ce4_8422_2325, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+    })
 }
 
 /// The layout state of a workbench window that is not the layout itself.
@@ -242,6 +254,8 @@ pub(super) struct LayoutUi {
     pub drag: Option<Drag>,
     pub resize: Option<Resize>,
     pub menu: Option<Menu>,
+    /// Where a menu opened from a button hangs (only that button measures).
+    pub menu_anchor: crate::menu::AnchorBounds,
     /// 4.8.10, step 1: the auto-hidden left sidebar shown over the page.
     pub left_overlay: bool,
     /// "Maximize focused area": that group fills the body until toggled.
@@ -265,6 +279,7 @@ impl LayoutUi {
             drag: None,
             resize: None,
             menu: None,
+            menu_anchor: Default::default(),
             left_overlay: false,
             zoomed: None,
             no_room: None,
@@ -1663,10 +1678,51 @@ impl Shell {
         if let Some(ui) = self.layout_ui() {
             ui.menu = match ui.menu {
                 Some(m) if m.kind == kind => None,
-                _ => Some(Menu { kind, x, y }),
+                _ => Some(Menu {
+                    kind,
+                    x,
+                    y,
+                    under: None,
+                }),
             };
         }
         cx.notify();
+    }
+
+    /// Open `kind` 4 under the button `id` (components.md 5, menus); a
+    /// second click on it closes the menu.
+    pub(crate) fn open_menu_under(
+        &mut self,
+        kind: LayoutMenu,
+        id: &str,
+        align: crate::menu::Align,
+        cx: &mut Context<Self>,
+    ) {
+        let key = menu_button_key(id);
+        if let Some(ui) = self.layout_ui() {
+            ui.menu = match ui.menu {
+                Some(m) if m.kind == kind => None,
+                _ => Some(Menu {
+                    kind,
+                    x: 0.,
+                    y: 0.,
+                    under: Some((key, align)),
+                }),
+            };
+        }
+        cx.notify();
+    }
+
+    /// Over the menu button `id`: records its bounds while its menu is
+    /// open, so the menu hangs from it.
+    pub(crate) fn menu_button_measure(&self, id: &str) -> Option<AnyElement> {
+        let key = menu_button_key(id);
+        let super::Content::Workbench(bench) = &self.content else {
+            return None;
+        };
+        let ui = &bench.ui;
+        let open = ui.menu?.under?.0 == key;
+        open.then(|| ui.menu_anchor.measure_keyed(key))
     }
 
     fn close_menu(&mut self, cx: &mut Context<Self>) {
@@ -2014,6 +2070,10 @@ impl Shell {
         };
         let key = place_key(place);
         let single = g.tabs.len() == 1;
+        let folded_id = format!("folded-{key}");
+        let folded_measure = self.menu_button_measure(&folded_id);
+        let view_menu_id = format!("view-menu-{key}-{group}");
+        let view_menu_measure = self.menu_button_measure(&view_menu_id);
         // The tabs keep their room (they are fitted to the header below);
         // the context takes what is left and gives way inside it.
         let mut left = div()
@@ -2102,9 +2162,11 @@ impl Shell {
                 ));
             }
             if fit.is_some() {
+                let id = format!("view-tabs-more-{key}-{group}");
+                let measure = self.menu_button_measure(&id);
                 left = left.child(
                     ui::ghost_icon_button(
-                        format!("view-tabs-more-{key}-{group}"),
+                        id.clone(),
                         Icon::ChevronDown,
                         OVERFLOW_CHEVRON,
                         false,
@@ -2112,18 +2174,17 @@ impl Shell {
                         true,
                         &t,
                     )
+                    .relative()
+                    .children(measure)
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_click(cx.listener(
-                        move |shell, e: &gpui_kit::ClickEvent, _, cx| {
-                            let p = e.position();
-                            shell.open_menu(
-                                LayoutMenu::ViewTabs(place, group),
-                                f32::from(p.x) - 12.,
-                                f32::from(p.y) + 12.,
-                                cx,
-                            )
-                        },
-                    )),
+                    .on_click(cx.listener(move |shell, _, _, cx| {
+                        shell.open_menu_under(
+                            LayoutMenu::ViewTabs(place, group),
+                            &id,
+                            crate::menu::Align::Start,
+                            cx,
+                        )
+                    })),
                 );
             }
         }
@@ -2203,9 +2264,10 @@ impl Shell {
             .children(context)
             .child(div().flex_1())
             .when(folded_more, |this| {
+                let id = folded_id.clone();
                 this.child(
                     ui::ghost_icon_button(
-                        format!("folded-{key}"),
+                        folded_id.clone(),
                         Icon::ChevronDown,
                         24.,
                         false,
@@ -2213,46 +2275,49 @@ impl Shell {
                         true,
                         &t,
                     )
-                    .on_click(cx.listener(
-                        move |shell, e: &gpui_kit::ClickEvent, _, cx| {
-                            let p = e.position();
-                            if let Place::Side(side) = place {
-                                shell.open_menu(
-                                    LayoutMenu::FoldedSide(side),
-                                    f32::from(p.x) - 180.,
-                                    f32::from(p.y) + 12.,
-                                    cx,
-                                )
-                            }
-                        },
-                    )),
+                    .relative()
+                    .children(folded_measure)
+                    .on_click(cx.listener(move |shell, _, _, cx| {
+                        if let Place::Side(side) = place {
+                            shell.open_menu_under(
+                                LayoutMenu::FoldedSide(side),
+                                &id,
+                                crate::menu::Align::End,
+                                cx,
+                            )
+                        }
+                    })),
                 )
             })
             .children(buttons)
             .when(!has_own_menu, |this| {
+                let id = view_menu_id.clone();
+                let open = view_menu_measure.is_some();
                 this.child(
                     ui::ghost_icon_button(
-                        format!("view-menu-{key}-{group}"),
+                        view_menu_id.clone(),
                         Icon::Ellipsis,
                         24.,
-                        false,
+                        open,
                         false,
                         true,
                         &t,
                     )
-                    .tooltip(ui::tip(text(locale, Key::ViewActions)))
+                    .relative()
+                    .children(view_menu_measure)
+                    // No tooltip over the menu it opened (components.md 5).
+                    .when(!open, |this| {
+                        this.tooltip(ui::tip(text(locale, Key::ViewActions)))
+                    })
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_click(cx.listener(
-                        move |shell, e: &gpui_kit::ClickEvent, _, cx| {
-                            let p = e.position();
-                            shell.open_menu(
-                                LayoutMenu::View(active),
-                                f32::from(p.x) - 200.,
-                                f32::from(p.y) + 12.,
-                                cx,
-                            )
-                        },
-                    )),
+                    .on_click(cx.listener(move |shell, _, _, cx| {
+                        shell.open_menu_under(
+                            LayoutMenu::View(active),
+                            &id,
+                            crate::menu::Align::End,
+                            cx,
+                        )
+                    })),
                 )
             })
             .children(side.zip(hide_tip).map(|(side, (tip, keys))| {
@@ -2665,7 +2730,8 @@ impl Shell {
             .child(
                 div().flex_1().min_h_0().child(
                     ui::NarrowPage::new(content, narrow)
-                        .column(ui::page_column_width(group_width, narrow)),
+                        .column(ui::page_column_width(group_width, narrow))
+                        .side((group_width - ui::page_column_width(group_width, narrow)) / 2.),
                 ),
             )
             .into_any_element()
@@ -2708,6 +2774,11 @@ impl Shell {
         let g = bench.layout.page.groups[group].clone();
         let dragging = bench.ui.drag.map(|d| d.dragged.tab);
         let geometry = Rc::clone(&bench.ui.geometry);
+        let folded_tabs_id = format!("folded-tabs-{group}");
+        let folded_tabs_measure = self.menu_button_measure(&folded_tabs_id);
+        let Some(bench) = self.bench() else {
+            return div().into_any_element();
+        };
         let mut bar = div()
             .id(("tab-bar", group))
             .flex()
@@ -2877,7 +2948,7 @@ impl Shell {
             bar = bar.child(div().flex_1()).child(
                 div().flex().items_center().px(px(4.)).child(
                     ui::ghost_icon_button(
-                        format!("folded-tabs-{group}"),
+                        folded_tabs_id.clone(),
                         Icon::ChevronDown,
                         24.,
                         false,
@@ -2885,17 +2956,16 @@ impl Shell {
                         true,
                         t,
                     )
-                    .on_click(cx.listener(
-                        |shell, e: &gpui_kit::ClickEvent, _, cx| {
-                            let p = e.position();
-                            shell.open_menu(
-                                LayoutMenu::Folded,
-                                f32::from(p.x) - 200.,
-                                f32::from(p.y) + 12.,
-                                cx,
-                            )
-                        },
-                    )),
+                    .relative()
+                    .children(folded_tabs_measure)
+                    .on_click(cx.listener(move |shell, _, _, cx| {
+                        shell.open_menu_under(
+                            LayoutMenu::Folded,
+                            &folded_tabs_id,
+                            crate::menu::Align::End,
+                            cx,
+                        )
+                    })),
                 ),
             );
         }
@@ -3143,6 +3213,7 @@ impl Shell {
             .collect();
         let bench = self.bench()?;
         let menu = bench.ui.menu?;
+        let menu_anchor = bench.ui.menu_anchor.clone();
         let layout = bench.layout.clone();
         let can_undo = !bench.layout_undo.is_empty();
         let mut panel = menu::panel("layout-menu", &t)
@@ -3451,6 +3522,9 @@ impl Shell {
                     }
                 }
             }
+        }
+        if let Some((key, align)) = menu.under {
+            return menu_anchor.below_keyed(key, panel, align, 3);
         }
         Some(
             deferred(

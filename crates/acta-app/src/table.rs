@@ -168,6 +168,13 @@ fn status_rank(topic: &TopicSummary) -> usize {
         .unwrap_or(0)
 }
 
+/// Whether the project table groups its rows by epic under `filter`: the
+/// due segments list by date across epics instead (components-records.md
+/// 5, "list by due date, earliest first").
+pub fn grouped(filter: Filter) -> bool {
+    !matches!(filter, Filter::Overdue | Filter::Week)
+}
+
 /// A group of the project table: its epic (none for "No epic") and topics.
 pub type TableGroup<'a> = (Option<(EpicId, &'a str)>, &'a [TopicSummary]);
 
@@ -201,6 +208,15 @@ pub fn progress(topics: &[TopicSummary]) -> (i64, i64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_due_segments_list_across_epics_the_others_group() {
+        assert!(!grouped(Filter::Overdue));
+        assert!(!grouped(Filter::Week));
+        assert!(grouped(Filter::Open));
+        assert!(grouped(Filter::All));
+        assert!(grouped(Filter::Closed));
+    }
     use crate::tree::sample::topic;
     use acta_core::model::Status;
 

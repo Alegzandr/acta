@@ -4,7 +4,7 @@
 //! (16 ms per key over 10,000 topics); knowledge comes from the store's
 //! full-text search, off the UI thread.
 
-use acta_core::model::{KbId, KbKind, ProjectId, Status, TopicId};
+use acta_core::model::{EpicId, KbId, KbKind, ProjectId, Status, TopicId};
 
 use crate::commands::Command;
 
@@ -12,6 +12,7 @@ use crate::commands::Command;
 pub enum Group {
     Recent,
     Topics,
+    Epics,
     Knowledge,
     Commands,
     Projects,
@@ -19,10 +20,12 @@ pub enum Group {
     Choices,
 }
 
-/// The order groups appear in, fixed so results do not jump.
-pub const ORDER: [Group; 6] = [
+/// The order groups appear in, fixed so results do not jump, except that a
+/// title equal to the query leads (see [`arrange`]).
+pub const ORDER: [Group; 7] = [
     Group::Recent,
     Group::Topics,
+    Group::Epics,
     Group::Knowledge,
     Group::Commands,
     Group::Projects,
@@ -32,6 +35,7 @@ pub const ORDER: [Group; 6] = [
 #[derive(Clone, Debug, PartialEq)]
 pub enum Target {
     Topic(TopicId, Status),
+    Epic(EpicId),
     Project(ProjectId),
     Kb(KbId, KbKind),
     Command(Command),
@@ -129,19 +133,39 @@ pub fn idle_topic(
     }
 }
 
+/// Whether `title` is the query itself, case and surrounding spaces
+/// aside: what someone who types a name exactly means to open.
+pub fn is_exact(query: &str, title: &str) -> bool {
+    let query = query.trim();
+    !query.is_empty() && title.trim().to_lowercase() == query.to_lowercase()
+}
+
 /// Order items: fixed group order, then score, then their given order
 /// (recency for topics), and keep at most `limit` per group. A scope to
 /// topics keeps the recent ones, which are topics too.
-pub fn arrange(mut items: Vec<Item>, scope: Option<Group>, limit: usize) -> Vec<Item> {
+///
+/// A title equal to `query` ranks first across groups (lead decision,
+/// QA 2026-11-22): its group moves to the top and the exact row leads it,
+/// so `Enter` opens what was named and never creates a duplicate.
+pub fn arrange(mut items: Vec<Item>, scope: Option<Group>, limit: usize, query: &str) -> Vec<Item> {
     if let Some(scope) = scope {
         items.retain(|i| i.group == scope || (scope == Group::Topics && i.group == Group::Recent));
     }
+    let lead = items
+        .iter()
+        .filter(|i| is_exact(query, &i.title))
+        .map(|i| i.group)
+        .min_by_key(|g| ORDER.iter().position(|o| o == g));
+    let rank = |item: &Item| {
+        let group = ORDER
+            .iter()
+            .position(|g| *g == item.group)
+            .unwrap_or(ORDER.len());
+        let first = lead.is_some_and(|g| g == item.group);
+        (!first, group, !is_exact(query, &item.title))
+    };
     // Stable: equal scores keep their given order.
-    items.sort_by(|a, b| {
-        let ga = ORDER.iter().position(|g| *g == a.group);
-        let gb = ORDER.iter().position(|g| *g == b.group);
-        ga.cmp(&gb).then(b.score.cmp(&a.score))
-    });
+    items.sort_by(|a, b| rank(a).cmp(&rank(b)).then(b.score.cmp(&a.score)));
     let mut out = Vec::with_capacity(items.len());
     let mut current: Option<Group> = None;
     let mut count = 0;
@@ -223,13 +247,13 @@ mod tests {
                 "Entry in Acta / Terminal".to_owned(),
             ),
         ];
-        let idle = arrange(choices(&all, ""), Some(Group::Choices), 10);
+        let idle = arrange(choices(&all, ""), Some(Group::Choices), 10, "");
         let order: Vec<_> = idle.iter().map(|i| i.target.clone()).collect();
         assert_eq!(
             order,
             [Target::Choice(0), Target::Choice(1), Target::Choice(2)]
         );
-        let typed = arrange(choices(&all, "term"), Some(Group::Choices), 10);
+        let typed = arrange(choices(&all, "term"), Some(Group::Choices), 10, "term");
         assert_eq!(typed[0].target, Target::Choice(1), "title match first");
         assert_eq!(typed[1].target, Target::Choice(2), "then the detail");
         assert_eq!(typed.len(), 2);
@@ -254,7 +278,7 @@ mod tests {
             item(Group::Topics, "Embed the terminal", 7),
             item(Group::Projects, "Acta", 50),
         ];
-        let arranged = arrange(items.clone(), None, 10);
+        let arranged = arrange(items.clone(), None, 10, "");
         let titles: Vec<_> = arranged.iter().map(|i| i.title.as_str()).collect();
         assert_eq!(
             titles,
@@ -265,9 +289,9 @@ mod tests {
                 "Acta"
             ]
         );
-        let topics = arrange(items.clone(), Some(Group::Topics), 10);
+        let topics = arrange(items.clone(), Some(Group::Topics), 10, "");
         assert_eq!(topics.len(), 2);
-        assert_eq!(arrange(items, None, 1).len(), 3);
+        assert_eq!(arrange(items, None, 1, "").len(), 3);
     }
 
     #[test]
@@ -285,11 +309,51 @@ mod tests {
             item(Group::Topics, "Newer", 2),
             item(Group::Commands, "Toggle terminal", 0),
         ];
-        let titles: Vec<_> = arrange(items, Some(Group::Topics), 10)
+        let titles: Vec<_> = arrange(items, Some(Group::Topics), 10, "")
             .into_iter()
             .map(|i| i.title)
             .collect();
         assert_eq!(titles, ["Opened lately", "Newer", "Older"]);
+    }
+
+    #[test]
+    fn an_exact_title_leads_across_groups() {
+        // "Acta" names the project; a memory and a command merely hold it.
+        let items = vec![
+            item(Group::Topics, "Acta release notes", 90),
+            item(Group::Knowledge, "Acta memory", 80),
+            item(Group::Projects, "Acta", 50),
+            item(Group::Commands, "Open Acta folder", 70),
+        ];
+        let arranged = arrange(items, None, 10, "acta");
+        assert_eq!(arranged[0].title, "Acta");
+        assert_eq!(arranged[0].group, Group::Projects);
+        // The rest keep the fixed order.
+        let rest: Vec<_> = arranged[1..].iter().map(|i| i.group).collect();
+        assert_eq!(rest, vec![Group::Topics, Group::Knowledge, Group::Commands]);
+    }
+
+    #[test]
+    fn an_epic_named_exactly_is_found_first_so_enter_opens_it() {
+        let items = vec![
+            item(Group::Topics, "Core UI polish", 120),
+            item(Group::Epics, "Core UI", 60),
+        ];
+        let arranged = arrange(items, None, 10, " Core UI ");
+        assert_eq!(arranged[0].group, Group::Epics);
+        assert!(is_exact("core ui", "Core UI"));
+        assert!(!is_exact("", ""));
+        assert!(!is_exact("core", "Core UI"));
+    }
+
+    #[test]
+    fn within_a_group_the_exact_title_comes_before_a_better_score() {
+        let items = vec![
+            item(Group::Topics, "Terminal tabs", 200),
+            item(Group::Topics, "Terminal", 10),
+        ];
+        let arranged = arrange(items, None, 10, "terminal");
+        assert_eq!(arranged[0].title, "Terminal");
     }
 
     #[test]

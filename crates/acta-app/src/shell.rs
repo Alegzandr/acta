@@ -49,6 +49,7 @@ use crate::inbox_page::InboxPage;
 use crate::kb_model::Filters;
 use crate::kb_page::{DocPage, Draft, KnowledgePage};
 use crate::layout::{Direction, Layout, Place, Side, Tab, TabId, ViewAction, ViewId};
+use crate::menu::Align;
 use crate::palette::{CreateKind, Palette, PaletteEvent, Setup};
 use crate::palette_model::{Group, Target};
 use crate::record_page::{EditTitle, OpenDuePicker, OpenStatusMenu, PageEvent, RecordPage};
@@ -85,6 +86,12 @@ pub const MIN_SIZE: (f32, f32) = (880., 560.);
 const STATUS_BAR_HEIGHT: f32 = 24.;
 /// docs/design/components.md 5, Toast: 6 s.
 const TOAST_TIME: Duration = Duration::from_secs(6);
+
+/// A toast about a failure stays until dismissed (components.md 5, Toast):
+/// an error, and "Not enough room", which also carries the way out.
+fn toast_stays(kind: ToastKind) -> bool {
+    matches!(kind, ToastKind::Error | ToastKind::LayoutNoRoom)
+}
 /// Deferred layers paint by priority: the sidebar over the page 1, the
 /// layout toast 2, menus 3, a drag 4, the palette and dialogs above all.
 const OVERLAY_PRIORITY: usize = 10;
@@ -126,8 +133,6 @@ actions!(
         SwitchProject,
         /// `Mod+T`.
         NewTopic,
-        /// `Mod+E`.
-        AddEntry,
         /// `Mod+N`.
         CaptureNote,
         /// `Mod+I`.
@@ -273,7 +278,6 @@ fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new(m("cmd-p", "ctrl-p"), GoToTopic, app),
         KeyBinding::new(m("cmd-o", "ctrl-o"), SwitchProject, app),
         KeyBinding::new(m("cmd-t", "ctrl-t"), NewTopic, app),
-        KeyBinding::new(m("cmd-e", "ctrl-e"), AddEntry, app),
         KeyBinding::new(m("cmd-n", "ctrl-n"), CaptureNote, app),
         KeyBinding::new(m("cmd-i", "ctrl-i"), GoInbox, app),
         KeyBinding::new(m("cmd-l", "ctrl-l"), GoKnowledge, app),
@@ -440,6 +444,8 @@ struct Bench {
     tree: tree_ui::TreeState,
     /// The tree's open menu (`Shift+F10`, `S`, `M`).
     tree_menu: Option<TreeMenu>,
+    /// Where the tree's menu hangs: its row's title.
+    tree_menu_anchor: crate::menu::AnchorBounds,
     /// The due date picker on a tree row (`D`).
     tree_due: Option<TreeDue>,
     /// The row being renamed in place.
@@ -692,6 +698,7 @@ impl Shell {
             cursor: tree::Cursor::default(),
             tree: tree_ui::TreeState::default(),
             tree_menu: None,
+            tree_menu_anchor: Default::default(),
             tree_due: None,
             rename: None,
             find: (String::new(), None),
@@ -907,7 +914,17 @@ impl Shell {
             self.navigate(route, true, window, cx);
         }
         match std::env::var("ACTA_DEV_OVERLAY").as_deref() {
-            Ok("palette") => self.open_palette(None, None, window, cx),
+            Ok("palette") => {
+                self.open_palette(None, None, window, cx);
+                // `ACTA_DEV_QUERY`: typed into it (the ranking of 8.3).
+                #[cfg(debug_assertions)]
+                if let Ok(query) = std::env::var("ACTA_DEV_QUERY")
+                    && let Some(bench) = self.bench()
+                    && let Some(Overlay::Palette(palette)) = &bench.overlay
+                {
+                    palette.update(cx, |p, cx| p.dev_type(&query, window, cx));
+                }
+            }
             // Due dates and the Overview (components-records.md 5), once
             // the page has loaded: the picker, with `ACTA_DEV_DUE_INPUT`
             // typed into it (`due-picker-enter` also presses Enter); the
@@ -998,7 +1015,37 @@ impl Shell {
                 });
                 self.open_palette(None, None, window, cx);
             }
-            Ok("layout-menu") => self.open_menu(LayoutMenu::Layout, 1000., 40., cx),
+            Ok("layout-menu") => {
+                self.open_menu_under(LayoutMenu::Layout, "titlebar-layout", Align::End, cx)
+            }
+            // Menus hung from their buttons (components.md 5), once the
+            // page has loaded: the status menu, the first entry's menu,
+            // the Settings language menu.
+            #[cfg(debug_assertions)]
+            Ok(which @ ("status-menu" | "entry-menu" | "settings-language")) => {
+                let which = which.to_owned();
+                cx.spawn_in(window, async move |shell, cx| {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(1500))
+                        .await;
+                    let _ = shell.update_in(cx, |shell, window, cx| {
+                        if which == "settings-language" {
+                            if let Some(bench) = shell.bench()
+                                && let PageView::Settings(page) = &bench.page
+                            {
+                                page.update(cx, |page, cx| page.dev_open_language(cx));
+                            }
+                        } else {
+                            shell.with_record(
+                                cx,
+                                |page, window, cx| page.dev_menu(&which, window, cx),
+                                window,
+                            )
+                        }
+                    });
+                })
+                .detach();
+            }
             // "File with Claude Code" against a live Claude Code: the
             // terminal starts, then after 30 s the triage runs (typed into
             // an idle session), then after 60 s more `/exit`, if idle. The
@@ -1936,6 +1983,7 @@ impl Shell {
                 let route = match target {
                     Target::Topic(id, _) => Route::Topic(id),
                     Target::Project(id) => Route::Project(id),
+                    Target::Epic(id) => Route::Epic(id),
                     Target::Kb(id, _) => Route::Kb(id),
                     Target::Command(command) => return self.run_command(command, window, cx),
                     Target::Choice(_) => return,
@@ -2029,11 +2077,6 @@ impl Shell {
             Command::NewEpic => self.open_palette(None, Some(CreateKind::Epic), window, cx),
             Command::NewProject => self.new_project(window, cx),
             Command::TreeCollapseAll => self.collapse_all(cx),
-            Command::AddEntry => self.with_record(
-                cx,
-                |page, window, cx| page.focus_composer(window, cx),
-                window,
-            ),
             Command::Capture => self.open_capture(window, cx),
             Command::GoInbox => self.go_project_page(Route::Inbox, window, cx),
             Command::GoKnowledge => self.go_project_page(Route::Knowledge, window, cx),
@@ -2935,10 +2978,7 @@ impl Shell {
     /// (components.md 5, Toast); an error stays until dismissed.
     fn arm_toast_timer(&mut self, cx: &mut Context<Self>) {
         let Some(bench) = self.bench() else { return };
-        let stays = bench
-            .toast
-            .as_ref()
-            .is_none_or(|t| t.kind == ToastKind::Error);
+        let stays = bench.toast.as_ref().is_none_or(|t| toast_stays(t.kind));
         bench.toast_timer = if stays {
             Task::ready(())
         } else {
@@ -3515,7 +3555,16 @@ impl Shell {
             &state,
             window,
             |shell, _, event: &InputEvent, window, cx| match event {
-                InputEvent::PressEnter { .. } | InputEvent::Blur => shell.commit_rename(window, cx),
+                // Enter saves and gives the keyboard back to the tree at
+                // once, so its keys work while the write runs (QA: focus
+                // was lost until Mod+1).
+                InputEvent::PressEnter { .. } => {
+                    shell.commit_rename(window, cx);
+                    if let Some(handle) = shell.bench().map(|b| b.tree_focus.clone()) {
+                        window.focus(&handle, cx);
+                    }
+                }
+                InputEvent::Blur => shell.commit_rename(window, cx),
                 _ => {}
             },
         );
@@ -3735,21 +3784,23 @@ impl Shell {
         // components-app.md 5, Claude Code sessions: while sessions run, the
         // item counts them by state and shows the Sessions view.
         let live = crate::sessions::live(cx).to_vec();
-        let sessions_text = crate::sessions::status_text(locale, crate::sessions::counts(&live));
+        let counts = crate::sessions::counts(&live);
+        let sessions_text = crate::sessions::status_text(locale, counts);
         let claude_item = match (sessions_text, crate::sessions::strongest(&live)) {
             (Some(label), Some(state)) => {
-                let tip = live.first().map(|s| {
+                // The bar names the most urgent state; the tooltip lists
+                // every state, then the first session's focus and activity.
+                let mut lines = crate::sessions::state_counts(locale, counts);
+                if let Some(s) = live.first() {
                     let owner = crate::sessions::place(s);
                     let name = self
                         .bench()
                         .and_then(|b| crate::sessions_view::title_of(b.ws.read(cx), owner))
                         .unwrap_or_default();
-                    format!(
-                        "{}\n{}",
-                        crate::terminal_dock::focus_label(locale, owner, &name),
-                        crate::sessions::detail(locale, s, true)
-                    )
-                });
+                    lines.push(crate::terminal_dock::focus_label(locale, owner, &name));
+                    lines.push(crate::sessions::detail(locale, s, true));
+                }
+                let tip = Some(lines.join("\n"));
                 ui::bar_item("status-claude", &tokens)
                     .child(icon(
                         Icon::Bot,
@@ -4372,11 +4423,28 @@ impl Shell {
             .rounded(px(RADIUS_LG))
             .shadow(vec![t.shadow_overlay()])
             .child(
-                type_scale::UI
-                    .el()
-                    .text_color(t.text_primary)
-                    .line_clamp(2)
-                    .child(toast.message.clone()),
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_start()
+                    .gap(px(8.))
+                    // A failure says so with its glyph (QA 2026-11-22).
+                    .when(room, |this| {
+                        this.child(div().h(px(20.)).flex().items_center().child(icon(
+                            Icon::TriangleAlert,
+                            16.,
+                            t.warning,
+                        )))
+                    })
+                    .child(
+                        type_scale::UI
+                            .el()
+                            .flex_1()
+                            .min_w_0()
+                            .text_color(t.text_primary)
+                            .line_clamp(2)
+                            .child(toast.message.clone()),
+                    ),
             )
             .child(
                 div()
@@ -4599,17 +4667,14 @@ enum TreeKey {
 
 /// The plan usage meters of the status bar (components-app.md 5, Plan
 /// usage): "5h 42%" and "7d 18%", each with a 24 x 4 bar, `warning` above
-/// 80 %, dimmed once its window has reset; "Plan usage: no data yet" until
-/// Claude Code first reports it.
+/// 80 %, dimmed once its window has reset; nothing until Claude Code first
+/// reports it.
 fn usage_items(t: &Tokens, locale: Locale, cx: &mut Context<Shell>) -> Vec<AnyElement> {
     let now = acta_core::time::now_ms();
+    // Nothing until there is a number (layout.md 4.6): why the bar is
+    // empty is the tooltip of the Settings row.
     let Some(usage) = crate::sessions::plan_usage(cx) else {
-        return vec![
-            ui::bar_item("status-usage", t)
-                .child(type_scale::SMALL.el().child(text(locale, Key::UsageNoData)))
-                .tooltip(ui::tip(text(locale, Key::UsageNoDataTip)))
-                .into_any_element(),
-        ];
+        return Vec::new();
     };
     let windows = [
         (
@@ -4649,7 +4714,7 @@ fn usage_items(t: &Tokens, locale: Locale, cx: &mut Context<Shell>) -> Vec<AnyEl
             let filled = 24. * f32::from(m.percent.min(100)) / 100.;
             Some(
                 ui::bar_item(id, t)
-                    .gap(px(6.))
+                    .gap(px(4.))
                     .child(
                         type_scale::SMALL
                             .el()
@@ -4676,6 +4741,7 @@ fn usage_items(t: &Tokens, locale: Locale, cx: &mut Context<Shell>) -> Vec<AnyEl
 /// The open menu of a tree row (components.md 5, Context menu): the row
 /// menu, the status menu (`S`, then `1` to `6`) or the epics (`M`).
 fn tree_menu(
+    anchor: &crate::menu::AnchorBounds,
     items: &[MenuItem],
     menu: TreeMenu,
     status: Option<Status>,
@@ -4728,13 +4794,13 @@ fn tree_menu(
             })),
         );
     }
-    deferred(
-        gpui_kit::anchored()
-            .offset(point(px(0.), px(28.)))
-            .child(panel),
-    )
-    .with_priority(1)
-    .into_any_element()
+    // Over the row's title, one row high: the menu hangs 4 under the row.
+    div()
+        .size_full()
+        .relative()
+        .child(anchor.measure())
+        .children(anchor.below(panel, crate::menu::Align::Start))
+        .into_any_element()
 }
 
 impl Render for Shell {
@@ -4877,9 +4943,6 @@ impl Render for Shell {
             .on_action(
                 cx.listener(|s, _: &NewTopic, w, cx| s.run_command(Command::NewTopic, w, cx)),
             )
-            .on_action(
-                cx.listener(|s, _: &AddEntry, w, cx| s.run_command(Command::AddEntry, w, cx)),
-            )
             .on_action(cx.listener(|s, _: &CaptureNote, w, cx| s.open_capture(w, cx)))
             .on_action(cx.listener(|s, _: &GoInbox, w, cx| s.toggle_view(ViewId::Inbox, w, cx)))
             .on_action(
@@ -5006,6 +5069,14 @@ pub fn window_options(default_size: (f32, f32), focus: bool, cx: &App) -> Window
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failures_stay_until_dismissed_and_undo_toasts_go() {
+        assert!(toast_stays(ToastKind::Error));
+        assert!(toast_stays(ToastKind::LayoutNoRoom));
+        assert!(!toast_stays(ToastKind::Layout));
+        assert!(!toast_stays(ToastKind::LayoutReset));
+    }
 
     #[test]
     fn the_key_bindings_parse() {

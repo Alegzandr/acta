@@ -7,7 +7,7 @@ use std::rc::Rc;
 use acta_core::model::FolderId;
 use gpui_kit::{
     AnyElement, Context, Div, InteractiveElement, IntoElement, ParentElement, SharedString,
-    Stateful, StatefulInteractiveElement, Styled, Window, anchored, deferred, div, point, px,
+    Stateful, StatefulInteractiveElement, Styled, Window, div, px,
 };
 
 use crate::folders_model::{self, GitLine};
@@ -22,21 +22,30 @@ use crate::ui;
 /// padding 0 x 4, `radius.sm`: the folder's icon 16, its name, then
 /// `chevron-down` 12. `missing`: the active folder was not found
 /// (`folder-x` in `warning`, the name in `text.secondary`). The caller
-/// adds the tooltip (the full path) and the click.
+/// adds the tooltip (the full path) and the click. `in_header`: the 28
+/// header of the terminal, where it sits among `type.small` and
+/// `type.label` text, so its name is `type.small` and its icon 14 (QA
+/// 2026-11-22: it read larger than the view tabs beside it).
 pub fn switcher(
     id: impl Into<SharedString>,
     glyph: Icon,
     name: &str,
     missing: bool,
+    in_header: bool,
     t: &Tokens,
 ) -> Stateful<Div> {
     let hover = t.fill_hover;
-    let el = type_scale::UI.el().id(id.into());
+    let role = if in_header {
+        type_scale::SMALL
+    } else {
+        type_scale::UI
+    };
+    let el = role.el().id(id.into());
     ui::focusable(el, t, false)
         .flex()
         .flex_row()
         .items_center()
-        .gap(px(6.))
+        .gap(px(4.))
         .h(px(24.))
         .px(px(4.))
         .min_w_0()
@@ -44,7 +53,7 @@ pub fn switcher(
         .hover(move |s| s.bg(hover))
         .child(icon(
             glyph,
-            16.,
+            if in_header { 14. } else { 16. },
             if missing { t.warning } else { t.text_secondary },
         ))
         .child(
@@ -105,10 +114,12 @@ pub struct SwitchActions<V> {
 /// The switcher's menu (screens.md 8.11): every folder the page sees,
 /// grouped by origin, "Active" on the active one, "Not found" (not
 /// choosable) on a folder that was not found; then "Edit folders..." and
-/// "Add folder...". Anchored under the switcher by the caller's position.
+/// "Add folder...". Hangs under the switcher, measured by `anchor`.
 /// `highlight` indexes [`choosable`].
+#[allow(clippy::too_many_arguments)]
 pub fn switcher_menu<V: 'static>(
     id: &'static str,
+    anchor: &menu::AnchorBounds,
     groups: &[SwitchGroup],
     highlight: Option<usize>,
     locale: Locale,
@@ -205,9 +216,9 @@ pub fn switcher_menu<V: 'static>(
             )
             .on_click(cx.listener(move |v, _, window, cx| add(v, window, cx))),
         );
-    deferred(anchored().offset(point(px(0.), px(26.))).child(panel))
-        .with_priority(1)
-        .into_any_element()
+    anchor
+        .below(panel, menu::Align::Start)
+        .unwrap_or_else(|| div().into_any_element())
 }
 
 /// The git state (ADR 0011, 2): `git-branch` 12 and the branch, then

@@ -16,14 +16,13 @@ use acta_core::model::{
     Author, Entry, EntryId, EntryKind, KbId, KbKind, KbSummary, Owner, Record, Status, TopicId,
     TopicSummary,
 };
-use acta_core::store::{EpicPatch, NewEntry, OverviewFilter, ProjectPatch, TopicPatch};
+use acta_core::store::{EpicPatch, OverviewFilter, ProjectPatch, TopicPatch};
 use gpui_kit::component::input::{Escape, Input, InputEvent, InputState, Textarea, TextareaState};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, AppContext, ClipboardItem, Context, Entity, EventEmitter, FocusHandle,
     Focusable, InteractiveElement, IntoElement, KeyDownEvent, ParentElement, PathPromptOptions,
-    Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Task, Window, anchored,
-    deferred, div, point, px,
+    Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Task, Window, div, px,
 };
 
 use crate::due::{self, Outcome, Tone};
@@ -98,9 +97,6 @@ pub struct RecordPage {
     saving_title: bool,
     state_edit: Option<Entity<TextareaState>>,
     description_edit: Option<Entity<TextareaState>>,
-    composer: Entity<TextareaState>,
-    composer_kind: EntryKind,
-    composer_open: bool,
     /// The status menu, with its highlighted row.
     status_menu: Option<usize>,
     /// The entry menu (components-records.md 5, Timeline entry).
@@ -113,6 +109,10 @@ pub struct RecordPage {
     reveal_editor: std::rc::Rc<std::cell::Cell<bool>>,
     /// The knowledge section's New menu, with its highlighted row.
     kb_new_menu: Option<usize>,
+    /// Where the status, entry and knowledge menus hang.
+    status_anchor: AnchorBounds,
+    entry_anchor: AnchorBounds,
+    kb_new_anchor: AnchorBounds,
     /// The working folders (components-folders.md 5).
     folder_ui: folders::FolderUi,
     table_filter: table::Filter,
@@ -120,6 +120,12 @@ pub struct RecordPage {
     kb_open: Option<KbId>,
     kb_inherited_open: bool,
     id_copied: bool,
+    /// The pointer is over the properties block: its add chips show.
+    props_hover: bool,
+    /// The topic table's body height last laid out, and the least it keeps
+    /// after a segment changed.
+    table_height: std::rc::Rc<std::cell::Cell<f32>>,
+    table_floor: f32,
     seen_revision: u64,
     /// The due date picker, open on the Due row (components-records.md 5).
     due_picker: Option<Entity<DuePicker>>,
@@ -203,21 +209,14 @@ impl RecordPage {
     pub fn new(
         ws: Entity<Workspace>,
         owner: Owner,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let locale = settings::locale(cx);
-        let composer = cx.new(|cx| {
-            TextareaState::new(window, cx)
-                .auto_grow(1, 16)
-                .placeholder(text(locale, Key::ComposerPlaceholder))
-        });
-        let mut subs = vec![
+        let subs = vec![
             cx.observe(&ws, |page, _, cx| page.reload_if_moved(cx)),
             // The Overview counts in local days: a new day recounts.
             cx.observe_global::<due::Today>(|page, cx| page.reload(cx)),
         ];
-        subs.push(cx.subscribe_in(&composer, window, Self::on_composer));
         let mut page = Self {
             ws,
             owner,
@@ -229,21 +228,24 @@ impl RecordPage {
             saving_title: false,
             state_edit: None,
             description_edit: None,
-            composer,
-            composer_kind: EntryKind::Progress,
-            composer_open: false,
             status_menu: None,
             entry_menu: None,
             entry_edit: None,
             scroll: gpui_kit::ScrollHandle::new(),
             reveal_editor: Default::default(),
             kb_new_menu: None,
+            status_anchor: AnchorBounds::default(),
+            entry_anchor: AnchorBounds::default(),
+            kb_new_anchor: AnchorBounds::default(),
             folder_ui: folders::FolderUi::default(),
             table_filter: table::Filter::Open,
             table_sort: None,
             kb_open: None,
             kb_inherited_open: false,
             id_copied: false,
+            props_hover: false,
+            table_height: Default::default(),
+            table_floor: 0.,
             seen_revision: 0,
             due_picker: None,
             _due_sub: None,
@@ -758,85 +760,31 @@ impl RecordPage {
             | self.entry_menu.take().is_some()
             | self.entry_edit.take().is_some()
             | self.kb_new_menu.take().is_some();
-        if self.composer_open {
-            self.composer_open = false;
-        }
         if had {
             window.focus(&self.focus, cx);
         }
         cx.notify();
     }
 
-    /// `Mod+E`: the composer at the top of the timeline, preset to Progress.
-    pub fn focus_composer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.topic().is_none() {
-            return;
-        }
-        self.composer_open = true;
-        self.composer_kind = EntryKind::Progress;
-        self.composer
-            .update(cx, |state, cx| state.focus(window, cx));
-        cx.notify();
-    }
-
-    fn on_composer(
-        &mut self,
-        _: &Entity<TextareaState>,
-        event: &InputEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        match event {
-            InputEvent::Focus => {
-                self.composer_open = true;
-                cx.notify();
+    /// Debug builds: a menu open for captures (`status-menu`, or the
+    /// `entry-menu` of the newest entry that is not a system event).
+    #[cfg(debug_assertions)]
+    pub fn dev_menu(&mut self, which: &str, window: &mut Window, cx: &mut Context<Self>) {
+        match which {
+            "status-menu" => self.status_menu = Some(0),
+            "entry-menu" => {
+                let entry = self.data.as_ref().and_then(|d| {
+                    record::timeline_entries(&d.entries)
+                        .into_iter()
+                        .find(|e| e.kind != EntryKind::System)
+                });
+                if let Some(entry) = entry {
+                    self.open_entry_menu(entry, window, cx);
+                }
             }
-            InputEvent::PressEnter {
-                secondary: true, ..
-            } => self.add_entry(window, cx),
             _ => {}
         }
-    }
-
-    fn add_entry(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(topic) = self.topic() else { return };
-        let body = self.composer.read(cx).value().trim().to_owned();
-        if body.is_empty() {
-            return;
-        }
-        let kind = self.composer_kind;
-        self.composer
-            .update(cx, |state, cx| state.set_value("", window, cx));
-        self.composer_open = false;
-        window.focus(&self.focus, cx);
         cx.notify();
-        let restore = body.clone();
-        let task = self.ws.update(cx, |ws, cx| {
-            ws.write(cx, Key::ErrorSaveEntry, move |store| {
-                store.log(
-                    topic,
-                    NewEntry {
-                        kind,
-                        text: body,
-                        state: None,
-                        status: None,
-                    },
-                    Author::Human,
-                )
-            })
-        });
-        // A failed write puts the text back (interaction.md 6.4).
-        cx.spawn_in(window, async move |page, cx| {
-            if task.await.is_err() {
-                let _ = page.update_in(cx, |page, window, cx| {
-                    page.composer
-                        .update(cx, |state, cx| state.set_value(restore, window, cx));
-                    page.composer_open = true;
-                    cx.notify();
-                });
-            }
-        })
-        .detach();
     }
 
     // ---- the entry menu ----
@@ -1031,15 +979,26 @@ impl RecordPage {
 
 // ---- rendering ----
 
-/// `{when} by {author}`, the long form: "2 h ago by Claude Code".
-fn updated_line(locale: Locale, at: i64, by: Author) -> String {
-    let when = when::long_alone(locale, at);
+/// The meta line's text around the id (components-records.md 5): the
+/// sentence of `meta.record` cut where the id goes, so the id can be its
+/// own control in any language; without an id, all of `meta.updated`.
+pub(crate) fn meta_parts(locale: Locale, with_id: bool, at: i64, by: Author) -> (String, String) {
+    const MARK: &str = "\u{1}";
+    let when = when::long(locale, at);
     let author = when::author(locale, by);
-    tr(
-        locale,
-        Key::CommonBy,
-        &[("when", Arg::Text(&when)), ("author", Arg::Text(&author))],
-    )
+    let args = [
+        ("id", Arg::Text(MARK)),
+        ("when", Arg::Text(&when)),
+        ("author", Arg::Text(&author)),
+    ];
+    if !with_id {
+        return (String::new(), tr(locale, Key::MetaUpdated, &args[1..]));
+    }
+    let line = tr(locale, Key::MetaRecord, &args);
+    match line.split_once(MARK) {
+        Some((before, after)) => (before.to_owned(), after.to_owned()),
+        None => (String::new(), line),
+    }
 }
 
 fn entry_kind_meta(kind: EntryKind) -> (Icon, Key) {
@@ -1053,16 +1012,16 @@ fn entry_kind_meta(kind: EntryKind) -> (Icon, Key) {
 impl RecordPage {
     fn render_title(&self, data: &Loaded, t: &Tokens, cx: &mut Context<Self>) -> AnyElement {
         if let Some(state) = &self.title_edit {
-            return div()
+            // The editor keeps the title's own size (QA: it shrank to the
+            // input's default while editing).
+            return type_scale::TITLE
+                .el()
                 .border_b_1()
                 .border_color(t.border_strong)
-                .text_size(px(24.))
-                .line_height(px(30.))
-                .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                 .on_action(
                     cx.listener(|page, _: &Escape, window, cx| page.cancel_title(window, cx)),
                 )
-                .child(Input::new(state).appearance(false).px(px(0.)))
+                .child(ui::role_input(Input::new(state), type_scale::TITLE))
                 .into_any_element();
         }
         type_scale::TITLE
@@ -1078,22 +1037,23 @@ impl RecordPage {
     fn render_properties(
         &self,
         data: &Loaded,
+        due_focused: bool,
         locale: Locale,
         t: &Tokens,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let mut rows: Vec<(String, AnyElement)> = Vec::new();
-        let updated = div()
-            .id("prop-updated")
-            .child(updated_line(locale, data.updated_at, data.updated_by))
-            .into_any_element();
+        // An unset optional value has no row (components-records.md 5).
+        let due_row = data.due_on.is_some();
         match self.owner {
-            Owner::Topic(id) => {
+            Owner::Topic(_) => {
                 let topic = data.topic.as_ref();
                 let status = topic.map(|t| t.status).unwrap_or(Status::Planned);
                 let status_button = ui::ghost_value("prop-status", t)
+                    .relative()
                     .child(ui::status_glyph(status, 16., t))
                     .child(text(locale, ui::status_key(status)))
+                    .child(self.status_anchor.measure())
                     .on_click(cx.listener(move |page, _, window, cx| {
                         page.status_menu =
                             Some(Status::ALL.iter().position(|s| *s == status).unwrap_or(0));
@@ -1107,10 +1067,12 @@ impl RecordPage {
                     text(locale, Key::PropStatus),
                     div().child(status_button).children(menu).into_any_element(),
                 ));
-                rows.push((
-                    text(locale, Key::PropDue),
-                    self.render_due(data, locale, t, cx),
-                ));
+                if due_row {
+                    rows.push((
+                        text(locale, Key::PropDue),
+                        self.render_due(data, locale, t, cx),
+                    ));
+                }
                 let epic = match &data.epic {
                     Some((epic, name)) => {
                         let epic = *epic;
@@ -1126,58 +1088,167 @@ impl RecordPage {
                         .into_any_element(),
                 };
                 rows.push((text(locale, Key::PropEpic), epic));
-                rows.push((
-                    text(locale, Key::PropFolders),
-                    self.render_folders(data, locale, t, cx),
-                ));
-                rows.push((
-                    text(locale, Key::PropId),
-                    self.render_id(id.to_string(), locale, t, cx),
-                ));
             }
-            Owner::Epic(id) => {
+            Owner::Epic(_) | Owner::Project(_) => {
                 rows.push((text(locale, Key::PropProgress), progress(data, locale, t)));
-                rows.push((
-                    text(locale, Key::PropDue),
-                    self.render_due(data, locale, t, cx),
-                ));
-                rows.push((
-                    text(locale, Key::PropFolders),
-                    self.render_folders(data, locale, t, cx),
-                ));
-                rows.push((
-                    text(locale, Key::PropId),
-                    self.render_id(id.to_string(), locale, t, cx),
-                ));
-            }
-            Owner::Project(_) => {
-                rows.push((text(locale, Key::PropProgress), progress(data, locale, t)));
-                rows.push((
-                    text(locale, Key::PropDue),
-                    self.render_due(data, locale, t, cx),
-                ));
-                rows.push((
-                    text(locale, Key::PropFolders),
-                    self.render_folders(data, locale, t, cx),
-                ));
+                if due_row {
+                    rows.push((
+                        text(locale, Key::PropDue),
+                        self.render_due(data, locale, t, cx),
+                    ));
+                }
             }
         }
-        rows.push((text(locale, Key::PropUpdated), updated));
+        rows.push((
+            text(locale, Key::PropFolders),
+            self.render_folders(data, locale, t, cx),
+        ));
         let labels: Vec<&str> = rows.iter().map(|(l, _)| l.as_str()).collect();
         let width = ui::label_width(&labels, cx);
+        // The add chips: on one line under the last row, only while the
+        // pointer is over the block or the picker they open is open, so the
+        // page never moves under a reader who is not pointing at it.
+        let chips = (!due_row && (self.props_hover || self.due_picker.is_some() || due_focused))
+            .then(|| self.render_add_chips(locale, t, cx));
         div()
+            .id("properties")
             .flex()
             .flex_col()
             .mt(px(12.))
+            .on_hover(cx.listener(|page, hovered: &bool, _, cx| {
+                if page.props_hover != *hovered {
+                    page.props_hover = *hovered;
+                    cx.notify();
+                }
+            }))
             .children(
                 rows.into_iter()
                     .map(|(label, value)| ui::property(label, width, value, t)),
             )
+            .children(chips)
+            .child(self.render_meta(data, locale, t, cx))
             .into_any_element()
     }
 
-    /// The Due row (components-records.md 5): "None", or the date and its
-    /// relative phrase in two runs; the picker hangs under it.
+    /// The add chip of an unset Due (components-records.md 5): a compact
+    /// ghost button, `plus` 14 and "Due date" in `type.small` tertiary; the
+    /// picker hangs from it.
+    fn render_add_chips(&self, locale: Locale, t: &Tokens, cx: &mut Context<Self>) -> AnyElement {
+        let hover = t.fill_hover;
+        let chip = ui::focusable(type_scale::SMALL.el().id("prop-add-due"), t, false)
+            .relative()
+            .track_focus(&self.due_focus)
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(4.))
+            .h(px(24.))
+            .px(px(8.))
+            .ml(px(-8.))
+            .rounded(px(RADIUS_SM))
+            .text_color(t.text_tertiary)
+            .hover(move |s| s.bg(hover))
+            .on_click(cx.listener(|page, _, window, cx| page.open_due_picker(false, window, cx)))
+            .child(icon(Icon::Plus, 14., t.text_tertiary))
+            .child(text(locale, Key::PropAddDue))
+            .child(self.due_anchor.measure());
+        let picker = self.due_picker.as_ref().and_then(|p| {
+            self.due_anchor
+                .below_at(p.clone(), crate::menu::Align::Start, 2)
+        });
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(8.))
+            .h(px(28.))
+            .child(chip)
+            .children(picker)
+            .into_any_element()
+    }
+
+    /// The meta line under the block (components-records.md 5): "T-42 ·
+    /// Updated 2 h ago by Claude Code", `type.small` tertiary; the id in
+    /// mono at 12 is a ghost control that copies it; the time has the full
+    /// date as its tooltip. A project shows no id.
+    fn render_meta(
+        &self,
+        data: &Loaded,
+        locale: Locale,
+        t: &Tokens,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let id = match self.owner {
+            Owner::Topic(id) => Some(id.to_string()),
+            Owner::Epic(id) => Some(id.to_string()),
+            Owner::Project(_) => None,
+        };
+        let (before, after) = meta_parts(locale, id.is_some(), data.updated_at, data.updated_by);
+        let full = when::datetime(locale, data.updated_at);
+        let mut line = type_scale::SMALL
+            .el()
+            .flex()
+            .flex_row()
+            .items_center()
+            .min_h(px(20.))
+            .mt(px(4.))
+            .text_color(t.text_tertiary)
+            .font_features(type_scale::tabular());
+        if !before.is_empty() {
+            line = line.child(before);
+        }
+        if let Some(id) = id {
+            let shown = if self.id_copied {
+                text(locale, Key::CommonCopied)
+            } else {
+                id.clone()
+            };
+            let hover = t.fill_hover;
+            let role = if self.id_copied {
+                type_scale::SMALL
+            } else {
+                type_scale::CODE_SMALL
+            };
+            line = line.child(
+                ui::focusable(role.el().id("meta-id"), t, false)
+                    .px(px(4.))
+                    .mx(px(-4.))
+                    .rounded(px(RADIUS_XS))
+                    .text_color(t.text_tertiary)
+                    .hover(move |s| s.bg(hover))
+                    .tooltip(ui::tip(text(locale, Key::MetaCopyId)))
+                    .on_click(cx.listener(move |page, _, _, cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(id.clone()));
+                        page.id_copied = true;
+                        cx.notify();
+                        cx.spawn(async move |page, cx| {
+                            cx.background_executor()
+                                .timer(std::time::Duration::from_millis(1500))
+                                .await;
+                            let _ = page.update(cx, |page, cx| {
+                                page.id_copied = false;
+                                cx.notify();
+                            });
+                        })
+                        .detach();
+                    }))
+                    .child(shown),
+            );
+        }
+        line.child(
+            div()
+                .id("meta-updated")
+                .min_w_0()
+                .truncate()
+                .tooltip(ui::tip(full))
+                .child(after),
+        )
+        .into_any_element()
+    }
+
+    /// The Due row (components-records.md 5), drawn only while a date is
+    /// set: the date and its relative phrase in two runs; the picker hangs
+    /// under it.
     fn render_due(
         &self,
         data: &Loaded,
@@ -1235,48 +1306,11 @@ impl RecordPage {
                     window.refresh();
                 }
             }));
-        let picker = self
-            .due_picker
-            .as_ref()
-            .and_then(|p| self.due_anchor.below(p.clone().into_any_element()));
+        let picker = self.due_picker.as_ref().and_then(|p| {
+            self.due_anchor
+                .below_at(p.clone(), crate::menu::Align::Start, 2)
+        });
         div().child(button).children(picker).into_any_element()
-    }
-
-    fn render_id(
-        &self,
-        id: String,
-        locale: Locale,
-        t: &Tokens,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let shown = if self.id_copied {
-            text(locale, Key::CommonCopied)
-        } else {
-            id.clone()
-        };
-        ui::ghost_value("prop-id", t)
-            .child(
-                type_scale::CODE
-                    .el()
-                    .text_color(t.text_secondary)
-                    .child(shown),
-            )
-            .on_click(cx.listener(move |page, _, _, cx| {
-                cx.write_to_clipboard(ClipboardItem::new_string(id.clone()));
-                page.id_copied = true;
-                cx.notify();
-                cx.spawn(async move |page, cx| {
-                    cx.background_executor()
-                        .timer(std::time::Duration::from_millis(1500))
-                        .await;
-                    let _ = page.update(cx, |page, cx| {
-                        page.id_copied = false;
-                        cx.notify();
-                    });
-                })
-                .detach();
-            }))
-            .into_any_element()
     }
 
     fn render_status_menu(
@@ -1303,17 +1337,17 @@ impl RecordPage {
             )
             .on_click(cx.listener(move |page, _, _, cx| page.set_status(status, cx)))
         });
-        deferred(
-            anchored().offset(point(px(-8.), px(30.))).child(
+        self.status_anchor
+            .below(
                 menu::panel("status-menu", t)
                     .on_mouse_down_out(cx.listener(|page, _, _, cx| {
                         page.status_menu = None;
                         cx.notify();
                     }))
                     .children(items),
-            ),
-        )
-        .into_any_element()
+                menu::Align::Start,
+            )
+            .unwrap_or_else(|| div().into_any_element())
     }
 
     fn render_state(
@@ -1370,7 +1404,7 @@ impl RecordPage {
                     .flex()
                     .flex_row()
                     .justify_between()
-                    .child(ui::label(text(locale, Key::SectionState), t))
+                    .child(ui::section_header(text(locale, Key::SectionState), t))
                     .children(
                         meta.map(|m| type_scale::SMALL.el().text_color(t.text_tertiary).child(m)),
                     ),
@@ -1417,7 +1451,7 @@ impl RecordPage {
                     .h(px(28.))
                     .flex()
                     .items_center()
-                    .child(ui::label(text(locale, Key::SectionDescription), t)),
+                    .child(ui::section_header(text(locale, Key::SectionDescription), t)),
             )
             .child(body)
             .into_any_element()
@@ -1506,7 +1540,7 @@ impl RecordPage {
                 .items_center()
                 .gap(px(8.))
                 .h(px(28.))
-                .child(ui::label(text(locale, Key::SectionKnowledge), t))
+                .child(ui::section_header(text(locale, Key::SectionKnowledge), t))
                 .child(
                     type_scale::SMALL
                         .el()
@@ -1517,19 +1551,23 @@ impl RecordPage {
                 .child(div().flex_1())
                 .child(
                     div()
+                        .relative()
                         .child(
                             ui::ghost_icon_button("kb-new", Icon::Plus, 24., false, false, true, t)
-                                .tooltip(ui::tip(format!(
-                                    "{} / {}",
-                                    text(locale, Key::KbNewDocument),
-                                    text(locale, Key::KbNewMemory)
-                                )))
+                                .when(self.kb_new_menu.is_none(), |this| {
+                                    this.tooltip(ui::tip(format!(
+                                        "{} / {}",
+                                        text(locale, Key::KbNewDocument),
+                                        text(locale, Key::KbNewMemory)
+                                    )))
+                                })
                                 .on_click(cx.listener(|page, _, window, cx| {
                                     page.kb_new_menu = Some(0);
                                     window.focus(&page.focus, cx);
                                     cx.notify();
                                 })),
                         )
+                        .child(self.kb_new_anchor.measure())
                         .children(
                             self.kb_new_menu
                                 .map(|h| self.render_kb_new_menu(h, locale, t, cx)),
@@ -1537,11 +1575,7 @@ impl RecordPage {
                 ),
         );
         if kb.own.is_empty() {
-            let empty = match self.owner {
-                Owner::Topic(_) => Key::KbEmpty,
-                Owner::Epic(_) => Key::KbEmptyEpic,
-                Owner::Project(_) => Key::KbEmptyProject,
-            };
+            let empty = Key::KbEmpty;
             section = section.child(
                 type_scale::UI
                     .el()
@@ -1684,8 +1718,7 @@ impl RecordPage {
                 }))
             })
             .collect::<Vec<_>>();
-        let composer = self.render_composer(locale, t, cx);
-        let mut list = div().flex().flex_col().gap(px(32.)).mt(px(32.));
+        let mut list = div().flex().flex_col().gap(px(32.)).mt(px(16.));
         let human = when::initial(&when::human_name(locale));
         let shown: Vec<Entry> = record::timeline_entries(&data.entries);
         // The empty state is about what is shown: a timeline of hidden
@@ -1711,91 +1744,10 @@ impl RecordPage {
                     .flex_row()
                     .items_center()
                     .justify_between()
-                    .child(ui::label(text(locale, Key::SectionTimeline), t))
+                    .child(ui::section_header(text(locale, Key::SectionTimeline), t))
                     .child(ui::segmented(t).children(filters)),
             )
-            .child(div().mt(px(12.)).child(composer))
             .child(list)
-            .into_any_element()
-    }
-
-    fn render_composer(&self, locale: Locale, t: &Tokens, cx: &mut Context<Self>) -> AnyElement {
-        let kinds = [
-            EntryKind::Progress,
-            EntryKind::Decision,
-            EntryKind::Discussion,
-        ]
-        .into_iter()
-        .enumerate()
-        .map(|(i, kind)| {
-            let (_, key) = entry_kind_meta(kind);
-            ui::segment(
-                ("composer-kind", i),
-                text(locale, key),
-                self.composer_kind == kind,
-                t,
-            )
-            .on_click(cx.listener(move |page, _, _, cx| {
-                page.composer_kind = kind;
-                cx.notify();
-            }))
-        })
-        .collect::<Vec<_>>();
-        let macos = cfg!(target_os = "macos");
-        let keys = format!(
-            "{}+{}",
-            KeyName::Mod.label(locale, macos),
-            KeyName::Enter.label(locale, macos)
-        );
-        let hint = tr(locale, Key::ComposerHint, &[("keys", Arg::Text(&keys))]);
-        div()
-            .flex()
-            .flex_col()
-            .rounded(px(RADIUS_LG))
-            .bg(t.bg_raised)
-            .border_1()
-            .border_color(t.border_strong)
-            .px(px(16.))
-            .py(px(12.))
-            .child(
-                type_scale::READING.el().mx(px(-10.)).my(px(-8.)).child(
-                    Textarea::new(&self.composer)
-                        .appearance(false)
-                        .text_size(px(type_scale::READING.size()))
-                        .line_height(px(type_scale::READING.line())),
-                ),
-            )
-            .when(self.composer_open, |this| {
-                this.child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap(px(8.))
-                        .h(px(28.))
-                        .mt(px(8.))
-                        .child(ui::segmented(t).children(kinds))
-                        .child(div().flex_1())
-                        .child(
-                            type_scale::SMALL
-                                .el()
-                                .text_color(t.text_tertiary)
-                                .child(hint),
-                        )
-                        .child(
-                            ui::button(
-                                "composer-add",
-                                text(locale, Key::ComposerAdd),
-                                Variant::Primary,
-                                false,
-                                t,
-                            )
-                            .on_click(
-                                cx.listener(|page, _, window, cx| page.add_entry(window, cx)),
-                            ),
-                        ),
-                )
-            })
             .into_any_element()
     }
 
@@ -1897,6 +1849,7 @@ impl RecordPage {
                                 s.visible()
                             })
                     })
+                    .relative()
                     .child(
                         ui::ghost_icon_button(
                             format!("entry-menu-{index}"),
@@ -1913,6 +1866,7 @@ impl RecordPage {
                             },
                         )),
                     )
+                    .children(menu_open.then(|| self.entry_anchor.measure_keyed(entry.id.0 as u64)))
                     .children(menu),
             );
         let editing = self
@@ -1966,10 +1920,12 @@ impl RecordPage {
             .gap(px(12.))
             // The box hangs into the gutter by its padding and border, so
             // its author mark and text stay in the same columns as every
-            // other entry's.
+            // other entry's; in a narrow page it sits inside the column.
             .when(decision, |this| {
                 this.px(px(16.))
-                    .mx(px(-17.))
+                    .when(ui::decision_hangs(ui::side_space()), |this| {
+                        this.mx(px(-ui::DECISION_HANG))
+                    })
                     .py(px(12.))
                     .rounded(px(RADIUS_LG))
                     .border_1()
@@ -2009,6 +1965,10 @@ impl RecordPage {
                 };
                 ui::segment(("table-filter", i), text(locale, key), current == filter, t).on_click(
                     cx.listener(move |page, _, _, cx| {
+                        // The table keeps at least the height it had, so a
+                        // shorter list never pulls the page (and the
+                        // segment under the pointer) up (QA 2026-11-22).
+                        page.table_floor = page.table_floor.max(page.table_height.get());
                         page.table_filter = filter;
                         cx.notify();
                     }),
@@ -2175,7 +2135,10 @@ impl RecordPage {
                         .w(px(1.))
                         .h(px(32.))
                         .child(d.anchor.measure())
-                        .children(d.anchor.below(d.picker.clone().into_any_element()))
+                        .children(
+                            d.anchor
+                                .below_at(d.picker.clone(), crate::menu::Align::Start, 2),
+                        )
                 });
             let open = topic.status.is_open();
             let due_cell = dated.then(|| {
@@ -2274,8 +2237,18 @@ impl RecordPage {
             for topic in table::rows(&data.topics, current, self.table_sort, today) {
                 body = body.child(row(topic, cx));
             }
+        } else if !table::grouped(current) {
+            // Overdue and Next 7 days: one list by date across epics.
+            for topic in table::rows(&all, current, self.table_sort, today) {
+                body = body.child(row(topic, cx));
+            }
         } else {
             for (epic, topics) in table::groups(&data.loose, &data.groups) {
+                let shown = table::rows(topics, current, self.table_sort, today);
+                // A group with nothing under the segment has no header.
+                if shown.is_empty() {
+                    continue;
+                }
                 let (done, total) = table::progress(topics);
                 let name: SharedString = match epic {
                     Some((_, name)) => name.to_owned().into(),
@@ -2306,13 +2279,20 @@ impl RecordPage {
                             )),
                     );
                 body = body.child(group);
-                for topic in table::rows(topics, current, self.table_sort, today) {
+                for topic in shown {
                     body = body.child(row(topic, cx));
                 }
             }
         }
         let reveal = std::rc::Rc::clone(&self.reveal_table);
         let scroll = self.scroll.clone();
+        let height = std::rc::Rc::clone(&self.table_height);
+        let body = body
+            .relative()
+            .min_h(px(self.table_floor))
+            .child(ui::measure(move |bounds, _| {
+                height.set(f32::from(bounds.size.height));
+            }));
         div()
             .id("topic-table")
             .relative()
@@ -2441,7 +2421,7 @@ impl RecordPage {
                         14.,
                         t.text_secondary,
                     ))
-                    .child(ui::label(text(locale, Key::OverviewAttention), t))
+                    .child(ui::section_header(text(locale, Key::OverviewAttention), t))
                     .child(
                         type_scale::SMALL
                             .el()
@@ -2506,7 +2486,7 @@ impl RecordPage {
                     .items_center()
                     .gap(px(8.))
                     .h(px(28.))
-                    .child(ui::label(text(locale, Key::OverviewTitle), t))
+                    .child(ui::section_header(text(locale, Key::OverviewTitle), t))
                     .when(calm, |this| {
                         this.child(
                             type_scale::SMALL
@@ -2921,9 +2901,9 @@ impl RecordPage {
                     );
             }
         }
-        deferred(anchored().offset(point(px(-176.), px(28.))).child(panel))
-            .with_priority(1)
-            .into_any_element()
+        self.entry_anchor
+            .below_keyed(menu.entry.id.0 as u64, panel, menu::Align::End, 1)
+            .unwrap_or_else(|| div().into_any_element())
     }
 
     /// The `plus` menu of the knowledge section: New document, New memory,
@@ -2963,9 +2943,9 @@ impl RecordPage {
                 })),
             );
         }
-        deferred(anchored().offset(point(px(-176.), px(28.))).child(panel))
-            .with_priority(1)
-            .into_any_element()
+        self.kb_new_anchor
+            .below(panel, menu::Align::End)
+            .unwrap_or_else(|| div().into_any_element())
     }
 }
 
@@ -2987,11 +2967,13 @@ impl RecordPage {
             .filter(|s| crate::sessions::place(s) == self.owner)
             .collect();
         let first = on.iter().min_by_key(|s| s.started_at)?;
-        let tail = if here.count == 1 {
-            crate::sessions::detail(locale, first, false)
-        } else {
-            crate::sessions::since(locale, first.started_at)
-        };
+        // Since and last activity are the line's tooltip, one per line
+        // (clarity review 2026-11-22).
+        let mut tip = vec![crate::sessions::since(locale, first.started_at)];
+        if here.count == 1 {
+            tip.extend(crate::sessions::last(locale, first));
+        }
+        let tip = tip.join("\n");
         let terminals = cx
             .try_global::<crate::sessions_view::TerminalTokens>()
             .map(|g| g.0.clone())
@@ -3016,16 +2998,12 @@ impl RecordPage {
                 .child(
                     type_scale::SMALL
                         .el()
+                        .id("claude-line")
                         .min_w_0()
                         .truncate()
                         .text_color(t.text_secondary)
-                        .child(crate::sessions::here_text(locale, here))
-                        .child(
-                            type_scale::SMALL
-                                .el()
-                                .text_color(t.text_tertiary)
-                                .child(format!(" \u{b7} {tail}")),
-                        ),
+                        .tooltip(ui::tip(tip))
+                        .child(crate::sessions::here_text(locale, here)),
                 )
                 .when_some(in_acta, |this, project| {
                     this.child(
@@ -3249,6 +3227,9 @@ impl Render for RecordPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.global::<Tokens>().clone();
         let locale = settings::locale(cx);
+        // The add chip stays while it has the keyboard (the picker closed
+        // back onto it), as it does under the pointer.
+        let due_focused = self.due_focus.is_focused(window);
         // A figure of the Overview was opened: focus the table's first row
         // once it is drawn.
         if self.focus_first_row && self.data.is_some() {
@@ -3288,7 +3269,7 @@ impl Render for RecordPage {
         if let Some(data) = self.data.clone() {
             column = column
                 .child(self.render_title(&data, &t, cx))
-                .child(self.render_properties(&data, locale, &t, cx))
+                .child(self.render_properties(&data, due_focused, locale, &t, cx))
                 .children(self.render_claude_line(locale, &t, cx));
             if self.topic().is_some() {
                 column = column.child(self.render_state(&data, locale, &t, cx));
@@ -3305,6 +3286,13 @@ impl Render for RecordPage {
         }
         ui::page_scroll("record-page")
             .track_scroll(&self.scroll)
+            // Scrolling away from a title being renamed saves it, as a
+            // click elsewhere does (QA 2026-11-22).
+            .on_scroll(cx.listener(|page, _, window, cx| {
+                if page.title_edit.is_some() {
+                    page.commit_title(window, cx);
+                }
+            }))
             .track_focus(&self.focus)
             .key_context("RecordPage")
             .on_action(cx.listener(|page, _: &OpenStatusMenu, window, cx| {

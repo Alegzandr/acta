@@ -13,7 +13,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, ParentElement, Render, StatefulInteractiveElement, Styled,
-    Subscription, Task, Window, anchored, deferred, div, point, px,
+    Subscription, Task, Window, div, px,
 };
 
 use crate::diff::{self, Change};
@@ -73,8 +73,8 @@ fn owner_route(owner: Owner) -> Route {
     }
 }
 
-/// A knowledge row: kind icon, title, summary (or excerpt), author mark,
-/// compact time (docs/design/components-knowledge.md 5). Under a column of
+/// A knowledge row: kind icon, title, summary (or excerpt), the unread
+/// dot, compact time (docs/design/components-knowledge.md 5). Under a column of
 /// 520 the summary takes a second line and the row is 52.
 pub(crate) fn kb_row(
     entry: &KbSummary,
@@ -84,7 +84,6 @@ pub(crate) fn kb_row(
     locale: Locale,
     t: &Tokens,
 ) -> gpui_kit::Stateful<gpui_kit::Div> {
-    let human = when::initial(&when::human_name(locale));
     let summary: AnyElement = match excerpt {
         Some(snippet) => {
             let runs = kb_model::excerpt_runs(snippet);
@@ -134,21 +133,32 @@ pub(crate) fn kb_row(
     } else {
         title.flex_shrink_0().max_w(gpui_kit::relative(0.4))
     };
-    // The unread dot sits left of the author mark (5, Knowledge row).
+    // The unread dot, then the time; who wrote it last is the time's
+    // tooltip (clarity review 2026-11-22: no author mark on rows).
+    let tip = {
+        let when = when::long(locale, entry.updated_at);
+        let author = when::author(locale, entry.updated_by);
+        tr(
+            locale,
+            Key::MetaUpdated,
+            &[("when", Arg::Text(&when)), ("author", Arg::Text(&author))],
+        )
+    };
     let trailing = || -> Vec<AnyElement> {
         let mut out = Vec::new();
         if unread {
             out.push(ui::unread_dot(t).into_any_element());
         }
-        out.push(ui::author_mark(entry.updated_by, &human, t).into_any_element());
         out.push(
             type_scale::SMALL
                 .el()
+                .id(("kb-row-time", index))
                 .w(px(72.))
                 .flex_shrink_0()
                 .text_right()
                 .font_features(type_scale::tabular())
                 .text_color(t.text_tertiary)
+                .tooltip(ui::tip(tip.clone()))
                 .child(when::compact(locale, entry.updated_at))
                 .into_any_element(),
         );
@@ -212,6 +222,8 @@ pub struct KnowledgePage {
     search: Entity<InputState>,
     filters: Filters,
     menu: Option<FilterMenu>,
+    /// Where the open filter menu hangs.
+    menu_anchor: menu::AnchorBounds,
     open_memory: Option<KbId>,
     /// Shown as the Knowledge view (workbench.md 4.8.3): no title, no
     /// meta line, following the active project.
@@ -219,6 +231,11 @@ pub struct KnowledgePage {
     /// The Overview's chip "Not updated for 90 days" (components-records.md
     /// 5): only these memories, oldest first; `None` without the chip.
     stale: Option<Vec<KbId>>,
+    /// One focus handle per row in the order drawn: `Up` / `Down` move
+    /// between them; opened from the Overview, the first takes the focus
+    /// once the list is loaded (as the topic table does).
+    row_focus: Vec<FocusHandle>,
+    focus_first_row: bool,
     seen_revision: u64,
     _load: Task<()>,
     _search: Task<()>,
@@ -258,6 +275,7 @@ impl KnowledgePage {
         };
         let mut page = Self::build(ws, project, filters, false, window, cx);
         page.stale = Some(Vec::new());
+        page.focus_first_row = true;
         page.reload(cx);
         page
     }
@@ -306,9 +324,12 @@ impl KnowledgePage {
             search,
             filters,
             menu: None,
+            menu_anchor: Default::default(),
             open_memory: None,
             as_view,
             stale: None,
+            row_focus: Vec::new(),
+            focus_first_row: false,
             seen_revision: 0,
             _load: Task::ready(()),
             _search: Task::ready(()),
@@ -400,6 +421,36 @@ impl KnowledgePage {
                     })),
             )
             .into_any_element()
+    }
+
+    /// Keys on a row: `Up` / `Down` move between rows, `Esc` clears the
+    /// chip "Not updated for 90 days" (components-records.md 5, Filter chip).
+    fn row_key(
+        &mut self,
+        index: usize,
+        rows: usize,
+        event: &gpui_kit::KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if event.keystroke.modifiers.modified() {
+            return;
+        }
+        let to = match event.keystroke.key.as_str() {
+            "down" => (index + 1 < rows).then_some(index + 1),
+            "up" => index.checked_sub(1),
+            "escape" if self.stale.is_some() => {
+                self.stale = None;
+                cx.stop_propagation();
+                cx.notify();
+                return;
+            }
+            _ => return,
+        };
+        if let Some(handle) = to.and_then(|i| self.row_focus.get(i)) {
+            window.focus(handle, cx);
+        }
+        cx.stop_propagation();
     }
 
     fn run_search(&mut self, cx: &mut Context<Self>) {
@@ -557,23 +608,31 @@ impl KnowledgePage {
                     }),
                 )
             });
-            deferred(
-                anchored().offset(point(px(0.), px(32.))).child(
-                    menu::panel("kb-filter-menu", t)
-                        .on_mouse_down_out(cx.listener(|page, _, _, cx| {
-                            page.menu = None;
-                            cx.notify();
-                        }))
-                        .children(items),
-                ),
+            self.menu_anchor.below_keyed(
+                which as u64,
+                menu::panel("kb-filter-menu", t)
+                    .on_mouse_down_out(cx.listener(|page, _, _, cx| {
+                        page.menu = None;
+                        cx.notify();
+                    }))
+                    .children(items),
+                menu::Align::Start,
+                1,
             )
         });
-        div().child(button).children(menu).into_any_element()
+        div()
+            .relative()
+            .child(button)
+            .children(
+                (self.menu == Some(which)).then(|| self.menu_anchor.measure_keyed(which as u64)),
+            )
+            .children(menu.flatten())
+            .into_any_element()
     }
 }
 
 impl Render for KnowledgePage {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.global::<Tokens>().clone();
         let locale = settings::locale(cx);
         let ws = self.ws.read(cx);
@@ -753,6 +812,17 @@ impl Render for KnowledgePage {
             Level::Epic => 1,
             Level::Topic => 2,
         });
+        let rows = groups.iter().map(|(_, e)| e.len()).sum::<usize>();
+        while self.row_focus.len() < rows {
+            self.row_focus.push(cx.focus_handle());
+        }
+        // The Overview's figure was opened: the first row takes the focus
+        // once the chip's list has arrived.
+        let loaded = self.stale.as_ref().is_some_and(|ids| !ids.is_empty());
+        if self.focus_first_row && loaded && rows > 0 {
+            self.focus_first_row = false;
+            window.focus(&self.row_focus[0], cx);
+        }
         let mut index = 0;
         for (owner, entries) in groups {
             let name = names
@@ -797,9 +867,16 @@ impl Render for KnowledgePage {
                 let kind = entry.kind;
                 let open = self.open_memory == Some(id);
                 let unread = self.ws.read(cx).is_unread(acta_core::model::Record::Kb(id));
+                let handle = self.row_focus[index].clone();
                 column = column.child(
-                    kb_row(&entry, excerpt.as_deref(), unread, index, locale, &t).on_click(
-                        cx.listener(move |page, _, _, cx| match kind {
+                    kb_row(&entry, excerpt.as_deref(), unread, index, locale, &t)
+                        .track_focus(&handle)
+                        .on_key_down(cx.listener(
+                            move |page, event: &gpui_kit::KeyDownEvent, window, cx| {
+                                page.row_key(index, rows, event, window, cx)
+                            },
+                        ))
+                        .on_click(cx.listener(move |page, _, _, cx| match kind {
                             KbKind::Document => cx.emit(PageEvent::Open(Route::Kb(id))),
                             KbKind::Memory => {
                                 page.open_memory = if page.open_memory == Some(id) {
@@ -813,8 +890,7 @@ impl Render for KnowledgePage {
                                 };
                                 cx.notify();
                             }
-                        }),
-                    ),
+                        })),
                 );
                 if open {
                     column = column.child(
@@ -900,6 +976,7 @@ pub struct DocPage {
     show_theirs: bool,
     /// The `ellipsis` menu of the reading view is open.
     doc_menu: bool,
+    doc_menu_anchor: menu::AnchorBounds,
     /// The page's scroll, and where each heading of the body was laid out
     /// (by its index in the outline), for "Go to heading".
     scroll: gpui_kit::ScrollHandle,
@@ -998,6 +1075,7 @@ impl DocPage {
             saving: false,
             conflict: None,
             doc_menu: false,
+            doc_menu_anchor: Default::default(),
             scroll: gpui_kit::ScrollHandle::new(),
             headings: Default::default(),
             focus: cx.focus_handle(),
@@ -1761,42 +1839,44 @@ impl Render for DocPage {
             if let (Some(title), Some(summary), Some(body)) =
                 (&self.title, &self.summary, &self.body)
             {
-                column = column
-                    .child(
-                        div()
-                            .border_b_1()
-                            .border_color(t.border_strong)
-                            .text_size(px(24.))
-                            .line_height(px(30.))
-                            .font_weight(gpui_kit::FontWeight::SEMIBOLD)
-                            .child(Input::new(title).appearance(false).px(px(0.))),
-                    )
-                    .child(
-                        div()
-                            .mt(px(8.))
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap(px(8.))
-                            .child(type_scale::READING.el().flex_1().child(Input::new(summary)))
-                            .child(
-                                type_scale::SMALL
-                                    .el()
-                                    .font_features(type_scale::tabular())
-                                    .text_color(t.text_tertiary)
-                                    .child(format!("{} / 140", number(locale, count as u64))),
-                            ),
-                    )
-                    .child(div().mt(px(24.)).h(px(1.)).bg(t.border_subtle))
-                    .child(
-                        // The editor's own padding (10 x 8) is taken back, so
-                        // the text sits where the reading view puts it.
-                        type_scale::DOCUMENT
-                            .el()
-                            .mt(px(16.))
-                            .mx(px(-10.))
-                            .child(Textarea::new(body).appearance(false)),
-                    );
+                column =
+                    column
+                        .child(
+                            type_scale::TITLE
+                                .el()
+                                .border_b_1()
+                                .border_color(t.border_strong)
+                                .child(ui::role_input(Input::new(title), type_scale::TITLE)),
+                        )
+                        .child(
+                            div()
+                                .mt(px(8.))
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap(px(8.))
+                                .child(type_scale::READING.el().flex_1().child(ui::role_input(
+                                    Input::new(summary),
+                                    type_scale::READING,
+                                )))
+                                .child(
+                                    type_scale::SMALL
+                                        .el()
+                                        .font_features(type_scale::tabular())
+                                        .text_color(t.text_tertiary)
+                                        .child(format!("{} / 140", number(locale, count as u64))),
+                                ),
+                        )
+                        .child(div().mt(px(24.)).h(px(1.)).bg(t.border_subtle))
+                        .child(
+                            // The editor's own padding (10 x 8) is taken back, so
+                            // the text sits where the reading view puts it.
+                            type_scale::DOCUMENT
+                                .el()
+                                .mt(px(16.))
+                                .mx(px(-10.))
+                                .child(Textarea::new(body).appearance(false)),
+                        );
             }
         } else if let Some(entry) = &entry {
             let owner_name = owner_name(self.ws.read(cx), entry.owner);
@@ -1809,21 +1889,49 @@ impl Render for DocPage {
                     KbKind::Memory => Key::KindMemory,
                 },
             );
-            let updated = {
-                let when = when::long_alone(locale, entry.stamp.updated_at);
-                let author = when::author(locale, entry.stamp.updated_by);
-                tr(
-                    locale,
-                    Key::CommonBy,
-                    &[("when", Arg::Text(&when)), ("author", Arg::Text(&author))],
+            // The meta line (components-records.md 5): the id, then who
+            // changed it last and when, the full date as its tooltip.
+            let (before, after) = crate::record_page::meta_parts(
+                locale,
+                true,
+                entry.stamp.updated_at,
+                entry.stamp.updated_by,
+            );
+            let full = when::datetime(locale, entry.stamp.updated_at);
+            let id = entry.id.to_string();
+            let copy = id.clone();
+            let hover = t.fill_hover;
+            let meta = type_scale::SMALL
+                .el()
+                .flex()
+                .flex_row()
+                .items_center()
+                .min_h(px(20.))
+                .mt(px(4.))
+                .text_color(t.text_tertiary)
+                .font_features(type_scale::tabular())
+                .when(!before.is_empty(), |this| this.child(before))
+                .child(
+                    ui::focusable(type_scale::CODE_SMALL.el().id("doc-meta-id"), &t, false)
+                        .px(px(4.))
+                        .mx(px(-4.))
+                        .rounded(px(crate::theme::RADIUS_XS))
+                        .hover(move |s| s.bg(hover))
+                        .tooltip(ui::tip(text(locale, Key::MetaCopyId)))
+                        .on_click(move |_, _, cx| {
+                            cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(copy.clone()))
+                        })
+                        .child(id),
                 )
-            };
-            let labels = [
-                text(locale, Key::PropKind),
-                text(locale, Key::PropLevel),
-                text(locale, Key::PropId),
-                text(locale, Key::PropUpdated),
-            ];
+                .child(
+                    div()
+                        .id("doc-meta-updated")
+                        .min_w_0()
+                        .truncate()
+                        .tooltip(ui::tip(full))
+                        .child(after),
+                );
+            let labels = [text(locale, Key::PropKind), text(locale, Key::PropLevel)];
             let width = ui::label_width(&labels.iter().map(String::as_str).collect::<Vec<_>>(), cx);
             let macos = cfg!(target_os = "macos");
             let _ = macos;
@@ -1866,21 +1974,7 @@ impl Render for DocPage {
                                 .child(level),
                             &t,
                         ))
-                        .child(ui::property(
-                            labels[2].clone(),
-                            width,
-                            type_scale::CODE
-                                .el()
-                                .text_color(t.text_secondary)
-                                .child(entry.id.to_string()),
-                            &t,
-                        ))
-                        .child(ui::property(
-                            labels[3].clone(),
-                            width,
-                            div().child(updated),
-                            &t,
-                        )),
+                        .child(meta),
                 )
                 .child(
                     div()
@@ -1927,6 +2021,7 @@ impl Render for DocPage {
                             // components-knowledge.md 5: Go to heading, Save
                             // as file, Move, then Delete, last and in danger.
                             div()
+                                .relative()
                                 .child(
                                     ui::ghost_icon_button(
                                         "doc-more",
@@ -1944,110 +2039,91 @@ impl Render for DocPage {
                                         },
                                     )),
                                 )
+                                .child(self.doc_menu_anchor.measure())
                                 .when(self.doc_menu, |this| {
-                                    this.child(
-                                        gpui_kit::deferred(
-                                            gpui_kit::anchored()
-                                                .offset(gpui_kit::point(px(0.), px(32.)))
+                                    this.children(
+                                        self.doc_menu_anchor.below(
+                                            menu::panel("doc-menu", &t)
+                                                .on_mouse_down_out(cx.listener(|page, _, _, cx| {
+                                                    page.doc_menu = false;
+                                                    cx.notify();
+                                                }))
                                                 .child(
-                                                    menu::panel("doc-menu", &t)
-                                                        .on_mouse_down_out(cx.listener(
-                                                            |page, _, _, cx| {
-                                                                page.doc_menu = false;
-                                                                cx.notify();
-                                                            },
-                                                        ))
-                                                        .child(
-                                                            menu::item(
-                                                                "doc-heading",
-                                                                None,
-                                                                text(locale, Key::DocGoHeading),
-                                                                Some(
-                                                                    ui::kbd(
-                                                                        &[
-                                                                            KeyName::Mod.label(
-                                                                                locale,
-                                                                                cfg!(
-                                                                                    target_os =
-                                                                                        "macos"
-                                                                                ),
-                                                                            ),
-                                                                            KeyName::Shift.label(
-                                                                                locale,
-                                                                                cfg!(
-                                                                                    target_os =
-                                                                                        "macos"
-                                                                                ),
-                                                                            ),
-                                                                            "O",
-                                                                        ],
-                                                                        &t,
-                                                                    )
-                                                                    .into_any_element(),
-                                                                ),
-                                                                false,
+                                                    menu::item(
+                                                        "doc-heading",
+                                                        None,
+                                                        text(locale, Key::DocGoHeading),
+                                                        Some(
+                                                            ui::kbd(
+                                                                &[
+                                                                    KeyName::Mod.label(
+                                                                        locale,
+                                                                        cfg!(target_os = "macos"),
+                                                                    ),
+                                                                    KeyName::Shift.label(
+                                                                        locale,
+                                                                        cfg!(target_os = "macos"),
+                                                                    ),
+                                                                    "O",
+                                                                ],
                                                                 &t,
                                                             )
-                                                            .on_click(cx.listener(
-                                                                |page, _, _, cx| {
-                                                                    page.doc_menu = false;
-                                                                    page.go_to_heading(cx)
-                                                                },
-                                                            )),
-                                                        )
-                                                        .child(
-                                                            menu::item(
-                                                                "doc-save-file",
-                                                                None,
-                                                                text(locale, Key::KbSaveFile),
-                                                                None,
-                                                                false,
-                                                                &t,
-                                                            )
-                                                            .on_click(cx.listener(
-                                                                |page, _, _, cx| {
-                                                                    page.doc_menu = false;
-                                                                    page.save_as_file(cx)
-                                                                },
-                                                            )),
-                                                        )
-                                                        .child(
-                                                            menu::item(
-                                                                "doc-move",
-                                                                None,
-                                                                text(locale, Key::KbMoveTo),
-                                                                None,
-                                                                false,
-                                                                &t,
-                                                            )
-                                                            .on_click(cx.listener(
-                                                                |page, _, _, cx| {
-                                                                    page.doc_menu = false;
-                                                                    page.move_to(cx)
-                                                                },
-                                                            )),
-                                                        )
-                                                        .child(menu::separator(&t))
-                                                        .child(
-                                                            menu::item(
-                                                                "doc-delete",
-                                                                None,
-                                                                text(locale, Key::CommonDelete),
-                                                                None,
-                                                                false,
-                                                                &t,
-                                                            )
-                                                            .text_color(t.danger)
-                                                            .on_click(cx.listener(
-                                                                |page, _, _, cx| {
-                                                                    page.doc_menu = false;
-                                                                    page.delete(cx)
-                                                                },
-                                                            )),
+                                                            .into_any_element(),
                                                         ),
+                                                        false,
+                                                        &t,
+                                                    )
+                                                    .on_click(cx.listener(|page, _, _, cx| {
+                                                        page.doc_menu = false;
+                                                        page.go_to_heading(cx)
+                                                    })),
+                                                )
+                                                .child(
+                                                    menu::item(
+                                                        "doc-save-file",
+                                                        None,
+                                                        text(locale, Key::KbSaveFile),
+                                                        None,
+                                                        false,
+                                                        &t,
+                                                    )
+                                                    .on_click(cx.listener(|page, _, _, cx| {
+                                                        page.doc_menu = false;
+                                                        page.save_as_file(cx)
+                                                    })),
+                                                )
+                                                .child(
+                                                    menu::item(
+                                                        "doc-move",
+                                                        None,
+                                                        text(locale, Key::KbMoveTo),
+                                                        None,
+                                                        false,
+                                                        &t,
+                                                    )
+                                                    .on_click(cx.listener(|page, _, _, cx| {
+                                                        page.doc_menu = false;
+                                                        page.move_to(cx)
+                                                    })),
+                                                )
+                                                .child(menu::separator(&t))
+                                                .child(
+                                                    menu::item(
+                                                        "doc-delete",
+                                                        None,
+                                                        text(locale, Key::CommonDelete),
+                                                        None,
+                                                        false,
+                                                        &t,
+                                                    )
+                                                    .text_color(t.danger)
+                                                    .on_click(cx.listener(|page, _, _, cx| {
+                                                        page.doc_menu = false;
+                                                        page.delete(cx)
+                                                    })),
                                                 ),
-                                        )
-                                        .with_priority(1),
+                                            menu::Align::End,
+                                        ),
                                     )
                                 }),
                         ),

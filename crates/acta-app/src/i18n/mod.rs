@@ -322,9 +322,11 @@ mod tests {
         let typeset = |part: &str| {
             let mut part = part.replace("...", "\u{2026}").replace('\'', "\u{2019}");
             if french {
-                for mark in [";", ":", "!", "?", "\u{bb}"] {
+                for mark in [";", "!", "?", "\u{bb}"] {
                     part = part.replace(&format!(" {mark}"), &format!("\u{202f}{mark}"));
                 }
+                // The colon takes a full no-break space (10.1).
+                part = part.replace(" :", "\u{a0}:");
                 part = part
                     .replace("\u{ab} ", "\u{ab}\u{202f}")
                     .replace("400 Mo", "400\u{202f}Mo")
@@ -334,7 +336,7 @@ mod tests {
             part
         };
         let parts: Vec<&str> = text.split(" \u{b7} ").collect();
-        if parts.len() == 2 && !matches!(key, "kb.scope" | "import.meta") {
+        if parts.len() == 2 && !matches!(key, "kb.scope" | "import.meta" | "meta.record") {
             parts.into_iter().map(typeset).collect()
         } else {
             vec![typeset(&text)]
@@ -425,8 +427,17 @@ mod tests {
             }
             for text in all_texts(fr) {
                 for mark in [" ;", " :", " !", " ?", " \u{bb}", "\u{ab} "] {
-                    assert!(!text.contains(mark), "{}: {mark:?} needs U+202F", key.id());
+                    assert!(
+                        !text.contains(mark),
+                        "{}: {mark:?} needs a no-break space",
+                        key.id()
+                    );
                 }
+                assert!(
+                    !text.contains("\u{202f}:"),
+                    "{}: the colon takes U+00A0",
+                    key.id()
+                );
             }
         }
         assert_eq!(
@@ -436,7 +447,7 @@ mod tests {
         );
         assert_eq!(
             tr(Locale::Fr, Key::CmdTheme, &[("value", Arg::Text("Sombre"))]),
-            "Th\u{e8}me\u{202f}: Sombre"
+            "Th\u{e8}me\u{a0}: Sombre"
         );
         assert_eq!(text(Locale::En, Key::CommonOpening), "Opening\u{2026}");
     }
