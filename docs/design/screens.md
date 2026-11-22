@@ -918,3 +918,77 @@ Annotations: `[f]` is `file-text`, `[@]` `paperclip`, `(i)` `info`. Images come 
 ```
 
 Annotations: `(v)` is `check` in `success`, `(o)` `circle-dashed` in `text.tertiary`, `(!)` `triangle-alert` (`danger` when failed, `warning` when outdated). Signed in is the first required row not ready, so its button is the primary and "Set up Claude Code" is secondary until it is. The GitHub CLI row shows because an attached folder has a `github.com` remote. On first run (8.5) the same block, without GitHub CLI and without "Check again", sits above "Start with a project" while a required or recommended row is not ready; once all are ready it is gone. On Linux, "Install..." on Git ends in "Open in terminal": the command (`sudo apt-get install git`) starts in a new session of Acta's terminal and the row reads "Finish in the terminal" with "Show terminal".
+
+### 8.27 Dictation (components-voice.md 5)
+
+The timeline composer while listening, then writing:
+
+```
+|    +--------------------------------------------------------------------------------+      |
+|    | Talked to Alexandre about the export format. He wants the passphrase option    |      | type.reading
+|    | before 1.0, so we keep format 2 open until then.|                              |      | | = caret (anchor)
+|    |                                                                                |      |
+|    | [Progress|Decision|Discussion]  (p) [#]  ====----  Listening  0:12   [Save]     | 28   | footer
+|    +--------------------------------------------------------------------------------+      |
+       (p) paperclip, ghost 24; [#] square on fill.selected (stop), ghost 24;
+       ====---- the level bar 32 x 4; "Listening" small secondary; 0:12 small tertiary tnum;
+       the hint "Ctrl+Enter to save" yields its place here because the footer is full
+
+|    | [Progress|Decision|Discussion]  (p) (m)  Writing text...             [Save]     | 28   | after the stop
+|    +--------------------------------------------------------------------------------+      |
+|    (!) Acta is not allowed to use the microphone.   Open privacy settings                  | an error, 4 below
+```
+
+First use (the dialog of 5, 440), recommendation on a CPU-tier Windows laptop:
+
+```
++------------------------------------------------+
+|  Dictate with your voice                       |  type.heading
+|                                                |
+|  Acta turns what you say into text on this     |  type.ui, secondary
+|  computer. Your voice never leaves it and is   |
+|  never saved.                                  |
+|                                                |
+|  Whisper Small                                 |  type.ui-strong
+|  190 MB download · works on this computer's    |  small, secondary
+|  processor                                     |
+|  Free on this disk: 112 GB.                    |  small, tertiary
+|                                                |
+|  Other models are in Settings > Voice.         |  small, tertiary; link
+|                                                |
+|                  [Cancel]   [Download 190 MB]  |  Cancel focused
++------------------------------------------------+
+
++------------------------------------------------+
+|  Dictate with your voice                       |
+|  Downloading Whisper Small...                  |  type.ui
+|  ==================--------------------------  |  bar, never eased
+|  120 of 190 MB                                 |  small, tertiary, tnum
+|                                                |
+|               [Cancel download]   [Hide]       |
++------------------------------------------------+
+```
+
+Settings > Voice:
+
+```
+|        Voice                                                     <- type.subtitle             |
+|    8   Dictation                               [Whisper, on this computer v]                  |
+|        Turns what you say into text in notes, descriptions and documents. Your voice          |
+|        never leaves this computer and is never saved.                                         |
+|        Model                                                                                  |
+|        Recommended for this computer: Small. Larger models are more accurate and slower.      |
+|          Tiny          31 MB · for older computers; rough in French           Download        | 44
+|          Base          60 MB · fast; fair accuracy                            Download        | 44
+|          Small  Recommended   190 MB · good for English and French      (v) In use  ...     | 44
+|          Large turbo   574 MB · most accurate; best with a graphics card  ==--- 45%  Cancel  | 44
+|        Models are kept in C:\Users\Alexandre\AppData\Local\ActaData\models.                    |
+|        Free on this disk: 112 GB.  Downloaded models: 190 MB.  Show in Explorer               |
+|        Language                                [English or French, detected v]                |
+|        Pick one if dictation mistakes one language for the other.                             |
+|        Microphone                              [System default v]   ====------                |
+|        Shortcut                                                    [Ctrl][Shift][Space]       |
+|        Press once to start and again to stop, or hold it while you speak.                     |
+```
+
+Annotations: no accent and no red anywhere in dictation; the stop square, the pressed fill and the word "Listening" carry the state in greyscale. "Use the graphics card" is absent here (a Windows build without the Vulkan step, ADR 0014, 5); on Apple Silicon it sits under the model list and the recommendation is Large turbo with `voice.settings.model_hint_gpu`. On macOS the Dictation dropdown also offers "macOS recogniser, on this computer" when it works on the device.

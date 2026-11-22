@@ -50,13 +50,14 @@ Load only the part a task needs. Section numbers are global: "4.7" or "DESIGN 4.
 | [components-records.md](docs/design/components-records.md) | 5 | Timeline entry, current-state panel, note card, properties block, due row and due date picker, topic table, Overview section and filter chip. |
 | [components-questions.md](docs/design/components-questions.md) | 5 | Questions and people: naming, the person value and person field, the Questions section and question row, composer, answering and the decision offer, Report to (row, popover, notes, filing), the Questions page, the person page, signals elsewhere. |
 | [components-attachments.md](docs/design/components-attachments.md) | 5 | Files on notes, entries and descriptions (ADR 0012): the attachment strip, adding by paste, drop and button, refusals, the viewer, Save as and Open in another app, where files show elsewhere. |
+| [components-voice.md](docs/design/components-voice.md) | 5 | Dictation (ADR 0014): where the microphone is, the button and its states, taking dictation, errors, first use, Settings > Voice, keys. |
 | [components-knowledge.md](docs/design/components-knowledge.md) | 5 | Knowledge section, knowledge base page, document reading view and editor, history. |
 | [components-folders.md](docs/design/components-folders.md) | 5 | Working folders: rows, the switcher, inheritance, the active folder, git state, commit modes, not found and repair, picker, paths, terminal launch. |
 | [components-app.md](docs/design/components-app.md) | 5 | Chat panel, settings page, shortcuts page, export, import, trash, snapshot restore, key-loss recovery, updater window. |
 | [interaction.md](docs/design/interaction.md) | 6 | Keyboard map (6.1), focus (6.2), motion and latency budgets (6.3), writes, undo and confirmation (6.4), changes from other processes (6.5). |
-| [screens.md](docs/design/screens.md) | 8 | Wireframes: topic page (8.1), inbox (8.2), palette (8.3), terminal (8.4), first run (8.5), knowledge (8.6, 8.7, 8.10), import preview (8.8), key loss (8.9), working folders (8.11), settings (8.12), chat (8.13), epic (8.14), tab bar (8.15), updater (8.16), workbench with the right sidebar (8.17), dragging a view (8.18), split page area and views moved (8.19), project page with its Overview (8.20), questions and Report to on a topic (8.21), questions page (8.22), person page (8.23), quick capture with Report to (8.24), a note with files and the viewer (8.25). |
+| [screens.md](docs/design/screens.md) | 8 | Wireframes: topic page (8.1), inbox (8.2), palette (8.3), terminal (8.4), first run (8.5), knowledge (8.6, 8.7, 8.10), import preview (8.8), key loss (8.9), working folders (8.11), settings (8.12), chat (8.13), epic (8.14), tab bar (8.15), updater (8.16), workbench with the right sidebar (8.17), dragging a view (8.18), split page area and views moved (8.19), project page with its Overview (8.20), questions and Report to on a topic (8.21), questions page (8.22), person page (8.23), quick capture with Report to (8.24), a note with files and the viewer (8.25), Ready for Claude Code (8.26), dictation (8.27). |
 | [copy.md](docs/design/copy.md) | 7, 10.1 to 10.3 | Voice; languages, French conventions, dates, times and numbers, due dates and typed dates (10.2.1), layout under longer text. |
-| [catalogue.md](docs/design/catalogue.md) | 10.4 to 10.4.7 | Every UI string by key, English and French. Code and tests read 10.4; 10.4.1, 10.4.2, 10.4.4 and 10.4.5 note how keys moved into it; 10.4.3, 10.4.6 and 10.4.7 hold keys pending implementation. |
+| [catalogue.md](docs/design/catalogue.md) | 10.4 to 10.4.9 | Every UI string by key, English and French. Code and tests read 10.4; 10.4.1, 10.4.2, 10.4.4 and 10.4.5 note how keys moved into it; 10.4.3, 10.4.6, 10.4.7, 10.4.8 and 10.4.9 hold keys pending implementation. |
 | [data.md](docs/design/data.md) | 11 | What model data every element shows; data model requests. |
 
 Sections 1 (principles), 9 (review checklist) and the Direction are in this file. The token table (2.1), the contrast table (2.2) and the catalogue (10.4) are parsed by tests in `crates/acta-app` (`theme.rs`, `i18n/mod.rs`): keep their headings and table shapes.
@@ -146,6 +147,13 @@ Run against every screen, in dark and in light, in English and in French. One fa
 - [ ] Refusals name the file, its size and the limit; nothing over 400 ms spins; the UI never waits on a file being stored.
 - [ ] Viewer: images fit and never upscale; GIFs do not animate; text shows at most 1 MB with the notice; `Esc` returns focus to the file; web views are hidden under it.
 - [ ] Agent side: names and sizes only in `find`, `brief` and `entries`; `attachment` returns fenced text within 6,000 chars, one image within the pixel cap, or one line for a binary.
+
+**Dictation** (components-voice.md 5; run with no model, while downloading, listening, writing, with the microphone blocked, at 880 x 560 in the timeline composer and quick capture)
+- [ ] The microphone is in each multi-line editor and nowhere else; the footer does not move when it changes state; with Dictation off it is absent.
+- [ ] Every state reads in greyscale (icon shape and words); no red and no accent for listening; the level bar follows the sound and nothing else moves.
+- [ ] Text appears only at the anchor, phrase by phrase, never rewritten after it appears; a take is one undo step; `Esc` stops without cancelling the editor.
+- [ ] Nothing downloads without a click that names the size; free space is shown first; a model is used only after its hash matched.
+- [ ] No audio, and no dictated text outside the editor, reaches a file, a log, the clipboard or a process argument (ADR 0014, 7).
 
 **Behaviour**
 - [ ] Feedback on the next frame; nothing in the "never animates" list animates; budgets in 6.3 hold with 10,000 topics.
