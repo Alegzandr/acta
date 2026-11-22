@@ -84,7 +84,7 @@ A section of the Settings page (components-app.md 5) after Claude Code and befor
 
 | Row | Control | Description |
 |---|---|---|
-| Dictation | dropdown: "Whisper, on this computer" / "macOS recogniser, on this computer" (macOS only, when it works on the device) / "Off" | "Turns what you say into text in notes, descriptions and documents. Your voice never leaves this computer and is never saved." (`voice.settings.engine_hint`) |
+| Dictation | dropdown: "Whisper, on this computer" / "macOS recogniser, on this computer" (macOS only, when it works on the device) / "Off" | "Dictation in notes, descriptions and documents. Your voice never leaves this computer." (`voice.settings.engine_hint`) |
 | Model (Whisper only) | the model list (below) | "Recommended for this computer: Small. Larger models are more accurate and slower." (the recommendation's reason when it is the GPU tier: "This computer's graphics can run the large model quickly.") |
 | Use the graphics card | checkbox, on by default; shown only on a build and a computer where Whisper can use the GPU (ADR 0014, 5: Apple Silicon first, Vulkan later) | "Faster with large models. Acta uses the processor when the graphics card cannot be used." |
 | Language | dropdown: "English or French, detected" / "English" / "French" | "Pick one if dictation mistakes one language for the other." (`voice.settings.language_hint`) |

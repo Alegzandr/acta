@@ -862,8 +862,8 @@ Annotations: `[f]` is `file-text`, `[@]` `paperclip`, `(i)` `info`. Images come 
 ```
 |        Claude Code                                               <- type.subtitle             |
 |    8   Ready for Claude Code                                     <- type.label                |
-|        What Claude Code uses on this computer. Acta installs nothing without your click,      |
-|        and only from the publisher or your system's package manager.   <- small, tertiary     |
+|        What Claude Code uses on this computer. Nothing is installed without your click.       |
+|                                                         <- small, tertiary                    |
 |    8   (v) Claude Code                                      2.1.330                           | 44
 |            Runs in Acta's terminal and does the work. Required.                               |
 |        (o) Signed in to Claude                        Not signed in       [Sign in...]        | 44 primary
@@ -971,8 +971,8 @@ Settings > Voice:
 ```
 |        Voice                                                     <- type.subtitle             |
 |    8   Dictation                               [Whisper, on this computer v]                  |
-|        Turns what you say into text in notes, descriptions and documents. Your voice          |
-|        never leaves this computer and is never saved.                                         |
+|        Dictation in notes, descriptions and documents. Your voice never leaves this           |
+|        computer.                                                                              |
 |        Model                                                                                  |
 |        Recommended for this computer: Small. Larger models are more accurate and slower.      |
 |          Tiny          31 MB · for older computers; rough in French           Download        | 44

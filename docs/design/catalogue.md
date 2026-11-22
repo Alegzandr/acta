@@ -983,7 +983,7 @@ New with ADR 0013 (2026-11-22; components-app.md 5, screens.md 8.26). They stay 
 | Key | English | French |
 |---|---|---|
 | `ready.title` | Ready for Claude Code | Prêt pour Claude Code |
-| `ready.hint` | What Claude Code uses on this computer. Acta installs nothing without your click, and only from the publisher or your system's package manager. | Ce que Claude Code utilise sur cet ordinateur. Acta n'installe rien sans votre clic, et seulement depuis l'éditeur ou le gestionnaire de paquets de votre système. |
+| `ready.hint` | What Claude Code uses on this computer. Nothing is installed without your click. | Ce que Claude Code utilise sur cet ordinateur. Rien n'est installé sans votre clic. |
 | `ready.claude` | Claude Code | Claude Code |
 | `ready.claude.why` | Runs in Acta's terminal and does the work. Required. | S'exécute dans le terminal d'Acta et fait le travail. Requis. |
 | `ready.signin` | Signed in to Claude | Connecté à Claude |
@@ -1102,7 +1102,7 @@ New with dictation (2026-11-22; components-voice.md 5, screens.md 8.27). They st
 | `voice.download.offline` | There is no connection. | Il n'y a pas de connexion. |
 | `voice.settings.title` | Voice | Voix |
 | `voice.settings.engine` | Dictation | Dictée |
-| `voice.settings.engine_hint` | Turns what you say into text in notes, descriptions and documents. Your voice never leaves this computer and is never saved. | Transforme ce que vous dites en texte dans les notes, les descriptions et les documents. Votre voix ne quitte jamais cet ordinateur et n'est jamais enregistrée. |
+| `voice.settings.engine_hint` | Dictation in notes, descriptions and documents. Your voice never leaves this computer. | Dictée dans les notes, les descriptions et les documents. Votre voix ne quitte jamais cet ordinateur. |
 | `voice.engine.whisper` | Whisper, on this computer | Whisper, sur cet ordinateur |
 | `voice.engine.macos` | macOS recogniser, on this computer (M) | Reconnaissance de macOS, sur cet ordinateur (M) |
 | `voice.engine.off` | Off | Désactivée |
