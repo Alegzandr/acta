@@ -2057,6 +2057,105 @@ mod tests {
     }
 
     #[test]
+    fn an_answer_and_its_decision_are_undone_and_redone_as_one_step() {
+        use acta_core::store::NewQuestion;
+        let mut temp = temp_store();
+        let store = &mut temp.store;
+        let (_, id) = topic(store);
+        let q = store
+            .ask(
+                NewQuestion {
+                    owner: Owner::Topic(id),
+                    text: "Keep v1 until March?".into(),
+                    asked_to: None,
+                    expected_on: None,
+                },
+                Author::Human,
+            )
+            .unwrap();
+        let back = store.question(q).unwrap();
+        let entry = store
+            .answer(q, Some("Yes."), true, Author::Human)
+            .unwrap()
+            .expect("logged");
+        let step = Undo::Many(vec![
+            Undo::Question {
+                back: Box::new(back),
+                expect: Box::new(store.question(q).unwrap()),
+            },
+            Undo::Delete(Record::Entry(entry.id)),
+        ]);
+        let redo = step.apply(store).unwrap().expect("undone");
+        assert!(store.question(q).unwrap().is_open());
+        assert!(store.entry(entry.id).is_err(), "the decision went too");
+        assert!(redo.apply(store).unwrap().is_some());
+        assert!(!store.question(q).unwrap().is_open());
+        assert!(store.entry(entry.id).is_ok());
+    }
+
+    #[test]
+    fn report_to_and_a_contact_made_inline_go_back_together() {
+        use acta_core::model::ContactLevel;
+        let mut temp = temp_store();
+        let store = &mut temp.store;
+        let (project, id) = topic(store);
+        let record = Record::Topic(id);
+        let marie = store
+            .create_contact("Marie", ContactLevel::Project(project), Author::Human)
+            .unwrap();
+        store
+            .set_report_to(record, Some(marie), Author::Human)
+            .unwrap();
+        store.set_reported(record, true, Author::Human).unwrap();
+        let step = Undo::Many(vec![
+            Undo::ReportTo {
+                record,
+                back: (None, false),
+                expect: (Some(marie), true),
+            },
+            Undo::Delete(Record::Contact(marie)),
+        ]);
+        let redo = step.apply(store).unwrap().expect("undone");
+        assert_eq!(report_state(store, record).unwrap(), (None, false));
+        assert!(store.contact(marie).is_err());
+        assert!(redo.apply(store).unwrap().is_some());
+        assert_eq!(report_state(store, record).unwrap(), (Some(marie), true));
+    }
+
+    #[test]
+    fn a_merge_is_undone_with_its_references() {
+        use acta_core::model::ContactLevel;
+        let mut temp = temp_store();
+        let store = &mut temp.store;
+        let (project, id) = topic(store);
+        let level = ContactLevel::Project(project);
+        let a = store.create_contact("Marie", level, Author::Human).unwrap();
+        let b = store
+            .create_contact("Marie Dubois", level, Author::Human)
+            .unwrap();
+        store
+            .set_report_to(Record::Topic(id), Some(a), Author::Human)
+            .unwrap();
+        let before = store.contact(b).unwrap();
+        let uses: Vec<Record> = store
+            .contact_uses(a)
+            .unwrap()
+            .into_iter()
+            .map(|u| u.record)
+            .collect();
+        store.merge_contacts(a, b, Author::Human).unwrap();
+        let step = Undo::Unmerge {
+            from: a,
+            before: Box::new(before),
+            uses,
+        };
+        let redo = step.apply(store).unwrap().expect("undone");
+        assert_eq!(report_state(store, Record::Topic(id)).unwrap().0, Some(a));
+        assert!(redo.apply(store).unwrap().is_some());
+        assert_eq!(report_state(store, Record::Topic(id)).unwrap().0, Some(b));
+    }
+
+    #[test]
     fn undo_of_back_to_inbox_files_the_note_again_exactly() {
         let mut temp = temp_store();
         let store = &mut temp.store;

@@ -418,7 +418,10 @@ pub fn questions(store: &mut Store, folder: &Path) -> acta_core::Result<()> {
         .iter()
         .find(|(e, _)| e.title == "Terminal")
         .map(|(e, _)| e.id);
-    let atlas = store.create_project("Atlas", "", me)?;
+    let atlas = match store.projects()?.into_iter().find(|p| p.title == "Atlas") {
+        Some(p) => p.id,
+        None => store.create_project("Atlas", "", me)?,
+    };
     let project = ContactLevel::Project(acta);
     let detail = |store: &mut Store, id, job: Option<&str>, company: Option<&str>| {
         store.update_contact(
@@ -442,7 +445,7 @@ pub fn questions(store: &mut Store, folder: &Path) -> acta_core::Result<()> {
                  the first line and the context after it. She prefers one message with three \
                  questions to three messages. Never before 9:00 or after 18:00, and not on \
                  Wednesdays, when she is at the other office. If something is urgent, say so in \
-                 the subject and call the legal desk rather than her mobile. Copy the legal team \
+                 the subject and call the legal desk. Copy the legal team \
                  on anything about contracts or data leaving the EU."
                     .into(),
             )),
@@ -497,9 +500,9 @@ pub fn questions(store: &mut Store, folder: &Path) -> acta_core::Result<()> {
             store,
             owner,
             "Which Windows versions must the installer support, given that the terminal relies on \
-             ConPTY, that some of our users are still on older builds of Windows 10 at work, and \
-             that the packaging team would rather test fewer versions well than many versions \
-             badly; is it acceptable to state Windows 10 1809 as the floor in the docs?",
+             ConPTY, that some users are still on older builds of Windows 10 at work, and that \
+             packaging would rather test fewer versions well than many badly; can the docs \
+             state Windows 10 1809 as the floor for everyone?",
             Some(legal),
             None,
             claude,

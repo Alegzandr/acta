@@ -123,8 +123,10 @@ pub(super) struct QuestionUi {
     report_anchor: AnchorBounds,
     report_menu: Option<usize>,
     report_focus: Option<FocusHandle>,
-    /// Captures: the composer's picker typed into.
+    /// The composer, just opened, is brought into view once laid out.
     reveal: std::rc::Rc<std::cell::Cell<bool>>,
+    /// Captures: the section is scrolled to the top of the page.
+    reveal_section: std::rc::Rc<std::cell::Cell<bool>>,
 }
 
 impl RecordPage {
@@ -1087,6 +1089,9 @@ impl RecordPage {
             .data
             .as_ref()
             .and_then(|d| d.questions.section.open.first().map(|q| q.id));
+        self.q
+            .reveal_section
+            .set(which.starts_with("q-") && which != "q-composer");
         match which {
             "q-composer" => {
                 self.open_composer(None, None, window, cx);
@@ -1426,12 +1431,21 @@ impl RecordPage {
                         page.open_composer(None, None, window, cx)
                     })),
             );
+        let reveal = std::rc::Rc::clone(&self.q.reveal_section);
+        let scroll = self.scroll.clone();
         let mut section = div()
             .id("questions")
+            .relative()
             .flex()
             .flex_col()
             .mt(px(32.))
-            .child(header);
+            .child(header)
+            .child(ui::measure(move |bounds, window| {
+                if reveal.replace(false) {
+                    ui::scroll_into_view(&scroll, bounds, ui::Reveal::Top);
+                    window.refresh();
+                }
+            }));
         let unfolded = self.closed_unfolded(cx);
         let mut drawn: Vec<Question> = s.open.clone();
         if unfolded {
@@ -1635,8 +1649,7 @@ impl RecordPage {
         .on_click(cx.listener(move |page, _, _, cx| {
             page.q.menu = Some((id, index, 0));
             cx.notify();
-        }))
-        .child(self.q.menu_anchor.measure_keyed(index as u64));
+        }));
         let actions = div()
             .flex()
             .flex_row()
@@ -1665,6 +1678,15 @@ impl RecordPage {
             },
             locale,
             t,
+        )
+        .relative()
+        // The row's menu and its answer date picker hang from the row (the
+        // hover buttons are hidden while it has only the keyboard); only
+        // the row whose layer is open measures, so rows never take turns.
+        .when(
+            self.q.menu.is_some_and(|(m, _, _)| m == id)
+                || self.q.date.as_ref().is_some_and(|d| d.id == id),
+            |this| this.child(self.q.menu_anchor.measure_keyed(index as u64)),
         )
         .on_key_down(cx.listener(move |page, event: &KeyDownEvent, window, cx| {
             page.on_question_key(id, event, window, cx)
@@ -1858,6 +1880,7 @@ impl RecordPage {
         };
         let date_focused = c.date_focus.is_focused(window);
         let date_button = ui::ghost_value("q-date", t)
+            .relative()
             .ml(px(0.))
             .track_focus(&c.date_focus)
             .when(c.date.is_none(), |this| this.text_color(t.text_tertiary))
@@ -1929,6 +1952,7 @@ impl RecordPage {
         let picker_focus = c.picker.focus_handle(cx);
         div()
             .id("q-composer")
+            .relative()
             .flex()
             .flex_row()
             .items_start()

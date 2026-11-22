@@ -526,6 +526,7 @@ impl ContactsPage {
         let details = cm::details(&c.contact);
         let hover = t.fill_hover;
         let mut row = ui::focusable(div().id(("contact-row", index)), t, false)
+            .relative()
             .flex()
             .flex_row()
             .items_center()
@@ -581,7 +582,10 @@ impl ContactsPage {
             .when(self.unread.contains(&id), |this| {
                 this.child(ui::unread_dot(t))
             })
-            .child(self.menu_anchor.measure_keyed(id.0 as u64));
+            // Only the row whose menu is open measures (one anchor).
+            .when(self.menu.is_some_and(|(m, _)| m == id), |this| {
+                this.child(self.menu_anchor.measure_keyed(id.0 as u64))
+            });
         if let Some(h) = self.row_focus.get(index) {
             row = row.track_focus(h);
         }

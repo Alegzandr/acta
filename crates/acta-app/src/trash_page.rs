@@ -18,9 +18,18 @@ use crate::ui;
 use crate::when;
 use crate::workspace::Workspace;
 
+/// What a contact's trash row says instead of the days left
+/// (components-contacts.md 5): merged into another, or kept while named.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ContactNote {
+    MergedInto(String),
+    KeptNamed(usize),
+}
+
 pub struct TrashPage {
     ws: Entity<Workspace>,
     items: Vec<TrashItem>,
+    contacts: std::collections::HashMap<Record, ContactNote>,
     loaded: bool,
     seen_revision: u64,
     _load: Task<()>,
@@ -75,6 +84,7 @@ impl TrashPage {
         let mut page = Self {
             ws,
             items: Vec::new(),
+            contacts: std::collections::HashMap::new(),
             loaded: false,
             seen_revision: 0,
             _load: Task::ready(()),
@@ -85,16 +95,35 @@ impl TrashPage {
     }
 
     fn reload(&mut self, cx: &mut Context<Self>) {
-        let task = self
-            .ws
-            .read(cx)
-            .db
-            .run(cx, |store| store.trash(PageReq::first(PageReq::MAX_LIMIT)));
+        let task = self.ws.read(cx).db.run(cx, |store| {
+            let page = store.trash(PageReq::first(PageReq::MAX_LIMIT))?;
+            let mut notes = std::collections::HashMap::new();
+            for item in &page.items {
+                if let Record::Contact(id) = item.record {
+                    let c = store.contact_any(id)?;
+                    let note = match c.merged_into {
+                        Some(into) => store
+                            .contact_any(into)
+                            .ok()
+                            .map(|i| ContactNote::MergedInto(i.name)),
+                        None => {
+                            let n = store.contact_uses(id)?.len();
+                            (n > 0).then_some(ContactNote::KeptNamed(n))
+                        }
+                    };
+                    if let Some(note) = note {
+                        notes.insert(item.record, note);
+                    }
+                }
+            }
+            Ok((page, notes))
+        });
         self._load = cx.spawn(async move |page, cx| {
             let loaded = task.await;
             let _ = page.update(cx, |page, cx| {
-                if let Ok(items) = loaded {
+                if let Ok((items, contacts)) = loaded {
                     page.items = items.items;
+                    page.contacts = contacts;
                 }
                 page.loaded = true;
                 cx.notify();
@@ -144,11 +173,19 @@ impl TrashPage {
             Key::TrashBy,
             &[("author", Arg::Text(&when::author(locale, item.deleted_by)))],
         );
-        let left = tr(
-            locale,
-            Key::TrashDays,
-            &[("n", Arg::Count(days_left(item, now)))],
-        );
+        let left = match self.contacts.get(&record) {
+            Some(ContactNote::MergedInto(name)) => {
+                tr(locale, Key::TrashMergedInto, &[("name", Arg::Text(name))])
+            }
+            Some(ContactNote::KeptNamed(n)) => {
+                tr(locale, Key::TrashKeptNamed, &[("n", Arg::Count(*n as u64))])
+            }
+            None => tr(
+                locale,
+                Key::TrashDays,
+                &[("n", Arg::Count(days_left(item, now)))],
+            ),
+        };
         let place = self.project_title(item.project, cx);
         ui::focusable(div().id(("trash-row", index)), t, false)
             .flex()

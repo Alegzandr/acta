@@ -1105,8 +1105,8 @@ impl Shell {
             // unfolded, a contact's move refused.
             #[cfg(debug_assertions)]
             Ok(
-                which @ ("q-composer" | "q-answer" | "q-closed" | "q-menu" | "report-popover"
-                | "contact-move"),
+                which @ ("q-composer" | "q-answer" | "q-closed" | "q-menu" | "q-scroll"
+                | "report-popover" | "contact-move"),
             ) => {
                 let which = which.to_owned();
                 cx.spawn_in(window, async move |shell, cx| {

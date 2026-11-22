@@ -466,6 +466,7 @@ impl InboxPage {
         };
         let hover = t.fill_hover;
         let button = ui::focusable(role.el().id("inbox-report-filter"), t, false)
+            .relative()
             .flex()
             .flex_row()
             .items_center()

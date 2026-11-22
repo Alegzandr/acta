@@ -481,6 +481,7 @@ impl ContactPage {
         });
         div()
             .id("contact-title-row")
+            .relative()
             .group("contact-title")
             .flex()
             .flex_row()
@@ -519,9 +520,9 @@ impl ContactPage {
                             page.menu = Some(0);
                             cx.notify();
                         })),
-                    )
-                    .child(self.menu_anchor.measure()),
+                    ),
             )
+            .child(self.menu_anchor.measure())
             .children(menu)
             .into_any_element()
     }

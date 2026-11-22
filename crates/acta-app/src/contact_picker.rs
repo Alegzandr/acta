@@ -467,10 +467,12 @@ impl ContactPicker {
                     )
                     .child(icon(Icon::Plus, 14., t.text_secondary))
                     .child(
+                        // The typed name stays whole; "in Project Acta"
+                        // gives way first.
                         type_scale::UI
                             .el()
-                            .flex_1()
-                            .min_w_0()
+                            .flex_shrink_0()
+                            .max_w(gpui_kit::relative(0.7))
                             .truncate()
                             .text_color(t.text_primary)
                             .child(tr(
@@ -482,7 +484,10 @@ impl ContactPicker {
                     .child(
                         type_scale::SMALL
                             .el()
-                            .flex_shrink_0()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_right()
                             .text_color(level)
                             .child(self.new_in.clone()),
                     ),
@@ -497,7 +502,7 @@ impl ContactPicker {
         match self.mode {
             Mode::Inline => list
                 .min_w(px(240.))
-                .w(px(self.anchor_width().max(240.)))
+                .w(px(self.anchor_width().max(300.)))
                 .bg(t.bg_overlay)
                 .border_1()
                 .border_color(t.border_default)
