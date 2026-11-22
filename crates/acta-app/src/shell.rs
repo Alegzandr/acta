@@ -2987,13 +2987,33 @@ impl Shell {
         let sub = cx.subscribe_in(
             &capture,
             window,
-            |shell, _, event: &CaptureEvent, window, cx| {
-                let CaptureEvent::Close(draft, tray) = event;
-                if let Some(bench) = shell.bench() {
-                    bench.capture_draft = draft.clone();
-                    bench.capture_tray = tray.clone();
+            |shell, _, event: &CaptureEvent, window, cx| match event {
+                CaptureEvent::Close(draft, tray) => {
+                    if let Some(bench) = shell.bench() {
+                        bench.capture_draft = draft.clone();
+                        bench.capture_tray = tray.clone();
+                    }
+                    shell.close_overlay(window, cx);
                 }
-                shell.close_overlay(window, cx);
+                // The note was refused for its contact: the capture comes
+                // back with the text and the files, unless another overlay
+                // took the screen meanwhile (the draft then waits).
+                CaptureEvent::Refused { body, name, tray } => {
+                    let Some(bench) = shell.bench() else { return };
+                    bench.capture_draft = body.clone();
+                    bench.capture_tray = Some(tray.clone());
+                    if bench.overlay.is_some() {
+                        return;
+                    }
+                    shell.open_capture(window, cx);
+                    let capture = shell.bench().and_then(|b| match &b.overlay {
+                        Some(Overlay::Capture(c)) => Some(c.clone()),
+                        _ => None,
+                    });
+                    if let Some(capture) = capture {
+                        capture.update(cx, |c, cx| c.refused(name, window, cx));
+                    }
+                }
             },
         );
         let Some(bench) = self.bench() else { return };

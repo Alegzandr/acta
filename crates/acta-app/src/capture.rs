@@ -25,6 +25,15 @@ pub enum CaptureEvent {
     /// Closed; the draft (possibly empty) and its files, if any, are kept
     /// by the shell.
     Close(String, Option<Entity<Tray>>),
+    /// After closing: the store refused the note's contact (it moved out
+    /// of the project meanwhile). The shell opens the capture again with
+    /// the text, the files and the picker's inline error
+    /// (components-contacts.md 5, Errors).
+    Refused {
+        body: String,
+        name: String,
+        tray: Entity<Tray>,
+    },
 }
 
 pub struct Capture {
@@ -130,23 +139,46 @@ impl Capture {
             .update(cx, |state, cx| state.set_value("", window, cx));
         let project = self.project;
         let person = self.report.read(cx).value().clone();
+        let person_name = person.name().to_owned();
+        let kept = body.clone();
         let task = self.ws.update(cx, |ws, cx| {
-            ws.write(cx, Key::ErrorSave, move |store| {
+            ws.write_picked(cx, move |store| {
                 crate::inbox_page::add_note_with(store, project, &body, person)
             })
         });
         // The files get their rows once the note exists; saving does not
         // wait for them (components-attachments.md 5, While adding).
         let tray = self.tray.clone();
-        cx.spawn(async move |_, cx| {
-            if let Ok(note) = task.await {
+        let (body, name) = (kept, person_name);
+        // Held until the write answers, so a refusal still reaches the
+        // shell after the overlay closed.
+        let this = cx.entity();
+        cx.spawn(async move |_, cx| match task.await {
+            Ok(note) => {
                 tray.update(cx, |tray, cx| {
                     tray.commit(AttachOwner::Note(note), project, cx)
                 });
             }
+            Err(crate::workspace::WriteError::OutOfScope) => {
+                this.update(cx, |_, cx| {
+                    cx.emit(CaptureEvent::Refused { body, name, tray })
+                });
+            }
+            Err(_) => {}
         })
         .detach();
         cx.emit(CaptureEvent::Close(String::new(), None));
+    }
+
+    /// Opened again after a refusal: the picker shows the inline error.
+    pub fn refused(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let place = Place {
+            project: self.project,
+            epic: None,
+        };
+        self.report
+            .update(cx, |p, cx| p.refuse(name, place, window, cx));
+        self.report.update(cx, |p, cx| p.focus(window, cx));
     }
 
     /// Debug builds: a note typed and a screenshot pasted (the paste hook
@@ -177,6 +209,8 @@ impl Capture {
 
 impl Render for Capture {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // The palette's "Attach files..." finds this editor's tray.
+        attach_ui::pair(&self.editor, &self.tray, cx);
         let t = cx.global::<Tokens>().clone();
         let locale = settings::locale(cx);
         let macos = cfg!(target_os = "macos");

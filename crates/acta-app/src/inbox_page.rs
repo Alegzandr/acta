@@ -15,7 +15,9 @@ use acta_core::model::{
     ProjectTree, Record, Status, TopicId,
 };
 use acta_core::store::NewTopic;
-use gpui_kit::component::input::{Escape, InputEvent, Textarea, TextareaState};
+use gpui_kit::component::input::{
+    Escape, Input, InputEvent, InputState, MoveDown, MoveUp, Textarea, TextareaState,
+};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, AppContext, Context, Entity, EventEmitter, Focusable, InteractiveElement,
@@ -248,6 +250,11 @@ pub struct InboxPage {
     /// The Report to filter: `None` anyone; and its menu.
     report_filter: Option<acta_core::model::ContactId>,
     filter_menu: Option<usize>,
+    /// Over 8 contacts, the menu's search input (components-contacts.md 5,
+    /// Inbox filter).
+    filter_search: Option<(Entity<InputState>, Subscription)>,
+    /// The contacts the menu lists, as the last frame drew them.
+    filter_rows: std::rc::Rc<std::cell::RefCell<Vec<Option<acta_core::model::ContactId>>>>,
     filter_anchor: crate::menu::AnchorBounds,
     /// A note being edited in place, with its editor and its files.
     editing: Option<(NoteId, Entity<TextareaState>, Entity<Tray>)>,
@@ -381,6 +388,8 @@ impl InboxPage {
             report,
             report_filter: None,
             filter_menu: None,
+            filter_search: None,
+            filter_rows: Default::default(),
             filter_anchor: crate::menu::AnchorBounds::default(),
             editing: None,
             as_view,
@@ -481,11 +490,12 @@ impl InboxPage {
         let restore = body.clone();
         // The field starts empty each time (components-questions.md 5).
         let person = self.report.read(cx).value().clone();
+        let name = person.name().to_owned();
         self.report.update(cx, |p, cx| {
             p.set_value(crate::contact_picker::Value::None, window, cx)
         });
         let task = self.ws.update(cx, |ws, cx| {
-            ws.write(cx, Key::ErrorSave, move |store| {
+            ws.write_picked(cx, move |store| {
                 add_note_with(store, project, &body, person)
             })
         });
@@ -498,10 +508,20 @@ impl InboxPage {
                     tray.commit(AttachOwner::Note(note), project, cx)
                 });
             }
-            Err(_) => {
+            Err(err) => {
                 let _ = page.update_in(cx, |page, window, cx| {
                     page.capture
                         .update(cx, |state, cx| state.set_value(restore, window, cx));
+                    // The contact moved out of sight meanwhile: the picker
+                    // says so under the field (components-contacts.md 5).
+                    if err == crate::workspace::WriteError::OutOfScope {
+                        let place = acta_core::model::Place {
+                            project,
+                            epic: None,
+                        };
+                        page.report
+                            .update(cx, |p, cx| p.refuse(&name, place, window, cx));
+                    }
                 });
             }
         })
@@ -547,53 +567,84 @@ impl InboxPage {
                 t.text_secondary
             })
             .hover(move |s| s.bg(hover))
-            .on_click(cx.listener(|page, _, _, cx| {
-                page.filter_menu = Some(0);
-                cx.notify();
-            }))
+            .on_click({
+                let search = people.len() > crate::contacts_model::FILTER_SEARCH_OVER;
+                cx.listener(move |page, _, window, cx| page.open_filter_menu(search, window, cx))
+            })
             .child(label)
             .child(icon(Icon::ChevronDown, 14., t.text_tertiary))
             .child(self.filter_anchor.measure());
         let menu = self.filter_menu.map(|hl| {
-            let mut panel = crate::menu::panel("inbox-report-menu", t).on_mouse_down_out(
-                cx.listener(|page, _, _, cx| {
-                    page.filter_menu = None;
-                    cx.notify();
-                }),
-            );
-            panel = panel.child(
-                crate::menu::item(
-                    ("report-filter", 0usize),
-                    None,
-                    text(locale, Key::ReportFilterAnyone),
-                    self.report_filter.is_none().then(|| crate::menu::check(t)),
-                    hl == 0,
-                    t,
-                )
-                .on_click(cx.listener(|page, _, _, cx| {
-                    page.report_filter = None;
-                    page.filter_menu = None;
-                    cx.notify();
-                })),
-            );
-            for (i, (id, name, n)) in people.iter().enumerate() {
+            let mut panel = crate::menu::panel("inbox-report-menu", t)
+                .on_mouse_down_out(cx.listener(|page, _, _, cx| page.close_filter_menu(cx)))
+                .capture_action(cx.listener(|page, _: &MoveDown, _, cx| {
+                    page.step_filter_menu(false, cx);
+                    cx.stop_propagation();
+                }))
+                .capture_action(cx.listener(|page, _: &MoveUp, _, cx| {
+                    page.step_filter_menu(true, cx);
+                    cx.stop_propagation();
+                }))
+                .capture_action(cx.listener(|page, _: &Escape, _, cx| {
+                    page.close_filter_menu(cx);
+                    cx.stop_propagation();
+                }));
+            // Over 8 contacts, a search input at the top filters them with
+            // the picker's ranking; it never offers "New contact".
+            let typed = self
+                .filter_search
+                .as_ref()
+                .map(|(input, _)| input.read(cx).value().to_string())
+                .unwrap_or_default();
+            if let Some((input, _)) = &self.filter_search {
+                panel = panel.child(
+                    div()
+                        .h(px(28.))
+                        .mb(px(4.))
+                        .px(px(8.))
+                        .flex()
+                        .items_center()
+                        .rounded(px(RADIUS_SM))
+                        .bg(t.bg_raised)
+                        .border_1()
+                        .border_color(t.border_default)
+                        .child(Input::new(input).appearance(false).w_full()),
+                );
+            }
+            let names: Vec<&str> = people.iter().map(|(_, n, _)| n.as_str()).collect();
+            let mut rows: Vec<Option<acta_core::model::ContactId>> = Vec::new();
+            if typed.trim().is_empty() {
+                rows.push(None);
+                panel = panel.child(
+                    crate::menu::item(
+                        ("report-filter", 0usize),
+                        None,
+                        text(locale, Key::ReportFilterAnyone),
+                        self.report_filter.is_none().then(|| crate::menu::check(t)),
+                        hl == 0,
+                        t,
+                    )
+                    .on_click(cx.listener(|page, _, _, cx| page.choose_filter(None, cx))),
+                );
+            }
+            for i in crate::contacts_model::filter_rows(&names, &typed) {
+                let (id, name, n) = &people[i];
                 let id = *id;
+                let at = rows.len();
+                rows.push(Some(id));
                 panel = panel.child(
                     crate::menu::item(
                         ("report-filter", i + 1),
                         None,
                         name.clone(),
                         Some(crate::menu::hint(number(locale, *n as u64), t)),
-                        hl == i + 1,
+                        hl == at,
                         t,
                     )
-                    .on_click(cx.listener(move |page, _, _, cx| {
-                        page.report_filter = Some(id);
-                        page.filter_menu = None;
-                        cx.notify();
-                    })),
+                    .on_click(cx.listener(move |page, _, _, cx| page.choose_filter(Some(id), cx))),
                 );
             }
+            *self.filter_rows.borrow_mut() = rows;
             self.filter_anchor
                 .below(panel, crate::menu::Align::Start)
                 .unwrap_or_else(|| div().into_any_element())
@@ -603,6 +654,66 @@ impl InboxPage {
             .child(button)
             .children(menu)
             .into_any_element()
+    }
+
+    /// Open the Report to filter's menu; with more than 8 contacts its
+    /// search input takes the keyboard.
+    fn open_filter_menu(&mut self, search: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.filter_menu = Some(0);
+        self.filter_search = None;
+        if search {
+            let locale = settings::locale(cx);
+            let input = cx.new(|cx| {
+                InputState::new(window, cx).placeholder(text(locale, Key::ContactPlaceholder))
+            });
+            input.update(cx, |s, cx| s.focus(window, cx));
+            let sub =
+                cx.subscribe_in(
+                    &input,
+                    window,
+                    |page, _, event: &InputEvent, _, cx| match event {
+                        InputEvent::Change => {
+                            page.filter_menu = Some(0);
+                            cx.notify();
+                        }
+                        InputEvent::PressEnter { .. } => {
+                            let at = page.filter_menu.unwrap_or(0);
+                            let row = page.filter_rows.borrow().get(at).copied();
+                            if let Some(row) = row {
+                                page.choose_filter(row, cx);
+                            }
+                        }
+                        _ => {}
+                    },
+                );
+            self.filter_search = Some((input, sub));
+        }
+        cx.notify();
+    }
+
+    fn step_filter_menu(&mut self, up: bool, cx: &mut Context<Self>) {
+        let len = self.filter_rows.borrow().len();
+        if let Some(hl) = self.filter_menu.as_mut()
+            && len > 0
+        {
+            *hl = if up {
+                hl.saturating_sub(1)
+            } else {
+                (*hl + 1).min(len - 1)
+            };
+        }
+        cx.notify();
+    }
+
+    fn choose_filter(&mut self, to: Option<acta_core::model::ContactId>, cx: &mut Context<Self>) {
+        self.report_filter = to;
+        self.close_filter_menu(cx);
+    }
+
+    fn close_filter_menu(&mut self, cx: &mut Context<Self>) {
+        self.filter_menu = None;
+        self.filter_search = None;
+        cx.notify();
     }
 
     /// Edit (note card, 5): the body becomes the editor in place;
@@ -1133,6 +1244,11 @@ impl InboxPage {
 
 impl Render for InboxPage {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // The palette's "Attach files..." finds these editors' trays.
+        attach_ui::pair(&self.capture, &self.capture_tray, cx);
+        if let Some((_, editor, tray)) = &self.editing {
+            attach_ui::pair(editor, tray, cx);
+        }
         let t = cx.global::<Tokens>().clone();
         let locale = settings::locale(cx);
         let macos = cfg!(target_os = "macos");

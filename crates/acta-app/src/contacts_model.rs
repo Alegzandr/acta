@@ -230,6 +230,32 @@ pub fn picker_list(visible: &[ContactSummary], typed: &str) -> PickerList {
     }
 }
 
+/// The inbox's Report to filter searches its contacts when there are more
+/// than this many (components-contacts.md 5, Inbox filter).
+pub const FILTER_SEARCH_OVER: usize = 8;
+
+/// The inbox filter's rows for `typed`, as indexes into `names` (the
+/// contacts of the listed notes, first seen first): the picker's ranking
+/// (equal key, then a word starting with it, then containing it; ties keep
+/// the given order) and no "New contact" row, since a filter does not
+/// create. No text: every row in order.
+pub fn filter_rows(names: &[&str], typed: &str) -> Vec<usize> {
+    let typed_key = person_key(typed);
+    let mut scored: Vec<(u8, usize)> = names
+        .iter()
+        .enumerate()
+        .filter_map(|(i, name)| {
+            if typed_key.is_empty() {
+                Some((0, i))
+            } else {
+                rank(&person_key(name), &typed_key).map(|r| (r, i))
+            }
+        })
+        .collect();
+    scored.sort();
+    scored.into_iter().map(|(_, i)| i).collect()
+}
+
 /// The level a contact created from a record's picker gets: the record's
 /// project (components-contacts.md 5, Levels).
 pub fn default_level(project: ProjectId) -> ContactLevel {
@@ -677,5 +703,16 @@ mod tests {
             &[],
         );
         assert!(to_p.ends_with(": Marie."), "{to_p}");
+    }
+
+    #[test]
+    fn the_inbox_filter_ranks_as_the_picker_and_never_creates() {
+        let names = ["Marie Dubois", "Alexandre", "Anne-Marie", "Paul", "marie"];
+        assert_eq!(filter_rows(&names, ""), vec![0, 1, 2, 3, 4]);
+        // Equal key first, then a word starting with it, then containing.
+        assert_eq!(filter_rows(&names, "marie"), vec![4, 0, 2]);
+        assert_eq!(filter_rows(&names, "  MARIE "), vec![4, 0, 2]);
+        assert_eq!(filter_rows(&names, "zz"), Vec::<usize>::new());
+        assert_eq!(filter_rows(&names, "alex"), vec![1]);
     }
 }

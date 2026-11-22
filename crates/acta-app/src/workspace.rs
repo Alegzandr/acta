@@ -786,6 +786,10 @@ pub enum WorkspaceEvent {
 pub enum WriteError {
     /// A knowledge entry changed since it was read (another writer).
     Stale,
+    /// A contact the write names is not visible from its record (moved
+    /// meanwhile): no toast, the picker that chose it says so under the
+    /// field (components-contacts.md 5, Errors).
+    OutOfScope,
     /// Anything else; a toast already said so.
     Failed,
 }
@@ -1095,6 +1099,40 @@ impl Workspace {
         failure: Key,
         f: impl FnOnce(&mut Store) -> acta_core::Result<R> + Send + 'static,
     ) -> Task<Result<R, WriteError>> {
+        self.write_with(cx, failure, false, f)
+    }
+
+    /// [`Workspace::write`] for a write naming a contact chosen in a
+    /// picker: a contact out of the record's sight is answered with
+    /// [`WriteError::OutOfScope`] and no toast, the picker showing the
+    /// inline error instead (components-contacts.md 5, Errors).
+    pub fn write_picked<R: Send + 'static>(
+        &mut self,
+        cx: &mut Context<Self>,
+        f: impl FnOnce(&mut Store) -> acta_core::Result<R> + Send + 'static,
+    ) -> Task<Result<R, WriteError>> {
+        self.write_with(cx, Key::ErrorSave, true, f)
+    }
+
+    /// [`Workspace::write_undoable`] for a write naming a picked contact
+    /// (see [`Workspace::write_picked`]).
+    pub fn write_undoable_picked<R: Send + 'static>(
+        &mut self,
+        cx: &mut Context<Self>,
+        project: Option<ProjectId>,
+        f: impl FnOnce(&mut Store) -> acta_core::Result<(Undo, R)> + Send + 'static,
+    ) -> Task<Result<R, WriteError>> {
+        let task = self.write_picked(cx, move |store| store.atomically(f));
+        self.push_undo(task, project, None, cx)
+    }
+
+    fn write_with<R: Send + 'static>(
+        &mut self,
+        cx: &mut Context<Self>,
+        failure: Key,
+        quiet_scope: bool,
+        f: impl FnOnce(&mut Store) -> acta_core::Result<R> + Send + 'static,
+    ) -> Task<Result<R, WriteError>> {
         let task = self.db.run(cx, f);
         cx.spawn(async move |this, cx| {
             let result = task.await;
@@ -1103,6 +1141,9 @@ impl Workspace {
                 match result {
                     Ok(value) => Ok(value),
                     Err(acta_core::Error::StaleRevision { .. }) => Err(WriteError::Stale),
+                    Err(acta_core::Error::OutOfScope { .. }) if quiet_scope => {
+                        Err(WriteError::OutOfScope)
+                    }
                     // An editor's file a purge took meanwhile says so.
                     Err(acta_core::Error::StagedGone) => {
                         ws.toast_error(Key::AttachGone, cx);
