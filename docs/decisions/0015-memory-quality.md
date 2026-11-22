@@ -1,6 +1,6 @@
 # 0015 - Memory quality
 
-Status: proposed
+Status: accepted (2026-11-22, lead; to be proven by the phase 6 runs)
 Date: 2026-11-22
 
 ## Context
