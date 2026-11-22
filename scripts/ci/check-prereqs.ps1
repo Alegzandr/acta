@@ -25,18 +25,23 @@ $failed = $false
 
 # winget ships with Windows Server 2025 but is registered for a user only at their
 # first sign-in; a runner may need that registration (Microsoft's documented step).
+# Nothing is downloaded to get it: without winget the check cannot be made, and says so.
 if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-    Write-Output 'winget not found; registering App Installer for this user'
-    Add-AppxPackage -RegisterByFamilyName -MainPackage Microsoft.DesktopAppInstaller_8wekyb3d8bbwe
+    Write-Output 'winget not found; registering the App Installer that ships with Windows'
+    try {
+        Add-AppxPackage -RegisterByFamilyName -MainPackage Microsoft.DesktopAppInstaller_8wekyb3d8bbwe
+    } catch {
+        Write-Output "registration failed: $($_.Exception.Message)"
+    }
     $env:PATH = "$env:LOCALAPPDATA\Microsoft\WindowsApps;$env:PATH"
 }
 if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-    # Microsoft's own bootstrap module, pinned; it installs winget on this runner only.
-    Write-Output 'winget still not found; bootstrapping it with Microsoft.WinGet.Client'
-    Install-PackageProvider -Name NuGet -Force | Out-Null
-    Install-Module -Name Microsoft.WinGet.Client -RequiredVersion 1.29.380 -Force -Repository PSGallery
-    Repair-WinGetPackageManager -AllUsers -Force
-    $env:PATH = "$env:LOCALAPPDATA\Microsoft\WindowsApps;$env:PATH"
+    Write-Output '::error::winget unavailable on this runner'
+    if ($env:GITHUB_STEP_SUMMARY) {
+        'winget unavailable on this runner: the ADR 0013 checks were not made.' |
+            Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+    }
+    exit 1
 }
 $version = winget --version
 Write-Output "winget $version"

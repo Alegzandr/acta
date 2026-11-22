@@ -4,7 +4,8 @@
 #
 # Usage: scripts/vad.sh [--fetch]
 #   (no option)  check the file that is there; fail when it is missing or differs
-#   --fetch      download it from Hugging Face first when it is missing (HTTPS only)
+#   --fetch      download it from Hugging Face first when it is missing (HTTPS only), at the commit
+#                pinned in models.rs (SILERO_VAD_REVISION)
 #
 # A file that does not match is deleted, never shipped. crates/acta-app/build.rs checks
 # the same file again when the app is built, and the packaging scripts check it before
@@ -42,7 +43,11 @@ sha256_of() {
 if [ ! -f "$dest" ]; then
     [ "$fetch" = 1 ] || die "$dest is missing; run scripts/vad.sh --fetch"
     mkdir -p "$(dirname "$dest")"
-    url=https://huggingface.co/$repo/resolve/main/$file
+    # The commit pinned next to the file in models.rs, never `main`.
+    revision=$(sed -n 's/^pub const SILERO_VAD_REVISION: &str = "\([0-9a-f]\{40\}\)";$/\1/p' \
+        "$root/crates/acta-core/src/voice/models.rs")
+    [ -n "$revision" ] || die "SILERO_VAD_REVISION (a 40-hex commit id) is not in models.rs"
+    url=https://huggingface.co/$repo/resolve/$revision/$file
     echo "Downloading $url"
     # The resolver redirects to Hugging Face's CDN: redirects stay on HTTPS.
     curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 --retry 3 \

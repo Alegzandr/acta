@@ -36,6 +36,8 @@ const PHRASE_LIMIT: Duration = Duration::from_secs(30);
 const PROMPT_LIMIT: Duration = Duration::from_secs(300);
 /// `kAFAssistantErrorDomain` 1110: "No speech detected". Not an error for
 /// dictation: the phrase held no words.
+/// Any other domain with that code is a real failure.
+const NO_SPEECH_DOMAIN: &str = "kAFAssistantErrorDomain";
 const NO_SPEECH: isize = 1110;
 
 /// Which of Acta's languages the recogniser takes on this Mac without the
@@ -209,7 +211,7 @@ fn recognise(language: &str, phrase: &[f32]) -> Result<String, EngineError> {
         let handler = RcBlock::new(
             move |result: *mut SFSpeechRecognitionResult, error: *mut NSError| {
                 let answer = if let Some(error) = error.as_ref() {
-                    if error.code() == NO_SPEECH {
+                    if error.code() == NO_SPEECH && error.domain().to_string() == NO_SPEECH_DOMAIN {
                         Answer::NoSpeech
                     } else {
                         Answer::Failed
