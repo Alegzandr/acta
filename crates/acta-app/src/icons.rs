@@ -87,6 +87,7 @@ icons! {
     PanelsTopLeft => "panels-top-left",
     Globe => "globe",
     Square => "square",
+    Mic => "mic",
     Play => "play",
     Bot => "bot",
     Clock => "clock",

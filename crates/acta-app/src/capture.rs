@@ -5,6 +5,7 @@
 
 use acta_core::model::{AttachOwner, Place, ProjectId};
 use gpui_kit::component::input::{Escape, IndentInline, InputEvent, Textarea, TextareaState};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AppContext, Context, Entity, EventEmitter, Focusable, InteractiveElement, IntoElement,
     ParentElement, Render, StatefulInteractiveElement, Styled, Subscription, Window, div, px,
@@ -73,6 +74,7 @@ impl Capture {
                 .default_value(draft)
         });
         editor.update(cx, |state, cx| state.focus(window, cx));
+        crate::voice::attach(&editor, window, cx);
         let place = Place {
             project,
             epic: None,
@@ -262,11 +264,17 @@ impl Render for Capture {
                             .child(div().w(px(240.)).child(self.report.clone())),
                     )
                     .child(attach_ui::attach_button("capture", &self.tray, cx))
-                    .child(type_scale::SMALL.el().text_color(t.text_tertiary).child(tr(
-                        locale,
-                        Key::ComposerHint,
-                        &[("keys", Arg::Text(&keys))],
-                    )))
+                    // Dictation (components-voice.md 5): the microphone after
+                    // the paperclip, left of the save hint, which yields
+                    // while a take shows its status.
+                    .children(crate::voice::ui::mic_for(&self.editor, cx))
+                    .when(!crate::voice::ui::listening_for(&self.editor, cx), |this| {
+                        this.child(type_scale::SMALL.el().text_color(t.text_tertiary).child(tr(
+                            locale,
+                            Key::ComposerHint,
+                            &[("keys", Arg::Text(&keys))],
+                        )))
+                    })
                     .child(
                         ui::button(
                             "capture-add",
@@ -278,7 +286,8 @@ impl Render for Capture {
                         )
                         .on_click(cx.listener(|capture, _, window, cx| capture.save(window, cx))),
                     ),
-            );
+            )
+            .children(crate::voice::ui::line_for(&self.editor, cx));
         attach_ui::drop_zone("capture", &self.tray, RADIUS_XL, body, cx)
     }
 }

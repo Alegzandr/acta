@@ -147,6 +147,8 @@ pub fn groups(locale: Locale, macos: bool) -> Vec<(Key, Vec<Row>)> {
     let editors = vec![
         r(Key::ShortcutsEditorSave, vec![vec![m, enter]]),
         r(Key::ShortcutsEditorCancel, vec![vec![esc]]),
+        // components-voice.md 5: tap to toggle, hold to talk.
+        c(Command::Dictate),
     ];
 
     let mut terminal = vec![c(Command::TerminalLarger), c(Command::TerminalSmaller)];

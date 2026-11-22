@@ -90,6 +90,8 @@ pub enum Kind {
         project: Option<(acta_core::model::ProjectId, String)>,
         folders: usize,
     },
+    /// "Dictate with your voice" (components-voice.md 5, First use).
+    VoiceSetup,
     #[cfg(windows)]
     /// "Sign out and clear chat data?" (components-app.md 5, Chat panel).
     ChatSignOut,
@@ -894,6 +896,7 @@ impl Dialog {
                 ];
                 (text(locale, Key::TerminalRestartTitle), body, buttons, 440.)
             }
+            Kind::VoiceSetup => crate::voice::setup::body(&self.safe, locale, t, cx),
             Kind::Confirm(c) => {
                 let body = type_scale::UI
                     .el()

@@ -917,6 +917,306 @@ catalogue! {
         en: t("The file was removed while the editor was open; add it again."),
         fr: t("Le fichier a été retiré pendant que l\u{2019}éditeur était ouvert\u{202f}; ajoutez-le de nouveau."),
     }
+    VoiceButton "voice.button" {
+        en: t("Dictate"),
+        fr: t("Dicter"),
+    }
+    VoiceButtonSetup "voice.button_setup" {
+        en: t("Dictate\u{2026}"),
+        fr: t("Dicter\u{2026}"),
+    }
+    VoiceButtonDownloading "voice.button_downloading" {
+        en: t("Dictation is downloading its model: {percent}"),
+        fr: t("La dictée télécharge son modèle\u{a0}: {percent}"),
+    }
+    VoiceStop "voice.stop" {
+        en: t("Stop dictating"),
+        fr: t("Arrêter la dictée"),
+    }
+    VoiceStarting "voice.starting" {
+        en: t("Starting\u{2026}"),
+        fr: t("Démarrage\u{2026}"),
+    }
+    VoiceListening "voice.listening" {
+        en: t("Listening"),
+        fr: t("À l\u{2019}écoute"),
+    }
+    VoiceWriting "voice.writing" {
+        en: t("Writing text\u{2026}"),
+        fr: t("Écriture du texte\u{2026}"),
+    }
+    VoiceStoppedSilence "voice.stopped_silence" {
+        en: t("Dictation stopped after a minute of silence."),
+        fr: t("Dictée arrêtée après une minute de silence."),
+    }
+    VoiceStoppedLimit "voice.stopped_limit" {
+        en: t("Dictation stops after 10 minutes. Start again to go on."),
+        fr: t("La dictée s\u{2019}arrête après 10 minutes. Recommencez pour continuer."),
+    }
+    VoiceNothingHeard "voice.nothing_heard" {
+        en: t("Nothing was heard. Check the microphone in Settings > Voice."),
+        fr: t("Rien n\u{2019}a été entendu. Vérifiez le micro dans Paramètres > Voix."),
+    }
+    VoiceSettingsLink "voice.settings_link" {
+        en: t("Voice settings"),
+        fr: t("Paramètres de la voix"),
+    }
+    VoiceSlow "voice.slow" {
+        en: t("Dictation is slow on this computer. A smaller model is faster."),
+        fr: t("La dictée est lente sur cet ordinateur. Un modèle plus petit est plus rapide."),
+    }
+    VoiceErrorBlocked "voice.error.blocked" {
+        en: t("Acta is not allowed to use the microphone."),
+        fr: t("Acta n\u{2019}est pas autorisé à utiliser le micro."),
+    }
+    VoiceErrorOpenPrivacy "voice.error.open_privacy" {
+        en: t("Open privacy settings"),
+        fr: t("Ouvrir les paramètres de confidentialité"),
+    }
+    VoiceErrorOpenSystemSettings "voice.error.open_system_settings" {
+        en: t("Open System Settings"),
+        fr: t("Ouvrir Réglages Système"),
+    }
+    VoiceErrorNoDevice "voice.error.no_device" {
+        en: t("No microphone was found."),
+        fr: t("Aucun micro n\u{2019}a été trouvé."),
+    }
+    VoiceErrorDeviceLost "voice.error.device_lost" {
+        en: t("The microphone stopped. What was heard is kept."),
+        fr: t("Le micro s\u{2019}est arrêté. Ce qui a été entendu est conservé."),
+    }
+    VoiceErrorModel "voice.error.model" {
+        en: t("The dictation model is missing or damaged."),
+        fr: t("Le modèle de dictée est absent ou endommagé."),
+    }
+    VoiceErrorDownloadAgain "voice.error.download_again" {
+        en: t("Download again"),
+        fr: t("Télécharger à nouveau"),
+    }
+    VoiceErrorEngine "voice.error.engine" {
+        en: t("Dictation stopped unexpectedly. Your text is safe."),
+        fr: t("La dictée s\u{2019}est arrêtée de façon inattendue. Votre texte est intact."),
+    }
+    VoiceSetupTitle "voice.setup.title" {
+        en: t("Dictate with your voice"),
+        fr: t("Dicter avec votre voix"),
+    }
+    VoiceSetupBody "voice.setup.body" {
+        en: t("Acta turns what you say into text on this computer. Your voice never leaves it and is never saved."),
+        fr: t("Acta transforme ce que vous dites en texte sur cet ordinateur. Votre voix n\u{2019}en sort jamais et n\u{2019}est jamais enregistrée."),
+    }
+    VoiceSetupCpu "voice.setup.cpu" {
+        en: t("{size} download · works on this computer\u{2019}s processor"),
+        fr: t("Téléchargement de {size} · fonctionne avec le processeur de cet ordinateur"),
+    }
+    VoiceSetupGpu "voice.setup.gpu" {
+        en: t("{size} download · uses this computer\u{2019}s graphics"),
+        fr: t("Téléchargement de {size} · utilise la carte graphique de cet ordinateur"),
+    }
+    VoiceSetupFree "voice.setup.free" {
+        en: t("Free on this disk: {free}."),
+        fr: t("Libre sur ce disque\u{a0}: {free}."),
+    }
+    VoiceSetupNoSpace "voice.setup.no_space" {
+        en: t("Not enough free space: {size} needed, {free} free."),
+        fr: t("Pas assez d\u{2019}espace libre\u{a0}: {size} nécessaires, {free} libres."),
+    }
+    VoiceSetupSystem "voice.setup.system" {
+        en: t("Use the macOS recogniser instead: nothing to download"),
+        fr: t("Utiliser plutôt la reconnaissance de macOS\u{a0}: rien à télécharger"),
+    }
+    VoiceSetupSystemPrimary "voice.setup.system_primary" {
+        en: t("Use the macOS recogniser"),
+        fr: t("Utiliser la reconnaissance de macOS"),
+    }
+    VoiceSetupUnavailable "voice.setup.unavailable" {
+        en: t("Dictation needs at least 2 GB of memory; this computer has {memory}."),
+        fr: t("La dictée demande au moins 2 Go de mémoire\u{202f}; cet ordinateur en a {memory}."),
+    }
+    VoiceSetupUnsupportedCpu "voice.setup.unsupported_cpu" {
+        en: t("Dictation needs a processor from 2013 or later; this one is older."),
+        fr: t("La dictée demande un processeur de 2013 ou plus récent\u{202f}; celui-ci est plus ancien."),
+    }
+    VoiceSetupMore "voice.setup.more" {
+        en: t("Other models are in Settings > Voice."),
+        fr: t("Les autres modèles sont dans Paramètres > Voix."),
+    }
+    VoiceSetupDownload "voice.setup.download" {
+        en: t("Download {size}"),
+        fr: t("Télécharger {size}"),
+    }
+    VoiceDownloadProgressTitle "voice.download.progress_title" {
+        en: t("Downloading Whisper {model}\u{2026}"),
+        fr: t("Téléchargement de Whisper {model}\u{2026}"),
+    }
+    VoiceDownloadBytes "voice.download.bytes" {
+        en: t("{done} of {size}"),
+        fr: t("{done} sur {size}"),
+    }
+    VoiceDownloadChecking "voice.download.checking" {
+        en: t("Checking\u{2026}"),
+        fr: t("Vérification\u{2026}"),
+    }
+    VoiceDownloadReady "voice.download.ready" {
+        en: t("Ready. Press {shortcut} in a text, or the microphone, to dictate."),
+        fr: t("Prêt. Appuyez sur {shortcut} dans un texte, ou sur le micro, pour dicter."),
+    }
+    VoiceDownloadHide "voice.download.hide" {
+        en: t("Hide"),
+        fr: t("Masquer"),
+    }
+    VoiceDownloadCancel "voice.download.cancel" {
+        en: t("Cancel download"),
+        fr: t("Annuler le téléchargement"),
+    }
+    VoiceDownloadFailed "voice.download.failed" {
+        en: t("The download stopped. {reason}"),
+        fr: t("Le téléchargement s\u{2019}est arrêté. {reason}"),
+    }
+    VoiceDownloadMismatch "voice.download.mismatch" {
+        en: t("The file did not match. Try again later."),
+        fr: t("Le fichier ne correspond pas. Réessayez plus tard."),
+    }
+    VoiceDownloadOffline "voice.download.offline" {
+        en: t("There is no connection."),
+        fr: t("Il n\u{2019}y a pas de connexion."),
+    }
+    VoiceSettingsTitle "voice.settings.title" {
+        en: t("Voice"),
+        fr: t("Voix"),
+    }
+    VoiceSettingsEngine "voice.settings.engine" {
+        en: t("Dictation"),
+        fr: t("Dictée"),
+    }
+    VoiceSettingsEngineHint "voice.settings.engine_hint" {
+        en: t("Dictation in notes, descriptions and documents. Your voice never leaves this computer."),
+        fr: t("Dictée dans les notes, les descriptions et les documents. Votre voix ne quitte jamais cet ordinateur."),
+    }
+    VoiceEngineWhisper "voice.engine.whisper" {
+        en: t("Whisper, on this computer"),
+        fr: t("Whisper, sur cet ordinateur"),
+    }
+    VoiceEngineMacos "voice.engine.macos" {
+        en: t("macOS recogniser, on this computer"),
+        fr: t("Reconnaissance de macOS, sur cet ordinateur"),
+    }
+    VoiceEngineOff "voice.engine.off" {
+        en: t("Off"),
+        fr: t("Désactivée"),
+    }
+    VoiceSettingsModel "voice.settings.model" {
+        en: t("Model"),
+        fr: t("Modèle"),
+    }
+    VoiceSettingsModelHint "voice.settings.model_hint" {
+        en: t("Recommended for this computer: {model}. Larger models are more accurate and slower."),
+        fr: t("Recommandé pour cet ordinateur\u{a0}: {model}. Les modèles plus grands sont plus précis et plus lents."),
+    }
+    VoiceSettingsModelHintGpu "voice.settings.model_hint_gpu" {
+        en: t("This computer\u{2019}s graphics can run the large model quickly."),
+        fr: t("La carte graphique de cet ordinateur fait tourner le grand modèle rapidement."),
+    }
+    VoiceSettingsGpu "voice.settings.gpu" {
+        en: t("Use the graphics card"),
+        fr: t("Utiliser la carte graphique"),
+    }
+    VoiceSettingsGpuHint "voice.settings.gpu_hint" {
+        en: t("Faster with large models. Acta uses the processor when the graphics card cannot be used."),
+        fr: t("Plus rapide avec les grands modèles. Acta utilise le processeur quand la carte graphique n\u{2019}est pas utilisable."),
+    }
+    VoiceSettingsLanguage "voice.settings.language" {
+        en: t("Language"),
+        fr: t("Langue"),
+    }
+    VoiceSettingsLanguageHint "voice.settings.language_hint" {
+        en: t("Pick one if dictation mistakes one language for the other."),
+        fr: t("Choisissez-en une si la dictée confond les deux langues."),
+    }
+    VoiceLanguageAuto "voice.language.auto" {
+        en: t("English or French, detected"),
+        fr: t("Anglais ou français, détecté"),
+    }
+    VoiceLanguageEn "voice.language.en" {
+        en: t("English"),
+        fr: t("Anglais"),
+    }
+    VoiceLanguageFr "voice.language.fr" {
+        en: t("French"),
+        fr: t("Français"),
+    }
+    VoiceSettingsMicrophone "voice.settings.microphone" {
+        en: t("Microphone"),
+        fr: t("Micro"),
+    }
+    VoiceSettingsMicrophoneDefault "voice.settings.microphone_default" {
+        en: t("System default"),
+        fr: t("Celui du système"),
+    }
+    VoiceSettingsShortcut "voice.settings.shortcut" {
+        en: t("Shortcut"),
+        fr: t("Raccourci"),
+    }
+    VoiceSettingsShortcutHint "voice.settings.shortcut_hint" {
+        en: t("Press once to start and again to stop, or hold it while you speak."),
+        fr: t("Appuyez une fois pour commencer et une autre pour arrêter, ou maintenez-le pendant que vous parlez."),
+    }
+    VoiceModelTinyHint "voice.model.tiny_hint" {
+        en: t("{size} · for older computers; rough in French"),
+        fr: t("{size} · pour les ordinateurs anciens\u{202f}; approximatif en français"),
+    }
+    VoiceModelBaseHint "voice.model.base_hint" {
+        en: t("{size} · fast; fair accuracy"),
+        fr: t("{size} · rapide\u{202f}; précision correcte"),
+    }
+    VoiceModelSmallHint "voice.model.small_hint" {
+        en: t("{size} · good for English and French"),
+        fr: t("{size} · bon en anglais et en français"),
+    }
+    VoiceModelTurboHint "voice.model.turbo_hint" {
+        en: t("{size} · most accurate; best with a graphics card"),
+        fr: t("{size} · le plus précis\u{202f}; idéal avec une carte graphique"),
+    }
+    VoiceModelRecommended "voice.model.recommended" {
+        en: t("Recommended"),
+        fr: t("Recommandé"),
+    }
+    VoiceModelDownload "voice.model.download" {
+        en: t("Download"),
+        fr: t("Télécharger"),
+    }
+    VoiceModelInUse "voice.model.in_use" {
+        en: t("In use"),
+        fr: t("Utilisé"),
+    }
+    VoiceModelUse "voice.model.use" {
+        en: t("Use"),
+        fr: t("Utiliser"),
+    }
+    VoiceModelDelete "voice.model.delete" {
+        en: t("Delete model"),
+        fr: t("Supprimer le modèle"),
+    }
+    VoiceModelDeleteTitle "voice.model.delete_title" {
+        en: t("Delete Whisper {model}?"),
+        fr: t("Supprimer Whisper {model}\u{202f}?"),
+    }
+    VoiceModelDeleteBody "voice.model.delete_body" {
+        en: t("It will be downloaded again ({size}) if you choose it later."),
+        fr: t("Il sera téléchargé à nouveau ({size}) si vous le choisissez plus tard."),
+    }
+    VoiceModelBusy "voice.model.busy" {
+        en: t("Stop dictating before deleting the model in use."),
+        fr: t("Arrêtez la dictée avant de supprimer le modèle utilisé."),
+    }
+    VoiceModelsWhere "voice.models.where" {
+        en: t("Models are kept in {path}. Free on this disk: {free}."),
+        fr: t("Les modèles sont conservés dans {path}. Libre sur ce disque\u{a0}: {free}."),
+    }
+    VoiceModelsUsed "voice.models.used" {
+        en: t("Downloaded models: {size}."),
+        fr: t("Modèles téléchargés\u{a0}: {size}."),
+    }
     KbNewDocument "kb.new_document" {
         en: t("New document"),
         fr: t("Nouveau document"),
@@ -2920,6 +3220,18 @@ catalogue! {
     CmdFolderBranch "cmd.folder_branch" {
         en: t("Switch branch of active folder\u{2026}"),
         fr: t("Changer de branche du dossier actif\u{2026}"),
+    }
+    CmdDictate "cmd.dictate" {
+        en: t("Dictate"),
+        fr: t("Dicter"),
+    }
+    CmdDictateStop "cmd.dictate_stop" {
+        en: t("Stop dictating"),
+        fr: t("Arrêter la dictée"),
+    }
+    CmdVoiceSettings "cmd.voice_settings" {
+        en: t("Voice settings"),
+        fr: t("Paramètres de la voix"),
     }
     SlashH1 "slash.h1" {
         en: t("Heading 1"),

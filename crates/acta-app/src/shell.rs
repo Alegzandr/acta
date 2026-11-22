@@ -689,6 +689,8 @@ impl Shell {
         // store for setup's folder links, and this build's plugin files
         // for the sessions the terminal starts (ADR 0008 amendment).
         crate::sessions::start(db.clone(), cx);
+        // Dictation's chosen microphone is a local value (layout.md 4.7).
+        crate::voice::set_db(db.clone(), cx);
         // Ready for Claude Code (ADR 0013): the Claude Code and sign-in
         // rows once at launch, for the status bar.
         crate::ready::init(db.clone(), cx);
@@ -1029,6 +1031,40 @@ impl Shell {
         }
     }
 
+    /// Debug builds, dictation (voice/dev.rs): once the page has loaded,
+    /// `ACTA_DEV_VOICE=dialog-*` opens the first-use dialog in that state,
+    /// `settings` opens Settings > Voice, and `fake` (or `fake-capture`,
+    /// in the quick capture) starts a take in the last editor focused,
+    /// fed by generated audio.
+    #[cfg(debug_assertions)]
+    fn dev_voice(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(which) =
+            crate::voice::get(cx).and_then(|d| d.read(cx).dev.which().map(str::to_owned))
+        else {
+            return;
+        };
+        if which == "fake-capture" {
+            self.open_capture(window, cx);
+        }
+        cx.spawn_in(window, async move |shell, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(2000))
+                .await;
+            let _ = shell.update_in(cx, |shell, window, cx| {
+                if which.starts_with("dialog-") {
+                    shell.open_dialog(DialogKind::VoiceSetup, window, cx);
+                } else if which == "settings" {
+                    shell.open_voice_settings(window, cx);
+                } else if which.starts_with("fake")
+                    && let Some(d) = crate::voice::get(cx)
+                {
+                    d.update(cx, |d, cx| d.dictate_target(window, cx));
+                }
+            });
+        })
+        .detach();
+    }
+
     /// Debug builds: `ACTA_DEV_OVERLAY=palette|capture|terminal|chat|chat-palette|browser|browser-palette|export|snapshots`
     /// opens that surface at launch, so captures need no input.
     fn dev_overlay(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1041,6 +1077,8 @@ impl Shell {
         {
             self.navigate(route, true, window, cx);
         }
+        #[cfg(debug_assertions)]
+        self.dev_voice(window, cx);
         match std::env::var("ACTA_DEV_OVERLAY").as_deref() {
             Ok("palette") => {
                 self.open_palette(None, None, window, cx);
@@ -1964,6 +2002,58 @@ impl Shell {
         self.navigate(Route::Settings, true, window, cx);
     }
 
+    /// "Voice settings": Settings, scrolled to Voice.
+    fn open_voice_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_settings(window, cx);
+        if let Some(bench) = self.bench() {
+            bench.settings.update(cx, |page, cx| page.reveal_voice(cx));
+        }
+    }
+
+    /// The first-use dialog of dictation; a download that ended before is
+    /// not shown again.
+    fn open_voice_setup(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(d) = crate::voice::get(cx) {
+            d.update(cx, |d, _| {
+                if d.download.is_none() {
+                    d.finished = None;
+                }
+            });
+        }
+        self.open_dialog(DialogKind::VoiceSetup, window, cx);
+    }
+
+    /// "Delete Whisper Large turbo?" (6.4): deleting is undone only by
+    /// downloading again.
+    fn confirm_delete_model(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(d) = crate::voice::get(cx) else {
+            return;
+        };
+        let Some(model) = d.update(cx, |d, _| d.to_delete.take()) else {
+            return;
+        };
+        let locale = settings::locale(cx);
+        let name = crate::voice::view::model_name(model);
+        let size = crate::voice::view::size(locale, model.file().size);
+        let confirm = crate::dialogs::Confirm {
+            title: crate::i18n::tr(
+                locale,
+                Key::VoiceModelDeleteTitle,
+                &[("model", crate::i18n::Arg::Text(name))],
+            ),
+            body: crate::i18n::tr(
+                locale,
+                Key::VoiceModelDeleteBody,
+                &[("size", crate::i18n::Arg::Text(&size))],
+            ),
+            confirm: crate::i18n::text(locale, Key::CommonDelete),
+            on_confirm: crate::palette::OnPick::new(move |_, _, cx| {
+                d.update(cx, |d, cx| d.delete_model(model, cx));
+            }),
+        };
+        self.open_dialog(DialogKind::Confirm(confirm), window, cx);
+    }
+
     /// Read the titles of the documents and memories open in tabs.
     fn refresh_kb_titles(&mut self, cx: &mut Context<Self>) {
         let Some(bench) = self.bench() else { return };
@@ -2414,6 +2504,12 @@ impl Shell {
                 _ => None,
             },
             on_contact: matches!(bench.page, PageView::Contact(_)),
+            dictate: crate::voice::get(cx).is_some_and(|d| {
+                let d = d.read(cx);
+                d.target()
+                    .is_some_and(|e| d.phase(e, cx) != crate::voice::view::Phase::Off)
+            }),
+            dictating: crate::voice::get(cx).is_some_and(|d| d.read(cx).running()),
         }
     }
 
@@ -2733,6 +2829,19 @@ impl Shell {
             Command::ShrinkArea => self.step_area(false, window, cx),
             Command::LayoutUndo => self.undo_layout(window, cx),
             Command::LayoutReset => self.reset_layout(window, cx),
+            Command::Dictate => {
+                if let Some(d) = crate::voice::get(cx) {
+                    d.update(cx, |d, cx| d.dictate_target(window, cx));
+                }
+            }
+            Command::DictateStop => {
+                if let Some(d) = crate::voice::get(cx) {
+                    d.update(cx, |d, cx| {
+                        d.request_stop(acta_core::voice::take::StopReason::Asked, cx)
+                    });
+                }
+            }
+            Command::VoiceSettings => self.open_voice_settings(window, cx),
             Command::ChatBrowser => cx.open_url(CLAUDE_HOME),
             #[cfg(windows)]
             Command::ChatSignOut => self.open_dialog(DialogKind::ChatSignOut, window, cx),
@@ -5746,6 +5855,22 @@ impl Render for Shell {
             .on_action(
                 cx.listener(|shell, _: &OpenSettings, window, cx| shell.open_settings(window, cx)),
             )
+            // Dictation (components-voice.md 5): push-to-talk ends on the
+            // key's release, wherever the focus is.
+            .capture_key_up(crate::voice::key_up)
+            .on_action(
+                cx.listener(|s, _: &crate::voice::OpenVoiceSettings, w, cx| {
+                    s.open_voice_settings(w, cx)
+                }),
+            )
+            .on_action(
+                cx.listener(|s, _: &crate::voice::OpenVoiceSetup, w, cx| s.open_voice_setup(w, cx)),
+            )
+            .on_action(cx.listener(
+                |s, _: &crate::voice::settings_view::ConfirmDeleteModel, w, cx| {
+                    s.confirm_delete_model(w, cx)
+                },
+            ))
             .on_action(cx.listener(|shell, _: &OpenShortcuts, window, cx| {
                 shell.navigate(Route::Shortcuts, true, window, cx)
             }))

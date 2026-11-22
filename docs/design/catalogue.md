@@ -237,6 +237,81 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `attach.actual` | Actual size | Taille réelle |
 | `attach.truncated` | First 1 MB shown. Save the file to see all of it. | Premier Mo affiché. Enregistrez le fichier pour le voir en entier. |
 | `attach.gone` | The file was removed while the editor was open; add it again. | Le fichier a été retiré pendant que l'éditeur était ouvert ; ajoutez-le de nouveau. |
+| `voice.button` | Dictate | Dicter |
+| `voice.button_setup` | Dictate... | Dicter... |
+| `voice.button_downloading` | Dictation is downloading its model: {percent} | La dictée télécharge son modèle : {percent} |
+| `voice.stop` | Stop dictating | Arrêter la dictée |
+| `voice.starting` | Starting... | Démarrage... |
+| `voice.listening` | Listening | À l'écoute |
+| `voice.writing` | Writing text... | Écriture du texte... |
+| `voice.stopped_silence` | Dictation stopped after a minute of silence. | Dictée arrêtée après une minute de silence. |
+| `voice.stopped_limit` | Dictation stops after 10 minutes. Start again to go on. | La dictée s'arrête après 10 minutes. Recommencez pour continuer. |
+| `voice.nothing_heard` | Nothing was heard. Check the microphone in Settings > Voice. | Rien n'a été entendu. Vérifiez le micro dans Paramètres > Voix. |
+| `voice.settings_link` | Voice settings | Paramètres de la voix |
+| `voice.slow` | Dictation is slow on this computer. A smaller model is faster. | La dictée est lente sur cet ordinateur. Un modèle plus petit est plus rapide. |
+| `voice.error.blocked` | Acta is not allowed to use the microphone. | Acta n'est pas autorisé à utiliser le micro. |
+| `voice.error.open_privacy` | Open privacy settings (W) | Ouvrir les paramètres de confidentialité (W) |
+| `voice.error.open_system_settings` | Open System Settings (M) | Ouvrir Réglages Système (M) |
+| `voice.error.no_device` | No microphone was found. | Aucun micro n'a été trouvé. |
+| `voice.error.device_lost` | The microphone stopped. What was heard is kept. | Le micro s'est arrêté. Ce qui a été entendu est conservé. |
+| `voice.error.model` | The dictation model is missing or damaged. | Le modèle de dictée est absent ou endommagé. |
+| `voice.error.download_again` | Download again | Télécharger à nouveau |
+| `voice.error.engine` | Dictation stopped unexpectedly. Your text is safe. | La dictée s'est arrêtée de façon inattendue. Votre texte est intact. |
+| `voice.setup.title` | Dictate with your voice | Dicter avec votre voix |
+| `voice.setup.body` | Acta turns what you say into text on this computer. Your voice never leaves it and is never saved. | Acta transforme ce que vous dites en texte sur cet ordinateur. Votre voix n'en sort jamais et n'est jamais enregistrée. |
+| `voice.setup.cpu` | {size} download · works on this computer's processor | Téléchargement de {size} · fonctionne avec le processeur de cet ordinateur |
+| `voice.setup.gpu` | {size} download · uses this computer's graphics | Téléchargement de {size} · utilise la carte graphique de cet ordinateur |
+| `voice.setup.free` | Free on this disk: {free}. | Libre sur ce disque : {free}. |
+| `voice.setup.no_space` | Not enough free space: {size} needed, {free} free. | Pas assez d'espace libre : {size} nécessaires, {free} libres. |
+| `voice.setup.system` | Use the macOS recogniser instead: nothing to download (M) | Utiliser plutôt la reconnaissance de macOS : rien à télécharger (M) |
+| `voice.setup.system_primary` | Use the macOS recogniser (M) | Utiliser la reconnaissance de macOS (M) |
+| `voice.setup.unavailable` | Dictation needs at least 2 GB of memory; this computer has {memory}. | La dictée demande au moins 2 Go de mémoire ; cet ordinateur en a {memory}. |
+| `voice.setup.unsupported_cpu` | Dictation needs a processor from 2013 or later; this one is older. | La dictée demande un processeur de 2013 ou plus récent ; celui-ci est plus ancien. |
+| `voice.setup.more` | Other models are in Settings > Voice. | Les autres modèles sont dans Paramètres > Voix. |
+| `voice.setup.download` | Download {size} | Télécharger {size} |
+| `voice.download.progress_title` | Downloading Whisper {model}... | Téléchargement de Whisper {model}... |
+| `voice.download.bytes` | {done} of {size} | {done} sur {size} |
+| `voice.download.checking` | Checking... | Vérification... |
+| `voice.download.ready` | Ready. Press {shortcut} in a text, or the microphone, to dictate. | Prêt. Appuyez sur {shortcut} dans un texte, ou sur le micro, pour dicter. |
+| `voice.download.hide` | Hide | Masquer |
+| `voice.download.cancel` | Cancel download | Annuler le téléchargement |
+| `voice.download.failed` | The download stopped. {reason} | Le téléchargement s'est arrêté. {reason} |
+| `voice.download.mismatch` | The file did not match. Try again later. | Le fichier ne correspond pas. Réessayez plus tard. |
+| `voice.download.offline` | There is no connection. | Il n'y a pas de connexion. |
+| `voice.settings.title` | Voice | Voix |
+| `voice.settings.engine` | Dictation | Dictée |
+| `voice.settings.engine_hint` | Dictation in notes, descriptions and documents. Your voice never leaves this computer. | Dictée dans les notes, les descriptions et les documents. Votre voix ne quitte jamais cet ordinateur. |
+| `voice.engine.whisper` | Whisper, on this computer | Whisper, sur cet ordinateur |
+| `voice.engine.macos` | macOS recogniser, on this computer (M) | Reconnaissance de macOS, sur cet ordinateur (M) |
+| `voice.engine.off` | Off | Désactivée |
+| `voice.settings.model` | Model | Modèle |
+| `voice.settings.model_hint` | Recommended for this computer: {model}. Larger models are more accurate and slower. | Recommandé pour cet ordinateur : {model}. Les modèles plus grands sont plus précis et plus lents. |
+| `voice.settings.model_hint_gpu` | This computer's graphics can run the large model quickly. | La carte graphique de cet ordinateur fait tourner le grand modèle rapidement. |
+| `voice.settings.gpu` | Use the graphics card | Utiliser la carte graphique |
+| `voice.settings.gpu_hint` | Faster with large models. Acta uses the processor when the graphics card cannot be used. | Plus rapide avec les grands modèles. Acta utilise le processeur quand la carte graphique n'est pas utilisable. |
+| `voice.settings.language` | Language | Langue |
+| `voice.settings.language_hint` | Pick one if dictation mistakes one language for the other. | Choisissez-en une si la dictée confond les deux langues. |
+| `voice.language.auto` | English or French, detected | Anglais ou français, détecté |
+| `voice.language.en` | English | Anglais |
+| `voice.language.fr` | French | Français |
+| `voice.settings.microphone` | Microphone | Micro |
+| `voice.settings.microphone_default` | System default | Celui du système |
+| `voice.settings.shortcut` | Shortcut | Raccourci |
+| `voice.settings.shortcut_hint` | Press once to start and again to stop, or hold it while you speak. | Appuyez une fois pour commencer et une autre pour arrêter, ou maintenez-le pendant que vous parlez. |
+| `voice.model.tiny_hint` | {size} · for older computers; rough in French | {size} · pour les ordinateurs anciens ; approximatif en français |
+| `voice.model.base_hint` | {size} · fast; fair accuracy | {size} · rapide ; précision correcte |
+| `voice.model.small_hint` | {size} · good for English and French | {size} · bon en anglais et en français |
+| `voice.model.turbo_hint` | {size} · most accurate; best with a graphics card | {size} · le plus précis ; idéal avec une carte graphique |
+| `voice.model.recommended` | Recommended | Recommandé |
+| `voice.model.download` | Download | Télécharger |
+| `voice.model.in_use` | In use | Utilisé |
+| `voice.model.use` | Use | Utiliser |
+| `voice.model.delete` | Delete model | Supprimer le modèle |
+| `voice.model.delete_title` | Delete Whisper {model}? | Supprimer Whisper {model} ? |
+| `voice.model.delete_body` | It will be downloaded again ({size}) if you choose it later. | Il sera téléchargé à nouveau ({size}) si vous le choisissez plus tard. |
+| `voice.model.busy` | Stop dictating before deleting the model in use. | Arrêtez la dictée avant de supprimer le modèle utilisé. |
+| `voice.models.where` | Models are kept in {path}. Free on this disk: {free}. | Les modèles sont conservés dans {path}. Libre sur ce disque : {free}. |
+| `voice.models.used` | Downloaded models: {size}. | Modèles téléchargés : {size}. |
 | `kb.new_document` | New document | Nouveau document |
 | `kb.new_memory` | New memory | Nouvelle mémoire |
 | `kb.written.document` | Written by {author} {when} | Écrit par {author} {when} |
@@ -738,6 +813,9 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `cmd.folder_pull` | Pull active folder | Pull du dossier actif |
 | `cmd.folder_fetch` | Fetch active folder | Fetch du dossier actif |
 | `cmd.folder_branch` | Switch branch of active folder... | Changer de branche du dossier actif... |
+| `cmd.dictate` | Dictate | Dicter |
+| `cmd.dictate_stop` | Stop dictating | Arrêter la dictée |
+| `cmd.voice_settings` | Voice settings | Paramètres de la voix |
 | `slash.h1` | Heading 1 | Titre 1 |
 | `slash.h2` | Heading 2 | Titre 2 |
 | `slash.h3` | Heading 3 | Titre 3 |
@@ -1124,89 +1202,9 @@ New with ADR 0013 (2026-11-22; components-app.md 5, screens.md 8.26). Moved into
 
 `{manager}` in `ready.uninstall` is the manager's name as a proper noun ("winget", "Homebrew", "apt"), or `ready.uninstall.native` for Claude Code's native install. `ready.agreements` is shown only for winget commands, which pass `--accept-package-agreements` and `--accept-source-agreements` (winget has no stdin to ask on). Retry on a failed row is `common.retry`; everywhere else re-checking is `ready.check_again`.
 
-### 10.4.9 Keys of dictation (ADR 0014), pending
+### 10.4.9 Keys of dictation (ADR 0014)
 
-New with dictation (2026-11-22; components-voice.md 5, screens.md 8.27). They stay here until dictation is implemented; the implementing change moves them into 10.4 and `catalogue.rs` in one commit, as a `voice.*` family after the `attach.*` keys, with the `cmd.*` keys beside their family. In French the verb is *dicter* and the noun *dictée* (feminine: "Dictée désactivée"). "Whisper" and the model names (Tiny, Base, Small, Large turbo) are names, kept as written in both languages. `{size}`, `{done}`, `{free}` and `{memory}` use the size format of components-attachments.md 5 ("190 MB" / "190 Mo", "112 GB" / "112 Go"); `{percent}` is a whole number with `%` (French: a narrow no-break space before `%`, 10.2); `{shortcut}` is the key as the kbd hint names it on the platform; `{model}` a model name; `{path}` a folder in `type.code`.
-
-| Key | English | French |
-|---|---|---|
-| `voice.button` | Dictate | Dicter |
-| `voice.button_setup` | Dictate... | Dicter... |
-| `voice.button_downloading` | Dictation is downloading its model: {percent} | La dictée télécharge son modèle : {percent} |
-| `voice.stop` | Stop dictating | Arrêter la dictée |
-| `voice.starting` | Starting... | Démarrage... |
-| `voice.listening` | Listening | À l'écoute |
-| `voice.writing` | Writing text... | Écriture du texte... |
-| `voice.stopped_silence` | Dictation stopped after a minute of silence. | Dictée arrêtée après une minute de silence. |
-| `voice.stopped_limit` | Dictation stops after 10 minutes. Start again to go on. | La dictée s'arrête après 10 minutes. Recommencez pour continuer. |
-| `voice.nothing_heard` | Nothing was heard. Check the microphone in Settings > Voice. | Rien n'a été entendu. Vérifiez le micro dans Paramètres > Voix. |
-| `voice.settings_link` | Voice settings | Paramètres de la voix |
-| `voice.slow` | Dictation is slow on this computer. A smaller model is faster. | La dictée est lente sur cet ordinateur. Un modèle plus petit est plus rapide. |
-| `voice.error.blocked` | Acta is not allowed to use the microphone. | Acta n'est pas autorisé à utiliser le micro. |
-| `voice.error.open_privacy` | Open privacy settings (W) | Ouvrir les paramètres de confidentialité (W) |
-| `voice.error.open_system_settings` | Open System Settings (M) | Ouvrir Réglages Système (M) |
-| `voice.error.no_device` | No microphone was found. | Aucun micro n'a été trouvé. |
-| `voice.error.device_lost` | The microphone stopped. What was heard is kept. | Le micro s'est arrêté. Ce qui a été entendu est conservé. |
-| `voice.error.model` | The dictation model is missing or damaged. | Le modèle de dictée est absent ou endommagé. |
-| `voice.error.download_again` | Download again | Télécharger à nouveau |
-| `voice.error.engine` | Dictation stopped unexpectedly. Your text is safe. | La dictée s'est arrêtée de façon inattendue. Votre texte est intact. |
-| `voice.setup.title` | Dictate with your voice | Dicter avec votre voix |
-| `voice.setup.body` | Acta turns what you say into text on this computer. Your voice never leaves it and is never saved. | Acta transforme ce que vous dites en texte sur cet ordinateur. Votre voix n'en sort jamais et n'est jamais enregistrée. |
-| `voice.setup.cpu` | {size} download · works on this computer's processor | Téléchargement de {size} · fonctionne avec le processeur de cet ordinateur |
-| `voice.setup.gpu` | {size} download · uses this computer's graphics | Téléchargement de {size} · utilise la carte graphique de cet ordinateur |
-| `voice.setup.free` | Free on this disk: {free}. | Libre sur ce disque : {free}. |
-| `voice.setup.no_space` | Not enough free space: {size} needed, {free} free. | Pas assez d'espace libre : {size} nécessaires, {free} libres. |
-| `voice.setup.system` | Use the macOS recogniser instead: nothing to download (M) | Utiliser plutôt la reconnaissance de macOS : rien à télécharger (M) |
-| `voice.setup.system_primary` | Use the macOS recogniser (M) | Utiliser la reconnaissance de macOS (M) |
-| `voice.setup.unavailable` | Dictation needs at least 2 GB of memory; this computer has {memory}. | La dictée demande au moins 2 Go de mémoire ; cet ordinateur en a {memory}. |
-| `voice.setup.more` | Other models are in Settings > Voice. | Les autres modèles sont dans Paramètres > Voix. |
-| `voice.setup.download` | Download {size} | Télécharger {size} |
-| `voice.download.progress_title` | Downloading Whisper {model}... | Téléchargement de Whisper {model}... |
-| `voice.download.bytes` | {done} of {size} | {done} sur {size} |
-| `voice.download.checking` | Checking... | Vérification... |
-| `voice.download.ready` | Ready. Press {shortcut} in a text, or the microphone, to dictate. | Prêt. Appuyez sur {shortcut} dans un texte, ou sur le micro, pour dicter. |
-| `voice.download.hide` | Hide | Masquer |
-| `voice.download.cancel` | Cancel download | Annuler le téléchargement |
-| `voice.download.failed` | The download stopped. {reason} | Le téléchargement s'est arrêté. {reason} |
-| `voice.download.mismatch` | The file did not match. Try again later. | Le fichier ne correspond pas. Réessayez plus tard. |
-| `voice.download.offline` | There is no connection. | Il n'y a pas de connexion. |
-| `voice.settings.title` | Voice | Voix |
-| `voice.settings.engine` | Dictation | Dictée |
-| `voice.settings.engine_hint` | Dictation in notes, descriptions and documents. Your voice never leaves this computer. | Dictée dans les notes, les descriptions et les documents. Votre voix ne quitte jamais cet ordinateur. |
-| `voice.engine.whisper` | Whisper, on this computer | Whisper, sur cet ordinateur |
-| `voice.engine.macos` | macOS recogniser, on this computer (M) | Reconnaissance de macOS, sur cet ordinateur (M) |
-| `voice.engine.off` | Off | Désactivée |
-| `voice.settings.model` | Model | Modèle |
-| `voice.settings.model_hint` | Recommended for this computer: {model}. Larger models are more accurate and slower. | Recommandé pour cet ordinateur : {model}. Les modèles plus grands sont plus précis et plus lents. |
-| `voice.settings.model_hint_gpu` | This computer's graphics can run the large model quickly. | La carte graphique de cet ordinateur fait tourner le grand modèle rapidement. |
-| `voice.settings.gpu` | Use the graphics card | Utiliser la carte graphique |
-| `voice.settings.gpu_hint` | Faster with large models. Acta uses the processor when the graphics card cannot be used. | Plus rapide avec les grands modèles. Acta utilise le processeur quand la carte graphique n'est pas utilisable. |
-| `voice.settings.language` | Language | Langue |
-| `voice.settings.language_hint` | Pick one if dictation mistakes one language for the other. | Choisissez-en une si la dictée confond les deux langues. |
-| `voice.language.auto` | English or French, detected | Anglais ou français, détecté |
-| `voice.language.en` | English | Anglais |
-| `voice.language.fr` | French | Français |
-| `voice.settings.microphone` | Microphone | Micro |
-| `voice.settings.microphone_default` | System default | Celui du système |
-| `voice.settings.shortcut` | Shortcut | Raccourci |
-| `voice.settings.shortcut_hint` | Press once to start and again to stop, or hold it while you speak. | Appuyez une fois pour commencer et une autre pour arrêter, ou maintenez-le pendant que vous parlez. |
-| `voice.model.tiny_hint` | {size} · for older computers; rough in French | {size} · pour les ordinateurs anciens ; approximatif en français |
-| `voice.model.base_hint` | {size} · fast; fair accuracy | {size} · rapide ; précision correcte |
-| `voice.model.small_hint` | {size} · good for English and French | {size} · bon en anglais et en français |
-| `voice.model.turbo_hint` | {size} · most accurate; best with a graphics card | {size} · le plus précis ; idéal avec une carte graphique |
-| `voice.model.recommended` | Recommended | Recommandé |
-| `voice.model.download` | Download | Télécharger |
-| `voice.model.in_use` | In use | Utilisé |
-| `voice.model.use` | Use | Utiliser |
-| `voice.model.delete` | Delete model | Supprimer le modèle |
-| `voice.model.delete_title` | Delete Whisper {model}? | Supprimer Whisper {model} ? |
-| `voice.model.delete_body` | It will be downloaded again ({size}) if you choose it later. | Il sera téléchargé à nouveau ({size}) si vous le choisissez plus tard. |
-| `voice.model.busy` | Stop dictating before deleting the model in use. | Arrêtez la dictée avant de supprimer le modèle utilisé. |
-| `voice.models.where` | Models are kept in {path}. Free on this disk: {free}. | Les modèles sont conservés dans {path}. Libre sur ce disque : {free}. |
-| `voice.models.used` | Downloaded models: {size}. | Modèles téléchargés : {size}. |
-| `cmd.dictate` | Dictate | Dicter |
-| `cmd.dictate_stop` | Stop dictating | Arrêter la dictée |
-| `cmd.voice_settings` | Voice settings | Paramètres de la voix |
+New with dictation (2026-11-22; components-voice.md 5, screens.md 8.27). Moved into 10.4 and `catalogue.rs` when dictation was implemented (branch `gpui-engineer/voice-ui`): the `voice.*` family after the `attach.*` keys, `cmd.dictate`, `cmd.dictate_stop` and `cmd.voice_settings` after `cmd.folder_branch`. Added with the implementation, for review: `voice.setup.unsupported_cpu`, the first-use dialog's line on an x86-64 processor without AVX2 and FMA (ADR 0014, amendment: `hardware::Reason::UnsupportedCpu`), shown with Close only, as `voice.setup.unavailable`. In French the verb is *dicter* and the noun *dictée* (feminine: "Dictée désactivée"). "Whisper" and the model names (Tiny, Base, Small, Large turbo) are names, kept as written in both languages. `{size}`, `{done}`, `{free}` and `{memory}` use the size format of components-attachments.md 5 (1 KB = 1,024 bytes, as the file managers show sizes: Small is "181 MB", Large turbo "547 MB"; the decimal "190 MB" and "574 MB" of the earlier text are the Hugging Face page's figures); `{percent}` is a whole number with `%` (French: a narrow no-break space before `%`, 10.2); `{shortcut}` is the key as the kbd hint names it on the platform; `{model}` a model name; `{path}` a folder in `type.code`.
 
 The macOS `Info.plist` usage strings (ADR 0014, 8) live with the bundle (`InfoPlist.strings`), not in this catalogue: `NSMicrophoneUsageDescription` "Acta turns what you say into text, on this Mac." / "Acta transforme ce que vous dites en texte, sur ce Mac."; `NSSpeechRecognitionUsageDescription` "Lets the macOS recogniser turn what you say into text, on this Mac." / "Permet à la reconnaissance de macOS de transformer ce que vous dites en texte, sur ce Mac." The delete dialog's buttons and "Show in Explorer" (Finder, file manager) reuse their existing keys.
 

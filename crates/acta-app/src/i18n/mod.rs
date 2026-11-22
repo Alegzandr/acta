@@ -350,6 +350,12 @@ mod tests {
                 | "ready.state.without_bash"
                 | "ready.state.missing_optional"
                 | "ready.state.outdated"
+                | "voice.setup.cpu"
+                | "voice.setup.gpu"
+                | "voice.model.tiny_hint"
+                | "voice.model.base_hint"
+                | "voice.model.small_hint"
+                | "voice.model.turbo_hint"
         );
         if parts.len() == 2 && !one_string {
             parts.into_iter().map(typeset).collect()

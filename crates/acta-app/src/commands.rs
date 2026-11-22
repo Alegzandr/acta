@@ -121,6 +121,11 @@ pub enum Command {
     Language(Locale),
     /// The Claude Code settings (components-app.md 5): each one's value.
     Claude(ClaudeSetting, bool),
+    /// Dictation (components-voice.md 5): "Dictate" on the editor that has
+    /// (or last had) the focus, "Stop dictating", "Voice settings".
+    Dictate,
+    DictateStop,
+    VoiceSettings,
 }
 
 /// What the palette does to the focused question.
@@ -213,6 +218,10 @@ pub struct Context {
     pub question: Option<FocusedQuestion>,
     /// A contact page is open.
     pub on_contact: bool,
+    /// An editor that offers dictation has, or last had, the focus.
+    pub dictate: bool,
+    /// A take is running.
+    pub dictating: bool,
 }
 
 /// What the open page's folders allow (interaction.md 6.1).
@@ -343,6 +352,12 @@ impl Command {
             );
         }
         out.extend([Command::ProfileName, Command::ProfileJobTitle]);
+        if ctx.dictate {
+            out.push(Command::Dictate);
+        }
+        if ctx.dictating {
+            out.push(Command::DictateStop);
+        }
         match ctx.overview {
             Some(false) => out.push(Command::OverviewMore),
             Some(true) => out.push(Command::OverviewLess),
@@ -455,6 +470,7 @@ impl Command {
             Command::Trash,
             Command::Snapshot,
             Command::Settings,
+            Command::VoiceSettings,
             Command::Shortcuts,
             Command::Theme(ThemeSetting::System),
             Command::Theme(ThemeSetting::Light),
@@ -552,6 +568,9 @@ impl Command {
             Command::Snapshot => Key::CmdSnapshot,
             Command::Settings => Key::CmdSettings,
             Command::Shortcuts => Key::CmdShortcuts,
+            Command::Dictate => Key::CmdDictate,
+            Command::DictateStop => Key::CmdDictateStop,
+            Command::VoiceSettings => Key::CmdVoiceSettings,
             Command::Claude(ClaudeSetting::Resume, true) => Key::CmdResumeOn,
             Command::Claude(ClaudeSetting::Resume, false) => Key::CmdResumeOff,
             Command::Claude(ClaudeSetting::Flash, true) => Key::CmdFlashOn,
@@ -674,6 +693,7 @@ impl Command {
             Command::ChatBrowser => vec![m, shift, "H"],
             Command::Settings => vec![m, ","],
             Command::Shortcuts => vec![m, "/"],
+            Command::Dictate | Command::DictateStop => vec![m, shift, "Space"],
             Command::CloseTab => vec![m, "W"],
             // components-app.md 5, Settings: never Ctrl+- (Claude Code's
             // undo); Ctrl+Alt on Windows and Linux, Cmd+Shift on macOS.
@@ -729,6 +749,31 @@ pub fn reading_width_key(width: crate::ui::ReadingWidth) -> Key {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dictation_commands_follow_the_editor_and_the_take() {
+        let none = Command::available(Context::default());
+        assert!(!none.contains(&Command::Dictate));
+        assert!(!none.contains(&Command::DictateStop));
+        assert!(none.contains(&Command::VoiceSettings));
+        let editor = Command::available(Context {
+            dictate: true,
+            ..Context::default()
+        });
+        assert!(editor.contains(&Command::Dictate));
+        let take = Command::available(Context {
+            dictate: true,
+            dictating: true,
+            ..Context::default()
+        });
+        assert!(take.contains(&Command::DictateStop));
+        assert_eq!(Command::Dictate.label(Locale::Fr), "Dicter");
+        assert_eq!(
+            Command::Dictate.shortcut(Locale::En, false),
+            ["Ctrl", "Shift", "Space"]
+        );
+        assert_eq!(Command::VoiceSettings.label(Locale::En), "Voice settings");
+    }
 
     #[test]
     fn page_commands_appear_only_where_they_act() {

@@ -680,6 +680,7 @@ impl RecordPage {
                 .default_value(value)
         });
         state.update(cx, |state, cx| state.focus(window, cx));
+        crate::voice::attach(&state, window, cx);
         let sub = cx.subscribe_in(
             &state,
             window,
@@ -935,6 +936,7 @@ impl RecordPage {
                 .default_value(entry.text.clone())
         });
         state.update(cx, |state, cx| state.focus(window, cx));
+        crate::voice::attach(&state, window, cx);
         let sub = cx.subscribe_in(
             &state,
             window,
@@ -3559,18 +3561,31 @@ fn editor_box_with(
                 .h(px(28.))
                 .items_center()
                 .children(button)
-                .child(type_scale::SMALL.el().text_color(t.text_tertiary).child(tr(
-                    locale,
-                    Key::ComposerHint,
-                    &[("keys", Arg::Text(&keys))],
-                ))),
+                // Dictation (components-voice.md 5): the microphone after
+                // the paperclip, left of the save hint, which yields while
+                // a take shows its status.
+                .children(crate::voice::ui::mic_for(editor, cx))
+                .when(!crate::voice::ui::listening_for(editor, cx), |this| {
+                    this.child(type_scale::SMALL.el().text_color(t.text_tertiary).child(tr(
+                        locale,
+                        Key::ComposerHint,
+                        &[("keys", Arg::Text(&keys))],
+                    )))
+                }),
         );
-    match tray {
+    let boxed = match tray {
         Some(tray) => {
             crate::attach_ui::drop_zone("editor", tray, RADIUS_LG, body, cx).into_any_element()
         }
         None => body.into_any_element(),
-    }
+    };
+    // The dictation line sits under the editor's box.
+    div()
+        .flex()
+        .flex_col()
+        .child(boxed)
+        .children(crate::voice::ui::line_for(editor, cx))
+        .into_any_element()
 }
 
 impl Render for RecordPage {

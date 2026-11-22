@@ -1136,6 +1136,7 @@ impl DocPage {
                 .auto_grow(12, 400)
                 .default_value(body)
         });
+        crate::voice::attach(&body_state, window, cx);
         // Editing an entry starts in its body; a new one needs a title first.
         if self.entry.is_some() {
             body_state.update(cx, |s, cx| s.focus(window, cx));
@@ -2163,6 +2164,18 @@ impl Render for DocPage {
                         .el()
                         .text_color(t.text_tertiary)
                         .child(text(locale, Key::DocEditing)),
+                )
+                // Dictation (components-voice.md 5): after "Editing", with
+                // its line in the bar.
+                .children(
+                    self.body
+                        .as_ref()
+                        .and_then(|b| crate::voice::ui::mic_for(b, cx)),
+                )
+                .children(
+                    self.body
+                        .as_ref()
+                        .and_then(|b| crate::voice::ui::line_in_bar_for(b, cx)),
                 )
                 .child(div().flex_1())
                 .when(!can_save, |this| {

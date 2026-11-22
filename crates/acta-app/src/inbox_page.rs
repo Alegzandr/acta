@@ -310,6 +310,7 @@ impl InboxPage {
                 .auto_grow(3, 16)
                 .placeholder(placeholder)
         });
+        crate::voice::attach(&capture, window, cx);
         let place = acta_core::model::Place {
             project,
             epic: None,
@@ -614,6 +615,7 @@ impl InboxPage {
                 .default_value(note.text.clone())
         });
         state.update(cx, |state, cx| state.focus(window, cx));
+        crate::voice::attach(&state, window, cx);
         let tray = {
             let ws = self.ws.clone();
             let held = self.files.get(&id).cloned().unwrap_or_default();
@@ -996,13 +998,27 @@ impl InboxPage {
                                     &tray,
                                     cx,
                                 ))
-                                .child(type_scale::SMALL.el().text_color(t.text_tertiary).child(
-                                    tr(locale, Key::ComposerHint, &[("keys", Arg::Text(&keys))]),
-                                )),
+                                // Dictation: the microphone after the
+                                // paperclip (components-voice.md 5).
+                                .children(crate::voice::ui::mic_for(&editor, cx))
+                                .when(!crate::voice::ui::listening_for(&editor, cx), |this| {
+                                    this.child(
+                                        type_scale::SMALL.el().text_color(t.text_tertiary).child(
+                                            tr(
+                                                locale,
+                                                Key::ComposerHint,
+                                                &[("keys", Arg::Text(&keys))],
+                                            ),
+                                        ),
+                                    )
+                                }),
                         ),
                     cx,
                 );
                 body.push(zone.into_any_element());
+                if let Some(line) = crate::voice::ui::line_for(&editor, cx) {
+                    body.push(line);
+                }
             }
             None => {
                 body.push(
@@ -1218,11 +1234,18 @@ impl Render for InboxPage {
                             ),
                     )
                     .child(attach_ui::attach_button("inbox", &self.capture_tray, cx))
-                    .child(type_scale::SMALL.el().text_color(t.text_tertiary).child(tr(
-                        locale,
-                        Key::ComposerHint,
-                        &[("keys", Arg::Text(&keys))],
-                    )))
+                    // Dictation (components-voice.md 5): the microphone after
+                    // the paperclip, left of the save hint, which yields
+                    // while a take shows its status.
+                    .children(crate::voice::ui::mic_for(&self.capture, cx))
+                    .when(
+                        !crate::voice::ui::listening_for(&self.capture, cx),
+                        |this| {
+                            this.child(type_scale::SMALL.el().text_color(t.text_tertiary).child(
+                                tr(locale, Key::ComposerHint, &[("keys", Arg::Text(&keys))]),
+                            ))
+                        },
+                    )
                     .child(
                         ui::button(
                             "inbox-add",
@@ -1235,6 +1258,12 @@ impl Render for InboxPage {
                     ),
             );
         let capture = attach_ui::drop_zone("inbox", &self.capture_tray, RADIUS_LG, capture, cx);
+        // The dictation line sits under the editor's box (screens.md 8.27).
+        let capture = div()
+            .flex()
+            .flex_col()
+            .child(capture)
+            .children(crate::voice::ui::line_for(&self.capture, cx));
         let listed: Vec<(Note, Option<String>)> = if self.show_filed {
             self.filed.clone()
         } else {

@@ -136,3 +136,9 @@ Built on `integration-engineer/voice` (core, downloader, worker). What changed f
 - **The fake engine exists only in debug builds** (`cfg(debug_assertions)`): the end-to-end tests run the debug executable; a release worker answers `EngineSpec::Fake` with a model error.
 - **Licences**: whisper.cpp (MIT) and Silero VAD (MIT) notices are in `scripts/licenses/third-party`.
 - **CI**: Linux runners install `cmake` and `libclang-dev` (`scripts/ci/linux-deps.sh`); Windows jobs set `LIBCLANG_PATH` to `C:\Program Files\LLVM\bin` (`scripts/ci/windows-libclang.ps1`); the Intel macOS release build on the Apple silicon runner sets `CMAKE_OSX_ARCHITECTURES=x86_64`. `cargo test` puts every build-script link folder on `PATH` and whisper-rs-sys adds over a hundred, past what `cmd.exe` accepts: tests that start a shell pass it `PATH` without them.
+
+## Note (2026-11-22): steps 4 and 5 built
+Built on `gpui-engineer/voice-ui`. Two points for section 7 (privacy) and the review:
+
+- **Resampler buffers.** Capture resamples with rubato's FFT resampler (`acta-app/src/voice/capture.rs`). `Resampler::reset`, called at the end of each take, zeroes its overlap and scratch buffers, but not the FFT's own working buffers (the last chunk's spectrum), and nothing is zeroed when the resampler is dropped: those few milliseconds of audio are freed without zeroing. Memory only: they never reach a file, a log or a pipe. Every buffer Acta owns (the ring, the phrase buffers, the resampler's input and output scratch) is zeroed as section 7 asks.
+- **The Settings level bar** opens the microphone only while the person is at the Microphone row (pointer over it, or its dropdown focused or open), never because Settings is open (components-voice.md 5). A take never starts on a model while it is being downloaded or downloaded again, and downloading over the model a running take uses is refused (`voice.model.busy`).

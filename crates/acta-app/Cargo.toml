@@ -40,6 +40,12 @@ whisper-rs = "0.16"
 zeroize = "1"
 # The worker's private stdout and its crash-dump settings (voice_worker.rs).
 libc = "0.2"
+# Dictation capture (ADR 0014, 5): the microphone (WASAPI, CoreAudio, ALSA)
+# and the resampler to 16 kHz; the machine's memory and cores for the model
+# recommendation (voice/machine.rs).
+cpal = "0.18"
+rubato = "5.1"
+sysinfo = { version = "0.40", default-features = false, features = ["system"] }
 
 [target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
 whisper-rs = { version = "0.16", features = ["metal"] }
