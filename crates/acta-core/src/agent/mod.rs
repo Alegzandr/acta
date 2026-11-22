@@ -7,6 +7,7 @@ pub mod due;
 pub mod folders;
 pub mod git;
 pub mod presence;
+pub mod questions;
 pub mod render;
 pub mod session;
 pub mod tools;

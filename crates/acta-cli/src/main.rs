@@ -156,9 +156,12 @@ enum Command {
         #[command(flatten)]
         text: TextSource,
     },
-    /// Change a topic, epic or note; --field reads that field's value from stdin or --file
+    /// Change a topic, epic, note or question; --field reads that field's
+    /// value from stdin or --file (json: several fields as one JSON object)
     Update {
         id: String,
+        /// As in log; a note: open or dismissed; a question: open, answered
+        /// or dropped
         #[arg(long)]
         status: Option<String>,
         /// E-n, or none
@@ -167,10 +170,17 @@ enum Command {
         /// Due date YYYY-MM-DD, or "" to clear (topics, epics and projects)
         #[arg(long, value_name = "DATE")]
         due: Option<String>,
-        /// Print the id, due date and overdue flag as JSON
+        /// A question answered on a topic: also log the answer as a decision
+        #[arg(long)]
+        log_decision: bool,
+        /// A topic or an epic was reported to its person (true or false)
+        #[arg(long, value_name = "BOOL")]
+        reported: Option<bool>,
+        /// Print the record's fields as JSON
         #[arg(long)]
         json: bool,
-        /// title, description or state
+        /// title, description, state, answer, asked_to, report_to, or json
+        /// (an object with those names)
         #[arg(long)]
         field: Option<String>,
         #[command(flatten)]
@@ -187,9 +197,13 @@ enum Command {
         #[arg(long)]
         epic: Option<String>,
         /// overdue, or week: open topics and epics due before today, or
-        /// within 7 days, by date
+        /// within 7 days, by date (questions: by answer date)
         #[arg(long)]
         due: Option<String>,
+        /// "-": read a person's name from stdin; lists everything open
+        /// naming them
+        #[arg(long, value_name = "-")]
+        person: Option<String>,
         #[arg(long)]
         limit: Option<i64>,
         #[arg(long)]
@@ -198,11 +212,13 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Create a topic, epic or note (first line of stdin is the title, the rest
-    /// the description); file notes into a topic's timeline (entry); dismiss
-    /// notes; or apply a triage plan (plan: create parameters as JSON on stdin)
+    /// Create a topic, epic, note or question (first line of stdin is the
+    /// title, the rest the description; or one JSON object with the item's
+    /// fields, e.g. {"title": "...", "asked_to": "...", "report_to": "..."});
+    /// file notes into a topic's timeline (entry); dismiss notes; or apply a
+    /// triage plan (plan: create parameters as JSON on stdin)
     Create {
-        /// topic, epic, note, entry, dismiss or plan
+        /// topic, epic, note, question, entry, dismiss or plan
         kind: String,
         /// E-n for a new topic
         #[arg(long)]
@@ -210,9 +226,13 @@ enum Command {
         /// T-n for entry
         #[arg(long)]
         topic: Option<String>,
-        /// Due date of a new topic or epic: YYYY-MM-DD
+        /// Due date of a new topic or epic, or a question's answer date:
+        /// YYYY-MM-DD
         #[arg(long, value_name = "DATE")]
         due: Option<String>,
+        /// A question's owner: T-n, E-n or P-n (default: the focus)
+        #[arg(long, value_name = "ID")]
+        owner: Option<String>,
         /// Comma-separated note ids to file into the new item, or to dismiss
         #[arg(long, value_delimiter = ',')]
         from_notes: Vec<String>,
@@ -771,6 +791,8 @@ fn run_on(store: &mut acta_core::Store, command: Command) -> Result<String, Stri
             status,
             epic,
             due,
+            log_decision,
+            reported,
             json,
             field,
             text,
@@ -780,6 +802,8 @@ fn run_on(store: &mut acta_core::Store, command: Command) -> Result<String, Stri
                 status,
                 epic,
                 due,
+                log_decision: log_decision.then_some(true),
+                reported,
                 ..UpdateArgs::default()
             };
             if let Some(f) = field {
@@ -788,7 +812,25 @@ fn run_on(store: &mut acta_core::Store, command: Command) -> Result<String, Stri
                     "title" => a.title = Some(value),
                     "description" => a.description = Some(value),
                     "state" => a.state = Some(value),
-                    _ => return Err("--field must be title, description or state".into()),
+                    "answer" => a.answer = Some(value),
+                    "asked_to" => a.asked_to = Some(value),
+                    "report_to" => a.report_to = Some(value),
+                    "json" => {
+                        let t: TextFields = serde_json::from_str(&value)
+                            .map_err(|e| format!("--field json takes one JSON object: {e}"))?;
+                        a.title = t.title;
+                        a.description = t.description;
+                        a.state = t.state;
+                        a.answer = t.answer;
+                        a.asked_to = t.asked_to;
+                        a.report_to = t.report_to;
+                    }
+                    _ => {
+                        return Err(
+                            "--field must be title, description, state, answer, asked_to, report_to or json"
+                                .into(),
+                        );
+                    }
                 }
             }
             let ack = ag.update(a)?;
@@ -800,20 +842,32 @@ fn run_on(store: &mut acta_core::Store, command: Command) -> Result<String, Stri
             status,
             epic,
             due,
+            person,
             limit,
             cursor,
             json,
         } => {
-            let query = if query {
+            if person.as_deref().is_some_and(|p| p != "-") {
+                return Err("a person is read from stdin: --person -".into());
+            }
+            if query && person.is_some() {
+                return Err("--query and --person both read stdin; use one".into());
+            }
+            let stdin = if query || person.is_some() {
                 Some(read_text(&TextSource::default())?.trim().to_owned())
             } else {
                 None
+            };
+            let (query, person) = match person {
+                Some(_) => (None, stdin),
+                None => (stdin, None),
             };
             let a = FindArgs {
                 query,
                 kind,
                 status,
                 epic,
+                person,
                 due,
                 limit,
                 cursor,
@@ -829,6 +883,7 @@ fn run_on(store: &mut acta_core::Store, command: Command) -> Result<String, Stri
             epic,
             topic,
             due,
+            owner,
             from_notes,
             text,
         } => {
@@ -857,16 +912,43 @@ fn run_on(store: &mut acta_core::Store, command: Command) -> Result<String, Stri
                 _ => {
                     let t = read_text(&text)?;
                     let t = t.trim();
-                    let (title, rest) = t.split_once('\n').unwrap_or((t, ""));
+                    let question = kind.trim().eq_ignore_ascii_case("question");
+                    // One JSON object carries the person (user text never
+                    // comes from an argument); otherwise the first line is
+                    // the title. A question is all of its text.
+                    // Text that starts with a brace but is not such an
+                    // object stays text (a note may hold code).
+                    let parsed = t
+                        .starts_with('{')
+                        .then(|| serde_json::from_str::<TextFields>(t).ok())
+                        .flatten();
+                    let fields = if let Some(f) = parsed {
+                        f
+                    } else if question {
+                        TextFields {
+                            title: Some(t.to_owned()),
+                            ..TextFields::default()
+                        }
+                    } else {
+                        let (title, rest) = t.split_once('\n').unwrap_or((t, ""));
+                        TextFields {
+                            title: Some(title.trim().to_owned()),
+                            description: Some(rest.trim().to_owned()).filter(|d| !d.is_empty()),
+                            ..TextFields::default()
+                        }
+                    };
                     ag.create(CreateArgs {
                         items: vec![CreateItem {
                             kind,
-                            title: title.trim().to_owned(),
-                            description: Some(rest.trim().to_owned()).filter(|d| !d.is_empty()),
+                            title: fields.title.unwrap_or_default(),
+                            description: fields.description,
                             epic,
                             topic,
                             from_notes: notes,
                             due,
+                            asked_to: fields.asked_to,
+                            owner,
+                            report_to: fields.report_to,
                         }],
                         dismiss: None,
                     })
@@ -921,6 +1003,19 @@ fn run_on(store: &mut acta_core::Store, command: Command) -> Result<String, Stri
         | Command::Sessions
         | Command::Statusline => Err("handled elsewhere".into()),
     }
+}
+
+/// User text read from stdin as one JSON object, with the tools' field
+/// names (data.md requests 18 and 19): never from process arguments.
+#[derive(serde::Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+struct TextFields {
+    title: Option<String>,
+    description: Option<String>,
+    state: Option<String>,
+    answer: Option<String>,
+    asked_to: Option<String>,
+    report_to: Option<String>,
 }
 
 fn kb_import(

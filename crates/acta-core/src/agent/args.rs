@@ -63,27 +63,39 @@ pub struct LogArgs {
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
 pub struct UpdateArgs {
-    /// T-n, E-n or N-n; P-n for due only.
+    /// T-n, E-n, N-n or Q-n; P-n for due only.
     pub id: String,
     pub title: Option<String>,
     pub description: Option<String>,
     pub state: Option<String>,
-    /// As in log; a note: open or dismissed.
+    /// As in log; N: open, dismissed; Q: open, answered, dropped.
     pub status: Option<String>,
     /// E-n or none.
     pub epic: Option<String>,
     /// YYYY-MM-DD, or "" to clear.
     pub due: Option<String>,
+    /// Q: person asked.
+    pub asked_to: Option<String>,
+    /// Q: what they answered.
+    pub answer: Option<String>,
+    /// Q on a topic: also log the answer as a decision.
+    pub log_decision: Option<bool>,
+    /// T, E, N: who to report back to.
+    pub report_to: Option<String>,
+    /// T, E: the user says it was reported.
+    pub reported: Option<bool>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
 pub struct FindArgs {
     pub query: Option<String>,
-    /// topic, epic, note or entry.
+    /// topic, epic, note, entry or question.
     pub kind: Option<String>,
     /// A status, or open (default), closed, all.
     pub status: Option<String>,
     pub epic: Option<String>,
+    /// Everything open naming this person.
+    pub person: Option<String>,
     /// overdue or week.
     pub due: Option<String>,
     /// Default 8, max 20.
@@ -93,9 +105,9 @@ pub struct FindArgs {
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
 pub struct CreateItem {
-    /// topic, epic, note or entry.
+    /// topic, epic, note, entry or question.
     pub kind: String,
-    /// Title; for a note, its text.
+    /// Title; a note's text; the question.
     #[serde(default)]
     pub title: String,
     /// Default with from_notes: their text.
@@ -106,8 +118,14 @@ pub struct CreateItem {
     pub topic: Option<String>,
     /// N-ids filed into this item.
     pub from_notes: Option<Vec<String>>,
-    /// topic, epic: YYYY-MM-DD.
+    /// topic, epic, question: YYYY-MM-DD.
     pub due: Option<String>,
+    /// question: the person asked.
+    pub asked_to: Option<String>,
+    /// question: T-n, E-n or P-n.
+    pub owner: Option<String>,
+    /// note, topic, epic: who to report back to.
+    pub report_to: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]

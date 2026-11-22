@@ -21,6 +21,22 @@ Acta holds the project's topics (T-n) in epics (E-n). Each topic has a current s
 - Set `status` when the topic is done, blocked or dropped.
 - Never copy code, diffs or long command output into Acta; name files and commits instead.
 
+## Questions for others
+- Record a question with `create` (kind `question`) when the answer must come from a person or a place outside this session (a colleague, a client, another team, an office, a document you cannot reach) and the work should not guess: requirements, policy, money, access, other people's systems, anything hard to undo.
+- Decide yourself, and `log` a decision, when the choice is technical, reversible and inside the task. When the user is the one who knows, ask them in the conversation instead.
+- Search first: `find(kind="question", query=...)`.
+- One question per item, answerable without context, at most 300 chars.
+- Set `asked_to` only to a person the user named or Acta already lists (`find(person=...)`), with Acta's spelling; never invent one. Set `due` only to a date the user gave.
+- Say it in one line: "I added a question for Marie (Q-12)."
+- Keep working on what does not depend on it; set the topic `blocked` only when nothing else can move.
+- When the user relays an answer: `update(id="Q-n", status="answered", answer=...)`, with `log_decision=true` when it settles a choice.
+
+## Reporting back
+- Set `report_to` only when the user says who the work must be reported to; never an invented person.
+- When work that has a person is done, end the wrap-up with what to tell them, in two or three lines.
+- Set `reported=true` only when the user says it was reported.
+- `find(person=...)` lists everything open that names someone: what to ask them and what to tell them.
+
 ## Delegating
 - Put the topic id in a subagent's prompt. Subagents always pass ids explicitly and log their findings.
 
