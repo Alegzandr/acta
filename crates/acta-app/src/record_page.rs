@@ -122,6 +122,10 @@ pub struct RecordPage {
     id_copied: bool,
     /// The pointer is over the properties block: its add chips show.
     props_hover: bool,
+    /// The topic table's body height last laid out, and the least it keeps
+    /// after a segment changed.
+    table_height: std::rc::Rc<std::cell::Cell<f32>>,
+    table_floor: f32,
     seen_revision: u64,
     /// The due date picker, open on the Due row (components-records.md 5).
     due_picker: Option<Entity<DuePicker>>,
@@ -240,6 +244,8 @@ impl RecordPage {
             kb_inherited_open: false,
             id_copied: false,
             props_hover: false,
+            table_height: Default::default(),
+            table_floor: 0.,
             seen_revision: 0,
             due_picker: None,
             _due_sub: None,
@@ -985,16 +991,16 @@ fn entry_kind_meta(kind: EntryKind) -> (Icon, Key) {
 impl RecordPage {
     fn render_title(&self, data: &Loaded, t: &Tokens, cx: &mut Context<Self>) -> AnyElement {
         if let Some(state) = &self.title_edit {
-            return div()
+            // The editor keeps the title's own size (QA: it shrank to the
+            // input's default while editing).
+            return type_scale::TITLE
+                .el()
                 .border_b_1()
                 .border_color(t.border_strong)
-                .text_size(px(24.))
-                .line_height(px(30.))
-                .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                 .on_action(
                     cx.listener(|page, _: &Escape, window, cx| page.cancel_title(window, cx)),
                 )
-                .child(Input::new(state).appearance(false).px(px(0.)))
+                .child(ui::role_input(Input::new(state), type_scale::TITLE))
                 .into_any_element();
         }
         type_scale::TITLE
@@ -1379,7 +1385,7 @@ impl RecordPage {
                     .flex()
                     .flex_row()
                     .justify_between()
-                    .child(ui::label(text(locale, Key::SectionState), t))
+                    .child(ui::section_header(text(locale, Key::SectionState), t))
                     .children(
                         meta.map(|m| type_scale::SMALL.el().text_color(t.text_tertiary).child(m)),
                     ),
@@ -1426,7 +1432,7 @@ impl RecordPage {
                     .h(px(28.))
                     .flex()
                     .items_center()
-                    .child(ui::label(text(locale, Key::SectionDescription), t)),
+                    .child(ui::section_header(text(locale, Key::SectionDescription), t)),
             )
             .child(body)
             .into_any_element()
@@ -1515,7 +1521,7 @@ impl RecordPage {
                 .items_center()
                 .gap(px(8.))
                 .h(px(28.))
-                .child(ui::label(text(locale, Key::SectionKnowledge), t))
+                .child(ui::section_header(text(locale, Key::SectionKnowledge), t))
                 .child(
                     type_scale::SMALL
                         .el()
@@ -1719,7 +1725,7 @@ impl RecordPage {
                     .flex_row()
                     .items_center()
                     .justify_between()
-                    .child(ui::label(text(locale, Key::SectionTimeline), t))
+                    .child(ui::section_header(text(locale, Key::SectionTimeline), t))
                     .child(ui::segmented(t).children(filters)),
             )
             .child(list)
@@ -1895,10 +1901,12 @@ impl RecordPage {
             .gap(px(12.))
             // The box hangs into the gutter by its padding and border, so
             // its author mark and text stay in the same columns as every
-            // other entry's.
+            // other entry's; in a narrow page it sits inside the column.
             .when(decision, |this| {
                 this.px(px(16.))
-                    .mx(px(-17.))
+                    .when(ui::decision_hangs(ui::side_space()), |this| {
+                        this.mx(px(-ui::DECISION_HANG))
+                    })
                     .py(px(12.))
                     .rounded(px(RADIUS_LG))
                     .border_1()
@@ -1938,6 +1946,10 @@ impl RecordPage {
                 };
                 ui::segment(("table-filter", i), text(locale, key), current == filter, t).on_click(
                     cx.listener(move |page, _, _, cx| {
+                        // The table keeps at least the height it had, so a
+                        // shorter list never pulls the page (and the
+                        // segment under the pointer) up (QA 2026-11-22).
+                        page.table_floor = page.table_floor.max(page.table_height.get());
                         page.table_filter = filter;
                         cx.notify();
                     }),
@@ -2206,8 +2218,18 @@ impl RecordPage {
             for topic in table::rows(&data.topics, current, self.table_sort, today) {
                 body = body.child(row(topic, cx));
             }
+        } else if !table::grouped(current) {
+            // Overdue and Next 7 days: one list by date across epics.
+            for topic in table::rows(&all, current, self.table_sort, today) {
+                body = body.child(row(topic, cx));
+            }
         } else {
             for (epic, topics) in table::groups(&data.loose, &data.groups) {
+                let shown = table::rows(topics, current, self.table_sort, today);
+                // A group with nothing under the segment has no header.
+                if shown.is_empty() {
+                    continue;
+                }
                 let (done, total) = table::progress(topics);
                 let name: SharedString = match epic {
                     Some((_, name)) => name.to_owned().into(),
@@ -2238,13 +2260,20 @@ impl RecordPage {
                             )),
                     );
                 body = body.child(group);
-                for topic in table::rows(topics, current, self.table_sort, today) {
+                for topic in shown {
                     body = body.child(row(topic, cx));
                 }
             }
         }
         let reveal = std::rc::Rc::clone(&self.reveal_table);
         let scroll = self.scroll.clone();
+        let height = std::rc::Rc::clone(&self.table_height);
+        let body = body
+            .relative()
+            .min_h(px(self.table_floor))
+            .child(ui::measure(move |bounds, _| {
+                height.set(f32::from(bounds.size.height));
+            }));
         div()
             .id("topic-table")
             .relative()
@@ -2373,7 +2402,7 @@ impl RecordPage {
                         14.,
                         t.text_secondary,
                     ))
-                    .child(ui::label(text(locale, Key::OverviewAttention), t))
+                    .child(ui::section_header(text(locale, Key::OverviewAttention), t))
                     .child(
                         type_scale::SMALL
                             .el()
@@ -2438,7 +2467,7 @@ impl RecordPage {
                     .items_center()
                     .gap(px(8.))
                     .h(px(28.))
-                    .child(ui::label(text(locale, Key::OverviewTitle), t))
+                    .child(ui::section_header(text(locale, Key::OverviewTitle), t))
                     .when(calm, |this| {
                         this.child(
                             type_scale::SMALL
@@ -2919,11 +2948,13 @@ impl RecordPage {
             .filter(|s| crate::sessions::place(s) == self.owner)
             .collect();
         let first = on.iter().min_by_key(|s| s.started_at)?;
-        let tail = if here.count == 1 {
-            crate::sessions::detail(locale, first, false)
-        } else {
-            crate::sessions::since(locale, first.started_at)
-        };
+        // Since and last activity are the line's tooltip, one per line
+        // (clarity review 2026-11-22).
+        let mut tip = vec![crate::sessions::since(locale, first.started_at)];
+        if here.count == 1 {
+            tip.extend(crate::sessions::last(locale, first));
+        }
+        let tip = tip.join("\n");
         let terminals = cx
             .try_global::<crate::sessions_view::TerminalTokens>()
             .map(|g| g.0.clone())
@@ -2948,16 +2979,12 @@ impl RecordPage {
                 .child(
                     type_scale::SMALL
                         .el()
+                        .id("claude-line")
                         .min_w_0()
                         .truncate()
                         .text_color(t.text_secondary)
-                        .child(crate::sessions::here_text(locale, here))
-                        .child(
-                            type_scale::SMALL
-                                .el()
-                                .text_color(t.text_tertiary)
-                                .child(format!(" \u{b7} {tail}")),
-                        ),
+                        .tooltip(ui::tip(tip))
+                        .child(crate::sessions::here_text(locale, here)),
                 )
                 .when_some(in_acta, |this, project| {
                     this.child(
@@ -3237,6 +3264,13 @@ impl Render for RecordPage {
         }
         ui::page_scroll("record-page")
             .track_scroll(&self.scroll)
+            // Scrolling away from a title being renamed saves it, as a
+            // click elsewhere does (QA 2026-11-22).
+            .on_scroll(cx.listener(|page, _, window, cx| {
+                if page.title_edit.is_some() {
+                    page.commit_title(window, cx);
+                }
+            }))
             .track_focus(&self.focus)
             .key_context("RecordPage")
             .on_action(cx.listener(|page, _: &OpenStatusMenu, window, cx| {

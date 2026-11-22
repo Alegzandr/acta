@@ -159,7 +159,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `epic.deleted` | Epic deleted. | Epic supprimé. |
 | `project.deleted` | Project deleted. | Projet supprimé. |
 | `topic.restored` | Topic restored. | Sujet restauré. |
-| `topic.empty_project` | No topics yet. Capture a note, or create a topic. | Aucun sujet pour l'instant. Saisissez une note ou créez un sujet. |
+| `topic.empty_project` | Capture a note, or create a topic. | Saisissez une note ou créez un sujet. |
 | `topic.empty.heading` | No topics yet | Aucun sujet pour l'instant |
 | `error.save_entry` | Could not save the entry. The database is locked by another process. | Impossible d'enregistrer l'entrée. La base de données est verrouillée par un autre processus. |
 | `error.save` | Could not save the change. Try again. | Impossible d'enregistrer la modification. Réessayez. |
@@ -1163,7 +1163,7 @@ From the clarity review of 2026-11-22 ([reviews/2026-11-22-clarity.md](reviews/2
 | Key | English | French |
 |---|---|---|
 | `timeline.empty` | No entries yet. Claude Code logs progress here as it works. | Aucune entrée pour l'instant. Claude Code consigne ici l'avancement au fil du travail. |
-| `topic.empty_project` | No topics yet. Capture a note, or create a topic. | Aucun sujet pour l'instant. Saisissez une note ou créez un sujet. |
+| `topic.empty_project` | Capture a note, or create a topic. | Saisissez une note ou créez un sujet. |
 | `inbox.empty` | Inbox is empty. Captured notes wait here until they are filed. | La boîte de réception est vide. Les notes saisies attendent ici d'être classées. |
 | `inbox.filed_empty` | No filed notes yet. | Aucune note classée pour l'instant. |
 | `kb.empty` | No documents or memories yet. | Aucun document ni mémoire pour l'instant. |

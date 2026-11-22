@@ -8,7 +8,7 @@ use std::rc::Rc;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     Anchor, AnyElement, Bounds, Div, ElementId, InteractiveElement, IntoElement, ParentElement,
-    Pixels, Point, SharedString, Size, Stateful, Styled, anchored, deferred, div, point, px,
+    Pixels, Point, SharedString, Stateful, Styled, anchored, deferred, div, point, px,
 };
 
 use crate::icons::{Icon, icon};
@@ -134,7 +134,11 @@ pub fn attach_spec(align: Align) -> (Anchor, Anchor, Point<Pixels>) {
 /// Where a layer of `size` lands under `trigger` before any flip or slide
 /// (both are GPUI's, tested there): what [`attach_spec`] asks for.
 #[cfg(test)]
-pub fn layer_bounds(trigger: Bounds<Pixels>, size: Size<Pixels>, align: Align) -> Bounds<Pixels> {
+pub fn layer_bounds(
+    trigger: Bounds<Pixels>,
+    size: gpui_kit::Size<Pixels>,
+    align: Align,
+) -> Bounds<Pixels> {
     let (corner, anchor, offset) = attach_spec(align);
     Bounds::from_anchor_and_size(anchor, trigger.corner(corner) + offset, size)
 }

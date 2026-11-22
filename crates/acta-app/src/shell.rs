@@ -85,6 +85,12 @@ pub const MIN_SIZE: (f32, f32) = (880., 560.);
 const STATUS_BAR_HEIGHT: f32 = 24.;
 /// docs/design/components.md 5, Toast: 6 s.
 const TOAST_TIME: Duration = Duration::from_secs(6);
+
+/// A toast about a failure stays until dismissed (components.md 5, Toast):
+/// an error, and "Not enough room", which also carries the way out.
+fn toast_stays(kind: ToastKind) -> bool {
+    matches!(kind, ToastKind::Error | ToastKind::LayoutNoRoom)
+}
 /// Deferred layers paint by priority: the sidebar over the page 1, the
 /// layout toast 2, menus 3, a drag 4, the palette and dialogs above all.
 const OVERLAY_PRIORITY: usize = 10;
@@ -1936,6 +1942,7 @@ impl Shell {
                 let route = match target {
                     Target::Topic(id, _) => Route::Topic(id),
                     Target::Project(id) => Route::Project(id),
+                    Target::Epic(id) => Route::Epic(id),
                     Target::Kb(id, _) => Route::Kb(id),
                     Target::Command(command) => return self.run_command(command, window, cx),
                     Target::Choice(_) => return,
@@ -2930,10 +2937,7 @@ impl Shell {
     /// (components.md 5, Toast); an error stays until dismissed.
     fn arm_toast_timer(&mut self, cx: &mut Context<Self>) {
         let Some(bench) = self.bench() else { return };
-        let stays = bench
-            .toast
-            .as_ref()
-            .is_none_or(|t| t.kind == ToastKind::Error);
+        let stays = bench.toast.as_ref().is_none_or(|t| toast_stays(t.kind));
         bench.toast_timer = if stays {
             Task::ready(())
         } else {
@@ -3510,7 +3514,16 @@ impl Shell {
             &state,
             window,
             |shell, _, event: &InputEvent, window, cx| match event {
-                InputEvent::PressEnter { .. } | InputEvent::Blur => shell.commit_rename(window, cx),
+                // Enter saves and gives the keyboard back to the tree at
+                // once, so its keys work while the write runs (QA: focus
+                // was lost until Mod+1).
+                InputEvent::PressEnter { .. } => {
+                    shell.commit_rename(window, cx);
+                    if let Some(handle) = shell.bench().map(|b| b.tree_focus.clone()) {
+                        window.focus(&handle, cx);
+                    }
+                }
+                InputEvent::Blur => shell.commit_rename(window, cx),
                 _ => {}
             },
         );
@@ -3730,21 +3743,23 @@ impl Shell {
         // components-app.md 5, Claude Code sessions: while sessions run, the
         // item counts them by state and shows the Sessions view.
         let live = crate::sessions::live(cx).to_vec();
-        let sessions_text = crate::sessions::status_text(locale, crate::sessions::counts(&live));
+        let counts = crate::sessions::counts(&live);
+        let sessions_text = crate::sessions::status_text(locale, counts);
         let claude_item = match (sessions_text, crate::sessions::strongest(&live)) {
             (Some(label), Some(state)) => {
-                let tip = live.first().map(|s| {
+                // The bar names the most urgent state; the tooltip lists
+                // every state, then the first session's focus and activity.
+                let mut lines = crate::sessions::state_counts(locale, counts);
+                if let Some(s) = live.first() {
                     let owner = crate::sessions::place(s);
                     let name = self
                         .bench()
                         .and_then(|b| crate::sessions_view::title_of(b.ws.read(cx), owner))
                         .unwrap_or_default();
-                    format!(
-                        "{}\n{}",
-                        crate::terminal_dock::focus_label(locale, owner, &name),
-                        crate::sessions::detail(locale, s, true)
-                    )
-                });
+                    lines.push(crate::terminal_dock::focus_label(locale, owner, &name));
+                    lines.push(crate::sessions::detail(locale, s, true));
+                }
+                let tip = Some(lines.join("\n"));
                 ui::bar_item("status-claude", &tokens)
                     .child(icon(
                         Icon::Bot,
@@ -4367,11 +4382,28 @@ impl Shell {
             .rounded(px(RADIUS_LG))
             .shadow(vec![t.shadow_overlay()])
             .child(
-                type_scale::UI
-                    .el()
-                    .text_color(t.text_primary)
-                    .line_clamp(2)
-                    .child(toast.message.clone()),
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_start()
+                    .gap(px(8.))
+                    // A failure says so with its glyph (QA 2026-11-22).
+                    .when(room, |this| {
+                        this.child(div().h(px(20.)).flex().items_center().child(icon(
+                            Icon::TriangleAlert,
+                            16.,
+                            t.warning,
+                        )))
+                    })
+                    .child(
+                        type_scale::UI
+                            .el()
+                            .flex_1()
+                            .min_w_0()
+                            .text_color(t.text_primary)
+                            .line_clamp(2)
+                            .child(toast.message.clone()),
+                    ),
             )
             .child(
                 div()
@@ -4996,6 +5028,14 @@ pub fn window_options(default_size: (f32, f32), focus: bool, cx: &App) -> Window
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failures_stay_until_dismissed_and_undo_toasts_go() {
+        assert!(toast_stays(ToastKind::Error));
+        assert!(toast_stays(ToastKind::LayoutNoRoom));
+        assert!(!toast_stays(ToastKind::Layout));
+        assert!(!toast_stays(ToastKind::LayoutReset));
+    }
 
     #[test]
     fn the_key_bindings_parse() {

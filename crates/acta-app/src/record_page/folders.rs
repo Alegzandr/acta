@@ -1465,19 +1465,25 @@ impl RecordPage {
                 }
             }
             let tip = tip.join("\n");
-            let button =
-                folders_view::switcher("folder-switcher", glyph, &active.name, active_missing, t)
-                    .when(menu_open.is_none(), |this| this.tooltip(ui::tip(tip)))
-                    .on_click(cx.listener(|page, _, _, cx| {
-                        cx.stop_propagation();
-                        page.folder_ui.switcher = match page.folder_ui.switcher {
-                            Some(_) => None,
-                            None => Some(0),
-                        };
-                        page.folder_ui.row_menu = None;
-                        page.folder_ui.branch_menu = None;
-                        cx.notify();
-                    }));
+            let button = folders_view::switcher(
+                "folder-switcher",
+                glyph,
+                &active.name,
+                active_missing,
+                false,
+                t,
+            )
+            .when(menu_open.is_none(), |this| this.tooltip(ui::tip(tip)))
+            .on_click(cx.listener(|page, _, _, cx| {
+                cx.stop_propagation();
+                page.folder_ui.switcher = match page.folder_ui.switcher {
+                    Some(_) => None,
+                    None => Some(0),
+                };
+                page.folder_ui.row_menu = None;
+                page.folder_ui.branch_menu = None;
+                cx.notify();
+            }));
             let mut wrap = div()
                 .relative()
                 .min_w(px(crate::terminal_dock::SWITCHER_MIN))
@@ -2121,14 +2127,21 @@ impl RecordPage {
                 ))
                 .tooltip(ui::tip(tip))
         };
+        // Rows of equal length: 14 icons that do not fit on one line go
+        // 7 and 7, never 12 and 2 (QA 2026-11-22). The room is the column
+        // less the list's indent, the label and its gap.
+        let label_w = ui::text_width(type_scale::SMALL, &text(locale, Key::FoldersIcon), cx);
+        let room = ui::column_width() - 24. - label_w - 8. - 16.;
         let mut icons = div()
             .flex()
             .flex_row()
             .flex_wrap()
             .flex_1()
             .min_w_0()
-            .gap(px(2.))
-            .when(ui::two_line_rows(), |this| this.max_w(px(7. * 30.)))
+            .gap(px(ICON_GAP))
+            .when_some(balanced_width(fm::ICONS.len() + 1, room), |this, w| {
+                this.max_w(px(w))
+            })
             .child(
                 toggle(
                     format!("fi-auto-{}", id.0),
@@ -2347,5 +2360,39 @@ mod move_tests {
         assert_eq!(move_options(&[a, b, c], b), (true, true));
         assert_eq!(move_options(&[a, b, c], c), (true, false));
         assert_eq!(move_options(&[a, b], c), (false, false));
+    }
+}
+
+/// The icon toggles of the folder form: 28 wide, 2 apart.
+const ICON_SIZE: f32 = 28.;
+const ICON_GAP: f32 = 2.;
+
+/// The width that lays `count` icon toggles out in rows of equal length
+/// within `room`: `None` when they fit on one line (or the room is not
+/// known), else the width of the longest balanced row.
+fn balanced_width(count: usize, room: f32) -> Option<f32> {
+    let step = ICON_SIZE + ICON_GAP;
+    let per_line = (((room + ICON_GAP) / step).floor() as usize).max(1);
+    if count <= per_line || !room.is_finite() {
+        return None;
+    }
+    let lines = count.div_ceil(per_line);
+    let per_row = count.div_ceil(lines);
+    Some(per_row as f32 * step - ICON_GAP)
+}
+
+#[cfg(test)]
+mod icon_tests {
+    use super::*;
+
+    #[test]
+    fn icons_that_wrap_go_in_rows_of_equal_length() {
+        // Room for 12: 14 icons go 7 and 7.
+        assert_eq!(balanced_width(14, 12. * 30.), Some(7. * 30. - 2.));
+        // Room for all 14: one line.
+        assert_eq!(balanced_width(14, 14. * 30.), None);
+        // Room for 5: 14 go 5, 5, 4.
+        assert_eq!(balanced_width(14, 5. * 30.), Some(5. * 30. - 2.));
+        assert_eq!(balanced_width(14, f32::MAX), None);
     }
 }

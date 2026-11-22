@@ -73,8 +73,8 @@ fn owner_route(owner: Owner) -> Route {
     }
 }
 
-/// A knowledge row: kind icon, title, summary (or excerpt), author mark,
-/// compact time (docs/design/components-knowledge.md 5). Under a column of
+/// A knowledge row: kind icon, title, summary (or excerpt), the unread
+/// dot, compact time (docs/design/components-knowledge.md 5). Under a column of
 /// 520 the summary takes a second line and the row is 52.
 pub(crate) fn kb_row(
     entry: &KbSummary,
@@ -84,7 +84,6 @@ pub(crate) fn kb_row(
     locale: Locale,
     t: &Tokens,
 ) -> gpui_kit::Stateful<gpui_kit::Div> {
-    let human = when::initial(&when::human_name(locale));
     let summary: AnyElement = match excerpt {
         Some(snippet) => {
             let runs = kb_model::excerpt_runs(snippet);
@@ -134,21 +133,32 @@ pub(crate) fn kb_row(
     } else {
         title.flex_shrink_0().max_w(gpui_kit::relative(0.4))
     };
-    // The unread dot sits left of the author mark (5, Knowledge row).
+    // The unread dot, then the time; who wrote it last is the time's
+    // tooltip (clarity review 2026-11-22: no author mark on rows).
+    let tip = {
+        let when = when::long(locale, entry.updated_at);
+        let author = when::author(locale, entry.updated_by);
+        tr(
+            locale,
+            Key::MetaUpdated,
+            &[("when", Arg::Text(&when)), ("author", Arg::Text(&author))],
+        )
+    };
     let trailing = || -> Vec<AnyElement> {
         let mut out = Vec::new();
         if unread {
             out.push(ui::unread_dot(t).into_any_element());
         }
-        out.push(ui::author_mark(entry.updated_by, &human, t).into_any_element());
         out.push(
             type_scale::SMALL
                 .el()
+                .id(("kb-row-time", index))
                 .w(px(72.))
                 .flex_shrink_0()
                 .text_right()
                 .font_features(type_scale::tabular())
                 .text_color(t.text_tertiary)
+                .tooltip(ui::tip(tip.clone()))
                 .child(when::compact(locale, entry.updated_at))
                 .into_any_element(),
         );
@@ -221,6 +231,11 @@ pub struct KnowledgePage {
     /// The Overview's chip "Not updated for 90 days" (components-records.md
     /// 5): only these memories, oldest first; `None` without the chip.
     stale: Option<Vec<KbId>>,
+    /// One focus handle per row in the order drawn: `Up` / `Down` move
+    /// between them; opened from the Overview, the first takes the focus
+    /// once the list is loaded (as the topic table does).
+    row_focus: Vec<FocusHandle>,
+    focus_first_row: bool,
     seen_revision: u64,
     _load: Task<()>,
     _search: Task<()>,
@@ -260,6 +275,7 @@ impl KnowledgePage {
         };
         let mut page = Self::build(ws, project, filters, false, window, cx);
         page.stale = Some(Vec::new());
+        page.focus_first_row = true;
         page.reload(cx);
         page
     }
@@ -312,6 +328,8 @@ impl KnowledgePage {
             open_memory: None,
             as_view,
             stale: None,
+            row_focus: Vec::new(),
+            focus_first_row: false,
             seen_revision: 0,
             _load: Task::ready(()),
             _search: Task::ready(()),
@@ -403,6 +421,36 @@ impl KnowledgePage {
                     })),
             )
             .into_any_element()
+    }
+
+    /// Keys on a row: `Up` / `Down` move between rows, `Esc` clears the
+    /// chip "Not updated for 90 days" (components-records.md 5, Filter chip).
+    fn row_key(
+        &mut self,
+        index: usize,
+        rows: usize,
+        event: &gpui_kit::KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if event.keystroke.modifiers.modified() {
+            return;
+        }
+        let to = match event.keystroke.key.as_str() {
+            "down" => (index + 1 < rows).then_some(index + 1),
+            "up" => index.checked_sub(1),
+            "escape" if self.stale.is_some() => {
+                self.stale = None;
+                cx.stop_propagation();
+                cx.notify();
+                return;
+            }
+            _ => return,
+        };
+        if let Some(handle) = to.and_then(|i| self.row_focus.get(i)) {
+            window.focus(handle, cx);
+        }
+        cx.stop_propagation();
     }
 
     fn run_search(&mut self, cx: &mut Context<Self>) {
@@ -584,7 +632,7 @@ impl KnowledgePage {
 }
 
 impl Render for KnowledgePage {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.global::<Tokens>().clone();
         let locale = settings::locale(cx);
         let ws = self.ws.read(cx);
@@ -764,6 +812,17 @@ impl Render for KnowledgePage {
             Level::Epic => 1,
             Level::Topic => 2,
         });
+        let rows = groups.iter().map(|(_, e)| e.len()).sum::<usize>();
+        while self.row_focus.len() < rows {
+            self.row_focus.push(cx.focus_handle());
+        }
+        // The Overview's figure was opened: the first row takes the focus
+        // once the chip's list has arrived.
+        let loaded = self.stale.as_ref().is_some_and(|ids| !ids.is_empty());
+        if self.focus_first_row && loaded && rows > 0 {
+            self.focus_first_row = false;
+            window.focus(&self.row_focus[0], cx);
+        }
         let mut index = 0;
         for (owner, entries) in groups {
             let name = names
@@ -808,9 +867,16 @@ impl Render for KnowledgePage {
                 let kind = entry.kind;
                 let open = self.open_memory == Some(id);
                 let unread = self.ws.read(cx).is_unread(acta_core::model::Record::Kb(id));
+                let handle = self.row_focus[index].clone();
                 column = column.child(
-                    kb_row(&entry, excerpt.as_deref(), unread, index, locale, &t).on_click(
-                        cx.listener(move |page, _, _, cx| match kind {
+                    kb_row(&entry, excerpt.as_deref(), unread, index, locale, &t)
+                        .track_focus(&handle)
+                        .on_key_down(cx.listener(
+                            move |page, event: &gpui_kit::KeyDownEvent, window, cx| {
+                                page.row_key(index, rows, event, window, cx)
+                            },
+                        ))
+                        .on_click(cx.listener(move |page, _, _, cx| match kind {
                             KbKind::Document => cx.emit(PageEvent::Open(Route::Kb(id))),
                             KbKind::Memory => {
                                 page.open_memory = if page.open_memory == Some(id) {
@@ -824,8 +890,7 @@ impl Render for KnowledgePage {
                                 };
                                 cx.notify();
                             }
-                        }),
-                    ),
+                        })),
                 );
                 if open {
                     column = column.child(
@@ -1774,42 +1839,44 @@ impl Render for DocPage {
             if let (Some(title), Some(summary), Some(body)) =
                 (&self.title, &self.summary, &self.body)
             {
-                column = column
-                    .child(
-                        div()
-                            .border_b_1()
-                            .border_color(t.border_strong)
-                            .text_size(px(24.))
-                            .line_height(px(30.))
-                            .font_weight(gpui_kit::FontWeight::SEMIBOLD)
-                            .child(Input::new(title).appearance(false).px(px(0.))),
-                    )
-                    .child(
-                        div()
-                            .mt(px(8.))
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap(px(8.))
-                            .child(type_scale::READING.el().flex_1().child(Input::new(summary)))
-                            .child(
-                                type_scale::SMALL
-                                    .el()
-                                    .font_features(type_scale::tabular())
-                                    .text_color(t.text_tertiary)
-                                    .child(format!("{} / 140", number(locale, count as u64))),
-                            ),
-                    )
-                    .child(div().mt(px(24.)).h(px(1.)).bg(t.border_subtle))
-                    .child(
-                        // The editor's own padding (10 x 8) is taken back, so
-                        // the text sits where the reading view puts it.
-                        type_scale::DOCUMENT
-                            .el()
-                            .mt(px(16.))
-                            .mx(px(-10.))
-                            .child(Textarea::new(body).appearance(false)),
-                    );
+                column =
+                    column
+                        .child(
+                            type_scale::TITLE
+                                .el()
+                                .border_b_1()
+                                .border_color(t.border_strong)
+                                .child(ui::role_input(Input::new(title), type_scale::TITLE)),
+                        )
+                        .child(
+                            div()
+                                .mt(px(8.))
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap(px(8.))
+                                .child(type_scale::READING.el().flex_1().child(ui::role_input(
+                                    Input::new(summary),
+                                    type_scale::READING,
+                                )))
+                                .child(
+                                    type_scale::SMALL
+                                        .el()
+                                        .font_features(type_scale::tabular())
+                                        .text_color(t.text_tertiary)
+                                        .child(format!("{} / 140", number(locale, count as u64))),
+                                ),
+                        )
+                        .child(div().mt(px(24.)).h(px(1.)).bg(t.border_subtle))
+                        .child(
+                            // The editor's own padding (10 x 8) is taken back, so
+                            // the text sits where the reading view puts it.
+                            type_scale::DOCUMENT
+                                .el()
+                                .mt(px(16.))
+                                .mx(px(-10.))
+                                .child(Textarea::new(body).appearance(false)),
+                        );
             }
         } else if let Some(entry) = &entry {
             let owner_name = owner_name(self.ws.read(cx), entry.owner);

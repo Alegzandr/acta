@@ -182,12 +182,14 @@ impl DuePicker {
     }
 
     fn render_preview(&self, locale: Locale, t: &Tokens) -> AnyElement {
-        // One line of 16 for a date; the sentences of an input that does
-        // not parse wrap rather than clip (10.3: nothing is clipped).
+        // A fixed two lines of 16, so the month under it never moves while
+        // typing (QA 2026-11-22): a date and its phrase on one line, the
+        // date giving way first; a sentence about the input on up to two.
         let line = type_scale::SMALL
             .el()
-            .min_h(px(16.))
+            .h(px(PREVIEW_HEIGHT))
             .mt(px(4.))
+            .overflow_hidden()
             .flex()
             .flex_row()
             .items_start()
@@ -199,16 +201,20 @@ impl DuePicker {
         };
         let day = |line: gpui_kit::Div, day: Date| {
             let state = acta_core::date::due_state(Some(day), self.model.today, true);
-            line.flex_wrap()
-                .child(
-                    div()
-                        .text_color(t.text_primary)
-                        .child(due::full(locale, day)),
-                )
-                .children(
-                    due::phrase(locale, state)
-                        .map(|(words, tn)| div().text_color(tone(tn)).child(words)),
-                )
+            line.child(
+                div()
+                    .min_w_0()
+                    .truncate()
+                    .text_color(t.text_primary)
+                    .child(due::full(locale, day)),
+            )
+            .children(due::phrase(locale, state).map(|(words, tn)| {
+                div()
+                    .flex_shrink_0()
+                    .whitespace_nowrap()
+                    .text_color(tone(tn))
+                    .child(words)
+            }))
         };
         let problem = |line: gpui_kit::Div, key: Key| {
             if self.model.error {
@@ -465,3 +471,6 @@ impl Render for DuePicker {
 }
 
 pub use crate::menu::AnchorBounds;
+
+/// The preview's height: two lines of `type.small`, whatever it shows.
+const PREVIEW_HEIGHT: f32 = 32.;

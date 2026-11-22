@@ -606,8 +606,8 @@ catalogue! {
         fr: t("Sujet restauré."),
     }
     TopicEmptyProject "topic.empty_project" {
-        en: t("No topics yet. Capture a note, or create a topic."),
-        fr: t("Aucun sujet pour l\u{2019}instant. Saisissez une note ou créez un sujet."),
+        en: t("Capture a note, or create a topic."),
+        fr: t("Saisissez une note ou créez un sujet."),
     }
     TopicEmptyHeading "topic.empty.heading" {
         en: t("No topics yet"),

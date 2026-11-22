@@ -313,13 +313,17 @@ impl Picker {
     }
 
     /// The input changed: parse it on this frame; a date turns the page to
-    /// its month.
+    /// its month. Text that is no date (or out of range) turns it back to
+    /// the month the picker opened on, never leaving it on the month of a
+    /// prefix ("15/12/21" of "15/12/2150", QA 2026-11-22).
     pub fn input(&mut self, text: &str) {
         self.preview = preview(text, self.today, self.current);
         self.error = false;
-        if let Preview::Day(day) = self.preview {
-            self.month = first_of(day);
-        }
+        self.month = match self.preview {
+            Preview::Day(day) => first_of(day),
+            Preview::Invalid | Preview::Range => first_of(self.current.unwrap_or(self.today)),
+            Preview::Empty(_) => self.month,
+        };
     }
 
     fn set(&self, day: Option<Date>) -> Outcome {
@@ -437,6 +441,19 @@ impl Picker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_date_out_of_range_turns_the_month_back_not_to_a_prefix() {
+        let today = Date::from_ymd(2026, 11, 22).unwrap();
+        let mut picker = Picker::new(today, None);
+        picker.input("15/12/21");
+        assert_eq!(picker.month, Date::from_ymd(2021, 12, 1).unwrap());
+        picker.input("15/12/2150");
+        assert_eq!(picker.preview, Preview::Range);
+        assert_eq!(picker.month, Date::from_ymd(2026, 11, 1).unwrap());
+        picker.input("15/12/2026x");
+        assert_eq!(picker.month, Date::from_ymd(2026, 11, 1).unwrap());
+    }
 
     const EN: Locale = Locale::En;
     const FR: Locale = Locale::Fr;

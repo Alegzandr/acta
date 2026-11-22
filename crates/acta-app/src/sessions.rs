@@ -311,7 +311,19 @@ pub fn counts(list: &[LiveSession]) -> Counts {
 
 /// "Claude Code: 1 waiting for you · 2 working"; `None` with no session.
 pub fn status_text(locale: Locale, c: Counts) -> Option<String> {
-    let parts: Vec<String> = [
+    let first = state_counts(locale, c).into_iter().next()?;
+    Some(tr(
+        locale,
+        Key::StatusbarSessions,
+        &[("list", Arg::Text(&first))],
+    ))
+}
+
+/// Each state that has sessions with its count, most urgent first
+/// (waiting, working, idle): the status bar shows the first, its tooltip
+/// all of them, one per line (layout.md 4.6).
+pub fn state_counts(locale: Locale, c: Counts) -> Vec<String> {
+    [
         (c.waiting, Key::SessionsWaiting),
         (c.working, Key::SessionsWorking),
         (c.idle, Key::SessionsIdle),
@@ -319,16 +331,7 @@ pub fn status_text(locale: Locale, c: Counts) -> Option<String> {
     .into_iter()
     .filter(|(n, _)| *n > 0)
     .map(|(n, key)| tr(locale, key, &[("n", Arg::Count(n))]))
-    .collect();
-    if parts.is_empty() {
-        return None;
-    }
-    let list = parts.join(" \u{b7} ");
-    Some(tr(
-        locale,
-        Key::StatusbarSessions,
-        &[("list", Arg::Text(&list))],
-    ))
+    .collect()
 }
 
 pub fn state_word(locale: Locale, state: SessionState) -> String {
@@ -503,7 +506,7 @@ mod tests {
     }
 
     #[test]
-    fn the_status_names_only_the_states_that_have_sessions() {
+    fn the_status_names_the_most_urgent_state_and_the_tooltip_all() {
         let c = Counts {
             waiting: 1,
             working: 2,
@@ -511,11 +514,24 @@ mod tests {
         };
         assert_eq!(
             status_text(Locale::En, c).as_deref(),
-            Some("Claude Code: 1 waiting for you \u{b7} 2 working")
+            Some("Claude Code: 1 waiting for you")
         );
         assert_eq!(
             status_text(Locale::Fr, c).as_deref(),
-            Some("Claude Code\u{a0}: 1 vous attend \u{b7} 2 au travail")
+            Some("Claude Code\u{a0}: 1 vous attend")
+        );
+        assert_eq!(
+            state_counts(Locale::En, c),
+            vec!["1 waiting for you".to_owned(), "2 working".to_owned()]
+        );
+        let idle = Counts {
+            waiting: 0,
+            working: 0,
+            idle: 3,
+        };
+        assert_eq!(
+            status_text(Locale::En, idle).as_deref(),
+            Some("Claude Code: 3 idle")
         );
         assert_eq!(status_text(Locale::En, Counts::default()), None);
     }

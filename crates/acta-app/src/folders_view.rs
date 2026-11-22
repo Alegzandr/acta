@@ -22,21 +22,30 @@ use crate::ui;
 /// padding 0 x 4, `radius.sm`: the folder's icon 16, its name, then
 /// `chevron-down` 12. `missing`: the active folder was not found
 /// (`folder-x` in `warning`, the name in `text.secondary`). The caller
-/// adds the tooltip (the full path) and the click.
+/// adds the tooltip (the full path) and the click. `in_header`: the 28
+/// header of the terminal, where it sits among `type.small` and
+/// `type.label` text, so its name is `type.small` and its icon 14 (QA
+/// 2026-11-22: it read larger than the view tabs beside it).
 pub fn switcher(
     id: impl Into<SharedString>,
     glyph: Icon,
     name: &str,
     missing: bool,
+    in_header: bool,
     t: &Tokens,
 ) -> Stateful<Div> {
     let hover = t.fill_hover;
-    let el = type_scale::UI.el().id(id.into());
+    let role = if in_header {
+        type_scale::SMALL
+    } else {
+        type_scale::UI
+    };
+    let el = role.el().id(id.into());
     ui::focusable(el, t, false)
         .flex()
         .flex_row()
         .items_center()
-        .gap(px(6.))
+        .gap(px(4.))
         .h(px(24.))
         .px(px(4.))
         .min_w_0()
@@ -44,7 +53,7 @@ pub fn switcher(
         .hover(move |s| s.bg(hover))
         .child(icon(
             glyph,
-            16.,
+            if in_header { 14. } else { 16. },
             if missing { t.warning } else { t.text_secondary },
         ))
         .child(

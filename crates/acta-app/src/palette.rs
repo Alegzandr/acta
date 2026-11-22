@@ -108,6 +108,8 @@ pub struct Palette {
     db: Db,
     items: Vec<Item>,
     knowledge: Vec<Item>,
+    /// The query the items were computed for.
+    query_text: String,
     selected: usize,
     _search: Task<()>,
     _subs: Vec<Subscription>,
@@ -129,7 +131,9 @@ impl Palette {
     pub fn new(setup: Setup, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let locale = settings::locale(cx);
         let placeholder = match (&setup.picker, setup.create) {
-            (Some(picker), _) => picker.label.clone(),
+            // The scope chip already names the picker (QA 2026-11-22:
+            // "File..." twice side by side).
+            (Some(_), _) => text(locale, Key::CommonSearch),
             (None, Some(CreateKind::Epic)) => Command::NewEpic.label(locale),
             (None, Some(CreateKind::Topic)) => text(locale, Key::TopicNew),
             (None, None) => text(locale, Key::CommonSearch),
@@ -160,6 +164,7 @@ impl Palette {
             db: setup.db,
             items: Vec::new(),
             knowledge: Vec::new(),
+            query_text: String::new(),
             selected: 0,
             _search: Task::ready(()),
             _subs: subs,
@@ -177,6 +182,7 @@ impl Palette {
         let locale = settings::locale(cx);
         let query = self.query(cx);
         self.items = self.local_items(&query, locale);
+        self.query_text = query.clone();
         self.selected = 0;
         if self.create.is_none()
             && self.picker.is_none()
@@ -250,6 +256,22 @@ impl Palette {
                     score,
                 });
             }
+            // Epics are found by name like topics (QA 2026-11-22): typing
+            // an epic's name opens it instead of creating a topic.
+            if !query.is_empty() {
+                for (epic, _) in &tree.epics {
+                    if let Some((score, matched)) = palette_model::fuzzy(query, &epic.title) {
+                        items.push(Item {
+                            group: Group::Epics,
+                            target: Target::Epic(epic.id),
+                            title: epic.title.clone(),
+                            detail: project.title.clone(),
+                            matched,
+                            score,
+                        });
+                    }
+                }
+            }
             let loose = tree.loose_topics.iter().map(|t| (t, project.title.clone()));
             let in_epics = tree.epics.iter().flat_map(|(e, topics)| {
                 topics
@@ -306,7 +328,8 @@ impl Palette {
         let mut all = self.items.clone();
         all.extend(self.knowledge.iter().cloned());
         let limit = if self.scope.is_some() { ROWS } else { 5 };
-        let mut out = palette_model::arrange(all, self.scope, limit);
+        let query = self.query_text.clone();
+        let mut out = palette_model::arrange(all, self.scope, limit, &query);
         out.truncate(ROWS);
         out
     }
@@ -362,6 +385,7 @@ impl Palette {
         let leading: AnyElement = match &item.target {
             Target::Topic(_, status) => ui::status_glyph(*status, 16., t).into_any_element(),
             Target::Project(_) => icon(Icon::Folder, 16., t.text_secondary).into_any_element(),
+            Target::Epic(_) => icon(Icon::Layers, 16., t.text_secondary).into_any_element(),
             Target::Kb(_, KbKind::Memory) => {
                 icon(Icon::Pin, 16., t.text_secondary).into_any_element()
             }
@@ -464,6 +488,7 @@ impl Palette {
             match group {
                 Group::Recent => Key::PaletteRecent,
                 Group::Topics => Key::PaletteTopics,
+                Group::Epics => Key::PaletteEpics,
                 Group::Knowledge => Key::SectionKnowledge,
                 Group::Commands => Key::PaletteCommands,
                 Group::Projects => Key::PaletteProjects,

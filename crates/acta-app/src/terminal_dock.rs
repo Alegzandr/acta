@@ -1408,6 +1408,7 @@ impl TerminalDock {
                 fm::shown_icon(&active.icon, git.as_ref(), missing),
                 &active.name,
                 missing,
+                true,
                 &t,
             )
             .w_full()
@@ -1437,7 +1438,7 @@ impl TerminalDock {
                 .flex()
                 .flex_row()
                 .items_center()
-                .gap(px(6.))
+                .gap(px(4.))
                 .flex_shrink_0()
                 .w(px(fit.switcher))
                 .child(

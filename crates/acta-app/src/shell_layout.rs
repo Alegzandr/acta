@@ -2730,7 +2730,8 @@ impl Shell {
             .child(
                 div().flex_1().min_h_0().child(
                     ui::NarrowPage::new(content, narrow)
-                        .column(ui::page_column_width(group_width, narrow)),
+                        .column(ui::page_column_width(group_width, narrow))
+                        .side((group_width - ui::page_column_width(group_width, narrow)) / 2.),
                 ),
             )
             .into_any_element()
