@@ -351,9 +351,7 @@ mod tests {
             // each call, as the registry would after an install.
             let n = self.paths.fetch_add(1, Ordering::SeqCst);
             let mut dirs = vec![self.marker.join(format!("fresh{n}"))];
-            dirs.extend(std::env::split_paths(
-                &std::env::var_os("PATH").unwrap_or_default(),
-            ));
+            dirs.extend(std::env::split_paths(&crate::test_child_path()));
             std::env::join_paths(dirs).ok()
         }
 

@@ -725,9 +725,28 @@ mod tests {
             program: program.to_owned(),
             args: args.iter().map(|a| (*a).to_owned()).collect(),
             cwd: std::env::temp_dir(),
-            env: vec![("ACTA_TEST_NAME".to_owned(), "Alexandre".to_owned())],
+            env: vec![
+                ("ACTA_TEST_NAME".to_owned(), "Alexandre".to_owned()),
+                ("PATH".to_owned(), child_path()),
+            ],
             verbatim_args: false,
         }
+    }
+
+    /// This process's `PATH` without the build-script output folders
+    /// `cargo test` adds: whisper-rs-sys (ADR 0014) adds over a hundred,
+    /// past what `cmd.exe` accepts, and the shell then finds nothing.
+    fn child_path() -> String {
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        let kept = std::env::split_paths(&path).filter(|dir| {
+            let parts: Vec<_> = dir.components().map(|c| c.as_os_str().to_owned()).collect();
+            let build = parts.iter().position(|c| c == "build");
+            !build.is_some_and(|i| parts[i..].iter().any(|c| c == "out"))
+        });
+        std::env::join_paths(kept)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .into_owned()
     }
 
     #[cfg(windows)]

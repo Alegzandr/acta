@@ -744,7 +744,9 @@ mod tests {
             &m,
             Tool::Claude,
             &|p: &Path| p.is_file(),
-            &SystemExec::default(),
+            &SystemExec {
+                path: Some(crate::test_child_path()),
+            },
         );
         let took = started.elapsed();
         assert_eq!(row.state, State::Unknown);

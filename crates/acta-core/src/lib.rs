@@ -34,6 +34,21 @@ pub use db::ChangeWatcher;
 pub use error::{Error, OpenError, Result};
 pub use store::{Store, StoreConfig};
 
+/// The `PATH` for children started by tests: this process's, without the
+/// build-script output folders `cargo test` adds to it. whisper-rs-sys
+/// (dictation, ADR 0014) adds over a hundred of them, which pushes `PATH`
+/// past what `cmd.exe` accepts, and a test's shell then finds nothing.
+#[cfg(test)]
+pub(crate) fn test_child_path() -> std::ffi::OsString {
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let kept = std::env::split_paths(&path).filter(|dir| {
+        let parts: Vec<_> = dir.components().map(|c| c.as_os_str().to_owned()).collect();
+        let build = parts.iter().position(|c| c == "build");
+        !build.is_some_and(|i| parts[i..].iter().any(|c| c == "out"))
+    });
+    std::env::join_paths(kept).unwrap_or(path)
+}
+
 /// Display name of the application.
 pub const APP_NAME: &str = "Acta";
 /// Velopack pack id (ADR 0004). Also the install directory name on Windows.

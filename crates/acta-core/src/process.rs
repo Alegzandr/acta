@@ -267,7 +267,7 @@ mod tests {
     fn shell(script: &str) -> Command {
         if cfg!(windows) {
             let mut c = Command::new("cmd");
-            c.args(["/C", script]);
+            c.args(["/C", script]).env("PATH", crate::test_child_path());
             c
         } else {
             let mut c = Command::new("sh");
