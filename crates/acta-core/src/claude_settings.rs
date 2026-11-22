@@ -218,18 +218,40 @@ fn desired(auto_memory_off: bool, commit: Option<CommitSettings>) -> Vec<Entry> 
     out
 }
 
-fn ledger_key(folder: &Path) -> String {
-    format!("{LEDGER_PREFIX}{}", folder.to_string_lossy())
+/// The stored form of a folder path (ADR 0008, "Path identity"): resolved
+/// on disk when the folder exists (8.3 names, symlinks, `\\?\\`, case of
+/// the real folder), the textual normalisation otherwise (an offline
+/// folder: prefix, drive letter, trailing separator).
+pub fn stored_form(folder: &Path) -> String {
+    folder_path::canonical(folder)
+        .unwrap_or_else(|_| folder_path::normalize(Os::CURRENT, &folder.to_string_lossy()))
+}
+
+/// The one key of a folder's ledger, for writing and reading alike: the
+/// stored form, or the key of an existing ledger for the same folder
+/// (compared as folder paths: case-insensitively on Windows and macOS).
+fn ledger_key(store: &Store, folder: &Path) -> crate::Result<String> {
+    let stored = stored_form(folder);
+    let key = format!("{LEDGER_PREFIX}{stored}");
+    if store.local_value(&key)?.is_some() {
+        return Ok(key);
+    }
+    Ok(store
+        .local_values(LEDGER_PREFIX)?
+        .into_iter()
+        .map(|(k, _)| k)
+        .find(|k| folder_path::same(Os::CURRENT, &k[LEDGER_PREFIX.len()..], &stored))
+        .unwrap_or(key))
 }
 
 fn read_ledger(store: &Store, folder: &Path) -> crate::Result<Option<Ledger>> {
     Ok(store
-        .local_value(&ledger_key(folder))?
+        .local_value(&ledger_key(store, folder)?)?
         .map(|t| serde_json::from_str(&t).unwrap_or_default()))
 }
 
 fn save_ledger(store: &mut Store, folder: &Path, ledger: &Ledger) -> crate::Result<()> {
-    let key = ledger_key(folder);
+    let key = ledger_key(store, folder)?;
     if ledger.holds_nothing() && ledger.wants_nothing() {
         store.set_local_value(&key, None)
     } else {
