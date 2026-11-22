@@ -13,8 +13,8 @@ use std::path::PathBuf;
 
 use acta_core::date::{Date, DueState, due_state};
 use acta_core::model::{
-    Author, Entry, EntryId, EntryKind, KbId, KbKind, KbSummary, Owner, Record, Status, TopicId,
-    TopicSummary,
+    AttachOwner, Author, Entry, EntryId, EntryKind, KbId, KbKind, KbSummary, Owner, Record, Status,
+    TopicId, TopicSummary,
 };
 use acta_core::store::{EpicPatch, OverviewFilter, ProjectPatch, TopicPatch};
 use gpui_kit::component::input::{Escape, Input, InputEvent, InputState, Textarea, TextareaState};
@@ -101,6 +101,10 @@ pub struct RecordPage {
     saving_title: bool,
     state_edit: Option<Entity<TextareaState>>,
     description_edit: Option<Entity<TextareaState>>,
+    /// The files the description editor is adding (topics and epics).
+    description_tray: Option<Entity<crate::attach_ui::Tray>>,
+    /// The files the entry editor is adding.
+    entry_tray: Option<Entity<crate::attach_ui::Tray>>,
     /// The status menu, with its highlighted row.
     status_menu: Option<usize>,
     /// The entry menu (components-records.md 5, Timeline entry).
@@ -235,6 +239,8 @@ impl RecordPage {
             saving_title: false,
             state_edit: None,
             description_edit: None,
+            description_tray: None,
+            entry_tray: None,
             status_menu: None,
             entry_menu: None,
             entry_edit: None,
@@ -690,10 +696,45 @@ impl RecordPage {
         self._subs.push(sub);
         if description {
             self.description_edit = Some(state);
+            // A description takes files on topics and epics (ADR 0012, 1).
+            let owner = match self.owner {
+                Owner::Topic(id) => Some(AttachOwner::Topic(id)),
+                Owner::Epic(id) => Some(AttachOwner::Epic(id)),
+                Owner::Project(_) => None,
+            };
+            self.description_tray = owner.map(|owner| self.new_tray(owner, cx));
         } else {
             self.state_edit = Some(state);
         }
         cx.notify();
+    }
+
+    fn new_tray(
+        &mut self,
+        owner: AttachOwner,
+        cx: &mut Context<Self>,
+    ) -> Entity<crate::attach_ui::Tray> {
+        let ws = self.ws.clone();
+        let held = self
+            .data
+            .as_ref()
+            .and_then(|d| d.files.get(&owner).cloned())
+            .unwrap_or_default();
+        let tray = cx.new(|cx| crate::attach_ui::Tray::new(ws, Some(owner), held, cx));
+        self._subs.push(cx.observe(&tray, |_, _, cx| cx.notify()));
+        tray
+    }
+
+    /// An editor was saved: the files it added get their rows on `owner`.
+    fn commit_tray(
+        &self,
+        tray: Option<Entity<crate::attach_ui::Tray>>,
+        owner: AttachOwner,
+        cx: &mut Context<Self>,
+    ) {
+        if let (Some(tray), Some(project)) = (tray, self.project_id()) {
+            tray.update(cx, |tray, cx| tray.commit(owner, project, cx));
+        }
     }
 
     /// Save the description or current state. The editor stays open with
@@ -707,6 +748,17 @@ impl RecordPage {
         let Some(editor) = editor else { return };
         let value = editor.read(cx).value().trim_end().to_owned();
         let owner = self.owner;
+        if description {
+            let files_owner = match owner {
+                Owner::Topic(id) => Some(AttachOwner::Topic(id)),
+                Owner::Epic(id) => Some(AttachOwner::Epic(id)),
+                Owner::Project(_) => None,
+            };
+            if let Some(files_owner) = files_owner {
+                let tray = self.description_tray.clone();
+                self.commit_tray(tray, files_owner, cx);
+            }
+        }
         let task = self.ws.update(cx, |ws, cx| {
             ws.write(cx, Key::ErrorSave, move |store| {
                 let me = Author::Human;
@@ -757,6 +809,9 @@ impl RecordPage {
                     // Only the editor that was saved closes.
                     if open.as_ref() == Some(&editor) {
                         *open = None;
+                        if description {
+                            page.description_tray = None;
+                        }
                         window.focus(&page.focus, cx);
                     }
                     cx.notify();
@@ -769,6 +824,13 @@ impl RecordPage {
     /// `Esc` in an editor: close it; its text is dropped from the editor
     /// but the stored value was never changed (drafts are request 15).
     fn cancel_editors(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // The files the editors added go with them (the record's stay).
+        for tray in [self.description_tray.take(), self.entry_tray.take()]
+            .into_iter()
+            .flatten()
+        {
+            tray.update(cx, |tray, cx| tray.discard(cx));
+        }
         let had = self.state_edit.take().is_some()
             | self.description_edit.take().is_some()
             | self.status_menu.take().is_some()
@@ -779,6 +841,25 @@ impl RecordPage {
             window.focus(&self.focus, cx);
         }
         cx.notify();
+    }
+
+    /// Debug builds: the description editor, or the editor of the newest
+    /// entry with files, for captures.
+    #[cfg(debug_assertions)]
+    pub fn dev_files_editor(&mut self, entry: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if !entry {
+            self.open_editor(true, window, cx);
+            return;
+        }
+        let found = self.data.as_ref().and_then(|d| {
+            d.entries
+                .iter()
+                .find(|e| d.files.contains_key(&AttachOwner::Entry(e.id)))
+                .cloned()
+        });
+        if let Some(e) = found {
+            self.start_entry_edit(e, window, cx);
+        }
     }
 
     /// Debug builds: a menu open for captures (`status-menu`, or the
@@ -867,6 +948,8 @@ impl RecordPage {
                     let text = editor.read(cx).value().trim_end().to_owned();
                     if !text.trim().is_empty() {
                         page.write_entry(&entry, text, entry.kind, cx);
+                        let tray = page.entry_tray.take();
+                        page.commit_tray(tray, AttachOwner::Entry(entry.id), cx);
                         page.entry_edit = None;
                         window.focus(&page.focus, cx);
                         cx.notify();
@@ -876,6 +959,7 @@ impl RecordPage {
         );
         self._subs.push(sub);
         self.entry_edit = Some((id, state));
+        self.entry_tray = Some(self.new_tray(AttachOwner::Entry(id), cx));
         self.reveal_editor.set(true);
         cx.notify();
     }
@@ -1459,8 +1543,26 @@ impl RecordPage {
         t: &Tokens,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let files_owner = match self.owner {
+            Owner::Topic(id) => Some(AttachOwner::Topic(id)),
+            Owner::Epic(id) => Some(AttachOwner::Epic(id)),
+            Owner::Project(_) => None,
+        };
+        let strip = match (&self.description_edit, files_owner) {
+            (None, Some(owner)) => data.files.get(&owner).and_then(|files| {
+                crate::attach_ui::strip(
+                    "description",
+                    files,
+                    crate::attach_ui::StripStyle::Full,
+                    t,
+                    cx,
+                )
+            }),
+            _ => None,
+        };
+        let tray = self.description_tray.clone();
         let body: AnyElement = if let Some(editor) = &self.description_edit {
-            editor_box(editor, locale, t, cx)
+            editor_box_with(editor, tray.as_ref(), locale, t, cx)
         } else if data.description.trim().is_empty() {
             let placeholder = match self.owner {
                 Owner::Topic(_) => Key::DescriptionPlaceholder,
@@ -1493,6 +1595,7 @@ impl RecordPage {
                     .child(ui::section_header(text(locale, Key::SectionDescription), t)),
             )
             .child(body)
+            .children(strip.map(|s| div().mt(px(4.)).child(s)))
             .into_any_element()
     }
 
@@ -1924,9 +2027,10 @@ impl RecordPage {
             Some(editor) => {
                 let reveal = std::rc::Rc::clone(&self.reveal_editor);
                 let scroll = self.scroll.clone();
+                let tray = self.entry_tray.clone();
                 div()
                     .relative()
-                    .child(editor_box(&editor, locale, t, cx))
+                    .child(editor_box_with(&editor, tray.as_ref(), locale, t, cx))
                     .child(ui::measure(move |bounds, window| {
                         if reveal.replace(false) {
                             ui::scroll_into_view(&scroll, bounds, ui::Reveal::Whole);
@@ -1936,7 +2040,29 @@ impl RecordPage {
                     .into_any_element()
             }
             None => {
-                markdown_view::short(("entry", index), entry.text.clone(), t).into_any_element()
+                let strip = self
+                    .data
+                    .as_ref()
+                    .and_then(|d| d.files.get(&AttachOwner::Entry(entry.id)))
+                    .and_then(|files| {
+                        crate::attach_ui::strip(
+                            &format!("entry-{}", entry.id.0),
+                            files,
+                            crate::attach_ui::StripStyle::Full,
+                            t,
+                            cx,
+                        )
+                    });
+                div()
+                    .flex()
+                    .flex_col()
+                    .child(markdown_view::short(
+                        ("entry", index),
+                        entry.text.clone(),
+                        t,
+                    ))
+                    .children(strip.map(|s| div().mt(px(8.)).child(s)))
+                    .into_any_element()
             }
         };
         let content = div()
@@ -3380,13 +3506,35 @@ fn editor_box(
     t: &Tokens,
     cx: &mut Context<RecordPage>,
 ) -> AnyElement {
+    editor_box_with(editor, None, locale, t, cx)
+}
+
+/// [`editor_box`] for an editor that takes files (a description, an
+/// entry): the paste hook, the strip between the text and the footer, the
+/// paperclip left of the save hint, and the drop target.
+fn editor_box_with(
+    editor: &Entity<TextareaState>,
+    tray: Option<&Entity<crate::attach_ui::Tray>>,
+    locale: Locale,
+    t: &Tokens,
+    cx: &mut Context<RecordPage>,
+) -> AnyElement {
     let macos = cfg!(target_os = "macos");
     let keys = format!(
         "{}+{}",
         KeyName::Mod.label(locale, macos),
         KeyName::Enter.label(locale, macos)
     );
-    let editor_box = div()
+    let mut textarea = Textarea::new(editor)
+        .appearance(false)
+        .text_size(px(type_scale::READING.size()))
+        .line_height(px(type_scale::READING.line()));
+    if let Some(tray) = tray {
+        textarea = textarea.on_paste(crate::attach_ui::on_paste(tray));
+    }
+    let strip = tray.and_then(|tray| tray.update(cx, |tray, cx| tray.render_strip(cx)));
+    let button = tray.map(|tray| crate::attach_ui::attach_button("editor", tray, cx));
+    let body = div()
         .flex()
         .flex_col()
         .rounded(px(RADIUS_LG))
@@ -3397,23 +3545,25 @@ fn editor_box(
         .py(px(12.))
         .on_action(cx.listener(|page, _: &Escape, window, cx| page.cancel_editors(window, cx)))
         .child(
-            type_scale::READING.el().mx(px(-10.)).my(px(-8.)).child(
-                Textarea::new(editor)
-                    .appearance(false)
-                    .text_size(px(type_scale::READING.size()))
-                    .line_height(px(type_scale::READING.line())),
-            ),
+            type_scale::READING
+                .el()
+                .mx(px(-10.))
+                .my(px(-8.))
+                .child(textarea),
         )
+        .children(strip.map(|s| div().mt(px(16.)).child(s)))
         .child(
             div()
                 .flex()
                 .flex_row()
                 .justify_end()
+                .gap(px(8.))
                 .h(px(28.))
                 .items_center()
-                .gap(px(8.))
-                // Dictation (components-voice.md 5): the microphone, left
-                // of the save hint, which yields while listening.
+                .children(button)
+                // Dictation (components-voice.md 5): the microphone after
+                // the paperclip, left of the save hint, which yields while
+                // a take shows its status.
                 .children(crate::voice::ui::mic_for(editor, cx))
                 .when(!crate::voice::ui::listening_for(editor, cx), |this| {
                     this.child(type_scale::SMALL.el().text_color(t.text_tertiary).child(tr(
@@ -3423,11 +3573,17 @@ fn editor_box(
                     )))
                 }),
         );
+    let boxed = match tray {
+        Some(tray) => {
+            crate::attach_ui::drop_zone("editor", tray, RADIUS_LG, body, cx).into_any_element()
+        }
+        None => body.into_any_element(),
+    };
     // The dictation line sits under the editor's box.
     div()
         .flex()
         .flex_col()
-        .child(editor_box)
+        .child(boxed)
         .children(crate::voice::ui::line_for(editor, cx))
         .into_any_element()
 }

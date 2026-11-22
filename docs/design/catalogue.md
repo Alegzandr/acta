@@ -212,6 +212,31 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `inbox.pick.as_entry` | Entry in {path} | Entrée dans {path} |
 | `inbox.empty` | Inbox is empty. Captured notes wait here until they are filed. | La boîte de réception est vide. Les notes saisies attendent ici d'être classées. |
 | `inbox.filed_empty` | No filed notes yet. | Aucune note classée pour l'instant. |
+| `attach.button` | Attach files... | Joindre des fichiers... |
+| `attach.drop` | Drop to attach | Déposer pour joindre |
+| `attach.adding` | Adding... {percent} | Ajout... {percent} |
+| `attach.pasted_name` | Pasted image {date} {time}.png | Image collée {date} {time}.png |
+| `attach.too_large` | {name} is {size}; the limit is 25 MB per file. | {name} pèse {size} ; la limite est de 25 Mo par fichier. |
+| `attach.too_many` | 20 files is the most a note, an entry or a description can hold. | Une note, une entrée ou une description contient 20 fichiers au plus. |
+| `attach.read_failed` | Could not read {name}. It may have moved or be in use. | Impossible de lire {name}. Il a peut-être été déplacé, ou il est utilisé. |
+| `attach.large_notice` | Files over 10 MB are also kept in every snapshot. | Les fichiers de plus de 10 Mo sont aussi conservés dans chaque instantané. |
+| `attach.count` | {n} file · {n} files | {n} fichier · {n} fichiers |
+| `attach.view` | View | Afficher |
+| `attach.save_as` | Save as... | Enregistrer sous... |
+| `attach.saved` | Saved to {folder}. | Enregistré dans {folder}. |
+| `attach.show_in_folder` | Show in folder | Afficher dans le dossier |
+| `attach.save_failed` | Could not save {name}. {reason} | Impossible d'enregistrer {name}. {reason} |
+| `attach.remove` | Remove | Retirer |
+| `attach.removed` | File removed. | Fichier retiré. |
+| `attach.restored` | File restored. | Fichier restauré. |
+| `attach.moved_to` | Moved to {id} | Déplacés vers {id} |
+| `attach.position` | {i} of {n} | {i} sur {n} |
+| `attach.prev` | Previous file | Fichier précédent |
+| `attach.next` | Next file | Fichier suivant |
+| `attach.fit` | Fit | Ajuster |
+| `attach.actual` | Actual size | Taille réelle |
+| `attach.truncated` | First 1 MB shown. Save the file to see all of it. | Premier Mo affiché. Enregistrez le fichier pour le voir en entier. |
+| `attach.gone` | The file was removed while the editor was open; add it again. | Le fichier a été retiré pendant que l'éditeur était ouvert ; ajoutez-le de nouveau. |
 | `voice.button` | Dictate | Dicter |
 | `voice.button_setup` | Dictate... | Dicter... |
 | `voice.button_downloading` | Dictation is downloading its model: {percent} | La dictée télécharge son modèle : {percent} |
@@ -759,6 +784,8 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `cmd.kb_to_document` | Change kind to document | Convertir en document |
 | `cmd.go_heading` | Go to heading... | Aller au titre... |
 | `cmd.save_file` | Save as file... | Enregistrer comme fichier... |
+| `cmd.attach` | Attach files... | Joindre des fichiers... |
+| `cmd.attachment_save` | Save file as... | Enregistrer le fichier sous... |
 | `cmd.export` | Export... | Exporter... |
 | `cmd.import` | Import... | Importer... |
 | `cmd.trash` | Open trash | Ouvrir la corbeille |
@@ -924,6 +951,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `settings.restore` | Restore... | Restaurer... |
 | `settings.trash_count` | {n} item · {n} items | {n} élément · {n} éléments |
 | `settings.database` | Database | Base de données |
+| `settings.attachments` | Attached files: {size} in {count} | Fichiers joints : {size} dans {count} (`{count}` is `attach.count`) |
 | `settings.chat` | Chat | Chat |
 | `settings.chat_data` | Chat data | Données du chat |
 | `settings.about` | About | À propos |
@@ -950,6 +978,8 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `export.scope.all` | Everything | Tout |
 | `export.scope.project` | This project | Ce projet |
 | `export.warning` | The file is not encrypted: anyone who opens it can read these projects. | Le fichier n'est pas chiffré : quiconque l'ouvre peut lire ces projets. |
+| `export.include_files` | Include attached files ({size}) | Inclure les fichiers joints ({size}) |
+| `export.too_large` | With its files this export would be about {size}, more than an import can read ({limit}). Export without files: their names and sizes stay. | Avec ses fichiers, cet export ferait environ {size}, plus qu'un import ne peut en lire ({limit}). Exportez sans les fichiers : leurs noms et tailles sont conservés. |
 | `export.passphrase` | Protect with a passphrase | Protéger par une phrase secrète |
 | `export.passphrase.lost` | Acta cannot recover a lost passphrase. | Acta ne peut pas retrouver une phrase secrète perdue. |
 | `export.choose` | Choose location... | Choisir l'emplacement... |
@@ -976,6 +1006,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `import.count.updated` | {n} updated | {n} mis à jour |
 | `import.folders` | {n} working folder was not found on this computer. Locate it from its project, epic or topic. · {n} working folders were not found on this computer. Locate each one from its project, epic or topic. | {n} dossier de travail est introuvable sur cet ordinateur. Localisez-le depuis son projet, son epic ou son sujet. · {n} dossiers de travail sont introuvables sur cet ordinateur. Localisez chacun depuis son projet, son epic ou son sujet. |
 | `import.network_folders` | {n} working folder on a network path was left out. Add it again from its project, epic or topic. · {n} working folders on a network path were left out. Add each one again from its project, epic or topic. | {n} dossier de travail sur un chemin réseau a été écarté. Ajoutez-le de nouveau depuis son projet, son epic ou son sujet. · {n} dossiers de travail sur un chemin réseau ont été écartés. Ajoutez chacun de nouveau depuis son projet, son epic ou son sujet. |
+| `import.files_missing` | {n} file was not in the export. · {n} files were not in the export. | {n} fichier n'était pas dans l'export. · {n} fichiers n'étaient pas dans l'export. |
 | `import.recovered_manual` | Commit modes come back as Manual: set them again in each folder's settings. | Les modes de commit reviennent en Manuel : redéfinissez-les dans les réglages de chaque dossier. |
 | `import.newer` | This file was made by a newer Acta (format {n}). Update Acta, then import it. | Ce fichier a été créé par une version plus récente d'Acta (format {n}). Mettez Acta à jour, puis importez-le. |
 | `import.not_acta` | This is not an Acta export. | Ce n'est pas un export Acta. |
@@ -1159,41 +1190,11 @@ New with questions and Report to (2026-11-21; components-questions.md 5, data.md
 
 `questions.more_*_overdue` replace `questions.more_*` when `{late}` is above 0, and `table.questions_tip_overdue` replaces `table.questions_tip` the same way (its first form is for one question, which is then the overdue one). The overdue clause ("1 overdue", "dont 1 en retard") is drawn in `warning` as one run (components-questions.md 5): the implementation marks the span of that clause in the formatted string, it never builds the sentence from fragments. `report.pending`, `report.done` and the events agree with *sujet* and *epic*, both masculine. The relative phrases of an answer date reuse `due.*` (10.4.4); the empty Answer by value reuses `due.none` (« Aucune », agreeing with *date*), Clear in the popover `common.clear`, and the remaining menu items `common.edit` and `common.delete`. Agent-facing text (`Q-12 Marie · overdue 3d`, `report to Marie`) is protocol, English only, and not in this catalogue (10).
 
-### 10.4.7 Keys of attachments, pending
+### 10.4.7 Keys of attachments
 
-New with attachments (2026-11-21; components-attachments.md 5, ADR 0012, data.md 11 request 20). They stay here until attachments are implemented; the implementing change moves them into 10.4 and `catalogue.rs` in one commit, as a family after the `inbox.*` keys, with `settings.attachments`, `export.include_files` and `import.files_missing` beside their families. In French the word is *fichier* (masculine): "Fichier retiré". `{size}` is the size format of components-attachments.md 5 ("2.1 MB" / "2,1 Mo"); `{name}` a file name, never translated.
+New with attachments (2026-11-21; components-attachments.md 5, ADR 0012, data.md 11 request 20). Moved into 10.4 and `catalogue.rs` when attachments were implemented (branch `gpui-engineer/attachments-ui`): the `attach.*` family after the `inbox.*` keys, `settings.attachments` after `settings.database`, `export.include_files` and `export.too_large` (the ADR 0012 amendment's copy) after `export.warning`, `import.files_missing` after `import.network_folders`, `cmd.attach` and `cmd.attachment_save` after `cmd.save_file`. Added with the implementation, for review: `attach.saved` and `attach.show_in_folder` (the Save as toast and its action, components-attachments.md 5; the French of `attach.saved` was not in the spec), and `attach.gone` (the error toast when a file an editor stored ahead of its row was purged before the record was saved, from the review of 2026-11-22). In French the word is *fichier* (masculine): "Fichier retiré". `{size}` is the size format of components-attachments.md 5 ("2.1 MB" / "2,1 Mo"); `{name}` a file name, never translated; `{folder}` the folder's path as the system gives it.
 
-| Key | English | French |
-|---|---|---|
-| `attach.button` | Attach files... | Joindre des fichiers... |
-| `attach.drop` | Drop to attach | Déposer pour joindre |
-| `attach.adding` | Adding... {percent} | Ajout... {percent} |
-| `attach.pasted_name` | Pasted image {date} {time}.png | Image collée {date} {time}.png |
-| `attach.too_large` | {name} is {size}; the limit is 25 MB per file. | {name} pèse {size} ; la limite est de 25 Mo par fichier. |
-| `attach.too_many` | 20 files is the most a note, an entry or a description can hold. | Une note, une entrée ou une description contient 20 fichiers au plus. |
-| `attach.read_failed` | Could not read {name}. It may have moved or be in use. | Impossible de lire {name}. Il a peut-être été déplacé, ou il est utilisé. |
-| `attach.large_notice` | Files over 10 MB are also kept in every snapshot. | Les fichiers de plus de 10 Mo sont aussi conservés dans chaque instantané. |
-| `attach.count` | {n} file · {n} files | {n} fichier · {n} fichiers |
-| `attach.view` | View | Afficher |
-| `attach.save_as` | Save as... | Enregistrer sous... |
-| `attach.save_failed` | Could not save {name}. {reason} | Impossible d'enregistrer {name}. {reason} |
-| `attach.remove` | Remove | Retirer |
-| `attach.removed` | File removed. | Fichier retiré. |
-| `attach.restored` | File restored. | Fichier restauré. |
-| `attach.moved_to` | Moved to {id} | Déplacés vers {id} |
-| `attach.position` | {i} of {n} | {i} sur {n} |
-| `attach.prev` | Previous file | Fichier précédent |
-| `attach.next` | Next file | Fichier suivant |
-| `attach.fit` | Fit | Ajuster |
-| `attach.actual` | Actual size | Taille réelle |
-| `attach.truncated` | First 1 MB shown. Save the file to see all of it. | Premier Mo affiché. Enregistrez le fichier pour le voir en entier. |
-| `settings.attachments` | Attached files: {size} in {count} | Fichiers joints : {size} dans {count} (`{count}` is `attach.count`) |
-| `export.include_files` | Include attached files ({size}) | Inclure les fichiers joints ({size}) |
-| `import.files_missing` | {n} file was not in the export. · {n} files were not in the export. | {n} fichier n'était pas dans l'export. · {n} fichiers n'étaient pas dans l'export. |
-| `cmd.attach` | Attach files... | Joindre des fichiers... |
-| `cmd.attachment_save` | Save file as... | Enregistrer le fichier sous... |
-
-`{date}` and `{time}` in `attach.pasted_name` are `2026-11-21` and `14.05` in both languages: a file name is not localised (10.2). The units B / KB / MB and o / Ko / Mo are formats, not keys. `attach.moved_to` is plural in French because it heads a list of files. ("Open in another app" was rejected by the user, ADR 0012, 8: its three keys are gone.) Agent-facing text (`· files: A-4 plan.pdf 2.1M`) is protocol, English only, and not in this catalogue (10).
+`{date}` and `{time}` in `attach.pasted_name` are `2026-11-21` and `14.05` in both languages: a file name is not localised (10.2). The units B / KB / MB and o / Ko / Mo are formats, not keys; "25 Mo" and "10 Mo" inside the French sentences take U+202F before the unit (10.1). `attach.moved_to` is plural in French because it heads a list of files. ("Open in another app" was rejected by the user, ADR 0012, 8: its three keys are gone.) Agent-facing text (`· files: A-4 plan.pdf 2.1M`) is protocol, English only, and not in this catalogue (10).
 
 ### 10.4.8 Keys of Ready for Claude Code (ADR 0013)
 
@@ -1203,7 +1204,7 @@ New with ADR 0013 (2026-11-22; components-app.md 5, screens.md 8.26). Moved into
 
 ### 10.4.9 Keys of dictation (ADR 0014)
 
-New with dictation (2026-11-22; components-voice.md 5, screens.md 8.27). Moved into 10.4 and `catalogue.rs` when dictation was implemented (branch `gpui-engineer/voice-ui`): the `voice.*` family after the `inbox.*` keys (the `attach.*` family of 10.4.7 goes between them when attachments are implemented), `cmd.dictate`, `cmd.dictate_stop` and `cmd.voice_settings` after `cmd.folder_branch`. Added with the implementation, for review: `voice.setup.unsupported_cpu`, the first-use dialog's line on an x86-64 processor without AVX2 and FMA (ADR 0014, amendment: `hardware::Reason::UnsupportedCpu`), shown with Close only, as `voice.setup.unavailable`. In French the verb is *dicter* and the noun *dictée* (feminine: "Dictée désactivée"). "Whisper" and the model names (Tiny, Base, Small, Large turbo) are names, kept as written in both languages. `{size}`, `{done}`, `{free}` and `{memory}` use the size format of components-attachments.md 5 (1 KB = 1,024 bytes, as the file managers show sizes: Small is "181 MB", Large turbo "547 MB"; the decimal "190 MB" and "574 MB" of the earlier text are the Hugging Face page's figures); `{percent}` is a whole number with `%` (French: a narrow no-break space before `%`, 10.2); `{shortcut}` is the key as the kbd hint names it on the platform; `{model}` a model name; `{path}` a folder in `type.code`.
+New with dictation (2026-11-22; components-voice.md 5, screens.md 8.27). Moved into 10.4 and `catalogue.rs` when dictation was implemented (branch `gpui-engineer/voice-ui`): the `voice.*` family after the `attach.*` keys, `cmd.dictate`, `cmd.dictate_stop` and `cmd.voice_settings` after `cmd.folder_branch`. Added with the implementation, for review: `voice.setup.unsupported_cpu`, the first-use dialog's line on an x86-64 processor without AVX2 and FMA (ADR 0014, amendment: `hardware::Reason::UnsupportedCpu`), shown with Close only, as `voice.setup.unavailable`. In French the verb is *dicter* and the noun *dictée* (feminine: "Dictée désactivée"). "Whisper" and the model names (Tiny, Base, Small, Large turbo) are names, kept as written in both languages. `{size}`, `{done}`, `{free}` and `{memory}` use the size format of components-attachments.md 5 (1 KB = 1,024 bytes, as the file managers show sizes: Small is "181 MB", Large turbo "547 MB"; the decimal "190 MB" and "574 MB" of the earlier text are the Hugging Face page's figures); `{percent}` is a whole number with `%` (French: a narrow no-break space before `%`, 10.2); `{shortcut}` is the key as the kbd hint names it on the platform; `{model}` a model name; `{path}` a folder in `type.code`.
 
 The macOS `Info.plist` usage strings (ADR 0014, 8) live with the bundle (`InfoPlist.strings`), not in this catalogue: `NSMicrophoneUsageDescription` "Acta turns what you say into text, on this Mac." / "Acta transforme ce que vous dites en texte, sur ce Mac."; `NSSpeechRecognitionUsageDescription` "Lets the macOS recogniser turn what you say into text, on this Mac." / "Permet à la reconnaissance de macOS de transformer ce que vous dites en texte, sur ce Mac." The delete dialog's buttons and "Show in Explorer" (Finder, file manager) reuse their existing keys.
 

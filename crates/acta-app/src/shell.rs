@@ -431,6 +431,10 @@ enum Overlay {
     Palette(Entity<Palette>),
     Capture(Entity<Capture>),
     Dialog(Entity<Dialog>),
+    /// The file viewer (components-attachments.md 5, Viewer).
+    Viewer(Entity<crate::attach_ui::Viewer>),
+    /// A file's menu: View, Save as..., Remove.
+    FileMenu(Entity<crate::attach_ui::FileMenu>),
 }
 
 /// A page tab that is not the checked-out one: its history, and its view
@@ -507,6 +511,10 @@ struct Bench {
     /// Where focus returns when the overlay closes.
     return_focus: Option<FocusHandle>,
     capture_draft: String,
+    /// Quick capture's files, kept with its draft when it closes.
+    capture_tray: Option<Entity<crate::attach_ui::Tray>>,
+    /// Strips, menus, the viewer and Save as (components-attachments.md 5).
+    files: Entity<crate::attach_ui::Files>,
     /// The Questions page opened next starts on this segment (the
     /// Overview's late answers open it on Overdue).
     questions_filter: Option<crate::questions_model::Filter>,
@@ -692,6 +700,8 @@ impl Shell {
             .spawn(async { claude_setup::write_plugin_files() })
             .detach();
         let ws = cx.new(|cx| Workspace::new(db, cx));
+        let files = cx.new(|_| crate::attach_ui::Files::new(ws.clone()));
+        cx.set_global(crate::attach_ui::FilesHub(files.clone()));
         let dock = cx.new(|cx| TerminalDock::new(ws.clone(), cx));
         let sessions = cx.new(|cx| crate::sessions_view::SessionsView::new(ws.clone(), cx));
         #[cfg(windows)]
@@ -725,6 +735,7 @@ impl Shell {
                 },
             ),
             cx.subscribe_in(&sessions, window, Self::on_sessions),
+            cx.subscribe_in(&files, window, Self::on_files),
             cx.subscribe_in(
                 &settings_page,
                 window,
@@ -780,6 +791,8 @@ impl Shell {
             overlay: None,
             return_focus: None,
             capture_draft: String::new(),
+            capture_tray: None,
+            files,
             questions_filter: None,
             toast: None,
             toast_timer: Task::ready(()),
@@ -816,6 +829,60 @@ impl Shell {
             WorkspaceEvent::Toast(toast) => self.show_toast(toast.clone(), cx),
             WorkspaceEvent::Reloaded => self.after_reload(window, cx),
         }
+    }
+
+    /// A file asks for the viewer or its menu: an overlay, with focus back
+    /// to the file when it closes.
+    fn on_files(
+        &mut self,
+        _: &Entity<crate::attach_ui::Files>,
+        event: &crate::attach_ui::FilesEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::attach_ui::{FileMenu, FilesEvent, OverlayEvent, Viewer};
+        let return_focus = window.focused(cx);
+        let Some(bench) = self.bench() else { return };
+        // A menu's View hands over to the viewer: focus still goes back to
+        // the file the menu was opened on.
+        let keep = match &bench.overlay {
+            Some(Overlay::FileMenu(_)) => bench.return_focus.clone(),
+            _ => None,
+        };
+        let (overlay, sub) = match event {
+            FilesEvent::View(list, at) => {
+                let (list, at) = (list.clone(), *at);
+                let viewer = cx.new(|cx| Viewer::new(list, at, window, cx));
+                let sub =
+                    cx.subscribe_in(&viewer, window, |shell, _, _: &OverlayEvent, window, cx| {
+                        shell.close_overlay(window, cx)
+                    });
+                (Overlay::Viewer(viewer), sub)
+            }
+            FilesEvent::Menu(target, at) => {
+                let (target, at) = (target.clone(), *at);
+                let menu = cx.new(|cx| FileMenu::new(target, at, window, cx));
+                let sub = cx.subscribe_in(
+                    &menu,
+                    window,
+                    |shell, menu, _: &OverlayEvent, window, cx| {
+                        // A choice that opened the viewer replaced the menu.
+                        let open = shell.bench().is_some_and(
+                            |b| matches!(&b.overlay, Some(Overlay::FileMenu(m)) if m == menu),
+                        );
+                        if open {
+                            shell.close_overlay(window, cx)
+                        }
+                    },
+                );
+                (Overlay::FileMenu(menu), sub)
+            }
+        };
+        let Some(bench) = self.bench() else { return };
+        bench.return_focus = keep.or(return_focus);
+        bench._subs.push(sub);
+        bench.overlay = Some(overlay);
+        cx.notify();
     }
 
     /// The first reload opens the first page; later ones keep the page and
@@ -1269,8 +1336,125 @@ impl Shell {
             }
             Ok("export") => self.open_export(window, cx),
             Ok("snapshots") => self.open_snapshots(window, cx),
+            // Files (components-attachments.md 5): see `dev_attach`.
+            #[cfg(debug_assertions)]
+            Ok(which) if which.starts_with("attach-") => {
+                let which = which.to_owned();
+                self.dev_attach(&which, window, cx)
+            }
             _ => {}
         }
+    }
+
+    /// Debug builds, `ACTA_DEV_OVERLAY=attach-*`, once the page has loaded:
+    /// quick capture with a pasted image (the paste hook called with a
+    /// clipboard holding only an image) and the files of `ACTA_DEV_FILES`
+    /// (`;`-separated) dropped through GPUI's own file drop events
+    /// (`attach-capture`; `attach-drop-hover` stops while they are over
+    /// it); the viewer on the first or second image or on a text file;
+    /// a file's menu; a note, a description or an entry being edited.
+    /// The real clipboard and file manager are never used.
+    #[cfg(debug_assertions)]
+    fn dev_attach(&mut self, which: &str, window: &mut Window, cx: &mut Context<Self>) {
+        use gpui_kit::{ExternalPaths, FileDropEvent, PlatformInput, point};
+        let which = which.to_owned();
+        let files: Vec<std::path::PathBuf> = std::env::var("ACTA_DEV_FILES")
+            .unwrap_or_default()
+            .split(';')
+            .filter(|p| !p.is_empty())
+            .map(std::path::PathBuf::from)
+            .collect();
+        if matches!(which.as_str(), "attach-capture" | "attach-drop-hover") {
+            self.open_capture(window, cx);
+        }
+        cx.spawn_in(window, async move |shell, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(1500))
+                .await;
+            let capture = |shell: &mut Shell| match shell.bench().map(|b| b.overlay.as_ref()) {
+                Some(Some(Overlay::Capture(c))) => Some(c.clone()),
+                _ => None,
+            };
+            match which.as_str() {
+                "attach-capture" | "attach-drop-hover" => {
+                    if which == "attach-capture" {
+                        let _ = shell.update_in(cx, |shell, window, cx| {
+                            if let Some(c) = capture(shell) {
+                                c.update(cx, |c, cx| c.dev_fill(window, cx));
+                            }
+                        });
+                    }
+                    // Over the capture's editor: 96 from the top, centred.
+                    let _ = cx.update(|window, cx| {
+                        let at = point(window.viewport_size().width / 2., px(150.));
+                        let paths = ExternalPaths(files.into_iter().collect());
+                        window.dispatch_event(
+                            PlatformInput::FileDrop(FileDropEvent::Entered {
+                                position: at,
+                                paths,
+                            }),
+                            cx,
+                        );
+                        window.dispatch_event(
+                            PlatformInput::FileDrop(FileDropEvent::Pending { position: at }),
+                            cx,
+                        );
+                        if which == "attach-capture" {
+                            window.dispatch_event(
+                                PlatformInput::FileDrop(FileDropEvent::Submit { position: at }),
+                                cx,
+                            );
+                        }
+                    });
+                }
+                "attach-edit" | "attach-filed" => {
+                    let filed = which == "attach-filed";
+                    let _ = shell.update_in(cx, |shell, window, cx| {
+                        if let Some(bench) = shell.bench()
+                            && let PageView::Inbox(page) = &bench.page
+                        {
+                            let page = page.clone();
+                            page.update(cx, |p, cx| {
+                                if filed {
+                                    p.dev_show_filed(cx)
+                                } else {
+                                    p.dev_edit_first(window, cx)
+                                }
+                            });
+                        }
+                    });
+                }
+                "attach-settings" => {
+                    let _ = shell.update_in(cx, |shell, _, cx| {
+                        if let Some(bench) = shell.bench()
+                            && let PageView::Settings(page) = &bench.page
+                        {
+                            let page = page.clone();
+                            page.update(cx, |p, cx| p.dev_scroll_end(cx));
+                        }
+                    });
+                }
+                "attach-description" | "attach-entry" => {
+                    let entry = which == "attach-entry";
+                    let _ = shell.update_in(cx, |shell, window, cx| {
+                        shell.with_record(
+                            cx,
+                            |page, window, cx| page.dev_files_editor(entry, window, cx),
+                            window,
+                        )
+                    });
+                }
+                _ => {
+                    let _ = shell.update_in(cx, |shell, _, cx| {
+                        if let Some(bench) = shell.bench() {
+                            let files = bench.files.clone();
+                            files.update(cx, |f, cx| f.dev_open(&which, cx));
+                        }
+                    });
+                }
+            }
+        })
+        .detach();
     }
 
     fn show_first_run(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -2798,14 +2982,16 @@ impl Shell {
         bench.return_focus = window.focused(cx);
         let ws = bench.ws.clone();
         let draft = std::mem::take(&mut bench.capture_draft);
-        let capture = cx.new(|cx| Capture::new(ws, project, draft, window, cx));
+        let tray = bench.capture_tray.take();
+        let capture = cx.new(|cx| Capture::new(ws, project, draft, tray, window, cx));
         let sub = cx.subscribe_in(
             &capture,
             window,
             |shell, _, event: &CaptureEvent, window, cx| {
-                let CaptureEvent::Close(draft) = event;
+                let CaptureEvent::Close(draft, tray) = event;
                 if let Some(bench) = shell.bench() {
                     bench.capture_draft = draft.clone();
+                    bench.capture_tray = tray.clone();
                 }
                 shell.close_overlay(window, cx);
             },
@@ -2918,6 +3104,8 @@ impl Shell {
             DialogKind::Export {
                 project,
                 this_project: false,
+                include_files: true,
+                files: None,
             },
             window,
             cx,
@@ -4902,10 +5090,12 @@ impl Shell {
                                         locale, &report, missing, had_auto,
                                     ),
                                     kind: ToastKind::Done,
+                                    action: None,
                                 },
                                 None => Toast {
                                     message: text(locale, Key::ErrorSave),
                                     kind: ToastKind::Error,
+                                    action: None,
                                 },
                             };
                             shell.show_toast(toast, cx);
@@ -5019,6 +5209,12 @@ impl Shell {
             Overlay::Dialog(dialog) => deferred(dialog.clone())
                 .with_priority(OVERLAY_PRIORITY)
                 .into_any_element(),
+            Overlay::Viewer(viewer) => deferred(viewer.clone())
+                .with_priority(OVERLAY_PRIORITY)
+                .into_any_element(),
+            Overlay::FileMenu(menu) => deferred(menu.clone())
+                .with_priority(OVERLAY_PRIORITY)
+                .into_any_element(),
         })
     }
 
@@ -5070,6 +5266,39 @@ impl Shell {
                         .text_color(t.text_primary)
                         .child(toast.message.clone()),
                 )
+                .children(toast.action.clone().map(|action| {
+                    match action {
+                        crate::workspace::ToastAction::Reveal(path) => ui::button(
+                            "toast-reveal",
+                            text(locale, Key::AttachShowInFolder),
+                            Variant::Ghost,
+                            false,
+                            &t,
+                        )
+                        // The parent folder with the file selected, never the file.
+                        .on_click(move |_, _, cx| cx.reveal_path(&path))
+                        .into_any_element(),
+                        crate::workspace::ToastAction::RetrySave(file, path) => ui::button(
+                            "toast-retry",
+                            text(locale, Key::CommonRetry),
+                            Variant::Ghost,
+                            false,
+                            &t,
+                        )
+                        .on_click(cx.listener(move |shell, _, _, cx| {
+                            if let Some(bench) = shell.bench() {
+                                bench.toast = None;
+                                let (file, path) = ((*file).clone(), path.clone());
+                                bench
+                                    .files
+                                    .clone()
+                                    .update(cx, |files, cx| files.save_to(file, path, cx));
+                            }
+                            cx.notify();
+                        }))
+                        .into_any_element(),
+                    }
+                }))
                 .when(toast.kind == ToastKind::Undo, |this| {
                     this.child(
                         ui::button(
@@ -5296,7 +5525,8 @@ fn seed_if_asked(store: &mut acta_core::Store) {
             || seed == "long"
             || seed == "due"
             || seed == "folders"
-            || seed == "questions")
+            || seed == "questions"
+            || seed == "attachments")
         && let Some(dir) = crate::launch_dir()
         && let Err(err) = match seed.as_str() {
             "bare" => crate::dev_seed::bare(store, &dir),
@@ -5307,6 +5537,8 @@ fn seed_if_asked(store: &mut acta_core::Store) {
             "folders" => crate::dev_seed::folders(store, &dir),
             #[cfg(debug_assertions)]
             "questions" => crate::dev_seed::questions(store, &dir),
+            #[cfg(debug_assertions)]
+            "attachments" => crate::dev_seed::attachments(store, &dir),
             _ => crate::dev_seed::seed(store, &dir),
         }
     {

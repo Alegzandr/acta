@@ -692,3 +692,179 @@ fn imported_blobs_over_the_limit_or_unlike_their_size_are_refused() {
     f.blobs[0].content = Some(base64::engine::general_purpose::STANDARD.encode(vec![0u8; 3]));
     assert!(import(&f).unwrap_err().to_string().contains("limit"));
 }
+
+#[test]
+fn a_staged_file_gets_its_row_when_the_note_is_saved_or_goes_when_discarded() {
+    let (mut ts, p, _) = setup();
+    let s = &mut ts.store;
+    let data = bytes(5, 2 * CHUNK_BYTES + 3);
+    let mut calls = Vec::new();
+    let staged = s
+        .stage(&AttachSource::Bytes(data.clone()), &mut |d, t| {
+            calls.push((d, t))
+        })
+        .unwrap();
+    assert_eq!(staged.size(), data.len() as u64);
+    assert_eq!(staged.kind(), FileKind::Other);
+    assert_eq!(calls.last(), Some(&(data.len() as u64, data.len() as u64)));
+    // Pending: no row names it, the blob is not complete yet.
+    assert_eq!(count(s, "SELECT count(*) FROM attachments"), 0);
+    assert_eq!(
+        count(
+            s,
+            "SELECT count(*) FROM attachment_blobs WHERE complete = 0"
+        ),
+        1
+    );
+    let n = s.add_note(p, "Logs from Alexandre", H).unwrap();
+    let a = s
+        .attach_staged(AttachOwner::Note(n), "trace.bin", &staged, H)
+        .unwrap();
+    assert_eq!(content(s, &a), data);
+    assert_eq!(
+        count(
+            s,
+            "SELECT count(*) FROM attachment_blobs WHERE complete = 0"
+        ),
+        0
+    );
+    // The same staging named twice links the one blob.
+    let b = s
+        .attach_staged(AttachOwner::Note(n), "copy.bin", &staged, H)
+        .unwrap();
+    assert_eq!(content(s, &b), data);
+    assert_eq!(count(s, "SELECT count(*) FROM attachment_blobs"), 1);
+    // Discarding after the row exists leaves the content alone.
+    s.discard_staged(&staged).unwrap();
+    assert_eq!(content(s, &a), data);
+
+    // Content already stored stages without writing anything.
+    let again = s
+        .stage(&AttachSource::Bytes(data.clone()), &mut |_, _| {})
+        .unwrap();
+    assert_eq!(count(s, "SELECT count(*) FROM attachment_blobs"), 1);
+    s.discard_staged(&again).unwrap();
+    assert_eq!(count(s, "SELECT count(*) FROM attachment_blobs"), 1);
+
+    // A cancelled editor drops its pending blob.
+    let other = s
+        .stage(&AttachSource::Bytes(bytes(9, 100)), &mut |_, _| {})
+        .unwrap();
+    assert_eq!(count(s, "SELECT count(*) FROM attachment_blobs"), 2);
+    s.discard_staged(&other).unwrap();
+    assert_eq!(count(s, "SELECT count(*) FROM attachment_blobs"), 1);
+    // ... after which it cannot be saved any more.
+    assert!(
+        s.attach_staged(AttachOwner::Note(n), "gone.bin", &other, H)
+            .is_err()
+    );
+
+    // Images carry their kind and pixel size before they have a row.
+    let img = s
+        .stage(&AttachSource::Bytes(png(40, 30)), &mut |_, _| {})
+        .unwrap();
+    assert_eq!(img.kind(), FileKind::Image);
+    assert_eq!(img.pixels(), Some((40, 30)));
+    assert!(s.staged_thumbnail(&img).unwrap().is_some());
+    let shot = s
+        .attach_staged(AttachOwner::Note(n), "shot.png", &img, H)
+        .unwrap();
+    assert!(s.attachment_thumbnail(shot.id).unwrap().is_some());
+    assert_eq!(s.attachment_owner(shot.id).unwrap(), AttachOwner::Note(n));
+}
+
+#[test]
+fn staging_refuses_too_large_and_saving_refuses_the_twenty_first() {
+    let (mut ts, p, _) = setup();
+    let s = &mut ts.store;
+    let big = vec![1u8; MAX_FILE_BYTES as usize + 1];
+    assert!(matches!(
+        s.stage(&AttachSource::Bytes(big), &mut |_, _| {}),
+        Err(Error::AttachmentTooLarge { .. })
+    ));
+    let n = s.add_note(p, "Twenty", H).unwrap();
+    for i in 0..MAX_FILES_PER_OWNER {
+        add(s, AttachOwner::Note(n), "f.bin", bytes(i as u8 + 1, 10));
+    }
+    let one = s
+        .stage(&AttachSource::Bytes(bytes(200, 10)), &mut |_, _| {})
+        .unwrap();
+    assert!(matches!(
+        s.attach_staged(AttachOwner::Note(n), "x.bin", &one, H),
+        Err(Error::TooManyFiles { .. })
+    ));
+}
+
+#[test]
+fn a_purge_never_takes_a_file_an_open_editor_holds() {
+    let (mut ts, p, _) = setup();
+    let s = &mut ts.store;
+    let n = s.add_note(p, "Logs from Alexandre", H).unwrap();
+    let data = bytes(11, CHUNK_BYTES + 5);
+    let age = |s: &Store| {
+        s.conn
+            .execute(
+                "UPDATE attachment_blobs SET created_at = 0 WHERE complete = 0",
+                [],
+            )
+            .unwrap();
+    };
+    // Held by this process: kept however old.
+    let staged = s
+        .stage(&AttachSource::Bytes(data.clone()), &mut |_, _| {})
+        .unwrap();
+    age(s);
+    s.purge_attachments(crate::time::now_ms()).unwrap();
+    let a = s
+        .attach_staged(AttachOwner::Note(n), "trace.bin", &staged, H)
+        .unwrap();
+    assert_eq!(content(s, &a), data);
+
+    // Another process's purge (no hold): a touch restarts the blob's age.
+    let other = s
+        .stage(&AttachSource::Bytes(bytes(12, 300)), &mut |_, _| {})
+        .unwrap();
+    s.held.clear();
+    age(s);
+    s.touch_staged(std::slice::from_ref(&other)).unwrap();
+    s.purge_attachments(crate::time::now_ms()).unwrap();
+    s.attach_staged(AttachOwner::Note(n), "kept.bin", &other, H)
+        .unwrap();
+
+    // Neither held nor touched: purged, and saving says so.
+    let gone = s
+        .stage(&AttachSource::Bytes(bytes(13, 300)), &mut |_, _| {})
+        .unwrap();
+    s.held.clear();
+    age(s);
+    s.purge_attachments(crate::time::now_ms()).unwrap();
+    let err = s
+        .attach_staged(AttachOwner::Note(n), "gone.bin", &gone, H)
+        .unwrap_err();
+    assert!(matches!(err, Error::StagedGone));
+    assert_eq!(
+        err.to_string(),
+        "the file was removed while the editor was open; add it again"
+    );
+}
+
+#[test]
+fn staging_through_a_lock_takes_it_once_per_step() {
+    let (mut ts, _, _) = setup();
+    let cell = std::cell::RefCell::new(&mut ts.store);
+    let taken = std::cell::Cell::new(0);
+    let data = bytes(14, 3 * CHUNK_BYTES);
+    let staged = stage_with(
+        || {
+            taken.set(taken.get() + 1);
+            std::cell::RefMut::map(cell.borrow_mut(), |s| &mut **s)
+        },
+        &AttachSource::Bytes(data.clone()),
+        &mut |_, _| {},
+    )
+    .unwrap();
+    assert_eq!(staged.size(), data.len() as u64);
+    // Writable check, lookup, pending blob, one per chunk: never held
+    // across the whole file.
+    assert_eq!(taken.get(), 3 + 3);
+}

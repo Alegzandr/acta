@@ -22,7 +22,7 @@ mod trash;
 
 pub use attachments::{
     AttachSource, AttachmentReader, CHUNK_BYTES, FileTotals, LARGE_FILE_BYTES, MAX_FILE_BYTES,
-    MAX_FILES_PER_OWNER, NAME_MAX, Purged, clean_name,
+    MAX_FILES_PER_OWNER, NAME_MAX, Purged, Staged, clean_name, stage_with,
 };
 pub use exchange::{
     ExportFile, FILE_EXTENSION, FORMAT_NAME, FORMAT_VERSION, ImportCounts, ImportReport,
@@ -85,6 +85,9 @@ pub struct Store {
     link_index_failed: std::cell::Cell<bool>,
     /// Contacts lifted by moves since the last [`Store::take_lifts`].
     lifts: std::cell::RefCell<Vec<crate::model::Lift>>,
+    /// Pending blobs this process staged for an open editor: the purge
+    /// leaves them alone, however old (ADR 0012, 4).
+    held: std::collections::HashSet<i64>,
 }
 
 /// `meta` key raised by the second release of a two-step destructive change
@@ -128,6 +131,7 @@ impl Store {
             writable,
             link_index_failed: std::cell::Cell::new(false),
             lifts: std::cell::RefCell::new(Vec::new()),
+            held: std::collections::HashSet::new(),
         })
     }
 

@@ -139,6 +139,9 @@ pub struct Loaded {
     /// The names of the contacts the timeline's Report to events name, by
     /// UUID (drawn with the current name).
     pub event_names: HashMap<String, String>,
+    /// The files of the description (topics and epics) and of the
+    /// entries shown (components-attachments.md 5).
+    pub files: HashMap<acta_core::model::AttachOwner, Vec<acta_core::model::Attachment>>,
 }
 
 /// What the Questions section and the topic table's two columns need.
@@ -351,7 +354,17 @@ pub fn load(
                 .flatten()
                 .collect();
             let event_names = store.contact_names(&uuids)?;
+            let owners: Vec<acta_core::model::AttachOwner> =
+                std::iter::once(acta_core::model::AttachOwner::Topic(id))
+                    .chain(
+                        entries
+                            .items
+                            .iter()
+                            .map(|e| acta_core::model::AttachOwner::Entry(e.id)),
+                    )
+                    .collect();
             Ok(Loaded {
+                files: store.attachments_of(&owners)?,
                 event_names,
                 questions: questions(store, owner, topic.project, today)?,
                 report: topic.report.clone(),
@@ -396,6 +409,7 @@ pub fn load(
             let own = kb.own.len() as i64;
             let (figures, chip) = overview(store, Scope::Epic(id), today, chip)?;
             Ok(Loaded {
+                files: store.attachments_of(&[acta_core::model::AttachOwner::Epic(id)])?,
                 event_names: HashMap::new(),
                 questions: questions(store, owner, epic.project, today)?,
                 report: epic.report.clone(),
@@ -433,6 +447,7 @@ pub fn load(
             let own = kb.own.len() as i64;
             let (figures, chip) = overview(store, Scope::Project(id), today, chip)?;
             Ok(Loaded {
+                files: HashMap::new(),
                 event_names: HashMap::new(),
                 questions: questions(store, owner, id, today)?,
                 report: Report::default(),
