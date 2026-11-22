@@ -81,6 +81,10 @@ pub struct Preferences {
     /// keys (record ids or fixed page keys, never a title). `None` until
     /// the layout first changes: the defaults.
     pub layout: Option<Saved>,
+    /// Dictation (components-voice.md 5, Settings > Voice): the engine,
+    /// the model, the language and the graphics checkbox. Settings only;
+    /// the microphone is in the database's local values.
+    pub voice: crate::voice::VoicePrefs,
 }
 
 /// The file as stored. Every field but the version may be missing (it then
@@ -144,6 +148,14 @@ struct Stored {
     /// of the file unreadable (4.8.12).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     layout: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    voice_engine: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    voice_model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    voice_language: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    voice_no_gpu: bool,
 }
 
 /// A stored version ("0.4.1", "1.0.0-rc.1"): ASCII letters, digits, dots
@@ -329,6 +341,12 @@ pub fn parse(text: &str) -> Result<Preferences, LoadError> {
         skip_decision: stored.skip_decision,
         last_version: stored.last_version.filter(|v| is_version(v)),
         layout,
+        voice: crate::voice::VoicePrefs::from_stored(
+            stored.voice_engine.as_deref(),
+            stored.voice_model.as_deref(),
+            stored.voice_language.as_deref(),
+            stored.voice_no_gpu,
+        ),
     })
 }
 
@@ -362,6 +380,10 @@ pub fn serialize(prefs: &Preferences) -> String {
         tabs: Vec::new(),
         active_tab: 0,
         layout: prefs.layout.as_ref().map(Saved::to_value),
+        voice_engine: prefs.voice.engine_key().map(str::to_owned),
+        voice_model: prefs.voice.model.map(|m| m.key().to_owned()),
+        voice_language: prefs.voice.language_key().map(str::to_owned),
+        voice_no_gpu: !prefs.voice.gpu,
     };
     // A struct of plain enums and numbers always serializes.
     let mut text = serde_json::to_string_pretty(&stored).unwrap_or_default();
@@ -578,6 +600,12 @@ mod tests {
                 sidebar_width: Some(300),
                 ..Old::default()
             })),
+            voice: crate::voice::VoicePrefs {
+                engine: Some(crate::voice::EngineChoice::Whisper),
+                model: Some(acta_core::voice::models::ModelId::Small),
+                language: acta_core::voice::engine::Lang::French,
+                gpu: false,
+            },
         };
         save_to(&path, &prefs).unwrap();
         assert_eq!(load_from(&path).unwrap(), prefs);
@@ -642,6 +670,38 @@ mod tests {
         assert_eq!(prefs.layout, None, "a title is not a page key");
         assert_eq!(prefs.collapsed, ["P-1"]);
         assert_eq!(prefs.terminal_text_size, None);
+    }
+
+    #[test]
+    fn dictation_settings_round_trip_and_unknown_values_are_the_default() {
+        use crate::voice::{EngineChoice, VoicePrefs};
+        use acta_core::voice::engine::Lang;
+        use acta_core::voice::models::ModelId;
+        let text = serialize(&Preferences {
+            voice: VoicePrefs {
+                engine: Some(EngineChoice::Off),
+                model: Some(ModelId::LargeTurbo),
+                language: Lang::English,
+                gpu: true,
+            },
+            ..Preferences::default()
+        });
+        assert!(text.contains("\"voice_engine\": \"off\""));
+        assert!(text.contains("\"voice_model\": \"large-turbo\""));
+        assert!(text.contains("\"voice_language\": \"en\""));
+        assert!(!text.contains("voice_no_gpu"));
+        let back = parse(&text).unwrap().voice;
+        assert_eq!(back.engine, Some(EngineChoice::Off));
+        assert_eq!(back.model, Some(ModelId::LargeTurbo));
+        assert_eq!(back.language, Lang::English);
+        let odd = parse(
+            r#"{"version":1,"voice_engine":"cloud","voice_model":"medium","voice_language":"de"}"#,
+        )
+        .unwrap()
+        .voice;
+        assert_eq!(odd, VoicePrefs::default());
+        assert_eq!(odd.language, Lang::Detect);
+        assert!(odd.gpu);
     }
 
     #[test]

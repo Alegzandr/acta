@@ -75,6 +75,7 @@ mod update;
 mod update_source;
 mod updater_window;
 mod user_path;
+mod voice;
 mod voice_worker;
 #[cfg(windows)]
 mod webview_build;
@@ -364,6 +365,7 @@ fn run_app(options: Options, pending: Option<Arc<LaunchState>>, launched: Instan
             gpui_kit::init(cx);
             fonts::register(cx);
             settings::init(cx);
+            voice::init(cx);
             due::start(cx);
             shell::bind_keys(cx);
             // App-level quit asks first while an install runs (ADR 0013).

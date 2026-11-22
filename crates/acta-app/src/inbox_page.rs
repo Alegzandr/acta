@@ -308,6 +308,7 @@ impl InboxPage {
                 .auto_grow(3, 16)
                 .placeholder(placeholder)
         });
+        crate::voice::attach(&capture, window, cx);
         let place = acta_core::model::Place {
             project,
             epic: None,
@@ -550,6 +551,7 @@ impl InboxPage {
                 .default_value(note.text.clone())
         });
         state.update(cx, |state, cx| state.focus(window, cx));
+        crate::voice::attach(&state, window, cx);
         let sub = cx.subscribe_in(
             &state,
             window,
@@ -871,7 +873,20 @@ impl InboxPage {
                     ))
                     .into_any_element(),
             })
-            .child(meta.child(div().flex_1()).child(actions))
+            // A note being edited offers dictation in its footer, under it
+            // its line (components-voice.md 5).
+            .child({
+                let editing = self.editing.as_ref().filter(|(e, _)| *e == id);
+                meta.child(div().flex_1())
+                    .children(editing.and_then(|(_, s)| crate::voice::ui::mic_for(s, cx)))
+                    .child(actions)
+            })
+            .children(
+                self.editing
+                    .as_ref()
+                    .filter(|(e, _)| *e == id)
+                    .and_then(|(_, s)| crate::voice::ui::line_for(s, cx)),
+            )
             .into_any_element()
     }
 }
@@ -965,11 +980,17 @@ impl Render for InboxPage {
                             )
                             .child(div().w(px(240.)).child(self.report.clone())),
                     )
-                    .child(type_scale::SMALL.el().text_color(t.text_tertiary).child(tr(
-                        locale,
-                        Key::ComposerHint,
-                        &[("keys", Arg::Text(&keys))],
-                    )))
+                    // Dictation (components-voice.md 5): the microphone,
+                    // left of the save hint, which yields while listening.
+                    .children(crate::voice::ui::mic_for(&self.capture, cx))
+                    .when(
+                        !crate::voice::ui::listening_for(&self.capture, cx),
+                        |this| {
+                            this.child(type_scale::SMALL.el().text_color(t.text_tertiary).child(
+                                tr(locale, Key::ComposerHint, &[("keys", Arg::Text(&keys))]),
+                            ))
+                        },
+                    )
                     .child(
                         ui::button(
                             "inbox-add",
@@ -981,6 +1002,12 @@ impl Render for InboxPage {
                         .on_click(cx.listener(|page, _, window, cx| page.add(window, cx))),
                     ),
             );
+        // The dictation line sits under the editor's box (screens.md 8.27).
+        let capture = div()
+            .flex()
+            .flex_col()
+            .child(capture)
+            .children(crate::voice::ui::line_for(&self.capture, cx));
         let listed: Vec<(Note, Option<String>)> = if self.show_filed {
             self.filed.clone()
         } else {

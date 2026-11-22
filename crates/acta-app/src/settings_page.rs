@@ -118,7 +118,7 @@ fn choice_control<T: Copy + PartialEq + 'static>(
 
 /// What a key does to a dropdown menu of `count` items.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum MenuKey {
+pub(crate) enum MenuKey {
     /// Open it with this item highlighted.
     Open(usize),
     /// Move the highlight.
@@ -131,7 +131,7 @@ enum MenuKey {
 
 /// `selected` is the current value's item, `highlighted` the open menu's.
 /// Keys pressed with a modifier are not the menu's.
-fn menu_key(
+pub(crate) fn menu_key(
     open: bool,
     selected: usize,
     highlighted: usize,
@@ -187,6 +187,10 @@ pub struct SettingsPage {
     /// status bar opens Settings there).
     scroll: gpui_kit::ScrollHandle,
     reveal_ready: std::rc::Rc<std::cell::Cell<u8>>,
+    /// Settings > Voice (components-voice.md 5), and a pending scroll to
+    /// it ("Voice settings").
+    voice: Option<Entity<crate::voice::settings_view::VoiceSettings>>,
+    reveal_voice: std::rc::Rc<std::cell::Cell<u8>>,
 }
 
 impl EventEmitter<crate::ready::Request> for SettingsPage {}
@@ -263,6 +267,10 @@ impl SettingsPage {
             _cli: cli_task,
             scroll: gpui_kit::ScrollHandle::new(),
             reveal_ready: Default::default(),
+            voice: crate::voice::get(cx).map(|d| {
+                cx.new(|cx| crate::voice::settings_view::VoiceSettings::new(d, window, cx))
+            }),
+            reveal_voice: Default::default(),
         }
     }
 
@@ -271,6 +279,12 @@ impl SettingsPage {
     pub fn reveal_ready(&mut self, cx: &mut Context<Self>) {
         // Tried for a few frames: the page may not be laid out yet.
         self.reveal_ready.set(REVEAL_FRAMES);
+        cx.notify();
+    }
+
+    /// Scroll to Settings > Voice once it is laid out.
+    pub fn reveal_voice(&mut self, cx: &mut Context<Self>) {
+        self.reveal_voice.set(REVEAL_FRAMES);
         cx.notify();
     }
 
@@ -294,7 +308,12 @@ use crate::ui::focus_ring;
 
 /// A setting row: label and description at the left, the control at the
 /// right; at least 44 high with 8 of vertical padding; no boxes, no lines.
-fn setting_row(label: String, description: String, control: impl IntoElement, t: &Tokens) -> Div {
+pub(crate) fn setting_row(
+    label: String,
+    description: String,
+    control: impl IntoElement,
+    t: &Tokens,
+) -> Div {
     div()
         .flex()
         .flex_row()
@@ -534,6 +553,27 @@ impl Render for SettingsPage {
         let language = self.language_control(locale, &t, cx);
         let text_size = self.text_size_control(&t, cx);
         let claude = self.claude_section(locale, &t, cx);
+        // Voice, after Claude Code and before Data (components-voice.md 5).
+        let voice = self.voice.clone().map(|voice| {
+            let reveal = self.reveal_voice.clone();
+            let scroll = self.scroll.clone();
+            div()
+                .relative()
+                .child(voice)
+                .child(ui::measure(move |bounds, window| {
+                    let left = reveal.get();
+                    if left == 0 {
+                        return;
+                    }
+                    if f32::from(scroll.max_offset().y) > 0. || left == 1 {
+                        ui::scroll_into_view(&scroll, bounds, ui::Reveal::Top);
+                        reveal.set(0);
+                    } else {
+                        reveal.set(left - 1);
+                    }
+                    window.refresh();
+                }))
+        });
         let data = self.data_sections(locale, &t, cx);
         let about = about_section(locale, &t);
         let profile = self.profile_section(locale, &t, cx);
@@ -617,6 +657,7 @@ impl Render for SettingsPage {
                         &t,
                     ))
                     .children(claude)
+                    .children(voice)
                     .children(data)
                     .children(about),
             )
@@ -1639,7 +1680,7 @@ impl SettingsPage {
 
 /// The checkbox of components.md 5 as a setting's control: 16, `radius.xs`,
 /// `border.strong`; checked, `accent` with a `check` in `text.on-accent`.
-fn checkbox(id: &'static str, checked: bool, t: &Tokens) -> gpui_kit::Stateful<Div> {
+pub(crate) fn checkbox(id: &'static str, checked: bool, t: &Tokens) -> gpui_kit::Stateful<Div> {
     let hover = t.fill_hover;
     div()
         .id(id)

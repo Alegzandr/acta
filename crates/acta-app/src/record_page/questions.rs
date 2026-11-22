@@ -230,6 +230,7 @@ impl RecordPage {
                 .default_value(editing.map(|q| q.text.clone()).unwrap_or_default())
         });
         text.update(cx, |s, cx| s.focus(window, cx));
+        crate::voice::attach(&text, window, cx);
         let value = editing
             .and_then(|q| q.asked_to.as_ref())
             .map(|c| Value::Contact(c.id, c.name.clone()))
@@ -423,6 +424,7 @@ impl RecordPage {
                 .default_value(q.answer.clone().unwrap_or_default())
         });
         editor.update(cx, |s, cx| s.focus(window, cx));
+        crate::voice::attach(&editor, window, cx);
         let sub = cx.subscribe_in(
             &editor,
             window,
@@ -2017,17 +2019,28 @@ impl RecordPage {
                                     .bg(t.bg_raised)
                                     .border_1()
                                     .border_color(t.border_default)
+                                    // Dictation: the microphone in the
+                                    // field's trailing slot, compact
+                                    // (components-voice.md 5).
+                                    .flex()
+                                    .flex_row()
+                                    .items_start()
                                     .child(
-                                        type_scale::UI.el().child(
+                                        type_scale::UI.el().flex_1().min_w_0().child(
                                             Textarea::new(&c.text)
                                                 .appearance(false)
                                                 .text_size(px(type_scale::UI.size()))
                                                 .line_height(px(type_scale::UI.line())),
                                         ),
+                                    )
+                                    .children(
+                                        crate::voice::ui::mic_for(&c.text, cx)
+                                            .map(|m| div().py(px(2.)).mr(px(-6.)).child(m)),
                                     ),
                             )
                             .children(counter),
                     )
+                    .children(crate::voice::ui::line_for(&c.text, cx))
                     .child(
                         div()
                             .flex()

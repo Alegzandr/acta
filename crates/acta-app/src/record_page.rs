@@ -674,6 +674,7 @@ impl RecordPage {
                 .default_value(value)
         });
         state.update(cx, |state, cx| state.focus(window, cx));
+        crate::voice::attach(&state, window, cx);
         let sub = cx.subscribe_in(
             &state,
             window,
@@ -854,6 +855,7 @@ impl RecordPage {
                 .default_value(entry.text.clone())
         });
         state.update(cx, |state, cx| state.focus(window, cx));
+        crate::voice::attach(&state, window, cx);
         let sub = cx.subscribe_in(
             &state,
             window,
@@ -3384,7 +3386,7 @@ fn editor_box(
         KeyName::Mod.label(locale, macos),
         KeyName::Enter.label(locale, macos)
     );
-    div()
+    let editor_box = div()
         .flex()
         .flex_col()
         .rounded(px(RADIUS_LG))
@@ -3409,12 +3411,24 @@ fn editor_box(
                 .justify_end()
                 .h(px(28.))
                 .items_center()
-                .child(type_scale::SMALL.el().text_color(t.text_tertiary).child(tr(
-                    locale,
-                    Key::ComposerHint,
-                    &[("keys", Arg::Text(&keys))],
-                ))),
-        )
+                .gap(px(8.))
+                // Dictation (components-voice.md 5): the microphone, left
+                // of the save hint, which yields while listening.
+                .children(crate::voice::ui::mic_for(editor, cx))
+                .when(!crate::voice::ui::listening_for(editor, cx), |this| {
+                    this.child(type_scale::SMALL.el().text_color(t.text_tertiary).child(tr(
+                        locale,
+                        Key::ComposerHint,
+                        &[("keys", Arg::Text(&keys))],
+                    )))
+                }),
+        );
+    // The dictation line sits under the editor's box.
+    div()
+        .flex()
+        .flex_col()
+        .child(editor_box)
+        .children(crate::voice::ui::line_for(editor, cx))
         .into_any_element()
 }
 
