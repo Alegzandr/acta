@@ -146,6 +146,7 @@ dependencies = [
  "getrandom 0.4.3",
  "hmac 0.12.1",
  "keyring",
+ "libc",
  "rusqlite",
  "schemars",
  "serde",
@@ -161,6 +162,7 @@ dependencies = [
 name = "acta-terminal"
 version = "0.4.1"
 dependencies = [
+ "acta-core",
  "alacritty_terminal",
  "async-channel",
  "gpui-kit",

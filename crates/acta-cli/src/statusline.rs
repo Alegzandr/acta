@@ -124,26 +124,8 @@ pub fn is_acta_statusline(command: &str) -> bool {
 pub fn shell_for(command: &str) -> Command {
     #[cfg(windows)]
     {
-        let bash = std::env::var_os("CLAUDE_CODE_GIT_BASH_PATH")
-            .map(std::path::PathBuf::from)
-            .filter(|p| p.is_file())
-            .or_else(git_bash_on_path)
-            .or_else(|| {
-                ["ProgramFiles", "ProgramW6432", "LOCALAPPDATA"]
-                    .iter()
-                    .filter_map(std::env::var_os)
-                    .flat_map(|base| {
-                        let base = std::path::PathBuf::from(base);
-                        [
-                            base.join("Git").join("bin").join("bash.exe"),
-                            base.join("Programs")
-                                .join("Git")
-                                .join("bin")
-                                .join("bash.exe"),
-                        ]
-                    })
-                    .find(|p| p.is_file())
-            });
+        // The shared lookup (ADR 0013, prereqs::locate::git_bash).
+        let bash = acta_core::prereqs::git_bash();
         match bash {
             Some(bash) => {
                 let mut c = Command::new(bash);
@@ -163,17 +145,6 @@ pub fn shell_for(command: &str) -> Command {
         c.args(["-c", command]);
         c
     }
-}
-
-/// Git Bash from a `git.exe` on `PATH`: `<Git>/cmd/git.exe` or
-/// `<Git>/bin/git.exe`, next to `<Git>/bin/bash.exe`.
-#[cfg(windows)]
-fn git_bash_on_path() -> Option<std::path::PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path)
-        .filter(|dir| dir.join("git.exe").is_file())
-        .filter_map(|dir| dir.parent().map(|git| git.join("bin").join("bash.exe")))
-        .find(|bash| bash.is_file())
 }
 
 /// Runs `command` with `input` on stdin; its stdout whatever the exit
