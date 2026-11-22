@@ -336,7 +336,12 @@ mod tests {
             part
         };
         let parts: Vec<&str> = text.split(" \u{b7} ").collect();
-        if parts.len() == 2 && !matches!(key, "kb.scope" | "import.meta" | "meta.record") {
+        if parts.len() == 2
+            && !matches!(
+                key,
+                "kb.scope" | "import.meta" | "meta.record" | "questions.scope" | "contact.meta"
+            )
+        {
             parts.into_iter().map(typeset).collect()
         } else {
             vec![typeset(&text)]
