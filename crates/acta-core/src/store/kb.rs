@@ -113,6 +113,9 @@ pub struct KbWriteCtx {
     pub context_branch: Option<String>,
     /// Sources the entry names (ADR 0015, 5), added to the ones it has.
     pub links: Vec<super::KbSource>,
+    /// An edit: `links` replace the entry's sources instead (the writer
+    /// named them again, so an old path no longer flags it).
+    pub replace_links: bool,
 }
 
 /// One row of a history list: no body.
@@ -610,6 +613,9 @@ pub(crate) fn update_in(
             (body, ChangeKind::AppendedSection, Some(heading))
         }
     };
+    if ctx.replace_links {
+        tx.execute("DELETE FROM kb_links WHERE entry_id = ?1", [id.0])?;
+    }
     super::kb_quality::add_links(tx, id, &ctx.links, author, now)?;
     if title == cur.title && summary == cur.summary && body == cur.body {
         return Ok(cur.rev);

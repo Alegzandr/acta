@@ -2328,6 +2328,7 @@ impl Agent<'_> {
         if let Some(also) = self.also_open(id) {
             head.push_str(&format!("\n{also}"));
         }
+        self.test_bump_after_read(id);
         let mut title = format!("Title: {}", render::clip(&render::one_line(&e.title), 100));
         if let Some(p) = self.provenance(&e, &flags) {
             title.push('\n');
@@ -2795,7 +2796,9 @@ impl Agent<'_> {
         };
         let mut ctx = self.write_ctx();
         if let Some(r) = a.refs.as_deref() {
+            // Named again on an edit: they replace the old sources.
             ctx.links = self.parse_refs(r)?;
+            ctx.replace_links = true;
         }
         let olds = match a.supersedes.as_deref() {
             Some(t) => self.parse_supersedes(t)?,

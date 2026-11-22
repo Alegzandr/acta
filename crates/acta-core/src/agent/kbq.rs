@@ -46,6 +46,9 @@ pub struct KbSession {
     pub warned: Vec<KbId>,
     /// Blob ids at `HEAD` per worktree root: `(head, path -> blob)`.
     trees: HashMap<PathBuf, (String, HashMap<String, Option<String>>)>,
+    /// Debug builds: `ACTA_TEST_BUMP_AFTER_READ` already applied (phase 6
+    /// proof of the stale-revision reply).
+    pub bumped: bool,
     /// Whether a branch is merged into the default one, per root, branch
     /// and the two commits.
     merged: HashMap<(PathBuf, String, String, String), bool>,
@@ -242,6 +245,42 @@ impl Agent<'_> {
             },
         );
         t.truncate(KB_RECENT);
+    }
+
+    /// Debug builds only: `ACTA_TEST_BUMP_AFTER_READ=K-n` makes the first
+    /// read of that entry be followed by an edit from another session, so
+    /// a headless run meets a stale revision (ADR 0015, phase 6).
+    pub(crate) fn test_bump_after_read(&mut self, id: KbId) {
+        if !cfg!(debug_assertions) || self.session.kb.bumped {
+            return;
+        }
+        let wanted = std::env::var("ACTA_TEST_BUMP_AFTER_READ").ok();
+        if wanted.as_deref().map(str::trim) != Some(id.to_string().as_str()) {
+            return;
+        }
+        self.session.kb.bumped = true;
+        let Ok(e) = self.store.kb_entry(id) else {
+            return;
+        };
+        let ctx = KbWriteCtx {
+            session: Some("another-test-session".into()),
+            ..KbWriteCtx::default()
+        };
+        let _ = self.store.kb_update_with(
+            id,
+            crate::store::KbUpdate {
+                expected_rev: None,
+                title: None,
+                summary: None,
+                edit: crate::store::KbEdit::Body(format!(
+                    "{}
+Also: the script must run from the repository root.",
+                    e.body.trim_end()
+                )),
+            },
+            &ctx,
+            Author::Claude,
+        );
     }
 
     /// `K-4 is also open in a session on T-51 (read 2 min ago).` when
@@ -693,7 +732,7 @@ impl Agent<'_> {
             None => format!("replace it (supersedes=\"{}\")", first.id),
         };
         let out = format!(
-            "not saved: {}\n{}\nReconcile: {replace}, fix it (kb_write id=\"{}\" rev={}), or, if both hold, say in this summary when it applies and repeat the call.",
+            "not saved: {}\n{}\nReconcile: {replace}, fix it (kb_write id=\"{}\" rev={} op=\"replace_body\"), or, if both hold, say in this summary when it applies and repeat the call.",
             head.join("; "),
             fence.wrap(&body.join("\n")),
             first.id,

@@ -1984,12 +1984,21 @@ fn memory_quality_over_stdio() {
     let (_, list) = m.call("kb", json!({}));
     let line = list.lines().find(|l| l.starts_with("K-5")).unwrap();
     assert!(line.contains("?file gone"), "{list}");
+    // Fixed, naming its sources again: they replace the old ones.
+    let (err, text) = write(
+        &mut m,
+        json!({"id": "K-5", "rev": 2, "op": "replace_body", "text": "The module was removed.", "refs": "T-1"}),
+    );
+    assert!(!err, "{text}");
+    let (_, list) = m.call("kb", json!({}));
+    let line = list.lines().find(|l| l.starts_with("K-5")).unwrap();
+    assert!(!line.contains('?'), "{line}");
     m.close();
 
     // The CLI: verify (the revision read), a stale retire, check, quality.
-    let (ok, out, err) = cli(&data, &repo, &["kb", "verify", "K-5", "--rev", "2"], "");
+    let (ok, out, err) = cli(&data, &repo, &["kb", "verify", "K-5", "--rev", "3"], "");
     assert!(
-        ok && out.starts_with("ok K-5 verified (rev 3)"),
+        ok && out.starts_with("ok K-5 verified (rev 4)"),
         "{out}{err}"
     );
     let (ok, out, err) = cli(&data, &repo, &["kb", "retire", "K-5", "--rev", "1"], "gone");

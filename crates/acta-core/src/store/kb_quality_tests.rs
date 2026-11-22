@@ -557,6 +557,7 @@ fn the_round_trip_keeps_quality_fields_and_an_older_file_imports_live() {
             KbSource::Commit("9e92ba4".into()),
             KbSource::Record(Record::Topic(u)),
         ],
+        replace_links: false,
     };
     let old = mem(s, Owner::Topic(t), "Old fact");
     let (new, _) = s
