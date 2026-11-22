@@ -1492,6 +1492,121 @@ From the user's decisions of 2026-11-22 (layout.md 4.5.1, data.md 11 request 27)
 
 `{level_lower}` is the level word in lower case ("topic", « sujet »); the French form picks "cet" before "epic" (« cet epic »). The commands "Start Claude Code here", "New chat here" and "New browser here" use the `tool.*` labels above as their palette text.
 
+### 10.4.20 Keys of files and commits
+
+New with the Files and Commits views and the file viewer (2026-11-22; components-repo.md 5, wireframes 8.40 to 8.44). Numbered 10.4.20 to leave room for the sections other branches add meanwhile. Pending: to be moved into 10.4 and `catalogue.rs` when the UI is built (PLAN.md, Files and commits): `view.files` and `view.commits` after `view.sessions`, `cmd.toggle_files` and `cmd.toggle_commits` after `cmd.toggle_chat`, `folders.browse_files` and `folders.show_commits` after `folders.copy_path`, the other `cmd.*` keys after `cmd.folder_branch`, the `files.*`, `viewer.*`, `diff.*`, `commits.*` and `mention.*` families together after the `folders.*` keys.
+
+**Reused**, not duplicated: Open `common.open`; Retry `common.retry`; Try again `common.try_again`; Copied `common.copied`; Copy path `folders.copy_path`; Show in Explorer / Reveal in Finder / Show in file manager `folders.show.*`; Set working folder... `folders.set`; Locate... `folders.locate`; Active `folders.active`; the chooser's groups `folders.group.*`; Show working folders `cmd.folders_show`; Branches / Remote branches `folders.git.local`, `folders.git.remote`; no git `folders.git.err.no_git`; Open settings `cmd.settings`; Fit / Actual size `attach.fit`, `attach.actual`; Previous file / Next file `attach.prev`, `attach.next`; the find count "3 of 12" `attach.position`. In the palette, "Show ignored files", "Show changed files only", "Show changes", "Show file history", "Mention in Claude Code", "Copy relative path", "Open in default app" and "Reveal in Files" are their `files.*` keys, "Previous change" / "Next change" `diff.prev_change` / `diff.next_change`, and the Show, Hide and Move commands of the two views come from the `{view}` keys of 10.4.1.
+
+The git letters M, A, U, D, R, C, ref names, hashes, paths, file names and git's own messages (`{message}`) are never translated. *Commit* stays in French as git's word, as in 10.4.3 (*commiter*, *commité*), and so does *hash*. *Fichier* is masculine, *modification* feminine. `{size}`, `{before}` and `{after}` use the size format of components-attachments.md 5; `{seconds}` is a whole number and the French takes U+00A0 before "s"; the French "100 000" and "5 000" take U+202F (10.2). `viewer.too_large` puts the size after a colon in French, so the sentence never starts with a number. Counts take `tnum`.
+
+| Key | English | French |
+|---|---|---|
+| `view.files` | Files | Fichiers |
+| `view.commits` | Commits | Commits |
+| `cmd.toggle_files` | Toggle files | Afficher ou masquer les fichiers |
+| `cmd.toggle_commits` | Toggle commits | Afficher ou masquer les commits |
+| `files.of.topic` | Folders of topic {name} | Dossiers du sujet {name} |
+| `files.of.epic` | Folders of epic {name} | Dossiers de l'epic {name} |
+| `files.of.project` | Folders of project {name} | Dossiers du projet {name} |
+| `files.no_page` | Open a project, epic or topic to see its files. | Ouvrez un projet, un epic ou un sujet pour voir ses fichiers. |
+| `commits.no_page` | Open a project, epic or topic to see its commits. | Ouvrez un projet, un epic ou un sujet pour voir ses commits. |
+| `files.no_folder` | No working folder here. | Aucun dossier de travail ici. |
+| `files.not_found` | {folder} was not found on this computer. | {folder} est introuvable sur cet ordinateur. |
+| `files.status.modified` | Modified | Modifié |
+| `files.status.added` | Added | Ajouté |
+| `files.status.untracked` | Untracked | Non suivi |
+| `files.status.deleted` | Deleted | Supprimé |
+| `files.status.renamed` | Renamed from {path} | Renommé depuis {path} |
+| `files.status.conflict` | Conflict | Conflit |
+| `files.show_ignored` | Show ignored files | Afficher les fichiers ignorés |
+| `files.changed_only` | Show changed files only | Afficher seulement les fichiers modifiés |
+| `files.no_changes` | No changes in {folder}. | Aucune modification dans {folder}. |
+| `files.loading` | Loading... | Chargement... |
+| `files.empty_folder` | Empty | Vide |
+| `files.read_failed` | Could not read this folder. | Impossible de lire ce dossier. |
+| `files.refresh` | Refresh | Actualiser |
+| `files.collapse_all` | Collapse all | Tout replier |
+| `files.filter_placeholder` | Filter by name | Filtrer par nom |
+| `files.matches_more` | {shown} of {n} matches. Keep typing to narrow. | {shown} résultats sur {n}. Continuez à taper pour affiner. |
+| `files.no_match` | No file matches “{query}”. | Aucun fichier ne correspond à « {query} ». |
+| `files.search_capped` | Searched the first 100,000 files. | Recherche limitée aux 100 000 premiers fichiers. |
+| `files.open_default` | Open in default app | Ouvrir avec l'application par défaut |
+| `files.no_run` | Acta does not run programs. | Acta n'exécute pas de programmes. |
+| `files.copy_relative` | Copy relative path | Copier le chemin relatif |
+| `files.mention` | Mention in Claude Code | Mentionner dans Claude Code |
+| `files.show_changes` | Show changes | Afficher les modifications |
+| `files.history` | Show file history | Afficher l'historique du fichier |
+| `files.folder_history` | Show folder history | Afficher l'historique du dossier |
+| `files.reveal` | Reveal in Files | Afficher dans la vue Fichiers |
+| `folders.browse_files` | Browse files | Parcourir les fichiers |
+| `folders.show_commits` | Show commits | Afficher les commits |
+| `mention.timeout` | Claude Code was not ready in time. The mention is copied. | Claude Code n'était pas prêt à temps. La mention est copiée. |
+| `viewer.lines` | {n} line · {n} lines | {n} ligne · {n} lignes |
+| `viewer.binary` | This file is not text Acta can show. | Ce fichier n'est pas du texte qu'Acta peut afficher. |
+| `viewer.not_utf8` | This file is not UTF-8 text. | Ce fichier n'est pas du texte UTF-8. |
+| `viewer.too_large` | {size} is too large to show here. | Trop volumineux pour être affiché ici : {size}. |
+| `viewer.truncated` | Showing the first 1 MB. | Seul le premier Mo est affiché. |
+| `viewer.gone` | This file was deleted or moved. | Ce fichier a été supprimé ou déplacé. |
+| `viewer.read_failed` | Could not read {name}. {reason} | Impossible de lire {name}. {reason} |
+| `viewer.rendered` | Rendered | Rendu |
+| `viewer.source` | Source | Source |
+| `viewer.find` | Find | Rechercher |
+| `viewer.find_none` | No results | Aucun résultat |
+| `diff.tab_uncommitted` | {name} · changes | {name} · modifications |
+| `diff.prev_change` | Previous change | Modification précédente |
+| `diff.next_change` | Next change | Modification suivante |
+| `diff.open_current` | Open current version | Ouvrir la version actuelle |
+| `diff.first_parent` | Compared with the first parent, {hash}. | Comparé au premier parent, {hash}. |
+| `diff.binary` | Binary file, {before} to {after}. | Fichier binaire, de {before} à {after}. |
+| `diff.binary_one` | Binary file, {size}. | Fichier binaire, {size}. |
+| `diff.binary_short` | binary | binaire |
+| `diff.before` | Before | Avant |
+| `diff.after` | After | Après |
+| `diff.no_content` | No changes in content. | Aucune modification du contenu. |
+| `diff.truncated` | Showing the first 5,000 lines of this diff. | Seules les 5 000 premières lignes de ce diff sont affichées. |
+| `commits.all_branches` | All branches | Toutes les branches |
+| `commits.current_branch` | Current branch ({branch}) | Branche courante ({branch}) |
+| `commits.current_commit` | Current commit | Commit courant |
+| `commits.filter_placeholder` | Filter by message, author or hash | Filtrer par message, auteur ou hash |
+| `commits.path_tip` | Only commits that change {path} | Seulement les commits qui modifient {path} |
+| `commits.clear_path` | Clear file filter | Retirer le filtre de fichier |
+| `commits.uncommitted` | Uncommitted changes | Modifications non commitées |
+| `commits.with_upstream` | {branch} and {upstream} | {branch} et {upstream} |
+| `commits.merge` | Merge commit | Commit de fusion |
+| `commits.commit` | Commit | Commit |
+| `commits.committed_by` | Committed by {name} | Commité par {name} |
+| `commits.parents` | Parents | Parents |
+| `commits.files_changed` | {n} file changed · {n} files changed | {n} fichier modifié · {n} fichiers modifiés |
+| `commits.copy_hash` | Copy hash | Copier le hash |
+| `commits.copy_subject` | Copy subject | Copier le titre |
+| `commits.only_branch` | Show only this branch | Afficher seulement cette branche |
+| `commits.loading` | Loading commits... | Chargement des commits... |
+| `commits.more_failed` | Could not load more commits. | Impossible de charger plus de commits. |
+| `commits.capped` | Showing the first 100,000 commits. Filter by branch or file to see older ones. | Seuls les 100 000 premiers commits sont affichés. Filtrez par branche ou par fichier pour voir les plus anciens. |
+| `commits.no_match` | No commits match. | Aucun commit ne correspond. |
+| `commits.clear_filters` | Clear filters | Retirer les filtres |
+| `commits.not_repo` | {folder} is not a git repository. | {folder} n'est pas un dépôt git. |
+| `commits.empty` | No commits yet. | Aucun commit pour l'instant. |
+| `commits.timed_out` | Git took longer than {seconds} s to read the history. | Git a mis plus de {seconds} s à lire l'historique. |
+| `commits.failed` | Could not read the history. {message} | Impossible de lire l'historique. {message} |
+| `cmd.go_to_file` | Go to file... | Aller au fichier... |
+| `cmd.files_folder` | Show files of folder... | Afficher les fichiers du dossier... |
+| `cmd.commits_folder` | Show commits of folder... | Afficher les commits du dossier... |
+| `cmd.files_ignored_hide` | Hide ignored files | Masquer les fichiers ignorés |
+| `cmd.files_all` | Show all files | Afficher tous les fichiers |
+| `cmd.files_collapse` | Collapse all folders | Replier tous les dossiers |
+| `cmd.files_refresh` | Refresh files | Actualiser les fichiers |
+| `cmd.commits_branch` | Filter commits by branch... | Filtrer les commits par branche... |
+| `cmd.commits_all` | Show all branches | Afficher toutes les branches |
+| `cmd.commits_head` | Go to current commit | Aller au commit courant |
+| `cmd.commits_copy_hash` | Copy commit hash | Copier le hash du commit |
+| `cmd.viewer_find` | Find in file | Rechercher dans le fichier |
+| `cmd.viewer_source` | Show source | Afficher la source |
+| `cmd.viewer_rendered` | Show rendered | Afficher le rendu |
+| `cmd.diff_next_file` | Next changed file | Fichier modifié suivant |
+| `cmd.diff_prev_file` | Previous changed file | Fichier modifié précédent |
+
 ### 10.4.21 Keys of Markdown rendering and the editor
 
 From the user's request of 2026-11-22 (components-editor.md 5). Pending until implemented; numbered high so that sections added meanwhile by other work keep their numbers. The heading and list commands reuse `slash.h1` to `slash.h3`, `slash.bullets`, `slash.numbers`, `slash.tasks` and `slash.quote` as their palette, bubble and context-menu labels; "Copied" is `common.copied`. `{mod}` is the `Ctrl` / `Cmd` key name of 6.1 (`KeyName::Mod`), `{host}` a host name, `{slug}` a heading anchor and `{item}` a task's text as written (at most 60 characters, then "…"), none of them translated. The alert words name GitHub's alert kinds and are translated like any label; what follows them is content and is not.
