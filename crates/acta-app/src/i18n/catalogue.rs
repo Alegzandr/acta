@@ -1026,8 +1026,8 @@ catalogue! {
         fr: t("Ajouter un dossier\u{2026}"),
     }
     FoldersHint "folders.hint" {
-        en: t("Claude Code starts in the active folder and may also read and edit the others."),
-        fr: t("Claude Code démarre dans le dossier actif et peut aussi lire et modifier les autres."),
+        en: t("Claude Code starts in the active folder and can also use the others."),
+        fr: t("Claude Code démarre dans le dossier actif et peut aussi utiliser les autres."),
     }
     FoldersNone "folders.none" {
         en: t("No working folder. The terminal will ask where to start."),
@@ -1182,8 +1182,8 @@ catalogue! {
         fr: t("Introuvable"),
     }
     FoldersOtherCheckout "folders.other_checkout" {
-        en: t("Another checkout of the same repository as {name}. Not passed to Claude Code here."),
-        fr: t("Autre copie de travail du même dépôt que {name}. Non transmise à Claude Code ici."),
+        en: t("Another checkout of {name}\u{2019}s repository. Not passed to Claude Code here."),
+        fr: t("Autre copie du dépôt de {name}. Non transmise à Claude Code ici."),
     }
     FoldersGitDetached "folders.git.detached" {
         en: t("detached at {commit}"),
@@ -1214,8 +1214,8 @@ catalogue! {
         fr: t("Automatique"),
     }
     FoldersIconAutoHint "folders.icon.auto_hint" {
-        en: t("Automatic: a branch for a git worktree, a git folder for a repository, a folder otherwise"),
-        fr: t("Automatique\u{202f}: une branche pour un worktree git, un dossier git pour un dépôt, un dossier sinon"),
+        en: t("Chosen from the folder: worktree, repository or plain folder"),
+        fr: t("Choisie d\u{2019}après le dossier\u{202f}: worktree, dépôt ou dossier simple"),
     }
     FoldersIconFolder "folders.icon.folder" {
         en: t("Folder"),
@@ -1282,16 +1282,16 @@ catalogue! {
         fr: t("Commit et push"),
     }
     FoldersCommitManualHint "folders.commit.manual_hint" {
-        en: t("Claude Code commits only when you ask."),
-        fr: t("Claude Code ne commite que si vous le demandez."),
+        en: t("Claude Code commits only when asked."),
+        fr: t("Claude Code ne commite que sur demande."),
     }
     FoldersCommitCommitHint "folders.commit.commit_hint" {
-        en: t("After each finished, tested change, Claude Code commits it."),
-        fr: t("Après chaque modification terminée et testée, Claude Code la commite."),
+        en: t("Claude Code commits each finished, tested change."),
+        fr: t("Claude Code commite chaque modification terminée et testée."),
     }
     FoldersCommitPushHint "folders.commit.push_hint" {
-        en: t("After each commit, Claude Code also pushes to the branch\u{2019}s upstream. Never forced; it stops and tells you if a push is rejected or needs a sign-in."),
-        fr: t("Après chaque commit, Claude Code pousse aussi vers la branche amont. Jamais en force\u{202f}; il s\u{2019}arrête et vous prévient si un push est refusé ou demande une connexion."),
+        en: t("Then pushes to the upstream branch, never forced. It stops if a push fails."),
+        fr: t("Puis pousse vers la branche amont, jamais en force. Il s\u{2019}arrête si un push échoue."),
     }
     FoldersCommitAsUser "folders.commit.as_user" {
         en: t("Commit in my name, without Co-Authored-By Claude"),
@@ -1302,28 +1302,28 @@ catalogue! {
         fr: t("Aussi sur {branch}"),
     }
     FoldersCommitIdentity "folders.commit.identity" {
-        en: t("Commits use your git identity: {name}."),
-        fr: t("Les commits utilisent votre identité git\u{202f}: {name}."),
+        en: t("Commits as {name}."),
+        fr: t("Commits au nom de\u{202f}: {name}."),
     }
     FoldersCommitNoIdentity "folders.commit.no_identity" {
-        en: t("Git has no user name for this folder, so commits will fail. Acta does not set it."),
-        fr: t("Git n\u{2019}a pas de nom d\u{2019}utilisateur pour ce dossier\u{202f}: les commits échoueront. Acta ne le définit pas."),
+        en: t("Git has no user name here, so commits will fail."),
+        fr: t("Git n\u{2019}a pas de nom d\u{2019}utilisateur ici\u{202f}: les commits échoueront."),
     }
     FoldersCommitFile "folders.commit.file" {
-        en: t("Acta writes these rules to .claude/settings.local.json in this folder, kept out of git."),
-        fr: t("Acta écrit ces règles dans le .claude/settings.local.json de ce dossier, exclu de git."),
+        en: t("Saved in .claude/settings.local.json, kept out of git."),
+        fr: t("Enregistré dans .claude/settings.local.json, exclu de git."),
     }
     FoldersCommitTracked "folders.commit.tracked" {
-        en: t("This folder\u{2019}s .claude/settings.local.json is tracked by git, so Acta does not write it: Claude Code will ask before each commit."),
-        fr: t("Le .claude/settings.local.json de ce dossier est suivi par git, Acta ne l\u{2019}écrit donc pas\u{202f}: Claude Code demandera avant chaque commit."),
+        en: t(".claude/settings.local.json is tracked by git here, so Acta leaves it alone. Claude Code will ask before each commit."),
+        fr: t(".claude/settings.local.json est suivi par git ici, Acta n\u{2019}y touche donc pas. Claude Code demandera avant chaque commit."),
     }
     FoldersCommitUserOwn "folders.commit.user_key" {
-        en: t("Your own {key} setting in .claude/settings.local.json is kept."),
-        fr: t("Votre propre réglage {key} dans .claude/settings.local.json est conservé."),
+        en: t("Your own {key} setting is kept."),
+        fr: t("Votre propre réglage {key} est conservé."),
     }
     FoldersCommitRootWins "folders.commit.root_wins" {
-        en: t("The repository\u{2019}s own local settings set attribution, and that setting wins."),
-        fr: t("Les réglages locaux du dépôt définissent attribution, et ce réglage l\u{2019}emporte."),
+        en: t("The repository\u{2019}s own attribution setting wins."),
+        fr: t("Le réglage attribution du dépôt l\u{2019}emporte."),
     }
     FoldersGitBehind "folders.git.behind" {
         en: t("behind {n}"),
@@ -1526,16 +1526,16 @@ catalogue! {
         fr: t("Redémarrer"),
     }
     TerminalMissingBodyTopic "terminal.missing.body.topic" {
-        en: t("Claude Code was not started. This is the active folder of topic {name}, and it is not on this computer:"),
-        fr: t("Claude Code n\u{2019}a pas été lancé. C\u{2019}est le dossier actif du sujet {name}, et il n\u{2019}est pas sur cet ordinateur\u{202f}:"),
+        en: t("Claude Code was not started: the active folder of topic {name} is not on this computer."),
+        fr: t("Claude Code n\u{2019}a pas été lancé\u{202f}: le dossier actif du sujet {name} n\u{2019}est pas sur cet ordinateur."),
     }
     TerminalMissingBodyEpic "terminal.missing.body.epic" {
-        en: t("Claude Code was not started. This is the active folder of epic {name}, and it is not on this computer:"),
-        fr: t("Claude Code n\u{2019}a pas été lancé. C\u{2019}est le dossier actif de l\u{2019}epic {name}, et il n\u{2019}est pas sur cet ordinateur\u{202f}:"),
+        en: t("Claude Code was not started: the active folder of epic {name} is not on this computer."),
+        fr: t("Claude Code n\u{2019}a pas été lancé\u{202f}: le dossier actif de l\u{2019}epic {name} n\u{2019}est pas sur cet ordinateur."),
     }
     TerminalMissingBodyProject "terminal.missing.body.project" {
-        en: t("Claude Code was not started. This is the active folder of project {name}, and it is not on this computer:"),
-        fr: t("Claude Code n\u{2019}a pas été lancé. C\u{2019}est le dossier actif du projet {name}, et il n\u{2019}est pas sur cet ordinateur\u{202f}:"),
+        en: t("Claude Code was not started: the active folder of project {name} is not on this computer."),
+        fr: t("Claude Code n\u{2019}a pas été lancé\u{202f}: le dossier actif du projet {name} n\u{2019}est pas sur cet ordinateur."),
     }
     TerminalMissingOther "terminal.missing.other" {
         en: t("Or start in another folder:"),
@@ -2374,8 +2374,8 @@ catalogue! {
         fr: t("Commits automatiques"),
     }
     SettingsAutoCommitHint "settings.auto_commit.hint" {
-        en: t("The default for folders set to commit automatically. Each folder can choose otherwise in its folder settings. Commits always use your own git identity."),
-        fr: t("La valeur par défaut des dossiers qui commitent automatiquement. Chaque dossier peut en décider autrement dans ses réglages. Les commits utilisent toujours votre propre identité git."),
+        en: t("Default for folders that commit automatically."),
+        fr: t("Par défaut pour les dossiers qui commitent automatiquement."),
     }
     SettingsClaude "settings.claude" {
         en: t("Claude Code"),
@@ -2674,8 +2674,8 @@ catalogue! {
         fr: t("Phrase secrète incorrecte."),
     }
     ImportAutoCommit "import.auto_commit" {
-        en: p("{n} working folder lets Claude Code commit automatically. Acta writes its rules only once the folder is found on this computer.", "{n} working folders let Claude Code commit automatically. Acta writes their rules only once each folder is found on this computer."),
-        fr: p("{n} dossier de travail laisse Claude Code commiter automatiquement. Acta n\u{2019}écrit ses règles qu\u{2019}une fois le dossier trouvé sur cet ordinateur.", "{n} dossiers de travail laissent Claude Code commiter automatiquement. Acta n\u{2019}écrit leurs règles qu\u{2019}une fois chaque dossier trouvé sur cet ordinateur."),
+        en: p("{n} working folder will commit automatically once found on this computer.", "{n} working folders will commit automatically once found on this computer."),
+        fr: p("{n} dossier de travail commitera automatiquement une fois trouvé sur cet ordinateur.", "{n} dossiers de travail commiteront automatiquement une fois trouvés sur cet ordinateur."),
     }
     TrashHint "trash.hint" {
         en: t("Deleted things stay here for 30 days."),

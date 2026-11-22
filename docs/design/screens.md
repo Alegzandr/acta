@@ -16,11 +16,11 @@ Widths are for the default 1440 x 900 window. Every screen exists in both themes
 |     [i] Inbox      4 |        Embed the terminal bound to the project   <- type.title 24/30    |
 |     [k] Knowledge    |    12                                                                   |
 |     (o) Naming       |        Status    [(.) Active v]            <- properties block: rows 28,|
-|   v Core UI          |        Due       15 Dec 2026  In 24 days      optional; "None" if unset  |
+|   v Core UI          |        Due       15 Dec 2026  In 24 days      optional; no row if unset  |
 |       (v) App shell  |        Epic      Terminal                    label column as wide as its|
 |       (.) Sidebar t..|        Folders   > [f] ~\dev\acta-wt\embed-terminal  +1   longest label |
-|       ( ) Palette   *|        Id        T-42                      <- type.code, copies on Enter|
-|   v Terminal         |        Updated   2 h ago by Claude Code                                 |
+|       ( ) Palette   *|        T-42 · Updated 2 h ago by Claude Code    <- meta line, small     |
+|   v Terminal         |                                                                         |
 |      [(.) Embed th..]|    24                                                                   |
 |       (=) Scrollback |        +--------------------------------------------------------+       |
 |       (-) Links      |        | Current state                                          |       |
@@ -38,10 +38,7 @@ Widths are for the default 1440 x 900 window. Every screen exists in both themes
 |                      |        9 more from epic and project          <- ghost row, collapsed    |
 |                      |    32                                                                   |
 |                      |        Timeline            [All|Progress|Decisions|Discussion]          |
-|                      |    12  +--------------------------------------------------------+       |
-|                      |        | Add an entry...                                        |       |
-|                      |        +--------------------------------------------------------+       |
-|                      |    24                                                                   |
+|                      |    12   (no composer: only Claude Code adds entries)                    |
 |                      |        [>] Claude Code  Progress  2 h ago    <- square mark, mono name  |
 |                      |            Resize now reflows the grid; the last row is still cut       |
 |                      |            when the panel is under 12 rows.                             |
@@ -56,7 +53,7 @@ Widths are for the default 1440 x 900 window. Every screen exists in both themes
   rows 28, indent 16            [..] around a tree row = fill.selected; * = unread dot (accent, 6)
 ```
 
-Annotations: one tab is open, so there is no tab bar. The tree follows 4.2.1: it lists every project; "Acta" is expanded because the open page belongs to it, "Atlas" and "Field notes" are folded. `[i]` is `inbox`, `[k]` is `library`, `[t]` `trash-2`, `[s]` `settings`, `[p]` `folder`; in the titlebar `[=]` is the sidebar toggle, `[o]` the chat toggle, `[>_]` the terminal toggle. Tree glyphs: `(o)` Draft, `( )` Planned, `(.)` Active, `(=)` Blocked, `(v)` Done, `(-)` Dropped. The page's location is in the titlebar breadcrumb and nowhere else; its title heads the page. `> [f]` is the folded working-folders row (5, 8.11), here as the value of the Folders property. The composer is one line (28 + padding) until focused, then becomes the multi-line editor. Scrolling: title and properties scroll with the content; nothing is sticky except the "new entries" button. In the status bar, `(v)` is the `circle-check` glyph of the ready state.
+Annotations: one tab is open, so there is no tab bar. The tree follows 4.2.1: it lists every project; "Acta" is expanded because the open page belongs to it, "Atlas" and "Field notes" are folded. `[i]` is `inbox`, `[k]` is `library`, `[t]` `trash-2`, `[s]` `settings`, `[p]` `folder`; in the titlebar `[=]` is the sidebar toggle, `[o]` the chat toggle, `[>_]` the terminal toggle. Tree glyphs: `(o)` Draft, `( )` Planned, `(.)` Active, `(=)` Blocked, `(v)` Done, `(-)` Dropped. The page's location is in the titlebar breadcrumb and nowhere else; its title heads the page. `> [f]` is the folded working-folders row (5, 8.11), here as the value of the Folders property. The timeline has no composer (components-records.md 5, Who writes the timeline): entries come from Claude Code, and the human edits or deletes them from each entry's menu. Scrolling: title and properties scroll with the content; nothing is sticky except the "new entries" button. In the status bar, `(v)` is the `circle-check` glyph of the ready state.
 
 ### 8.2 Notes inbox
 
@@ -466,7 +463,7 @@ Annotations: icons are the folders' own: `[g]` `git-branch` (automatic, a worktr
 +----------------------+-------------------------------------------------------------------------+
 ```
 
-Annotations: Settings is a page in the active tab; its sidebar row is selected. Sections in `type.subtitle`, setting rows of at least 44 with the description under the label and the control at the right. The fourth check is missing, so "Set up Claude Code" is the primary button. The Working folders, Chat and About sections follow below the fold. Nothing here has a Save button.
+Annotations: Settings is a page in the active tab; its sidebar row is selected. Sections in `type.subtitle`, setting rows of at least 44 with the description under the label and the control at the right. The fourth check is missing, so "Set up Claude Code" is the primary button. Since ADR 0013 the "Ready for Claude Code" block of 8.26 heads the section, and its Claude Code row replaces "Claude Code found". The Working folders, Chat and About sections follow below the fold. Nothing here has a Save button.
 
 ### 8.13 Chat panel states
 
@@ -859,3 +856,136 @@ The viewer, on the second of two images of the note:
 ```
 
 Annotations: `[f]` is `file-text`, `[@]` `paperclip`, `(i)` `info`. Images come before other files; names are cut in the middle so the extension stays. The quick capture's third file shows "Adding… 40%" because it has taken over 400 ms; the note can be saved meanwhile. A file over 25 MB would instead leave the line "trace.zip is 48 MB; the limit is 25 MB per file." in `danger` with `triangle-alert`. PDFs offer Save as (and, once ADR 0012 accepts it, Open in another app); the viewer is for images and text-like files only. Made into a topic, the note's files go to the topic's description; the filed card then lists them in `text.secondary` under "Moved to T-51".
+
+### 8.26 Ready for Claude Code (Settings, Windows)
+
+```
+|        Claude Code                                               <- type.subtitle             |
+|    8   Ready for Claude Code                                     <- type.label                |
+|        What Claude Code uses on this computer. Nothing is installed without your click.       |
+|                                                         <- small, tertiary                    |
+|    8   (v) Claude Code                                      2.1.330                           | 44
+|            Runs in Acta's terminal and does the work. Required.                               |
+|        (o) Signed in to Claude                        Not signed in       [Sign in...]        | 44 primary
+|            Claude Code needs your Claude subscription. You sign in once, in Acta's terminal.  |
+|        (o) Git                                        Not installed       [Install...]        | 44 ghost
+|            Commits and branches, and Git Bash, the shell Claude Code prefers on Windows.      |
+|            Recommended.                                                                       |
+|        (!) GitHub CLI                                 Install failed   Retry  Show log        | 44
+|            Lets Claude Code open pull requests and read issues on GitHub. Optional.           |
+|            The installer stopped with code 1.                         <- small, secondary     |
+|            +--------------------------------------------------------------------------+      |
+|            | Found GitHub CLI [GitHub.cli] Version 2.105.0                            |      | type.code
+|            | Downloading https://github.com/cli/cli/releases/download/v2.105.0/...    |      | max 200
+|            | ...                                                                      |      |
+|            +--------------------------------------------------------------------------+      |
+|            Copy log   Hide log                                                                |
+|        Check again                                                                            |
+|    16  (v) Plugin files written                                     Done                      |
+|        ...                                                                                    |
+|        [Set up Claude Code]  Remove from Claude Code                 <- secondary while a     |
+|                                                                         required row waits    |
+```
+
+```
++------------------------------------------------+
+|  Install Git?                                  |  type.heading
+|                                                |
+|  Acta runs Windows Package Manager (winget),   |  type.reading
+|  which downloads Git for Windows from its      |
+|  publisher and checks it against the hash in   |
+|  winget's catalogue.                           |
+|  For you only. Windows may still ask for       |
+|  permission.                                   |
+|  Updates come from winget, not from Acta.      |
+|                                                |
+|  Command                                       |  type.label
+|  +------------------------------------------+  |
+|  | winget install --id Git.Git -e --source  |  |  type.code, wraps
+|  | winget --scope user                      |  |
+|  | --accept-package-agreements              |  |
+|  | --accept-source-agreements               |  |
+|  | --disable-interactivity                  |  |
+|  +------------------------------------------+  |
+|  Copy command                                  |  ghost
+|                                                |
+|                       [Cancel]   [Install]     |  Cancel focused
++------------------------------------------------+
+  width 440
+```
+
+Annotations: `(v)` is `check` in `success`, `(o)` `circle-dashed` in `text.tertiary`, `(!)` `triangle-alert` (`danger` when failed, `warning` when outdated). Signed in is the first required row not ready, so its button is the primary and "Set up Claude Code" is secondary until it is. The GitHub CLI row shows because an attached folder has a `github.com` remote. On first run (8.5) the same block, without GitHub CLI and without "Check again", sits above "Start with a project" while a required or recommended row is not ready; once all are ready it is gone. On Linux, "Install..." on Git ends in "Open in terminal": the command (`sudo apt-get install git`) starts in a new session of Acta's terminal and the row reads "Finish in the terminal" with "Show terminal".
+
+### 8.27 Dictation (components-voice.md 5)
+
+The inbox capture editor while listening, then writing (the timeline has no composer, components-records.md 5):
+
+```
+|    +--------------------------------------------------------------------------------+      |
+|    | Talked to Alexandre about the export format. He wants the passphrase option    |      | type.reading
+|    | before 1.0, so we keep format 2 open until then.|                              |      | | = caret (anchor)
+|    |                                                                                |      |
+|    |                                 (p) [#]  ====----  Listening  0:12   [Save]     | 28   | footer
+|    +--------------------------------------------------------------------------------+      |
+       (p) paperclip, ghost 24; [#] square on fill.selected (stop), ghost 24;
+       ====---- the level bar 32 x 4; "Listening" small secondary; 0:12 small tertiary tnum;
+       the hint "Ctrl+Enter to save" yields its place here because the footer is full
+
+|    |                                 (p) (m)  Writing text...             [Save]     | 28   | after the stop
+|    +--------------------------------------------------------------------------------+      |
+|    (!) Acta is not allowed to use the microphone.   Open privacy settings                  | an error, 4 below
+```
+
+First use (the dialog of 5, 440), recommendation on a CPU-tier Windows laptop:
+
+```
++------------------------------------------------+
+|  Dictate with your voice                       |  type.heading
+|                                                |
+|  Acta turns what you say into text on this     |  type.ui, secondary
+|  computer. Your voice never leaves it and is   |
+|  never saved.                                  |
+|                                                |
+|  Whisper Small                                 |  type.ui-strong
+|  190 MB download · works on this computer's    |  small, secondary
+|  processor                                     |
+|  Free on this disk: 112 GB.                    |  small, tertiary
+|                                                |
+|  Other models are in Settings > Voice.         |  small, tertiary; link
+|                                                |
+|                  [Cancel]   [Download 190 MB]  |  Cancel focused
++------------------------------------------------+
+
++------------------------------------------------+
+|  Dictate with your voice                       |
+|  Downloading Whisper Small...                  |  type.ui
+|  ==================--------------------------  |  bar, never eased
+|  120 of 190 MB                                 |  small, tertiary, tnum
+|                                                |
+|               [Cancel download]   [Hide]       |
++------------------------------------------------+
+```
+
+Settings > Voice:
+
+```
+|        Voice                                                     <- type.subtitle             |
+|    8   Dictation                               [Whisper, on this computer v]                  |
+|        Dictation in notes, descriptions and documents. Your voice never leaves this           |
+|        computer.                                                                              |
+|        Model                                                                                  |
+|        Recommended for this computer: Small. Larger models are more accurate and slower.      |
+|          Tiny          31 MB · for older computers; rough in French           Download        | 44
+|          Base          60 MB · fast; fair accuracy                            Download        | 44
+|          Small  Recommended   190 MB · good for English and French      (v) In use  ...     | 44
+|          Large turbo   574 MB · most accurate; best with a graphics card  ==--- 45%  Cancel  | 44
+|        Models are kept in C:\Users\Alexandre\AppData\Local\ActaData\models.                    |
+|        Free on this disk: 112 GB.  Downloaded models: 190 MB.  Show in Explorer               |
+|        Language                                [English or French, detected v]                |
+|        Pick one if dictation mistakes one language for the other.                             |
+|        Microphone                              [System default v]   ====------                |
+|        Shortcut                                                    [Ctrl][Shift][Space]       |
+|        Press once to start and again to stop, or hold it while you speak.                     |
+```
+
+Annotations: no accent and no red anywhere in dictation; the stop square, the pressed fill and the word "Listening" carry the state in greyscale. "Use the graphics card" is absent here (a Windows build without the Vulkan step, ADR 0014, 5); on Apple Silicon it sits under the model list and the recommendation is Large turbo with `voice.settings.model_hint_gpu`. On macOS the Dictation dropdown also offers "macOS recogniser, on this computer" when it works on the device.

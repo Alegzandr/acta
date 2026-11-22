@@ -2156,3 +2156,111 @@ fn find_due_pages_cover_every_record_once_in_date_order() {
     }
     assert_eq!(got, want);
 }
+
+/// ADR 0011: the folders line (in the fence) and the commit line (outside
+/// it) on a seeded database with long names everywhere: within the
+/// briefing budget, at most 300 chars together, and memory titles give way
+/// before them.
+#[test]
+fn briefing_keeps_the_folders_and_commit_lines_within_budget() {
+    use crate::claude_settings::CommitMode;
+    let mut seed = seed();
+    let project = seed.project;
+    let focus = seed.focus;
+    let tmp = tempfile::tempdir().unwrap();
+    let h = Author::Human;
+    let s = &mut seed.ts.store;
+    for i in 0..5 {
+        s.kb_create(
+            NewKb {
+                owner: Owner::Topic(focus),
+                kind: KbKind::Memory,
+                title: long(&format!("Memory{i} about Alexandre's keychain"), 120),
+                summary: long("When to read it", 120),
+                body: "Body.".into(),
+                from_file: false,
+            },
+            Author::Claude,
+        )
+        .unwrap();
+    }
+    let mut dirs = Vec::new();
+    for (i, owner) in [Owner::Topic(focus), Owner::Project(project)]
+        .into_iter()
+        .cycle()
+        .take(10)
+        .enumerate()
+    {
+        let d = tmp.path().join(format!("folder{i}"));
+        std::fs::create_dir_all(&d).unwrap();
+        let id = s.add_folder(owner, &d, h).unwrap();
+        s.set_folder_name(id, &long(&format!("Alexandre folder{i}"), 80), h)
+            .unwrap();
+        dirs.push((d, id));
+    }
+    let (work, id) = dirs[0].clone();
+    let git = |args: &[&str]| {
+        let out = crate::git_cmd::command(&work).args(args).output().unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+    git(&["init", "-q", "-b", "main"]);
+    git(&[
+        "-c",
+        "user.name=Alexandre",
+        "-c",
+        "user.email=alexandre@example.com",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "First",
+    ]);
+    s.set_commit_settings(id, CommitMode::Commit, Some(true), false, h)
+        .unwrap();
+
+    let mut sess = session(&seed);
+    sess.dir = Some(work.clone());
+    sess.in_acta = true;
+    let a = agent(&mut seed.ts.store, &mut sess);
+    let b = a.session_briefing(true).unwrap();
+    assert!(chars(&b) <= budget::SESSION_BRIEFING, "{}:\n{b}", chars(&b));
+    let commit = b.lines().nth(1).unwrap();
+    assert!(
+        commit.starts_with("Commits here: commit each finished change without being asked")
+            && commit.contains("not on main"),
+        "{b}"
+    );
+    let fence = b
+        .lines()
+        .position(|l| l.starts_with("[acta data "))
+        .unwrap();
+    assert_eq!(
+        fence, 2,
+        "the commit line is Acta's, before the fence:\n{b}"
+    );
+    let folders = b
+        .lines()
+        .find(|l| l.starts_with("Folders: work in "))
+        .unwrap();
+    assert!(chars(folders) + chars(commit) <= 300, "{b}");
+    let at = |needle: &str| b.find(needle);
+    if let Some(titles) = at("Recent memories: ") {
+        assert!(at("Folders: ").unwrap() < titles, "{b}");
+    }
+    assert!(b.contains("compacted"), "{b}");
+
+    // Where the session runs is unknown: no commit line.
+    let mut plain = session(&seed);
+    let a = agent(&mut seed.ts.store, &mut plain);
+    let b = a.session_briefing(false).unwrap();
+    assert!(
+        !b.contains("Commits here") && b.contains(" (active)."),
+        "{b}"
+    );
+}

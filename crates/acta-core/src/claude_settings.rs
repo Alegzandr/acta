@@ -310,10 +310,11 @@ fn folders_at(store: &Store, path: &str) -> crate::Result<Vec<Folder>> {
         .collect())
 }
 
-/// The commit settings that apply in `dir` (stored form): those of the
-/// deepest attached folder containing it, from the store's columns. Read
-/// by the `pre-git` guard. `None` outside every attached folder.
-pub fn commit_settings_for(store: &Store, dir: &str) -> crate::Result<Option<FolderCommit>> {
+/// The commit settings the user chose for `dir` (stored form): those of
+/// the deepest attached folder containing it, from the store's columns
+/// only. What the session-start briefing tells the agent. `None` outside
+/// every attached folder.
+pub fn chosen_commit_settings_for(store: &Store, dir: &str) -> crate::Result<Option<FolderCommit>> {
     let all: Vec<Folder> = store
         .all_folders()?
         .into_iter()
@@ -342,7 +343,26 @@ pub fn commit_settings_for(store: &Store, dir: &str) -> crate::Result<Option<Fol
                 .unwrap_or(&best)
                 .to_owned()
         });
-    let mut settings = settings_of(&here, as_user_default(store)?);
+    let settings = settings_of(&here, as_user_default(store)?);
+    Ok(Some(FolderCommit {
+        path: best,
+        name,
+        settings,
+    }))
+}
+
+/// The commit settings the `pre-git` guard enforces in `dir`: the user's
+/// choice ([`chosen_commit_settings_for`]), made stricter by what a
+/// settings file still holds. `None` outside every attached folder.
+pub fn commit_settings_for(store: &Store, dir: &str) -> crate::Result<Option<FolderCommit>> {
+    let Some(FolderCommit {
+        path: best,
+        name,
+        mut settings,
+    }) = chosen_commit_settings_for(store, dir)?
+    else {
+        return Ok(None);
+    };
     // What the file still holds when it could not be brought in line (the
     // folder was offline): the stricter of the two is enforced, so a
     // switch to Manual still guards the rules left in the file.

@@ -411,6 +411,11 @@ fn settings_left_in_an_offline_folder_are_still_guarded() {
         "the file's rules still hold"
     );
     assert!(!got.settings.on_default, "the stricter option");
+    // What the user chose (the briefing's source) is the column alone.
+    let chosen = chosen_commit_settings_for(s, &f.to_string_lossy())
+        .unwrap()
+        .unwrap();
+    assert_eq!(chosen.settings.mode, CommitMode::Manual);
     // Back: the next sync writes Manual and the column decides again.
     fs::rename(&away, &f).unwrap();
     assert_eq!(sync_all(s).unwrap(), (1, 0));

@@ -4,6 +4,7 @@
 
 pub mod args;
 pub mod due;
+pub mod folders;
 pub mod git;
 pub mod presence;
 pub mod render;

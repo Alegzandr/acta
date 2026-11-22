@@ -122,6 +122,51 @@ pub(crate) fn compact_schema(v: &mut serde_json::Value) {
     }
 }
 
+/// Replaces each `{"$ref": "#/$defs/X"}` with the definition and drops
+/// `$defs`: a type used once costs its name and the indirection for
+/// nothing. The argument types are not recursive; a schema that still has
+/// a reference after a few rounds keeps its `$defs`.
+pub(crate) fn inline_defs(schema: &mut serde_json::Value) {
+    use serde_json::Value;
+    let Some(defs) = schema.get("$defs").cloned() else {
+        return;
+    };
+    fn walk(v: &mut Value, defs: &Value) -> bool {
+        match v {
+            Value::Object(o) => {
+                let target = o
+                    .get("$ref")
+                    .and_then(Value::as_str)
+                    .and_then(|r| r.strip_prefix("#/$defs/"))
+                    .and_then(|n| defs.get(n))
+                    .cloned();
+                let mut found = false;
+                if let Some(Value::Object(d)) = target {
+                    o.remove("$ref");
+                    // Fields beside the reference (its description) win.
+                    for (k, x) in d {
+                        o.entry(k).or_insert(x);
+                    }
+                    found = true;
+                }
+                o.iter_mut()
+                    .filter(|(k, _)| *k != "$defs")
+                    .fold(found, |acc, (_, x)| walk(x, defs) | acc)
+            }
+            Value::Array(a) => a.iter_mut().fold(false, |acc, x| walk(x, defs) | acc),
+            _ => false,
+        }
+    }
+    for _ in 0..4 {
+        if !walk(schema, &defs) {
+            if let Some(o) = schema.as_object_mut() {
+                o.remove("$defs");
+            }
+            return;
+        }
+    }
+}
+
 /// The tool only hooks call (ADR 0005, `hook`).
 const HOOK_TOOL: &str = "hook";
 
@@ -156,6 +201,7 @@ impl ActaServer {
         let mut router = Self::tool_router();
         for route in router.map.values_mut() {
             let mut schema = serde_json::Value::Object((*route.attr.input_schema).clone());
+            inline_defs(&mut schema);
             compact_schema(&mut schema);
             if let serde_json::Value::Object(o) = schema {
                 route.attr.input_schema = Arc::new(o);
@@ -265,7 +311,7 @@ impl ActaServer {
 impl ActaServer {
     #[tool(
         name = "brief",
-        description = "Call when unsure where things stand: the focus topic's state, last entries and counts; an epic's topics; or the project overview. With focus=true, id becomes this session's focus.",
+        description = "When unsure where things stand: the focus topic's state, last entries and counts; an epic's topics; or the project overview. focus=true makes id the session's focus.",
         annotations(read_only_hint = true),
         meta = always_load()
     )]
@@ -280,7 +326,7 @@ impl ActaServer {
 
     #[tool(
         name = "entries",
-        description = "Call to answer a question about a topic's history: its timeline, newest first, a page at a time. id returns one entry in full.",
+        description = "To answer a question about a topic's history: its timeline, newest first, a page at a time; id: one entry in full.",
         annotations(read_only_hint = true)
     )]
     fn entries(&self, Parameters(a): Parameters<EntriesArgs>) -> CallToolResult {
@@ -289,7 +335,7 @@ impl ActaServer {
 
     #[tool(
         name = "log",
-        description = "Call after a decision, a finished step or a dead end worth not repeating (never per file edit): appends to the topic's timeline and can refresh its state and status in the same call.",
+        description = "After a decision, a finished step or a dead end worth not repeating (never per file edit): appends to the topic's timeline; can refresh its state and status too.",
         annotations(idempotent_hint = false),
         meta = always_load()
     )]
@@ -305,7 +351,7 @@ impl ActaServer {
 
     #[tool(
         name = "update",
-        description = "Call to change a topic, epic or note: title, description, state, status, due date, or move a topic to another epic. A note's status open puts it back in the inbox.",
+        description = "Changes a topic, epic or note: title, description, state (the old one stays in history), status, due date, a topic's epic. A note's status open puts it back in the inbox.",
         annotations(idempotent_hint = false)
     )]
     fn update(&self, Parameters(a): Parameters<UpdateArgs>) -> CallToolResult {
@@ -314,7 +360,7 @@ impl ActaServer {
 
     #[tool(
         name = "find",
-        description = "Call to locate topics, epics, notes or timeline entries in this project, by query or filters. kind=note without query lists the inbox; due lists deadlines.",
+        description = "Locates topics, epics, notes or timeline entries by query or filters. kind=note without query: the inbox; due: deadlines.",
         annotations(read_only_hint = true)
     )]
     fn find(&self, Parameters(a): Parameters<FindArgs>) -> CallToolResult {
@@ -323,7 +369,7 @@ impl ActaServer {
 
     #[tool(
         name = "create",
-        description = "Call to create topics, epics or notes (up to 10), or to apply an agreed inbox triage in one all-or-nothing call: from_notes files notes into each item, kind=entry adds them to an existing topic, dismiss closes the rest.",
+        description = "Creates topics, epics or notes (up to 10), or applies an agreed inbox triage all-or-nothing: from_notes files notes into each item, kind=entry into an existing topic, dismiss closes the rest.",
         annotations(idempotent_hint = false)
     )]
     fn create(&self, Parameters(a): Parameters<CreateArgs>) -> CallToolResult {
@@ -332,7 +378,7 @@ impl ActaServer {
 
     #[tool(
         name = "kb",
-        description = "Call before working on an unfamiliar area: lists the documents and memories in scope (topic, then epic, then project) with one-line summaries, or searches them with query.",
+        description = "Before working on an unfamiliar area: the documents and memories in scope (topic, epic, project) with one-line summaries; query searches them.",
         annotations(read_only_hint = true)
     )]
     fn kb(&self, Parameters(a): Parameters<KbArgs>) -> CallToolResult {
@@ -341,7 +387,7 @@ impl ActaServer {
 
     #[tool(
         name = "kb_read",
-        description = "Call to read a knowledge entry whose summary matches your task: whole when small, else its outline; then one section or a line range.",
+        description = "Reads a knowledge entry whose summary matches your task: whole when small, else its outline; then a section or line range.",
         annotations(read_only_hint = true)
     )]
     fn kb_read(&self, Parameters(a): Parameters<KbReadArgs>) -> CallToolResult {
@@ -350,7 +396,7 @@ impl ActaServer {
 
     #[tool(
         name = "kb_write",
-        description = "Call to save a durable fact (memory) or a long reference (document), or to edit one by section. Use it instead of your own memory files; search with kb first.",
+        description = "Saves a durable fact (memory) or long reference (document), or edits one by section. Use it instead of your own memory files; search with kb first.",
         annotations(idempotent_hint = false)
     )]
     fn kb_write(&self, Parameters(a): Parameters<KbWriteArgs>) -> CallToolResult {
