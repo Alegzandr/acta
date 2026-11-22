@@ -101,6 +101,14 @@ Run against every screen, in dark and in light, in English and in French. One fa
 - [ ] Nothing downloads without a click that names the size; free space is shown first; a model is used only after its hash matched.
 - [ ] No audio, and no dictated text outside the editor, reaches a file, a log, the clipboard or a process argument (ADR 0014, 7).
 
+**Zoom and section folds** (layout.md 4.9, components-records.md 5; run at 90%, 100%, 150% and 200% on a 1920 x 1080 and a 1366 x 768 screen, with the terminal and the chat shown, in both languages)
+- [ ] Everything scales together: type, icons, borders, the terminal grid, the chat and the agent browser; 1px lines stay crisp; no text is a scaled bitmap; the column, the sidebars and the panel keep their proportions.
+- [ ] The layout at each zoom is the layout of the effective size (4.8.10), down to 760 x 480: the right sidebar becomes an overlay only below 820 effective; nothing scrolls horizontally that 4.2 does not allow.
+- [ ] A window that cannot hold a step never takes it; a window made smaller by the system drops to what fits and comes back when it has room; "Zoom 150%" is in the status bar whenever the zoom is not 100% and resets it.
+- [ ] `Mod+=` / `Mod+-` / `Mod+0` work from the page, the tree, the chat and the agent browser; in the terminal on Windows and Linux `Ctrl+-` still reaches Claude Code.
+- [ ] An unfolded page looks exactly as before; a folded section is one header line with its chevron and count; nothing moves when a chevron appears; Claude Code writing inside a folded section shows the dot on its header.
+- [ ] Collapse all and Expand all keep the reader's place; a fold follows the page kind across records and survives a restart; `preferences.json` holds only fixed fold keys and the zoom percent.
+
 **Behaviour**
 - [ ] Feedback on the next frame; nothing in the "never animates" list animates; budgets in 6.3 hold with 10,000 topics.
 - [ ] Writes are optimistic; failure restores state and keeps the user's text.

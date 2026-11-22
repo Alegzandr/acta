@@ -1385,3 +1385,26 @@ New with memory quality (2026-11-22; components-knowledge.md 5, Memory quality; 
 | `cmd.kb_find_duplicates` | Find duplicate memories | Trouver les mémoires en double |
 
 Notes. *Mémoire* is feminine and *document* masculine, hence the `.document` / `.memory` pairs wherever a participle agrees; conflicts, duplicates and merges concern memories only, so their strings are written in the feminine ("Celle-ci la remplace", "Fusionnée dans"). *Remplacés et obsolètes* and *élément* agree with a mixed set of documents and memories (masculine plural, as `import.safe` already uses *éléments*). "Retired" is the English state word and "Mark as no longer true" the act that produces it; French uses *obsolète* for both, since a literal "retirée" collides with *Retirer* (remove a folder). "Still true" is *toujours valable* rather than *vraie* so that one form fits both kinds. `{id}` is a knowledge id (`K-4`) in `type.code` as the meta line shows it, never translated; `{title}` and `{reason}` are what Claude Code or the human wrote, as written; `{file}` is a file name (the last path segment) and `{branch}` a branch as git has it, both in `type.code`; `{folder}` a working folder's name; `{topic}` a topic id (`T-12`) with its title as the tooltip; `{date}` the absolute date and `{when}` the long form of 10.2; `{days}` is always 90 or more, so the singular form is not needed. The reason lines have no final full stop (they are tooltip and notice lines, one per reason); the notice messages that are sentences do. Agent-facing text (`?old 140d`, `?dup K-4`, `ok K-4 verified (rev 3)`, `K-9 superseded by K-21 on 11-20`) is protocol, English only, and not in this catalogue (10).
+
+### 10.4.13 Keys of zoom and section folds
+
+New with zoom and section folds (2026-11-22; layout.md 4.9, components-records.md 5 Section fold, screens.md 8.34 and 8.35). Pending: to be moved into 10.4 and `catalogue.rs` when they are implemented, `cmd.zoom*` and `cmd.sections_*` after `cmd.reading_width`, `settings.zoom*` after `settings.language.hint`, `zoom.*` beside the status bar's keys, `section.*` after `section.timeline`. `{value}`, `{applied}` and `{chosen}` are percents in the form of 10.2 ("150%", "150 %" with U+202F). `{section}` is the section's own label key (`section.timeline`, ...), in French between « » because it is a name inside a sentence.
+
+**Reused**, not duplicated: the folded Topics count is `table.count`; the stepper of the Zoom row is the Terminal text size row's.
+
+| Key | English | French |
+|---|---|---|
+| `cmd.zoom_in` | Zoom in | Zoom avant |
+| `cmd.zoom_out` | Zoom out | Zoom arrière |
+| `cmd.zoom_reset` | Reset zoom | Réinitialiser le zoom |
+| `cmd.zoom` | Zoom: {value} | Zoom : {value} |
+| `cmd.sections_collapse` | Collapse all sections | Replier toutes les sections |
+| `cmd.sections_expand` | Expand all sections | Déplier toutes les sections |
+| `settings.zoom` | Zoom | Zoom |
+| `settings.zoom.hint` | Everything in the window. | Tout le contenu de la fenêtre. |
+| `zoom.status` | Zoom {value} | Zoom {value} |
+| `zoom.status.tip` | Reset to 100% | Revenir à 100 % |
+| `zoom.limited` | You chose {chosen}. {applied} is the most this window can show. | Vous avez choisi {chosen}. Cette fenêtre ne peut pas afficher plus de {applied}. |
+| `section.fold` | Collapse {section} | Replier « {section} » |
+| `section.unfold` | Expand {section} | Déplier « {section} » |
+| `section.count.entries` | {n} entry · {n} entries | {n} entrée · {n} entrées |

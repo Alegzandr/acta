@@ -1155,3 +1155,57 @@ Other notices in the same place, one at a time:
 ```
 
 Annotations: rows as in History (32, author mark first, not drawn here). "Marked as still true" has no line counts. Hovering "Claude Code" on the third row shows "A Claude Code session on T-51" and "Branch feature/terminal". On a superseded memory the newest row reads "Superseded by K-21", on a retired one "Retired: {reason}", and after Make live again, "Made live again".
+
+### 8.34 Topic page at 150%, sections folded for a call
+
+A 1536 x 790 laptop window at 150%: effective 1024 x 527. The tree is hidden (`Mod+B`), the right sidebar too; Collapse all sections (`Mod+Shift+[`), then Questions unfolded.
+
+```
++----------------------------------------------------------------------------------+
+| [=] [<] [>]  Acta / Terminal / Embed the terminal        [s] [..toggles..] - [] X | 36 effective
++----------------------------------------------------------------------------------+
+|                                   32                                             |
+|            Embed the terminal                           <- type.title           |
+|            Status    [(.) Active v]                                              |
+|            Due       15 Dec 2026  In 24 days                                     |
+|            Epic      Terminal                                                    |
+|            T-42 · Updated 2 h ago by Claude Code                                 |
+|            +------------------------------------------------------+              |
+|            | Current state                                        |  never folds |
+|            | Rendering and input work on Windows. Resize still    |              |
+|            | drops the last row; fix is in progress.              |              |
+|            +------------------------------------------------------+              |
+|            Description v                         <- folded: chevron-down always  |
+|                                   32                                             |
+|            Questions  2 ^                        <- unfolded, hovered: chevron-up |
+|            ( ) Which ConPTY build does the client run?                           |
+|                Asked Marie · Answer by 4 Dec 2026  In 12 days                    |
+|                                   32                                             |
+|            Knowledge  3 v                        <- folded, count kept           |
+|                                   32                                             |
+|            Timeline  42 entries * v              <- folded; * Claude Code wrote  |
+|                                                                                  |
++----------------------------------------------------------------------------------+
+| [p] Acta   (v) Claude Code: ready                          Zoom 150%  Acta 0.5.0 | 24
++----------------------------------------------------------------------------------+
+```
+
+Annotations: widths in effective px; on screen everything is 1.5 times larger. The folded headers keep the 32 between sections, so the page still reads as the same page. `v` after a label is `chevron-down` 14 (`text.tertiary`), `^` is `chevron-up`, shown only on hover or focus of an unfolded header; `*` is the unread dot, 8 before the chevron. The timeline's filter is hidden while it is folded. "Zoom 150%" is the status bar item of 4.9; activating it returns to 100%.
+
+### 8.35 Settings > Appearance with Zoom
+
+```
+        Appearance                                               <- type.subtitle
+        Theme                                       [System|Light|Dark]
+        Language                                          [English v]
+        What you and Claude Code write is never translated.
+        Zoom                                                [- 150% +]
+        Everything in the window.
+        Text size                                  [Small|Default|Large]
+        Timelines, notes and documents.
+        Reading width                              [Narrow|Default|Wide]
+        Layout                                          [Reset layout]
+        Terminal text size                                    [- 13 +]
+```
+
+Annotations: the Zoom stepper's minus is disabled at 90%, its plus at the largest step the window can take (4.9); French "Zoom", "Tout le contenu de la fenêtre.", value "150 %".

@@ -41,7 +41,9 @@ Two weights of the sans: 400 and 600 (Segoe UI Variable's Regular and Semibold i
 
 **Mono beside sans.** `type.code` is 13 / 20 and sits on a 14 / 20 line, so ids and paths in a sans row share its baseline grid; where mono is a value among sans metadata at 12 (the meta line's id), it is set at 12 / 16, the one place mono takes the small size.
 
-Sentence case everywhere, in both languages. No uppercase, no italics for UI (italics are for Markdown emphasis only). Minimum text size is 12px; nothing smaller.
+Sentence case everywhere, in both languages. No uppercase, no italics for UI (italics are for Markdown emphasis only). Minimum text size is 12px; nothing smaller. Sizes here are at 100% zoom: zoom (layout.md 4.9, 90% to 200%) scales every role at once, Text size and the terminal size included, and is the only thing that takes a role under 12 (to 10.8, at the 90% floor).
+
+**Zoom and Text size are different settings.** Text size changes the two reading roles and leaves the interface where it is, for a person who reads long text; zoom scales the whole window, chrome included, for a screen shared or seen from further away. They multiply.
 
 ### 3.3 Long-form text
 
