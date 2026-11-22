@@ -47,10 +47,15 @@ foreach ($need in 'Include\vulkan\vulkan.hpp', 'Lib\vulkan-1.lib', 'Bin\glslc.ex
         exit 1
     }
 }
-& $glslc --version | Select-Object -First 1
-if ($LASTEXITCODE -ne 0) {
-    Write-Output "::error::glslc does not run"
+# The whole output is collected before anything is printed: `Select-Object -First`
+# in the pipeline stops glslc early, and its exit code is then not 0 although it ran.
+$glslcOut = & $glslc --version 2>&1
+$code = $LASTEXITCODE
+if ($code -ne 0) {
+    $glslcOut | ForEach-Object { Write-Output "$_" }
+    Write-Output "::error::glslc does not run (exit $code)"
     exit 1
 }
+Write-Output "$($glslcOut | Select-Object -First 1)"
 Write-Output "VULKAN_SDK=$Dir"
 "VULKAN_SDK=$Dir" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
