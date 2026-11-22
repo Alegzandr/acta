@@ -5,8 +5,9 @@
 <h1 align="center">Acta</h1>
 
 <p align="center">
-  <strong>The project tracker you and Claude Code share.</strong><br>
-  You see where the work stands; Claude Code starts every session already knowing it.
+  <strong>Your personal workbench for getting things done with Claude Code.</strong><br>
+  Know where every project stands, pick any of them back up in seconds,<br>
+  and let Claude Code keep the notes for you.
 </p>
 
 <p align="center">
@@ -18,21 +19,29 @@
 
 ## Why
 
-Claude Code starts each session from zero. You explain the context again, decisions get
-lost in old conversations, and the `CLAUDE.md` file keeps growing until nobody reads it.
+When you run several projects at once, the work is rarely the hard part. What costs
+you is everything around it: "where was I?", "what did we decide, and why?", "what was I
+waiting for?". Coming back after a meeting, a weekend or a month takes half an hour of
+digging. Claude Code makes it worse: each session starts from zero, so you explain it
+all again.
 
-Acta keeps the work in one place, split into small topics, that both of you use:
+Acta keeps that context for you, and Claude Code does the bookkeeping.
 
-- **You** get a tracker: projects, epics and topics, each with a status, a short
-  "where we are", and a timeline of what was done and decided.
-- **Claude Code** gets that same tracker as its memory. When a session starts, it is
-  briefed on the topic it works on, only that topic, in a few lines. As it works, it
-  logs progress and decisions and saves what it must remember.
+- **See where you are in seconds.** Each piece of work is a topic with its status, a
+  short "where we are" and a timeline of what was done and decided. A project's
+  Overview shows only what needs you: blocked, overdue, idle, waiting for an answer.
+- **Pick up where you left off.** Open a topic and the last state, the decisions and the
+  next step are there, whoever wrote them.
+- **No admin work.** As Claude Code works, it logs its progress and decisions in the
+  right topic and keeps its "where we are" up to date. You read, correct or delete.
+- **Capture without losing focus.** An idea or a request goes into the inbox in one
+  shortcut (`Ctrl+N`), or by voice; Claude Code turns the pile into topics when you
+  ask.
+- **Get more out of Claude Code.** Each session starts briefed on the topic it works on,
+  only that one, in a few lines. You stop re-explaining, and it stops redoing what
+  was already settled.
 
-The next session picks up where the last one stopped, and you can read, correct or
-delete anything Claude Code remembers.
-
-What Claude Code sees at the start of a session (an example):
+What Claude Code receives at the start of a session (an example):
 
 ```
 Acta briefing (project tracker and memory; see the acta:using-acta skill).
@@ -76,12 +85,14 @@ for certificates); the commands above avoid most warnings, and the
 
 ## Also in Acta
 
-- **Notes inbox.** Jot things down (`Ctrl+N`); Claude Code turns them into topics.
-- **Knowledge base.** Documents and memories on each project, epic or topic, that
-  Claude Code reads only when they matter.
-- **Your repositories.** Folders per page, with branch state and the commit mode you
-  allow Claude Code (manual, commit, or commit and push).
-- **Questions and contacts.** Track what you asked of whom, and who you report to.
+- **One window for the work.** The tracker, a terminal running Claude Code in the right
+  folder, and your repositories' branch state, side by side.
+- **Knowledge base.** Documents and notes worth keeping, on each project or topic, that
+  you and Claude Code both read.
+- **Questions and contacts.** What you asked of whom, and who you report to, so nothing
+  waits unnoticed.
+- **Your rules for commits.** Per folder: Claude Code leaves commits to you, commits,
+  or commits and pushes.
 - **Files and voice.** Attach files to notes; dictate with a local Whisper model.
 - **Keyboard first.** One command palette (`Ctrl+K`) reaches everything.
 
