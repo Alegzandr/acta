@@ -16,8 +16,8 @@ use std::time::Duration;
 
 use acta_core::folder_identity::{self, Known, Monitor};
 use acta_core::model::{
-    Author, EpicId, FolderId, KbId, Note, NoteId, Owner, ProjectId, ProjectTree, Record, Status,
-    TopicId,
+    Author, CommitMode, EpicId, FolderId, KbId, Note, NoteId, Owner, ProjectId, ProjectTree,
+    Record, Status, TopicId,
 };
 use acta_core::store::{EpicPatch, ProjectPatch, TopicPatch, Unread};
 use acta_core::{ChangeWatcher, Store};
@@ -85,6 +85,25 @@ pub enum Undo {
         back: Option<FolderId>,
         expect: Option<FolderId>,
     },
+    /// A folder's name changed (`""`: the last segment of its path).
+    FolderName {
+        id: FolderId,
+        back: String,
+        expect: String,
+    },
+    /// A folder's icon changed (`""`: automatic).
+    FolderIcon {
+        id: FolderId,
+        back: String,
+        expect: String,
+    },
+    /// A folder's commit mode or one of its options changed; its Claude
+    /// Code settings follow (ADR 0011, 3).
+    FolderCommit {
+        id: FolderId,
+        back: CommitColumns,
+        expect: CommitColumns,
+    },
     /// A folder set or located: put the old path back as stored.
     FolderPath {
         id: FolderId,
@@ -129,6 +148,15 @@ pub enum Undo {
     Many(Vec<Undo>),
 }
 
+/// A folder's commit columns: mode, "Commit in my name" (`None`: the
+/// Settings default), "Also on <default branch>".
+pub type CommitColumns = (CommitMode, Option<bool>, bool);
+
+fn commit_columns(store: &Store, id: FolderId) -> acta_core::Result<CommitColumns> {
+    let f = store.folder(id)?;
+    Ok((f.commit_mode, f.commit_as_user, f.commit_on_default))
+}
+
 fn is_live(store: &Store, record: Record) -> acta_core::Result<bool> {
     let found = match record {
         Record::Project(id) => store.project(id).map(|_| ()),
@@ -159,6 +187,9 @@ impl Undo {
             Undo::ProjectTitle { id, expect, .. } => store.project(*id)?.title == *expect,
             Undo::Due { owner, expect, .. } => due_on(store, *owner)? == *expect,
             Undo::ActiveFolder { owner, expect, .. } => active_pointer(store, *owner)? == *expect,
+            Undo::FolderName { id, expect, .. } => store.folder(*id)?.name == *expect,
+            Undo::FolderIcon { id, expect, .. } => store.folder(*id)?.icon == *expect,
+            Undo::FolderCommit { id, expect, .. } => commit_columns(store, *id)? == *expect,
             Undo::FolderPath { id, expect, .. } => store.folder(*id)?.path == *expect,
             Undo::KbRevision { id, expect, .. } => store.kb_entry(*id)?.rev == *expect,
             Undo::KbOwner { id, expect, .. } => store.kb_entry(*id)?.owner == *expect,
@@ -294,6 +325,31 @@ impl Undo {
                     expect: *back,
                 }
             }
+            Undo::FolderName { id, back, expect } => {
+                store.set_folder_name(*id, back, me)?;
+                Undo::FolderName {
+                    id: *id,
+                    back: expect.clone(),
+                    expect: store.folder(*id)?.name,
+                }
+            }
+            Undo::FolderIcon { id, back, expect } => {
+                store.set_folder_icon(*id, back, me)?;
+                Undo::FolderIcon {
+                    id: *id,
+                    back: expect.clone(),
+                    expect: store.folder(*id)?.icon,
+                }
+            }
+            Undo::FolderCommit { id, back, expect } => {
+                let (mode, as_user, on_default) = *back;
+                store.set_commit_settings(*id, mode, as_user, on_default, me)?;
+                Undo::FolderCommit {
+                    id: *id,
+                    back: *expect,
+                    expect: commit_columns(store, *id)?,
+                }
+            }
             Undo::FolderPath { id, back, expect } => {
                 store.restore_folder_path(*id, back, me)?;
                 Undo::FolderPath {
@@ -365,6 +421,25 @@ impl Undo {
                 Undo::Many(inverse)
             }
         })
+    }
+
+    /// Whether taking the step back changes which folders exist or their
+    /// commit settings: Claude Code's settings files then follow.
+    fn touches_folders(&self) -> bool {
+        match self {
+            // A project, epic or topic takes its folders to the trash and
+            // back with it.
+            Undo::Restore(
+                Record::Folder(_) | Record::Project(_) | Record::Epic(_) | Record::Topic(_),
+            )
+            | Undo::Delete(
+                Record::Folder(_) | Record::Project(_) | Record::Epic(_) | Record::Topic(_),
+            )
+            | Undo::FolderCommit { .. }
+            | Undo::FolderPath { .. } => true,
+            Undo::Many(all) => all.iter().any(Undo::touches_folders),
+            _ => false,
+        }
     }
 
     /// Check and take back in one transaction. `Ok(None)`: something else
@@ -501,6 +576,10 @@ pub struct Workspace {
     pub unread: Unread,
     /// Bumped on every reload, by any process's commit.
     pub revision: u64,
+    /// Bumped when the window regains focus and when the folder monitor
+    /// reloads the pages: the folders' git state is read again then, never
+    /// by watching `.git`.
+    pub git_epoch: u64,
     undo: HashMap<Option<ProjectId>, UndoStack>,
     /// The steps undone, per project, for `Mod+Shift+Z`: each the inverse
     /// of an undo, checked the same way. A new action of the project
@@ -587,6 +666,7 @@ impl Workspace {
             projects: Vec::new(),
             unread: Unread::default(),
             revision: 0,
+            git_epoch: 0,
             undo: HashMap::new(),
             redo: HashMap::new(),
             actions: HashMap::new(),
@@ -685,7 +765,14 @@ impl Workspace {
                         })
                         .await;
                 }
-                if pass.changed && this.update(cx, |ws, cx| ws.reload(cx)).is_err() {
+                if pass.changed
+                    && this
+                        .update(cx, |ws, cx| {
+                            ws.git_epoch += 1;
+                            ws.reload(cx)
+                        })
+                        .is_err()
+                {
                     return;
                 }
             }
@@ -693,9 +780,13 @@ impl Workspace {
     }
 
     /// The window regained focus: the next monitor pass reads every
-    /// folder's identity again and searches again for missing ones.
-    pub fn check_folders_again(&self) {
+    /// folder's identity again and searches again for missing ones, and
+    /// the pages read their folders' git state again (ADR 0011 addendum,
+    /// live files).
+    pub fn check_folders_again(&mut self, cx: &mut Context<Self>) {
         self.thorough.store(true, Ordering::Relaxed);
+        self.git_epoch += 1;
+        cx.notify();
     }
 
     /// Whether `record` carries an unread dot (topics and knowledge only).
@@ -797,6 +888,17 @@ impl Workspace {
         f: impl FnOnce(&mut Store) -> acta_core::Result<(Undo, R)> + Send + 'static,
     ) -> Task<Result<R, WriteError>> {
         let task = self.write(cx, Key::ErrorSave, move |store| store.atomically(f));
+        self.push_undo(task, project, message, cx)
+    }
+
+    /// Once `task` has written, its step goes on the stack of `project`.
+    fn push_undo<R: Send + 'static>(
+        &mut self,
+        task: Task<Result<(Undo, R), WriteError>>,
+        project: Option<ProjectId>,
+        message: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<R, WriteError>> {
         cx.spawn(async move |this, cx| {
             let (undo, value) = task.await?;
             let _ = this.update(cx, |ws, cx| {
@@ -812,6 +914,43 @@ impl Workspace {
             });
             Ok(value)
         })
+    }
+
+    /// [`Workspace::write_undoable`] for a change to folders (added,
+    /// removed, located, a commit setting): Claude Code's settings files are
+    /// brought in line with the store once it is written (ADR 0011, 3).
+    pub fn write_folders<R: Send + 'static>(
+        &mut self,
+        cx: &mut Context<Self>,
+        project: Option<ProjectId>,
+        message: Option<String>,
+        f: impl FnOnce(&mut Store) -> acta_core::Result<(Undo, R)> + Send + 'static,
+    ) -> Task<Result<R, WriteError>> {
+        // The write commits first; the settings files of the paths it
+        // touched are brought in line afterwards, in their own store task.
+        let task = self.write(cx, Key::ErrorSave, move |store| {
+            with_touched(store, |store| store.atomically(f))
+        });
+        let task = cx.spawn(async move |ws, cx| {
+            let (done, touched) = task.await?;
+            let _ = ws.update(cx, |ws, cx| ws.sync_folder_paths(touched, cx));
+            Ok(done)
+        });
+        self.push_undo(task, project, message, cx)
+    }
+
+    /// Claude Code's settings files of `paths` brought in line with the
+    /// store, in the background.
+    pub fn sync_folder_paths(&mut self, paths: Vec<String>, cx: &mut Context<Self>) {
+        if paths.is_empty() {
+            return;
+        }
+        self.db
+            .run(cx, move |store| {
+                sync_paths(store, &paths);
+                Ok(())
+            })
+            .detach();
     }
 
     /// `write_undoable` for callers that do not wait.
@@ -966,13 +1105,32 @@ impl Workspace {
     }
 
     /// Delete a record to the trash, with "{kind} deleted." and Undo.
+    /// Delete a record, undoably. A project, epic or topic takes its
+    /// folders to the trash: their Claude Code settings are taken out (and
+    /// put back by the undo or a restore).
     pub fn delete(&mut self, record: Record, project: Option<ProjectId>, cx: &mut Context<Self>) {
         let locale = crate::settings::locale(cx);
         let message = deleted_key(record).map(|key| text(locale, key));
-        self.undoable(cx, project, message, move |store| {
+        self.write_folders(cx, project, message, move |store| {
             store.delete(record, Author::Human)?;
             Ok((Undo::Restore(record), ()))
-        });
+        })
+        .detach();
+    }
+
+    /// Restore a record from the trash, undoably (its folders' settings
+    /// come back with it).
+    pub fn restore(
+        &mut self,
+        record: Record,
+        project: Option<ProjectId>,
+        message: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<(), WriteError>> {
+        self.write_folders(cx, project, message, move |store| {
+            store.restore(record, Author::Human)?;
+            Ok((Undo::Delete(record), ()))
+        })
     }
 
     /// Move a record among its siblings, undoably.
@@ -1019,7 +1177,7 @@ impl Workspace {
             };
             let Ok(task) = ws.update(cx, |ws, cx| {
                 let new = stored.clone();
-                ws.write_undoable(cx, project, None, move |store| {
+                ws.write_folders(cx, project, None, move |store| {
                     let folder = match target {
                         FolderRef::Id(id) => store.folder(id)?,
                         FolderRef::At(owner, path) => store
@@ -1104,7 +1262,7 @@ impl Workspace {
         };
         cx.notify();
         let locale = crate::settings::locale(cx);
-        let task = self.write_undoable(cx, project, None, move |store| {
+        let task = self.write_folders(cx, project, None, move |store| {
             let mut apply = Vec::new();
             let mut steps = Vec::new();
             for (id, old, new) in offer.changes {
@@ -1161,13 +1319,22 @@ impl Workspace {
         self.undoing = true;
         let started = self.actions.get(&project).copied().unwrap_or(0);
         let applied = step.clone();
-        let task = self.write(cx, Key::ErrorSave, move |store| applied.apply(store));
+        let task = self.write(cx, Key::ErrorSave, move |store| {
+            if applied.touches_folders() {
+                with_touched(store, |store| applied.apply(store))
+            } else {
+                Ok((applied.apply(store)?, Vec::new()))
+            }
+        });
         cx.spawn(async move |ws, cx| {
             let result = task.await;
             let _ = ws.update(cx, |ws, cx| {
                 ws.undoing = false;
                 // A failed write keeps the step for another try.
-                let Ok(inverse) = result else { return };
+                let Ok((inverse, touched)) = result else {
+                    return;
+                };
+                ws.sync_folder_paths(touched, cx);
                 let (from, to) = if redo {
                     (&mut ws.redo, &mut ws.undo)
                 } else {
@@ -1270,6 +1437,87 @@ pub fn err_kind(err: &acta_core::Error) -> String {
 
 /// Folders that are not a folder on this computer (blocking: call it off
 /// the UI thread and never while holding the store).
+/// Each live folder's stored path with its commit columns, sorted.
+fn folder_columns(store: &Store) -> acta_core::Result<Vec<(String, CommitColumns)>> {
+    let mut all: Vec<(String, CommitColumns)> = store
+        .all_folders()?
+        .into_iter()
+        .map(|f| {
+            (
+                f.path,
+                (f.commit_mode, f.commit_as_user, f.commit_on_default),
+            )
+        })
+        .collect();
+    all.sort_by(|a, b| {
+        a.0.cmp(&b.0)
+            .then(format!("{:?}", a.1).cmp(&format!("{:?}", b.1)))
+    });
+    Ok(all)
+}
+
+/// The paths whose folders changed between two [`folder_columns`]: one
+/// appeared, went or had its commit columns changed.
+fn touched_paths(
+    before: &[(String, CommitColumns)],
+    after: &[(String, CommitColumns)],
+) -> Vec<String> {
+    let at = |list: &[(String, CommitColumns)], path: &str| -> Vec<CommitColumns> {
+        list.iter()
+            .filter(|(p, _)| p == path)
+            .map(|(_, c)| *c)
+            .collect()
+    };
+    let mut out: Vec<String> = Vec::new();
+    for (path, _) in before.iter().chain(after) {
+        if !out.contains(path) && at(before, path) != at(after, path) {
+            out.push(path.clone());
+        }
+    }
+    out
+}
+
+/// Runs a write of folders and returns, with its result, the paths whose
+/// Claude Code settings it may change.
+fn with_touched<T>(
+    store: &mut Store,
+    f: impl FnOnce(&mut Store) -> acta_core::Result<T>,
+) -> acta_core::Result<(T, Vec<String>)> {
+    let before = folder_columns(store)?;
+    let done = f(store)?;
+    let after = folder_columns(store)?;
+    Ok((done, touched_paths(&before, &after)))
+}
+
+/// Claude Code's settings files of `paths` in line with the store's
+/// columns: written for a path still attached, taken out (as the ledger
+/// lists) for one no live folder has. A folder that cannot be written now
+/// (offline, a malformed file) is left for the next sync; the log says how
+/// many.
+fn sync_paths(store: &mut Store, paths: &[String]) {
+    let mut kept = 0;
+    for path in paths {
+        let live = store.all_folders().is_ok_and(|all| {
+            all.iter()
+                .any(|f| acta_core::folder_path::same(acta_core::paths::Os::CURRENT, &f.path, path))
+        });
+        let ok = if live {
+            acta_core::claude_settings::sync_path(store, Path::new(path)).is_ok()
+        } else {
+            !matches!(
+                acta_core::claude_settings::remove(store, Path::new(path)),
+                Ok(acta_core::claude_settings::Restore::Kept) | Err(_)
+            )
+        };
+        kept += usize::from(!ok);
+    }
+    if kept > 0 {
+        crate::log::line(&format!(
+            "folders: {kept} Claude Code settings file(s) left as they were"
+        ));
+    }
+}
+
 pub fn missing_paths(paths: impl IntoIterator<Item = String>) -> std::collections::HashSet<String> {
     paths
         .into_iter()
@@ -1305,6 +1553,63 @@ mod tests {
     use super::*;
     use crate::db::test_support::temp_store;
     use acta_core::store::NewTopic;
+
+    #[test]
+    fn deleting_a_topic_takes_its_folders_settings_out_and_undo_puts_them_back() {
+        use acta_core::claude_settings::{self, LOCAL_SETTINGS};
+        let mut temp = temp_store();
+        let store = &mut temp.store;
+        let (_, id) = topic(store);
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("embed-terminal");
+        std::fs::create_dir_all(&repo).unwrap();
+        let out = acta_core::git_cmd::command(&repo)
+            .args(["init", "-q", "-b", "main"])
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        let folder = store
+            .add_folder(Owner::Topic(id), &repo, Author::Human)
+            .unwrap();
+        let stored = store.folder(folder).unwrap().path;
+        let file = std::path::Path::new(&stored).join(LOCAL_SETTINGS);
+        let has_push = |file: &std::path::Path| {
+            std::fs::read_to_string(file).is_ok_and(|t| t.contains("Bash(git push)"))
+        };
+        // "Commit and push" set from the form: the rules are written.
+        let (_, touched) = with_touched(store, |s| {
+            s.set_commit_settings(folder, CommitMode::Push, None, false, Author::Human)
+        })
+        .unwrap();
+        assert_eq!(touched, std::slice::from_ref(&stored));
+        sync_paths(store, &touched);
+        assert!(has_push(&file));
+
+        // The topic deleted: its folder goes with it, and so do the rules.
+        let (undo, touched) = with_touched(store, |s| {
+            s.delete(Record::Topic(id), Author::Human)?;
+            Ok(Undo::Restore(Record::Topic(id)))
+        })
+        .unwrap();
+        assert!(undo.touches_folders());
+        assert_eq!(touched, std::slice::from_ref(&stored));
+        sync_paths(store, &touched);
+        assert!(!has_push(&file), "allow rules removed");
+
+        // Undo: the topic, its folder and the rules are back.
+        let (inverse, touched) = with_touched(store, |s| undo.apply(s)).unwrap();
+        assert!(inverse.is_some());
+        sync_paths(store, &touched);
+        assert!(has_push(&file), "allow rules back");
+        assert!(
+            claude_settings::commit_settings_for(store, &stored)
+                .unwrap()
+                .is_some()
+        );
+        // Nothing else changed: nothing to sync.
+        let ((), touched) = with_touched(store, |_| Ok(())).unwrap();
+        assert!(touched.is_empty());
+    }
 
     fn topic(store: &mut Store) -> (ProjectId, TopicId) {
         let project = store.create_project("Acta", "", Author::Human).unwrap();

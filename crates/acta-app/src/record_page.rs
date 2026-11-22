@@ -44,6 +44,8 @@ use crate::ui::{self, Variant};
 use crate::when;
 use crate::workspace::{FolderRef, Undo, Workspace};
 
+mod folders;
+
 /// What a page asks the window to do.
 #[derive(Clone, Debug, PartialEq)]
 pub enum PageEvent {
@@ -61,6 +63,9 @@ pub enum PageEvent {
     /// Show the palette as a picker of these rows; the chosen one is
     /// handed to the page's callback.
     Pick(crate::palette::Picker, crate::palette::OnPick),
+    /// Ask first (interaction.md 6.4): a git action in a folder where a
+    /// Claude Code session is working.
+    Confirm(crate::dialogs::Confirm),
     /// "File with Claude Code" (screens.md 8.2): run the triage command in
     /// the project's terminal.
     Triage(acta_core::model::ProjectId),
@@ -108,7 +113,8 @@ pub struct RecordPage {
     reveal_editor: std::rc::Rc<std::cell::Cell<bool>>,
     /// The knowledge section's New menu, with its highlighted row.
     kb_new_menu: Option<usize>,
-    folders_open: bool,
+    /// The working folders (components-folders.md 5).
+    folder_ui: folders::FolderUi,
     table_filter: table::Filter,
     table_sort: Option<table::Sort>,
     kb_open: Option<KbId>,
@@ -191,6 +197,7 @@ impl RecordPage {
             || self.kb_new_menu.is_some()
             || self.due_picker.is_some()
             || self.table_due.is_some()
+            || self.folder_menu_open()
     }
 
     pub fn new(
@@ -231,7 +238,7 @@ impl RecordPage {
             scroll: gpui_kit::ScrollHandle::new(),
             reveal_editor: Default::default(),
             kb_new_menu: None,
-            folders_open: false,
+            folder_ui: folders::FolderUi::default(),
             table_filter: table::Filter::Open,
             table_sort: None,
             kb_open: None,
@@ -265,10 +272,14 @@ impl RecordPage {
     }
 
     fn reload_if_moved(&mut self, cx: &mut Context<Self>) {
-        let revision = self.ws.read(cx).revision;
+        let ws = self.ws.read(cx);
+        let (revision, epoch) = (ws.revision, ws.git_epoch);
         if revision != self.seen_revision {
             self.seen_revision = revision;
             self.reload(cx);
+        } else if self.folder_ui_epoch_moved(epoch) {
+            // The window regained focus: the git state is read again.
+            self.read_git(cx);
         }
     }
 
@@ -314,6 +325,7 @@ impl RecordPage {
                     if let Some(data) = page.data.as_mut() {
                         data.folders.missing = missing;
                     }
+                    page.read_git(cx);
                     cx.notify();
                 });
             }
@@ -943,12 +955,8 @@ impl RecordPage {
     fn restore_record(&mut self, cx: &mut Context<Self>) {
         let record = record_of(self.owner);
         let project = self.project_id();
-        self.ws.update(cx, |ws, cx| {
-            ws.undoable(cx, project, None, move |store| {
-                store.restore(record, Author::Human)?;
-                Ok((Undo::Delete(record), ()))
-            });
-        });
+        self.ws
+            .update(cx, |ws, cx| ws.restore(record, project, None, cx).detach());
     }
 
     /// New document or memory owned by this page's record: the editor
@@ -958,154 +966,6 @@ impl RecordPage {
             owner: self.owner,
             kind,
         }));
-    }
-
-    /// "Show working folders": the folder row unfolded.
-    pub fn show_folders(&mut self, cx: &mut Context<Self>) {
-        self.folders_open = true;
-        cx.notify();
-    }
-
-    // ---- folders ----
-
-    /// The native folder picker, then `then` with the chosen folder.
-    fn pick_folder(
-        &mut self,
-        cx: &mut Context<Self>,
-        then: impl FnOnce(&mut Self, PathBuf, &mut Context<Self>) + 'static,
-    ) {
-        let locale = settings::locale(cx);
-        let chosen = cx.prompt_for_paths(PathPromptOptions {
-            files: false,
-            directories: true,
-            multiple: false,
-            prompt: Some(text(locale, Key::FoldersPicker).into()),
-        });
-        cx.spawn(async move |page, cx| {
-            let Ok(Ok(Some(mut paths))) = chosen.await else {
-                return;
-            };
-            let Some(path) = paths.pop() else { return };
-            let _ = page.update(cx, |page, cx| then(page, path, cx));
-        })
-        .detach();
-    }
-
-    /// Attach `path` to `owner` (as its primary when `primary`), undoably.
-    /// The path is resolved off the store first.
-    fn attach(&mut self, owner: Owner, path: PathBuf, primary: bool, cx: &mut Context<Self>) {
-        self.folders_open = true;
-        let project = self.project_id();
-        let ws = self.ws.clone();
-        let resolved = cx
-            .background_executor()
-            .spawn(async move { acta_core::folder_path::canonical(&path).map(|_| path) });
-        cx.spawn(async move |_, cx| {
-            let Ok(path) = resolved.await else {
-                ws.update(cx, |ws, cx| ws.toast_error(Key::ErrorSave, cx));
-                return;
-            };
-            ws.update(cx, |ws, cx| {
-                ws.undoable(cx, project, None, move |store| {
-                    let id = store.add_folder(owner, &path, Author::Human)?;
-                    if primary {
-                        store.reorder(Record::Folder(id), 0, Author::Human)?;
-                    }
-                    Ok((Undo::Delete(Record::Folder(id)), ()))
-                });
-            });
-        })
-        .detach();
-    }
-
-    /// "Add folder...": append to this page's own list.
-    pub fn add_folder(&mut self, cx: &mut Context<Self>) {
-        let owner = self.owner;
-        self.pick_folder(cx, move |page, path, cx| {
-            page.attach(owner, path, false, cx)
-        });
-    }
-
-    /// "Set working folder...": replace the page's own primary, or attach to
-    /// the project when no level has a folder (components-folders.md 5).
-    pub fn set_folder(&mut self, cx: &mut Context<Self>) {
-        let Some(data) = &self.data else { return };
-        let nothing_anywhere = data.folders.effective.is_empty();
-        let own_primary = data.folders.own.first().map(|f| f.id);
-        let target = if nothing_anywhere {
-            Owner::Project(data.project.0)
-        } else {
-            self.owner
-        };
-        self.pick_folder(cx, move |page, path, cx| match own_primary {
-            // Replacing the own primary keeps its place: the same repair
-            // as Locate.
-            Some(id) if !nothing_anywhere => {
-                page.folders_open = true;
-                let project = page.project_id();
-                page.ws.update(cx, |ws, cx| {
-                    ws.locate(FolderRef::Id(id), path, project, cx).detach()
-                });
-            }
-            _ => page.attach(target, path, true, cx),
-        });
-    }
-
-    /// "Locate...": repair the folder at `path` owned by `from`, in place,
-    /// through the workspace's shared Locate (undo and bulk offer).
-    fn locate(&mut self, from: Owner, path: String, cx: &mut Context<Self>) {
-        let project = self.project_id();
-        self.pick_folder(cx, move |page, chosen, cx| {
-            page.ws.update(cx, |ws, cx| {
-                ws.locate(FolderRef::At(from, path), chosen, project, cx)
-                    .detach()
-            });
-        });
-    }
-
-    fn remove_folder(
-        &mut self,
-        id: acta_core::model::FolderId,
-        path: &str,
-        cx: &mut Context<Self>,
-    ) {
-        let locale = settings::locale(cx);
-        let folder = paths_view::last_segment(path).to_owned();
-        let key = match self.owner {
-            Owner::Topic(_) => Key::FoldersRemovedTopic,
-            Owner::Epic(_) => Key::FoldersRemovedEpic,
-            Owner::Project(_) => Key::FoldersRemovedProject,
-        };
-        let message = tr(locale, key, &[("folder", Arg::Text(&folder))]);
-        let record = Record::Folder(id);
-        let project = self.project_id();
-        self.ws.update(cx, |ws, cx| {
-            ws.undoable(cx, project, Some(message), move |store| {
-                store.delete(record, Author::Human)?;
-                Ok((Undo::Restore(record), ()))
-            });
-        });
-    }
-
-    /// Makes a folder the page's active folder (ADR 0011): one undoable
-    /// write, the folder's position unchanged.
-    fn make_primary(&mut self, id: acta_core::model::FolderId, cx: &mut Context<Self>) {
-        let owner = self.owner;
-        let project = self.project_id();
-        self.ws.update(cx, |ws, cx| {
-            ws.undoable(cx, project, None, move |store| {
-                let back = crate::workspace::active_pointer(store, owner)?;
-                store.set_active_folder(owner, Some(id), Author::Human)?;
-                Ok((
-                    Undo::ActiveFolder {
-                        owner,
-                        back,
-                        expect: Some(id),
-                    },
-                    (),
-                ))
-            });
-        });
     }
 
     // ---- keys ----
@@ -1128,6 +988,9 @@ impl RecordPage {
             }
             cx.stop_propagation();
             cx.notify();
+            return;
+        }
+        if self.folder_keys(event, window, cx) {
             return;
         }
         let Some(highlight) = self.status_menu else {
@@ -1451,419 +1314,6 @@ impl RecordPage {
             ),
         )
         .into_any_element()
-    }
-
-    fn render_folders(
-        &self,
-        data: &Loaded,
-        locale: Locale,
-        t: &Tokens,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let folders = &data.folders;
-        let home = paths_view::home();
-        let shown = |path: &str| paths_view::shorten_home(path, home.as_deref());
-        let Some(primary) = folders.primary() else {
-            // Nothing attached anywhere up the chain.
-            return div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(8.))
-                .w_full()
-                .child(icon(Icon::FolderOpen, 16., t.text_secondary))
-                .child(
-                    type_scale::UI
-                        .el()
-                        .flex_1()
-                        .min_w_0()
-                        .text_color(t.text_tertiary)
-                        .child(text(locale, Key::FoldersNone)),
-                )
-                .child(
-                    ui::button(
-                        "folder-set",
-                        text(locale, Key::FoldersSet),
-                        Variant::Ghost,
-                        false,
-                        t,
-                    )
-                    .on_click(cx.listener(|page, _, _, cx| page.set_folder(cx))),
-                )
-                .into_any_element();
-        };
-        let primary_missing = folders.is_missing(&primary.path);
-        let extra = folders.effective.len().saturating_sub(1);
-        let missing_extra = folders.missing_additional();
-        let origin = folders.inherited_from.as_ref().map(|(from, name)| {
-            let key = match from {
-                Owner::Project(_) => Key::FoldersFromProject,
-                _ => Key::FoldersFromEpic,
-            };
-            let short: String = if name.chars().count() > 24 {
-                name.chars().take(23).chain(['\u{2026}']).collect()
-            } else {
-                name.clone()
-            };
-            // Narrow windows end it with an ellipsis rather than cut it.
-            type_scale::SMALL
-                .el()
-                .min_w_0()
-                .truncate()
-                .text_color(t.text_tertiary)
-                .child(tr(locale, key, &[("name", Arg::Text(&short))]))
-        });
-        let (glyph, glyph_color, path_color) = if primary_missing {
-            (Icon::FolderX, t.warning, t.text_secondary)
-        } else {
-            (Icon::FolderOpen, t.text_secondary, t.text_primary)
-        };
-        let budget = paths_view::budget(220.);
-        let mut line = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(8.))
-            .h(px(28.))
-            .min_w_0()
-            .child(icon(
-                if self.folders_open {
-                    Icon::ChevronDown
-                } else {
-                    Icon::ChevronRight
-                },
-                16.,
-                t.text_secondary,
-            ))
-            .child(icon(glyph, 16., glyph_color))
-            .child(
-                type_scale::CODE
-                    .el()
-                    .min_w_0()
-                    .truncate()
-                    .text_color(path_color)
-                    .child(paths_view::fit(&shown(&primary.path), budget)),
-            )
-            .when(extra > 0, |this| {
-                this.child(
-                    type_scale::SMALL
-                        .el()
-                        .ml(px(4.))
-                        .text_color(t.text_tertiary)
-                        .font_features(type_scale::tabular())
-                        .child(format!("+{}", number(locale, extra as u64))),
-                )
-            })
-            .when(missing_extra > 0 && !primary_missing, |this| {
-                this.child(icon(Icon::FolderX, 14., t.warning)).child(
-                    type_scale::SMALL
-                        .el()
-                        .text_color(t.text_secondary)
-                        .child(tr(
-                            locale,
-                            Key::FoldersNNotFound,
-                            &[("n", Arg::Count(missing_extra as u64))],
-                        )),
-                )
-            });
-        // The label, then the not-found words and Locate: what follows the
-        // path, in that fixed order.
-        let mut tail: Vec<AnyElement> = origin.into_iter().map(|o| o.into_any_element()).collect();
-        if primary_missing {
-            let from = primary.from;
-            let path = primary.path.clone();
-            tail.push(
-                type_scale::SMALL
-                    .el()
-                    .text_color(t.text_secondary)
-                    .child(text(locale, Key::FoldersNotFound))
-                    .into_any_element(),
-            );
-            tail.push(
-                ui::button(
-                    "folder-locate",
-                    text(locale, Key::FoldersLocate),
-                    Variant::Ghost,
-                    false,
-                    t,
-                )
-                .on_click(cx.listener(move |page, _, _, cx| {
-                    cx.stop_propagation();
-                    page.locate(from, path.clone(), cx)
-                }))
-                .into_any_element(),
-            );
-        }
-        let two_line = ui::two_line_rows() && !tail.is_empty();
-        let header = ui::focusable(div().id("folder-row"), t, false)
-            .px(px(8.))
-            .ml(px(-8.))
-            .rounded(px(RADIUS_SM))
-            .hover({
-                let hover = t.fill_hover;
-                move |s| s.bg(hover)
-            })
-            .on_click(cx.listener(|page, _, _, cx| {
-                page.folders_open = !page.folders_open;
-                cx.notify();
-            }));
-        let header = if two_line {
-            // Under 520, 52 high: the second line starts under the path
-            // (chevron 16, icon 16, two gaps of 8).
-            header.flex().flex_col().h(px(52.)).child(line).child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(8.))
-                    .h(px(24.))
-                    .pl(px(48.))
-                    .min_w_0()
-                    .children(tail),
-            )
-        } else {
-            line = line.children(tail);
-            header.flex().child(line)
-        };
-        if !self.folders_open {
-            return header.into_any_element();
-        }
-        let mut list = div().flex().flex_col().pl(px(24.));
-        let own_paths: Vec<_> = folders.own.iter().collect();
-        for (i, folder) in own_paths.iter().enumerate() {
-            let missing = folders.is_missing(&folder.path);
-            let id = folder.id;
-            let path = folder.path.clone();
-            let path_for_remove = folder.path.clone();
-            let owner = self.owner;
-            list = list.child(
-                div()
-                    .id(("own-folder", i))
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(8.))
-                    .h(px(28.))
-                    .child(icon(
-                        if missing {
-                            Icon::FolderX
-                        } else {
-                            Icon::FolderOpen
-                        },
-                        16.,
-                        if missing { t.warning } else { t.text_secondary },
-                    ))
-                    .child(
-                        type_scale::CODE
-                            .el()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .text_color(if i == 0 && !missing {
-                                t.text_primary
-                            } else {
-                                t.text_secondary
-                            })
-                            .child(paths_view::fit(&shown(&folder.path), budget)),
-                    )
-                    .when(missing, |this| {
-                        this.child(
-                            type_scale::SMALL
-                                .el()
-                                .text_color(t.text_secondary)
-                                .child(text(locale, Key::FoldersNotFound)),
-                        )
-                        .child(
-                            ui::button(
-                                ("own-locate", i),
-                                text(locale, Key::FoldersLocate),
-                                Variant::Ghost,
-                                false,
-                                t,
-                            )
-                            .on_click(cx.listener(
-                                move |page, _, _, cx| page.locate(owner, path.clone(), cx),
-                            )),
-                        )
-                    })
-                    .when(i == 0 && !missing, |this| {
-                        this.child(
-                            type_scale::SMALL
-                                .el()
-                                .text_color(t.text_tertiary)
-                                .child(text(locale, Key::FoldersPrimary)),
-                        )
-                    })
-                    .when(i > 0, |this| {
-                        this.child(
-                            ui::button(
-                                ("own-primary", i),
-                                text(locale, Key::FoldersMakePrimary),
-                                Variant::Ghost,
-                                false,
-                                t,
-                            )
-                            .on_click(cx.listener(move |page, _, _, cx| page.make_primary(id, cx))),
-                        )
-                    })
-                    .child(
-                        ui::ghost_icon_button(
-                            format!("own-remove-{i}"),
-                            Icon::X,
-                            24.,
-                            false,
-                            false,
-                            true,
-                            t,
-                        )
-                        .on_click(cx.listener(move |page, _, _, cx| {
-                            page.remove_folder(id, &path_for_remove, cx)
-                        })),
-                    ),
-            );
-        }
-        let has_own = !folders.own.is_empty();
-        // Always inherited (ADR 0011); the grouped list with the active
-        // mark is the folder-sets UI step.
-        let inherited: Vec<_> = folders.above.clone();
-        if !inherited.is_empty() {
-            let group = folders
-                .inherited_from
-                .as_ref()
-                .or(folders.above_from.as_ref())
-                .map(|(from, name)| {
-                    let key = match from {
-                        Owner::Project(_) => Key::KbFromProject,
-                        _ => Key::KbFromEpic,
-                    };
-                    tr(locale, key, &[("name", Arg::Text(name))])
-                })
-                .unwrap_or_default();
-            list = list.child(
-                type_scale::SMALL
-                    .el()
-                    .mt(px(8.))
-                    .text_color(t.text_tertiary)
-                    .child(group),
-            );
-            for (i, folder) in inherited.iter().enumerate() {
-                let missing = folders.is_missing(&folder.path);
-                let from = folder.from;
-                let path = folder.path.clone();
-                list = list.child(
-                    div()
-                        .id(("inherited-folder", i))
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap(px(8.))
-                        .h(px(28.))
-                        .child(icon(
-                            if missing {
-                                Icon::FolderX
-                            } else {
-                                Icon::FolderOpen
-                            },
-                            16.,
-                            if missing { t.warning } else { t.text_secondary },
-                        ))
-                        .child(
-                            type_scale::CODE
-                                .el()
-                                .flex_1()
-                                .min_w_0()
-                                .truncate()
-                                .text_color(t.text_secondary)
-                                .child(paths_view::fit(&shown(&folder.path), budget)),
-                        )
-                        .when(missing, |this| {
-                            this.child(
-                                type_scale::SMALL
-                                    .el()
-                                    .text_color(t.text_secondary)
-                                    .child(text(locale, Key::FoldersNotFound)),
-                            )
-                            .child(
-                                ui::button(
-                                    ("inherited-locate", i),
-                                    text(locale, Key::FoldersLocate),
-                                    Variant::Ghost,
-                                    false,
-                                    t,
-                                )
-                                .on_click(cx.listener(
-                                    move |page, _, _, cx| page.locate(from, path.clone(), cx),
-                                )),
-                            )
-                        })
-                        .when(i == 0 && !has_own && !missing, |this| {
-                            this.child(
-                                type_scale::SMALL
-                                    .el()
-                                    .text_color(t.text_tertiary)
-                                    .child(text(locale, Key::FoldersPrimary)),
-                            )
-                        }),
-                );
-            }
-        }
-        let (button_key, add) = if has_own || self.owner.level() == acta_core::model::Level::Project
-        {
-            (Key::FoldersAdd, true)
-        } else {
-            (Key::FoldersSetHere, false)
-        };
-        list = list.child(
-            div().pt(px(4.)).child(
-                ui::button(
-                    "folder-add",
-                    text(locale, button_key),
-                    Variant::Ghost,
-                    false,
-                    t,
-                )
-                .ml(px(-12.))
-                .on_click(cx.listener(move |page, _, _, cx| {
-                    if add {
-                        page.add_folder(cx)
-                    } else {
-                        page.set_folder(cx)
-                    }
-                })),
-            ),
-        );
-        let hint = if has_own || self.owner.level() == acta_core::model::Level::Project {
-            text(locale, Key::FoldersHint)
-        } else {
-            tr(
-                locale,
-                Key::FoldersUses,
-                &[(
-                    "name",
-                    Arg::Text(
-                        &folders
-                            .inherited_from
-                            .as_ref()
-                            .map(|f| f.1.clone())
-                            .unwrap_or_default(),
-                    ),
-                )],
-            )
-        };
-        list = list.child(
-            type_scale::SMALL
-                .el()
-                .mt(px(8.))
-                .text_color(t.text_tertiary)
-                .child(hint),
-        );
-        div()
-            .flex()
-            .flex_col()
-            .w_full()
-            .child(header)
-            .child(list)
-            .into_any_element()
     }
 
     fn render_state(
