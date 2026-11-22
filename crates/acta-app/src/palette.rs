@@ -34,6 +34,8 @@ const ROWS: usize = 10;
 pub enum CreateKind {
     Topic,
     Epic,
+    /// "New contact": the typed text is the name.
+    Contact,
 }
 
 pub enum PaletteEvent {
@@ -60,6 +62,11 @@ pub struct Choice {
     pub title: String,
     pub detail: String,
     pub lead: Lead,
+    /// At the right of the row: "Current", "Used outside".
+    pub trailing: String,
+    /// `Enter` on the row does not pick it: this shows under the list
+    /// instead (a contact moved down where it is named outside).
+    pub refusal: Option<String>,
 }
 
 /// What a picker does with the row chosen, by its index. Compared by
@@ -102,6 +109,8 @@ pub struct Palette {
     create: Option<CreateKind>,
     /// A picker: only its rows, and `Enter` picks.
     picker: Option<Picker>,
+    /// A picker row refused: why, under the list.
+    refused: Option<String>,
     projects: Vec<ProjectTree>,
     recent: Vec<TopicId>,
     context: commands::Context,
@@ -136,6 +145,7 @@ impl Palette {
             (Some(_), _) => text(locale, Key::CommonSearch),
             (None, Some(CreateKind::Epic)) => Command::NewEpic.label(locale),
             (None, Some(CreateKind::Topic)) => text(locale, Key::TopicNew),
+            (None, Some(CreateKind::Contact)) => text(locale, Key::ContactNamePlaceholder),
             (None, None) => text(locale, Key::CommonSearch),
         };
         let input = cx.new(|cx| InputState::new(window, cx).placeholder(placeholder));
@@ -158,6 +168,7 @@ impl Palette {
             },
             create: setup.create,
             picker: setup.picker,
+            refused: None,
             projects: setup.projects,
             recent: setup.recent,
             context: setup.context,
@@ -179,6 +190,13 @@ impl Palette {
         self.input
             .update(cx, |state, cx| state.set_value(text.to_owned(), window, cx));
         self.refresh(cx);
+    }
+
+    #[cfg(debug_assertions)]
+    /// Debug builds' captures: `text` typed, then `Enter`.
+    pub fn dev_enter(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.dev_type(text, window, cx);
+        self.run(false, cx);
     }
 
     fn query(&self, cx: &Context<Self>) -> String {
@@ -351,9 +369,15 @@ impl Palette {
             return;
         }
         let shown = self.shown();
-        if self.picker.is_some() {
+        if let Some(picker) = &self.picker {
             if let Some(Target::Choice(i)) = shown.get(self.selected).map(|i| &i.target) {
-                cx.emit(PaletteEvent::Picked(*i));
+                match picker.choices.get(*i).and_then(|c| c.refusal.clone()) {
+                    Some(why) => {
+                        self.refused = Some(why);
+                        cx.notify();
+                    }
+                    None => cx.emit(PaletteEvent::Picked(*i)),
+                }
             }
             return;
         }
@@ -367,6 +391,7 @@ impl Palette {
     fn step(&mut self, down: bool, cx: &mut Context<Self>) {
         let len = self.shown().len();
         self.selected = palette_model::step(self.selected, len, down);
+        self.refused = None;
         cx.notify();
     }
 
@@ -446,6 +471,25 @@ impl Palette {
             Target::Command(command) => command.shortcut(locale, cfg!(target_os = "macos")),
             _ => vec![],
         };
+        let trailing = match &item.target {
+            Target::Choice(i) => self
+                .picker
+                .as_ref()
+                .and_then(|p| p.choices.get(*i))
+                .filter(|c| !c.trailing.is_empty())
+                .map(|c| {
+                    type_scale::SMALL
+                        .el()
+                        .flex_shrink_0()
+                        .text_color(if c.refusal.is_some() || selected {
+                            t.text_secondary
+                        } else {
+                            t.text_tertiary
+                        })
+                        .child(c.trailing.clone())
+                }),
+            _ => None,
+        };
         let hover = t.fill_hover;
         div()
             .id(("palette-row", index))
@@ -485,6 +529,7 @@ impl Palette {
             .when(!shortcut.is_empty(), |this| {
                 this.child(ui::kbd(&shortcut, t))
             })
+            .children(trailing)
             .into_any_element()
     }
 }
@@ -663,6 +708,18 @@ impl Render for Palette {
             .when(!shown.is_empty() || !query.is_empty(), |this| {
                 this.child(results)
             })
+            .children(self.refused.clone().map(|why| {
+                type_scale::SMALL
+                    .el()
+                    .px(px(12.))
+                    .py(px(8.))
+                    .max_h(px(16. * 4. + 16.))
+                    .overflow_hidden()
+                    .border_t_1()
+                    .border_color(t.border_default)
+                    .text_color(t.text_secondary)
+                    .child(why)
+            }))
             .child(
                 div()
                     .flex()

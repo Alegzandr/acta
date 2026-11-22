@@ -68,10 +68,36 @@ pub fn author(locale: Locale, author: Author) -> String {
 /// The name of the sample data's human (CLAUDE.md).
 pub const SAMPLE_HUMAN: &str = "Alexandre";
 
-/// The user's name as the OS gives it, with a capital initial. A debug
-/// build run on the dev seed (`ACTA_DEV_SEED`) shows the sample data's
-/// human instead, so captures never carry the OS user's name.
+/// The name set in Settings > Profile (components-contacts.md 5), read
+/// with the tree: it names every human write, resolved when drawn.
+static PROFILE_NAME: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
+
+/// Keep the profile's name (`None`: not set, the system user name).
+pub fn set_profile_name(name: Option<String>) {
+    *PROFILE_NAME.write().unwrap_or_else(|p| p.into_inner()) = name;
+}
+
+/// The name set in Settings, if any.
+pub fn profile_name() -> Option<String> {
+    PROFILE_NAME
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone()
+}
+
+/// The human's name: the one set in Settings > Profile, else the user's
+/// name as the OS gives it, with a capital initial. A debug build run on
+/// the dev seed (`ACTA_DEV_SEED`) shows the sample data's human instead
+/// of the OS name, so captures never carry it.
 pub fn human_name(locale: Locale) -> String {
+    if let Some(name) = profile_name() {
+        return name;
+    }
+    system_name(locale)
+}
+
+/// The system user name, capitalised: the Profile's placeholder.
+pub fn system_name(locale: Locale) -> String {
     if cfg!(debug_assertions) && std::env::var_os("ACTA_DEV_SEED").is_some() {
         return SAMPLE_HUMAN.into();
     }

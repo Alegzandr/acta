@@ -4,7 +4,7 @@
 //! A route's key is what `preferences.json` may hold (docs/design/layout.md
 //! 4.7): a record id or a fixed page key with its project id, never a title.
 
-use acta_core::model::{EpicId, KbId, ProjectId, TopicId};
+use acta_core::model::{ContactId, EpicId, KbId, Owner, ProjectId, TopicId};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Route {
@@ -19,6 +19,12 @@ pub enum Route {
     Settings,
     /// The Keyboard shortcuts page (components-app.md 5).
     Shortcuts,
+    /// The Questions page of a project, an epic or a topic
+    /// (components-questions.md 5).
+    Questions(Owner),
+    /// The Contacts page and a contact's page (components-contacts.md 5).
+    Contacts,
+    Contact(ContactId),
 }
 
 impl Route {
@@ -35,6 +41,9 @@ impl Route {
             Route::Trash => "trash".into(),
             Route::Settings => "settings".into(),
             Route::Shortcuts => "shortcuts".into(),
+            Route::Questions(owner) => format!("questions:{owner}"),
+            Route::Contacts => "contacts".into(),
+            Route::Contact(id) => id.to_string(),
         }
     }
 
@@ -45,10 +54,20 @@ impl Route {
         if let Some(rest) = key.strip_prefix("knowledge:") {
             return project_key(rest).map(Route::Knowledge);
         }
+        if let Some(rest) = key.strip_prefix("questions:") {
+            let owner = match rest.split_once('-')?.0 {
+                "P" => Owner::Project(ProjectId::parse(rest)?),
+                "E" => Owner::Epic(EpicId::parse(rest)?),
+                "T" => Owner::Topic(TopicId::parse(rest)?),
+                _ => return None,
+            };
+            return Some(Route::Questions(owner));
+        }
         match key {
             "trash" => return Some(Route::Trash),
             "settings" => return Some(Route::Settings),
             "shortcuts" => return Some(Route::Shortcuts),
+            "contacts" => return Some(Route::Contacts),
             _ => {}
         }
         let (prefix, _) = key.split_once('-')?;
@@ -57,6 +76,7 @@ impl Route {
             "E" => EpicId::parse(key).map(Route::Epic),
             "T" => TopicId::parse(key).map(Route::Topic),
             "K" => KbId::parse(key).map(Route::Kb),
+            "C" => ContactId::parse(key).map(Route::Contact),
             _ => None,
         }
     }
@@ -154,6 +174,10 @@ mod tests {
             Route::Knowledge(ProjectId(2)),
             Route::Trash,
             Route::Settings,
+            Route::Questions(Owner::Epic(EpicId(3))),
+            Route::Questions(Owner::Project(ProjectId(1))),
+            Route::Contacts,
+            Route::Contact(ContactId(3)),
         ];
         for route in routes {
             assert_eq!(Route::parse(&route.key()), Some(route), "{route:?}");
@@ -174,6 +198,9 @@ mod tests {
             "inbox:2",
             "inbox:T-2",
             "trash2",
+            "questions:",
+            "questions:Q-1",
+            "questions:3",
         ] {
             assert_eq!(Route::parse(key), None, "{key}");
         }

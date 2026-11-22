@@ -44,6 +44,7 @@ use crate::when;
 use crate::workspace::{FolderRef, Undo, Workspace};
 
 mod folders;
+pub mod questions;
 
 /// What a page asks the window to do.
 #[derive(Clone, Debug, PartialEq)]
@@ -71,6 +72,9 @@ pub enum PageEvent {
     /// The Overview's memory line: the knowledge page with the chip "Not
     /// updated for 90 days".
     StaleMemories(acta_core::model::ProjectId),
+    /// The Overview's late answers: the Questions page of this scope with
+    /// Overdue selected.
+    LateAnswers(Owner),
 }
 
 gpui_kit::actions!(
@@ -148,6 +152,8 @@ pub struct RecordPage {
     row_ids: std::cell::RefCell<Vec<TopicId>>,
     /// The due date picker on a table row, anchored to its title.
     table_due: Option<TableDue>,
+    /// The Questions section and the Report to row.
+    q: questions::QuestionUi,
     _load: Task<()>,
     _subs: Vec<Subscription>,
 }
@@ -203,6 +209,7 @@ impl RecordPage {
             || self.kb_new_menu.is_some()
             || self.due_picker.is_some()
             || self.table_due.is_some()
+            || self.questions_menu_open()
             || self.folder_menu_open()
     }
 
@@ -259,6 +266,7 @@ impl RecordPage {
             row_focus: Vec::new(),
             row_ids: Default::default(),
             table_due: None,
+            q: questions::QuestionUi::default(),
             _load: Task::ready(()),
             _subs: subs,
         };
@@ -556,6 +564,12 @@ impl RecordPage {
                 self.reveal_table_now(cx);
             }
         }
+    }
+
+    /// The Overview's late answers: the Questions page of this project or
+    /// epic with Overdue selected.
+    pub fn show_late_answers(&mut self, cx: &mut Context<Self>) {
+        cx.emit(PageEvent::LateAnswers(self.owner));
     }
 
     /// Scroll to the table and focus its first row once the page reloaded
@@ -1038,6 +1052,7 @@ impl RecordPage {
         &self,
         data: &Loaded,
         due_focused: bool,
+        window: &Window,
         locale: Locale,
         t: &Tokens,
         cx: &mut Context<Self>,
@@ -1073,6 +1088,9 @@ impl RecordPage {
                         self.render_due(data, locale, t, cx),
                     ));
                 }
+                if let Some(report) = self.render_report(data, locale, t, cx) {
+                    rows.push((text(locale, Key::PropReportTo), report));
+                }
                 let epic = match &data.epic {
                     Some((epic, name)) => {
                         let epic = *epic;
@@ -1097,6 +1115,11 @@ impl RecordPage {
                         self.render_due(data, locale, t, cx),
                     ));
                 }
+                if matches!(self.owner, Owner::Epic(_))
+                    && let Some(report) = self.render_report(data, locale, t, cx)
+                {
+                    rows.push((text(locale, Key::PropReportTo), report));
+                }
             }
         }
         rows.push((
@@ -1108,8 +1131,13 @@ impl RecordPage {
         // The add chips: on one line under the last row, only while the
         // pointer is over the block or the picker they open is open, so the
         // page never moves under a reader who is not pointing at it.
-        let chips = (!due_row && (self.props_hover || self.due_picker.is_some() || due_focused))
-            .then(|| self.render_add_chips(locale, t, cx));
+        let report_chip = !matches!(self.owner, Owner::Project(_)) && data.report.to.is_none();
+        let wanted = self.props_hover
+            || self.due_picker.is_some()
+            || due_focused
+            || self.report_chip_wanted(window);
+        let chips = ((!due_row || report_chip) && wanted)
+            .then(|| self.render_add_chips(!due_row, report_chip, locale, t, cx));
         div()
             .id("properties")
             .flex()
@@ -1133,7 +1161,14 @@ impl RecordPage {
     /// The add chip of an unset Due (components-records.md 5): a compact
     /// ghost button, `plus` 14 and "Due date" in `type.small` tertiary; the
     /// picker hangs from it.
-    fn render_add_chips(&self, locale: Locale, t: &Tokens, cx: &mut Context<Self>) -> AnyElement {
+    fn render_add_chips(
+        &self,
+        due: bool,
+        report: bool,
+        locale: Locale,
+        t: &Tokens,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let hover = t.fill_hover;
         let chip = ui::focusable(type_scale::SMALL.el().id("prop-add-due"), t, false)
             .relative()
@@ -1162,8 +1197,10 @@ impl RecordPage {
             .items_center()
             .gap(px(8.))
             .h(px(28.))
-            .child(chip)
-            .children(picker)
+            .when(due, |this| this.child(chip).children(picker))
+            .when(report, |this| {
+                this.child(self.render_report_chip(locale, t, cx))
+            })
             .into_any_element()
     }
 
@@ -1761,7 +1798,12 @@ impl RecordPage {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         if entry.kind == EntryKind::System {
-            let line = system_line(entry, locale);
+            let names = self
+                .data
+                .as_ref()
+                .map(|d| d.event_names.clone())
+                .unwrap_or_default();
+            let line = system_line(entry, &names, locale);
             // The gutter shows the glyph of the status it was set to.
             let glyph = event_status(entry)
                 .map(|s| ui::status_glyph(s, 14., t))
@@ -1952,6 +1994,14 @@ impl RecordPage {
         // topic has a date.
         let dated = table::has_dates(&all);
         let current = self.table_filter.effective(dated);
+        // Questions and Report to exist only while a listed topic uses
+        // them; Report to goes under 640 of column, Questions and Entries
+        // under 520 (components-records.md 5, Topic table).
+        let width = ui::column_width();
+        let (q_col, r_col) = crate::questions_model::table_columns(&all, &data.questions.per_topic);
+        let q_col = q_col && width >= 520.;
+        let r_col = r_col && width >= 640.;
+        let entries_col = width >= 520.;
         let filters = table::Filter::shown(dated)
             .iter()
             .enumerate()
@@ -2096,15 +2146,34 @@ impl RecordPage {
                     cx,
                 ))
             })
-            .child(header_cell(
-                "th-entries",
-                Column::Entries,
-                Some(Key::TableEntries),
-                Some(56.),
-                true,
-                self,
-                cx,
-            ))
+            .when(q_col, |this| {
+                this.child(
+                    div()
+                        .w(px(64.))
+                        .flex_shrink_0()
+                        .text_right()
+                        .child(text(locale, Key::TableQuestions)),
+                )
+            })
+            .when(r_col, |this| {
+                this.child(
+                    div()
+                        .w(px(120.))
+                        .flex_shrink_0()
+                        .child(text(locale, Key::TableReportTo)),
+                )
+            })
+            .when(entries_col, |this| {
+                this.child(header_cell(
+                    "th-entries",
+                    Column::Entries,
+                    Some(Key::TableEntries),
+                    Some(56.),
+                    true,
+                    self,
+                    cx,
+                ))
+            })
             .child(header_cell(
                 "th-updated",
                 Column::Updated,
@@ -2167,6 +2236,57 @@ impl RecordPage {
                             )
                     })
             });
+            let questions_cell = q_col.then(|| {
+                let (n, late) = data.questions.per_topic.get(&id).copied().unwrap_or((0, 0));
+                let tip = if late > 0 {
+                    tr(
+                        locale,
+                        Key::TableQuestionsTipOverdue,
+                        &[
+                            ("n", Arg::Count(n as u64)),
+                            ("late", Arg::Count(late as u64)),
+                        ],
+                    )
+                } else {
+                    tr(
+                        locale,
+                        Key::TableQuestionsTip,
+                        &[("n", Arg::Count(n as u64))],
+                    )
+                };
+                type_scale::SMALL
+                    .el()
+                    .id(("table-questions", row_index))
+                    .w(px(64.))
+                    .flex_shrink_0()
+                    .text_right()
+                    .font_features(type_scale::tabular())
+                    .text_color(if late > 0 {
+                        t.text_secondary
+                    } else {
+                        t.text_tertiary
+                    })
+                    .when(n > 0, |this| {
+                        this.tooltip(ui::tip(tip)).child(number(locale, n as u64))
+                    })
+            });
+            let report_cell = r_col.then(|| {
+                let name = topic.report_to.as_ref().map(|c| c.name.clone());
+                type_scale::SMALL
+                    .el()
+                    .id(("table-report", row_index))
+                    .w(px(120.))
+                    .flex_shrink_0()
+                    .truncate()
+                    .text_color(if topic.reported {
+                        t.text_tertiary
+                    } else {
+                        t.text_secondary
+                    })
+                    .when_some(name, |this, name| {
+                        this.tooltip(ui::tip(name.clone())).child(name)
+                    })
+            });
             let r = ui::focusable(div().id(("table-row", row_index)), t, false)
                 .when_some(handle, |this, handle| this.track_focus(&handle))
                 .relative()
@@ -2205,16 +2325,20 @@ impl RecordPage {
                         .child(topic.title.clone()),
                 )
                 .children(due_cell)
-                .child(
-                    type_scale::SMALL
-                        .el()
-                        .w(px(56.))
-                        .flex_shrink_0()
-                        .text_right()
-                        .font_features(type_scale::tabular())
-                        .text_color(t.text_tertiary)
-                        .child(number(locale, topic.entries.max(0) as u64)),
-                )
+                .children(questions_cell)
+                .children(report_cell)
+                .when(entries_col, |this| {
+                    this.child(
+                        type_scale::SMALL
+                            .el()
+                            .w(px(56.))
+                            .flex_shrink_0()
+                            .text_right()
+                            .font_features(type_scale::tabular())
+                            .text_color(t.text_tertiary)
+                            .child(number(locale, topic.entries.max(0) as u64)),
+                    )
+                })
                 .child(
                     type_scale::SMALL
                         .el()
@@ -2326,14 +2450,30 @@ impl RecordPage {
         let o = data.overview.as_ref()?;
         let open = self.overview_open(cx);
         let count = |n: usize| [("n", Arg::Count(n as u64))];
-        let mut lines: Vec<(Icon, gpui_kit::Hsla, String, OverviewFilter)> = Vec::new();
+        // `None`: the late answers, which open the Questions page.
+        let mut lines: Vec<(Icon, gpui_kit::Hsla, String, Option<OverviewFilter>)> = Vec::new();
         if o.blocked > 0 {
             let words = tr(locale, Key::OverviewBlocked, &count(o.blocked));
-            lines.push((Icon::CirclePause, t.warning, words, OverviewFilter::Blocked));
+            lines.push((
+                Icon::CirclePause,
+                t.warning,
+                words,
+                Some(OverviewFilter::Blocked),
+            ));
         }
         if o.overdue > 0 {
             let words = tr(locale, Key::OverviewOverdue, &count(o.overdue));
-            lines.push((Icon::ClockAlert, t.warning, words, OverviewFilter::Overdue));
+            lines.push((
+                Icon::ClockAlert,
+                t.warning,
+                words,
+                Some(OverviewFilter::Overdue),
+            ));
+        }
+        // The fifth line, late answers (components-records.md 5).
+        if o.answers_late > 0 {
+            let words = tr(locale, Key::OverviewQuestionsLate, &count(o.answers_late));
+            lines.push((Icon::CircleQuestionMark, t.warning, words, None));
         }
         if o.idle > 0 {
             let words = tr(locale, Key::OverviewIdle, &count(o.idle));
@@ -2341,7 +2481,7 @@ impl RecordPage {
                 Icon::CircleDot,
                 t.text_secondary,
                 words,
-                OverviewFilter::Idle,
+                Some(OverviewFilter::Idle),
             ));
         }
         // The inbox is project-wide: never on an epic page.
@@ -2355,14 +2495,22 @@ impl RecordPage {
                     ("days", Arg::Count(days)),
                 ],
             );
-            lines.push((Icon::Inbox, t.text_secondary, words, OverviewFilter::Inbox));
+            lines.push((
+                Icon::Inbox,
+                t.text_secondary,
+                words,
+                Some(OverviewFilter::Inbox),
+            ));
         }
         let line_els = lines
             .into_iter()
             .enumerate()
             .map(|(i, (glyph, color, words, filter))| {
                 overview_control(("ov-line", i), 32., t)
-                    .on_click(cx.listener(move |page, _, _, cx| page.show_filter(filter, cx)))
+                    .on_click(cx.listener(move |page, _, _, cx| match filter {
+                        Some(filter) => page.show_filter(filter, cx),
+                        None => page.show_late_answers(cx),
+                    }))
                     .child(
                         div()
                             .size(px(16.))
@@ -3048,9 +3196,56 @@ fn owner_label(owner: Owner, data: &Loaded) -> String {
     }
 }
 
-fn system_line(entry: &Entry, locale: Locale) -> String {
+fn system_line(
+    entry: &Entry,
+    names: &std::collections::HashMap<String, String>,
+    locale: Locale,
+) -> String {
     let author = when::author(locale, entry.author);
     let when = when::long(locale, entry.stamp.created_at);
+    // Report to events (request 19): the contact drawn with its name now.
+    if let Some(event) = entry.event.as_ref().filter(|e| {
+        matches!(
+            e.kind,
+            acta_core::model::EventKind::Report | acta_core::model::EventKind::Reported
+        )
+    }) {
+        let name = |uuid: &Option<String>| {
+            uuid.as_ref()
+                .and_then(|u| names.get(u))
+                .cloned()
+                .unwrap_or_default()
+        };
+        let what = match (event.kind, &event.new) {
+            (acta_core::model::EventKind::Report, Some(_)) => tr(
+                locale,
+                Key::EventReportSet,
+                &[
+                    ("author", Arg::Text(&author)),
+                    ("name", Arg::Text(&name(&event.new))),
+                ],
+            ),
+            (acta_core::model::EventKind::Report, None) => tr(
+                locale,
+                Key::EventReportCleared,
+                &[("author", Arg::Text(&author))],
+            ),
+            (_, Some(_)) => tr(
+                locale,
+                Key::EventReported,
+                &[
+                    ("author", Arg::Text(&author)),
+                    ("name", Arg::Text(&name(&event.new))),
+                ],
+            ),
+            (_, None) => tr(
+                locale,
+                Key::EventReportUnmarked,
+                &[("author", Arg::Text(&author))],
+            ),
+        };
+        return format!("{what} \u{2013} {when}");
+    }
     let status = event_status(entry);
     let due = entry
         .event
@@ -3269,14 +3464,17 @@ impl Render for RecordPage {
         if let Some(data) = self.data.clone() {
             column = column
                 .child(self.render_title(&data, &t, cx))
-                .child(self.render_properties(&data, due_focused, locale, &t, cx))
+                .child(self.render_properties(&data, due_focused, window, locale, &t, cx))
                 .children(self.render_claude_line(locale, &t, cx));
             if self.topic().is_some() {
                 column = column.child(self.render_state(&data, locale, &t, cx));
             }
             column = column
                 .children(self.render_overview(&data, locale, &t, cx))
-                .child(self.render_description(&data, locale, &t, cx))
+                .child(self.render_description(&data, locale, &t, cx));
+            let questions = self.render_questions(&data, locale, &t, window, cx);
+            column = column
+                .child(questions)
                 .child(self.render_knowledge(&data, locale, &t, cx));
             if self.topic().is_some() {
                 column = column.child(self.render_timeline(&data, locale, &t, cx));
@@ -3308,10 +3506,27 @@ impl Render for RecordPage {
                     cx.notify();
                 }
             }))
-            .on_action(cx.listener(|page, _: &EditTitle, window, cx| page.edit_title(window, cx)))
-            .on_action(cx.listener(|page, _: &OpenDuePicker, window, cx| {
-                page.open_due_here(false, window, cx)
+            .on_action(cx.listener(|page, _: &EditTitle, window, cx| {
+                // A focused question row edits itself (the focused element
+                // wins, components-records.md 5).
+                if !page.edit_focused_question(window, cx) {
+                    page.edit_title(window, cx)
+                }
             }))
+            .on_action(cx.listener(|page, _: &OpenDuePicker, window, cx| {
+                match page.focused_question(window) {
+                    Some((_, id)) => page.open_question_date(id, window, cx),
+                    None => page.open_due_here(false, window, cx),
+                }
+            }))
+            .on_action(cx.listener(|page, _: &questions::NewQuestion, window, cx| {
+                page.new_question(window, cx)
+            }))
+            .on_action(
+                cx.listener(|page, _: &questions::OpenReportTo, window, cx| {
+                    page.open_report_to(window, cx)
+                }),
+            )
             .on_action(cx.listener(|page, _: &Escape, window, cx| page.cancel_editors(window, cx)))
             .on_key_down(cx.listener(Self::on_key))
             .child(column)

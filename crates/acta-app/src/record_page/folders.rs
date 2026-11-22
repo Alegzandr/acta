@@ -995,6 +995,8 @@ impl RecordPage {
                         disk.and_then(|d| d.git.as_ref()),
                         false,
                     )),
+                    trailing: String::new(),
+                    refusal: None,
                 }
             })
             .collect();
@@ -1069,6 +1071,8 @@ impl RecordPage {
                     folder.name.clone()
                 },
                 lead: crate::palette::Lead::Icon(Icon::GitCommitHorizontal),
+                trailing: String::new(),
+                refusal: None,
             })
             .collect();
         let page = cx.entity().downgrade();

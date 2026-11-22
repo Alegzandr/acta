@@ -16,19 +16,19 @@ use acta_core::store::{NewEntry, NewTopic};
 use gpui_kit::component::input::{Escape, InputEvent, Textarea, TextareaState};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, AppContext, Context, Entity, EventEmitter, InteractiveElement, IntoElement,
-    ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Task,
-    Window, div, px,
+    AnyElement, AppContext, Context, Entity, EventEmitter, Focusable, InteractiveElement,
+    IntoElement, ParentElement, Render, SharedString, StatefulInteractiveElement, Styled,
+    Subscription, Task, Window, div, px,
 };
 
-use crate::i18n::{Arg, Key, KeyName, Locale, text, tr};
-use crate::icons::Icon;
+use crate::i18n::{Arg, Key, KeyName, Locale, number, text, tr};
+use crate::icons::{Icon, icon};
 use crate::markdown_view;
 use crate::palette::{Choice, Lead, OnPick, Picker};
 use crate::record_page::PageEvent;
 use crate::route::Route;
 use crate::settings;
-use crate::theme::{RADIUS_LG, Tokens};
+use crate::theme::{RADIUS_LG, RADIUS_SM, Tokens};
 use crate::type_scale;
 use crate::ui::{self, Variant};
 use crate::when;
@@ -74,6 +74,8 @@ pub fn destinations(tree: &ProjectTree, locale: Locale) -> Vec<(Destination, Cho
                 title: text(locale, Key::TopicNew),
                 detail: project.clone(),
                 lead: Lead::Icon(Icon::CornerDownRight),
+                trailing: String::new(),
+                refusal: None,
             },
         ),
         (
@@ -82,6 +84,8 @@ pub fn destinations(tree: &ProjectTree, locale: Locale) -> Vec<(Destination, Cho
                 title: text(locale, Key::InboxPickNewEpic),
                 detail: project.clone(),
                 lead: Lead::Icon(Icon::Layers),
+                trailing: String::new(),
+                refusal: None,
             },
         ),
     ];
@@ -93,6 +97,8 @@ pub fn destinations(tree: &ProjectTree, locale: Locale) -> Vec<(Destination, Cho
                 title: epic.title.clone(),
                 detail: tr(locale, Key::InboxPickInEpic, &[("path", Arg::Text(&path))]),
                 lead: Lead::Icon(Icon::Layers),
+                trailing: String::new(),
+                refusal: None,
             },
         ));
     }
@@ -109,6 +115,8 @@ pub fn destinations(tree: &ProjectTree, locale: Locale) -> Vec<(Destination, Cho
                 title: topic.title.clone(),
                 detail: tr(locale, Key::InboxPickAsEntry, &[("path", Arg::Text(&path))]),
                 lead: Lead::Status(topic.status),
+                trailing: String::new(),
+                refusal: None,
             },
         ));
     }
@@ -179,6 +187,49 @@ pub fn file_note(
     })
 }
 
+/// Save a note with its Report to (components-questions.md 5, Notes): a
+/// contact taken as "New contact" is created now, with its name only, at
+/// the project's level.
+pub fn add_note_with(
+    store: &mut acta_core::Store,
+    project: ProjectId,
+    body: &str,
+    report: crate::contact_picker::Value,
+) -> acta_core::Result<NoteId> {
+    use crate::contact_picker::Value;
+    store.atomically(|store| {
+        let id = store.add_note(project, body, Author::Human)?;
+        let contact = match report {
+            Value::None => None,
+            Value::Contact(c, _) => Some(c),
+            Value::New(name) => Some(store.create_contact(
+                &name,
+                acta_core::model::ContactLevel::Project(project),
+                Author::Human,
+            )?),
+        };
+        if contact.is_some() {
+            store.set_report_to(acta_core::model::Record::Note(id), contact, Author::Human)?;
+        }
+        Ok(id)
+    })
+}
+
+/// The contacts the listed notes name, with how many each, for the inbox's
+/// Report to filter (first seen first).
+pub fn report_people(notes: &[&Note]) -> Vec<(acta_core::model::ContactId, String, usize)> {
+    let mut out: Vec<(acta_core::model::ContactId, String, usize)> = Vec::new();
+    for n in notes {
+        if let Some(c) = &n.report_to {
+            match out.iter_mut().find(|(id, _, _)| *id == c.id) {
+                Some(entry) => entry.2 += 1,
+                None => out.push((c.id, c.name.clone(), 1)),
+            }
+        }
+    }
+    out
+}
+
 pub struct InboxPage {
     ws: Entity<Workspace>,
     pub project: ProjectId,
@@ -190,6 +241,12 @@ pub struct InboxPage {
     total_open: i64,
     show_filed: bool,
     capture: Entity<TextareaState>,
+    /// The capture's Report to (empty each time).
+    report: Entity<crate::contact_picker::ContactPicker>,
+    /// The Report to filter: `None` anyone; and its menu.
+    report_filter: Option<acta_core::model::ContactId>,
+    filter_menu: Option<usize>,
+    filter_anchor: crate::menu::AnchorBounds,
     /// A note being edited in place, with its editor.
     editing: Option<(NoteId, Entity<TextareaState>)>,
     /// Shown as the Inbox view (workbench.md 4.8.3): no title, no meta
@@ -251,6 +308,20 @@ impl InboxPage {
                 .auto_grow(3, 16)
                 .placeholder(placeholder)
         });
+        let place = acta_core::model::Place {
+            project,
+            epic: None,
+        };
+        let report = cx.new(|cx| {
+            crate::contact_picker::ContactPicker::new(
+                ws.clone(),
+                place,
+                crate::contact_picker::Value::None,
+                crate::contact_picker::Mode::Inline,
+                window,
+                cx,
+            )
+        });
         let subs = vec![
             cx.observe(&ws, |page, ws, cx| {
                 let revision = ws.read(cx).revision;
@@ -271,6 +342,20 @@ impl InboxPage {
                     }
                 },
             ),
+            cx.subscribe_in(
+                &report,
+                window,
+                |page, _, event: &crate::contact_picker::PickerEvent, window, cx| {
+                    use crate::contact_picker::PickerEvent;
+                    match event {
+                        PickerEvent::Submit => page.add(window, cx),
+                        PickerEvent::Tab(true) | PickerEvent::Taken(_, Some(true)) => {
+                            page.capture.update(cx, |s, cx| s.focus(window, cx))
+                        }
+                        _ => cx.notify(),
+                    }
+                },
+            ),
         ];
         let mut page = Self {
             ws,
@@ -281,6 +366,10 @@ impl InboxPage {
             total_open: 0,
             show_filed: false,
             capture,
+            report,
+            report_filter: None,
+            filter_menu: None,
+            filter_anchor: crate::menu::AnchorBounds::default(),
             editing: None,
             as_view,
             seen_revision: 0,
@@ -333,9 +422,14 @@ impl InboxPage {
             .update(cx, |state, cx| state.set_value("", window, cx));
         let project = self.project;
         let restore = body.clone();
+        // The field starts empty each time (components-questions.md 5).
+        let person = self.report.read(cx).value().clone();
+        self.report.update(cx, |p, cx| {
+            p.set_value(crate::contact_picker::Value::None, window, cx)
+        });
         let task = self.ws.update(cx, |ws, cx| {
             ws.write(cx, Key::ErrorSave, move |store| {
-                store.add_note(project, &body, Author::Human)
+                add_note_with(store, project, &body, person)
             })
         });
         cx.spawn_in(window, async move |page, cx| {
@@ -347,6 +441,102 @@ impl InboxPage {
             }
         })
         .detach();
+    }
+
+    /// "Report to: anyone": a compact dropdown of the listed notes'
+    /// contacts with their counts.
+    fn render_report_filter(
+        &self,
+        people: &[(acta_core::model::ContactId, String, usize)],
+        locale: Locale,
+        t: &Tokens,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let chosen = self
+            .report_filter
+            .and_then(|c| people.iter().find(|(id, _, _)| *id == c));
+        let label = match chosen {
+            Some((_, name, _)) => tr(locale, Key::ReportFilter, &[("name", Arg::Text(name))]),
+            None => text(locale, Key::ReportFilterAll),
+        };
+        let role = if chosen.is_some() {
+            type_scale::UI_STRONG
+        } else {
+            type_scale::UI
+        };
+        let hover = t.fill_hover;
+        let button = ui::focusable(role.el().id("inbox-report-filter"), t, false)
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(4.))
+            .h(px(28.))
+            .px(px(8.))
+            .rounded(px(RADIUS_SM))
+            .border_1()
+            .border_color(t.border_default)
+            .text_color(if chosen.is_some() {
+                t.text_primary
+            } else {
+                t.text_secondary
+            })
+            .hover(move |s| s.bg(hover))
+            .on_click(cx.listener(|page, _, _, cx| {
+                page.filter_menu = Some(0);
+                cx.notify();
+            }))
+            .child(label)
+            .child(icon(Icon::ChevronDown, 14., t.text_tertiary))
+            .child(self.filter_anchor.measure());
+        let menu = self.filter_menu.map(|hl| {
+            let mut panel = crate::menu::panel("inbox-report-menu", t).on_mouse_down_out(
+                cx.listener(|page, _, _, cx| {
+                    page.filter_menu = None;
+                    cx.notify();
+                }),
+            );
+            panel = panel.child(
+                crate::menu::item(
+                    ("report-filter", 0usize),
+                    None,
+                    text(locale, Key::ReportFilterAnyone),
+                    self.report_filter.is_none().then(|| crate::menu::check(t)),
+                    hl == 0,
+                    t,
+                )
+                .on_click(cx.listener(|page, _, _, cx| {
+                    page.report_filter = None;
+                    page.filter_menu = None;
+                    cx.notify();
+                })),
+            );
+            for (i, (id, name, n)) in people.iter().enumerate() {
+                let id = *id;
+                panel = panel.child(
+                    crate::menu::item(
+                        ("report-filter", i + 1),
+                        None,
+                        name.clone(),
+                        Some(crate::menu::hint(number(locale, *n as u64), t)),
+                        hl == i + 1,
+                        t,
+                    )
+                    .on_click(cx.listener(move |page, _, _, cx| {
+                        page.report_filter = Some(id);
+                        page.filter_menu = None;
+                        cx.notify();
+                    })),
+                );
+            }
+            self.filter_anchor
+                .below(panel, crate::menu::Align::Start)
+                .unwrap_or_else(|| div().into_any_element())
+        });
+        div()
+            .relative()
+            .child(button)
+            .children(menu)
+            .into_any_element()
     }
 
     /// Edit (note card, 5): the body becomes the editor in place;
@@ -532,6 +722,33 @@ impl InboxPage {
                     .child(text(locale, Key::InboxDismissed)),
             );
         }
+        if let Some(c) = &note.report_to {
+            let (before, after) = crate::question_view::around_name(locale, Key::ReportTo, &c.name);
+            let id = c.id;
+            let mut name = crate::question_view::name_link(
+                ("note-report", index),
+                &c.name,
+                c.in_trash,
+                locale,
+                t,
+            );
+            if !c.in_trash {
+                name = name.on_click(
+                    cx.listener(move |_, _, _, cx| cx.emit(PageEvent::Open(Route::Contact(id)))),
+                );
+            }
+            meta = meta.child(
+                type_scale::SMALL
+                    .el()
+                    .flex()
+                    .flex_row()
+                    .min_w_0()
+                    .text_color(t.text_tertiary)
+                    .child(before)
+                    .child(name)
+                    .child(after),
+            );
+        }
         if filed && note.filed_by == Some(Author::Claude) {
             meta = meta.child(
                 type_scale::SMALL
@@ -704,6 +921,15 @@ impl Render for InboxPage {
             .border_color(t.border_strong)
             .px(px(16.))
             .py(px(12.))
+            .capture_action(cx.listener(
+                |page, _: &gpui_kit::component::input::IndentInline, window, cx| {
+                    // In capture, Tab moves to Report to (it does not indent).
+                    if page.capture.read(cx).focus_handle(cx).is_focused(window) {
+                        page.report.update(cx, |p, cx| p.focus(window, cx));
+                        cx.stop_propagation();
+                    }
+                },
+            ))
             .child(
                 type_scale::READING.el().mx(px(-10.)).my(px(-8.)).child(
                     Textarea::new(&self.capture)
@@ -716,11 +942,28 @@ impl Render for InboxPage {
                 div()
                     .flex()
                     .flex_row()
+                    .flex_wrap()
                     .items_center()
                     .justify_end()
                     .gap(px(8.))
-                    .h(px(28.))
+                    .min_h(px(28.))
                     .mt(px(8.))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(8.))
+                            .flex_1()
+                            .child(
+                                type_scale::SMALL
+                                    .el()
+                                    .flex_shrink_0()
+                                    .text_color(t.text_tertiary)
+                                    .child(text(locale, Key::PropReportTo)),
+                            )
+                            .child(div().w(px(240.)).child(self.report.clone())),
+                    )
                     .child(type_scale::SMALL.el().text_color(t.text_tertiary).child(tr(
                         locale,
                         Key::ComposerHint,
@@ -737,11 +980,28 @@ impl Render for InboxPage {
                         .on_click(cx.listener(|page, _, window, cx| page.add(window, cx))),
                     ),
             );
-        let shown: Vec<(Note, Option<String>)> = if self.show_filed {
+        let listed: Vec<(Note, Option<String>)> = if self.show_filed {
             self.filed.clone()
         } else {
             self.notes.iter().map(|n| (n.clone(), None)).collect()
         };
+        // The Report to filter exists while a listed note names someone.
+        let people = report_people(&listed.iter().map(|(n, _)| n).collect::<Vec<_>>());
+        if self
+            .report_filter
+            .is_some_and(|c| !people.iter().any(|(id, _, _)| *id == c))
+        {
+            self.report_filter = None;
+        }
+        let shown: Vec<(Note, Option<String>)> = match self.report_filter {
+            Some(c) => listed
+                .into_iter()
+                .filter(|(n, _)| n.report_to.as_ref().is_some_and(|r| r.id == c))
+                .collect(),
+            None => listed,
+        };
+        let report_filter =
+            (!people.is_empty()).then(|| self.render_report_filter(&people, locale, &t, cx));
         let mut list = div().flex().flex_col().gap(px(8.)).mt(px(12.));
         if shown.is_empty() {
             list = list.child(
@@ -794,7 +1054,15 @@ impl Render for InboxPage {
                 .items_center()
                 .justify_between()
                 .gap(px(8.))
-                .child(ui::segmented(&t).children(filters))
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(8.))
+                        .child(ui::segmented(&t).children(filters))
+                        .children(report_filter),
+                )
                 .child({
                     // 8.2: the single secondary button, disabled with the
                     // Open list empty.

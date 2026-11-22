@@ -102,6 +102,8 @@ icons! {
     FlaskConical => "flask-conical",
     Palette => "palette",
     CircleQuestionMark => "circle-question-mark",
+    Users => "users",
+    User => "user",
 }
 
 /// The app mark, shown in the updater window only (docs/design/components-app.md 5).
