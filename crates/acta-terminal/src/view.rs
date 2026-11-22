@@ -125,6 +125,8 @@ pub struct TerminalView {
     scroll_remainder: f32,
     /// When the session last printed something (idle detection).
     last_output: Instant,
+    /// When the user last pressed a key in this terminal (OSC 52 gate).
+    last_key: Option<Instant>,
     /// Started before the first layout: spawned once the grid size is known.
     start_pending: bool,
     _start: Task<()>,
@@ -163,6 +165,7 @@ impl TerminalView {
             marked: None,
             scroll_remainder: 0.0,
             last_output: Instant::now(),
+            last_key: None,
             start_pending: false,
             _start: Task::ready(()),
             _resize: Task::ready(()),
@@ -370,7 +373,16 @@ impl TerminalView {
             }
             SessionEvent::Bell => cx.emit(TerminalEvent::Bell),
             SessionEvent::ClipboardStore(text) => {
-                cx.write_to_clipboard(ClipboardItem::new_string(text));
+                // Dropped unless the user just typed here: see
+                // `clipboard_store_allowed`.
+                if crate::session::clipboard_store_allowed(
+                    self.was_focused,
+                    self.last_key,
+                    Instant::now(),
+                    text.len(),
+                ) {
+                    cx.write_to_clipboard(ClipboardItem::new_string(text));
+                }
             }
             SessionEvent::Exited(code) => {
                 self.exited = Some(code);
@@ -452,6 +464,7 @@ impl TerminalView {
     }
 
     fn on_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        self.last_key = Some(Instant::now());
         let keystroke = &event.keystroke;
         let key = Key {
             key: &keystroke.key,
