@@ -32,6 +32,7 @@ pub(crate) enum Mode {
 /// Opens one connection with a raw key and applies the pragmas in the order
 /// of ADR 0003. A key that does not decrypt the file is `KeyWrongOrCorrupt`.
 pub(crate) fn connect(path: &Path, key: &Key, mode: Mode) -> Result<Connection, OpenError> {
+    initialize_sqlite();
     let mut flags = OpenFlags::SQLITE_OPEN_NO_MUTEX;
     match mode {
         Mode::Live { create } => {
@@ -78,6 +79,27 @@ pub(crate) fn connect(path: &Path, key: &Key, mode: Mode) -> Result<Connection, 
         ))?;
     }
     Ok(conn)
+}
+
+/// Initialises SQLite, and SQLCipher with it, once per process and before
+/// any connection. SQLCipher sets up its crypto provider, mutexes and
+/// private heap in `SQLITE_EXTRA_INIT` (`sqlcipher_extra_init`), which
+/// `sqlite3_initialize` runs after it has already marked SQLite as
+/// initialised and outside its init mutex. Two threads opening the first
+/// connections of a process at the same moment could therefore have one
+/// open before the provider existed, and fail with a database error (seen
+/// on a loaded Linux CI runner). Here the first caller runs the whole
+/// initialisation, extra step included, and every other caller waits for
+/// it to finish.
+fn initialize_sqlite() {
+    static INIT: std::sync::Once = std::sync::Once::new();
+    INIT.call_once(|| {
+        // SAFETY: `sqlite3_initialize` may be called at any time and any
+        // number of times; its result is checked by the first open.
+        unsafe {
+            rusqlite::ffi::sqlite3_initialize();
+        }
+    });
 }
 
 /// What [`open_or_init`] found.

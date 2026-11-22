@@ -46,7 +46,7 @@ The files of each release, if you prefer to download by hand:
 | `Acta-win-x64-Portable.zip` | Windows, unpack anywhere |
 | `Acta-osx-arm64-Portable.zip`, `Acta-osx-x64-Portable.zip` | macOS app bundle, Apple silicon and Intel |
 | `Acta-linux-x64.AppImage` | Linux |
-| `SHA256SUMS` | Checksums of every file above and of the two install scripts |
+| `SHA256SUMS` | Checksums of every file of the release, including the update packages and feeds Acta itself downloads, and of the two install scripts |
 
 ## Unsigned builds
 
@@ -95,9 +95,9 @@ downloads it (only the difference when possible), applies it and restarts before
 window opens, without asking. The check gets 2 seconds and the download 5; past that,
 or if either fails, Acta opens normally and the update is applied at a later start. An
 ordinary start can therefore take up to about 7 seconds before the window appears.
-Updating uses [Velopack](https://velopack.io) and needs no administrator rights. This
-has been seen working on Windows against a local feed; macOS, Linux and GitHub as the
-source are still to be confirmed.
+Updating uses [Velopack](https://velopack.io) and needs no administrator rights. It is
+proven from GitHub Releases on Windows, macOS (Apple silicon) and Linux for every
+release since 0.3.0 (see [what has been verified](#what-has-been-verified)).
 
 A version with a pre-release suffix (`0.2.0-rc.1`) is published as a GitHub
 pre-release, which installed apps and the install scripts ignore.
@@ -107,7 +107,7 @@ pre-release, which installed apps and the install scripts ignore.
 Uninstalling never deletes your data. The data directory is kept on every system;
 delete it yourself only if you want everything gone.
 
-The Windows uninstaller was verified with the test app. The macOS and Linux lists are
+The Windows uninstaller is verified on every release. The macOS and Linux lists are
 the locations Acta is designed to use; they have not been checked on a real install
 yet, and there is no uninstaller on those systems.
 
@@ -129,22 +129,23 @@ yet, and there is no uninstaller on those systems.
 
 ## What has been verified
 
-Verified, on Windows 11 only, with a throwaway test app packaged the same way and an
-update feed served from the same machine (details in
-[ADR 0004](decisions/0004-packaging-and-updates.md), "Evidence"):
+Verified on GitHub's Windows, macOS (Apple silicon) and Linux runners by the
+end-to-end update workflow (`update-e2e.yml`), against the published releases, for each
+release since 0.3.0 (details in [releasing.md](releasing.md#update-end-to-end)):
 
-- The installer runs silently with no elevation and installs per user.
-- An installed version updates itself at launch, from a delta package, in about a second.
-- Uninstalling removes the app, its shortcuts and its PATH entry.
+- The install scripts of a release install it per user, with no prompt and no
+  elevation; on Windows the Start menu shortcut and the `acta` command on the user PATH
+  are created, on macOS and Linux the `~/.local/bin/acta` link on first start, and on
+  Linux the desktop entry and its icon.
+- An installed version updates itself from GitHub Releases at launch and restarts as
+  the new version; on macOS the updated bundle passes `codesign --verify`.
+- On Windows, uninstalling with Acta open removes the app, the `acta` command, its PATH
+  entry and the Start menu shortcut, and keeps `%LOCALAPPDATA%\ActaData` and its log.
 
-v0.1.0 is published on GitHub Releases. Not verified yet, because it needs runs on
-machines we have not used and the end-to-end update workflow (`update-e2e.yml`) that is
-still in progress for M1:
+Not verified yet:
 
-- Everything on macOS and Linux: packaging, the ad-hoc signature, `install.sh`, first
-  launch, the Linux desktop entry and icon, self-update.
-- Both install scripts against a real GitHub release, and updates fetched from GitHub
-  Releases rather than from a local feed.
+- macOS on Intel (`osx-x64`): the workflow has no Intel runner.
+- The macOS and Linux uninstall lists above.
 - What the operating systems show for browser downloads (SmartScreen, Smart App
   Control, Gatekeeper). The [unsigned builds](#unsigned-builds) section describes it
   from Microsoft's and Apple's documented behaviour and third-party reports, not from

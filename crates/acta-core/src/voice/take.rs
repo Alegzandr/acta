@@ -342,15 +342,23 @@ impl Controller {
     /// Applies what the engine returned. Insertions are computed against
     /// the editors' current text and caret.
     ///
-    /// Several phrases can come back in one poll: each is placed against
-    /// the text as the earlier ones of this poll leave it, so the app
-    /// applies the outputs in order.
+    /// Phrases are written in spoken order: one engine thread decodes them
+    /// in the order they were sent, and an answer is taken only for the
+    /// oldest phrase still pending. Several can come back in one poll:
+    /// each is placed against the text as the earlier ones leave it, so the
+    /// app applies the outputs in order, and applies them before it polls
+    /// again (the next poll reads the editors afresh).
     pub fn poll(&mut self, editors: &dyn Editors) -> Vec<Output> {
         let mut out = Vec::new();
         let mut view = Applied {
             editors,
             changed: Vec::new(),
         };
+        self.poll_into(&mut view, &mut out);
+        out
+    }
+
+    fn poll_into(&mut self, view: &mut Applied<'_>, out: &mut Vec<Output>) {
         while let Ok(outcome) = self.outcomes.try_recv() {
             match outcome {
                 Outcome::Started { take, result } => {
@@ -367,7 +375,7 @@ impl Controller {
                     }
                 }
                 Outcome::Text { take, seq, result } => {
-                    self.text(take, seq, result, &mut view, &mut out);
+                    self.text(take, seq, result, view, out);
                 }
             }
         }
@@ -376,12 +384,11 @@ impl Controller {
         while i < self.finishing.len() {
             if self.finishing[i].pending.is_empty() {
                 let t = self.finishing.remove(i);
-                self.done(t, &mut out);
+                self.done(t, out);
             } else {
                 i += 1;
             }
         }
-        out
     }
 
     fn take_mut(&mut self, take: u64) -> Option<&mut Take> {
@@ -469,7 +476,10 @@ impl Controller {
     }
 
     /// Waits until the engine thread has answered everything sent so far
-    /// or `limit` passes, then polls. For tests and shutdown.
+    /// or `limit` passes, polling meanwhile. For tests and shutdown. The
+    /// outputs of every poll of the wait come back together, so each is
+    /// placed against the text as the earlier ones leave it, the caller
+    /// not having applied any yet.
     pub fn poll_until_settled(
         &mut self,
         editors: &dyn Editors,
@@ -477,8 +487,12 @@ impl Controller {
     ) -> Vec<Output> {
         let deadline = std::time::Instant::now() + limit;
         let mut out = Vec::new();
+        let mut view = Applied {
+            editors,
+            changed: Vec::new(),
+        };
         loop {
-            out.extend(self.poll(editors));
+            self.poll_into(&mut view, &mut out);
             let busy = self.finishing.iter().any(|t| !t.pending.is_empty())
                 || self
                     .active
@@ -661,6 +675,71 @@ mod tests {
         assert_eq!(out, vec![Output::Done { editor: 1, take }]);
         assert_eq!(c.state(1), TakeState::Idle);
         assert_eq!(c.notice(1), None);
+    }
+
+    /// An engine whose second phrase is held until the first one's text
+    /// is being placed: the two answers come back in separate polls (with
+    /// the defect this guards against, the second was placed against the
+    /// text without the first and landed before it).
+    struct Gated {
+        fed: usize,
+        open: Receiver<()>,
+    }
+
+    impl Engine for Gated {
+        fn start(&mut self, _: Lang) -> Result<(), EngineError> {
+            Ok(())
+        }
+
+        fn feed(&mut self, _: &[f32]) -> Result<String, EngineError> {
+            self.fed += 1;
+            if self.fed == 1 {
+                return Ok("First.".into());
+            }
+            let _ = self.open.recv_timeout(WAIT);
+            // Long enough for the poll that placed the first phrase to
+            // have returned: the answers land in separate polls.
+            std::thread::sleep(Duration::from_millis(50));
+            Ok(format!("Phrase {}.", self.fed))
+        }
+
+        fn stop(&mut self) {}
+    }
+
+    /// The editors as the test holds them, opening the gate when the
+    /// controller first reads them (the first phrase is being placed).
+    struct Opening<'a> {
+        view: View<'a>,
+        gate: RefCell<Option<Sender<()>>>,
+    }
+
+    impl Editors for Opening<'_> {
+        fn text_and_caret(&self, editor: EditorId) -> Option<(&str, usize)> {
+            if let Some(gate) = self.gate.borrow_mut().take() {
+                let _ = gate.send(());
+            }
+            self.view.text_and_caret(editor)
+        }
+    }
+
+    #[test]
+    fn phrases_answered_in_separate_polls_are_written_in_spoken_order() {
+        let texts = Texts::with(&[(1, "Notes for Alexandre:")]);
+        let (gate, open) = mpsc::channel();
+        let mut c = Controller::new(Box::new(Gated { fed: 0, open }));
+        c.start(1, texts.get(1).len(), Lang::English);
+        c.capture_started();
+        c.phrase(phrase());
+        c.phrase(phrase());
+        let out = {
+            let editors = Opening {
+                view: View(texts.0.borrow()),
+                gate: RefCell::new(Some(gate)),
+            };
+            c.poll_until_settled(&editors, WAIT)
+        };
+        texts.apply(&out);
+        assert_eq!(texts.get(1), "Notes for Alexandre: First. Phrase 2.");
     }
 
     #[test]

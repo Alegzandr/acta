@@ -4,7 +4,10 @@
 # runs the executable through its C runtime start, static initialisers and the
 # start of `main`: the `--voice-worker` mode with its input closed exits at once
 # with 0 without calling into whisper.cpp. An AVX2 instruction anywhere on that
-# path stops the emulated run with an illegal-instruction error.
+# path stops the emulated run with an illegal-instruction error. whisper.cpp's Vulkan
+# backend is linked too (ADR 0014, amendment "Vulkan in Acta.exe"): the executable
+# imports no Vulkan loader and that path calls no Vulkan function, so the run also
+# proves a start without the GPU code (the runner has no graphics card).
 # Usage: windows-sde-start.ps1 -Exe <path to Acta.exe>   (SDE_PATH from setup-sde)
 param([Parameter(Mandatory = $true)][string]$Exe)
 $ErrorActionPreference = 'Stop'

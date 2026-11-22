@@ -1,6 +1,6 @@
 # Acta design: key screens
 
-Part of the Acta design system. [DESIGN.md](../../DESIGN.md) is the index: direction, principles, the never-list and the review checklist. Section numbers are shared across all parts.
+Part of the Acta design system. [DESIGN.md](../../DESIGN.md) is the index: direction, principles and the never-list; the review checklist is [checklist.md](checklist.md). Section numbers are shared across all parts.
 
 ## 8. Key screens
 
@@ -1071,3 +1071,87 @@ Annotations: no Epic Terminal group because no contact of that epic matches. The
 ```
 
 Annotations: the Name placeholder is the system user name; until a name is typed Acta keeps using it for authors and sends no `User:` line to Claude Code. Values apply on `Enter` or when the input loses focus; `Esc` restores. Both are stored in the encrypted database.
+
+### 8.31 Knowledge base with "To check" (ADR 0015)
+
+Opened from the Overview's "5 memories to check" (Kind: Memories set by it). Ungrouped, first reason first, then oldest check first.
+
+```
++----------------------+-------------------------------------------------------------------------+
+|  Inbox            4  |                               32                                        |
+| [Knowledge        ]  |        Knowledge                                 <- type.title          |
+|                      |     8  Acta · 5 memories                         <- counts the list     |
+|                      |    24  +--------------------------------------------------------+       |
+|                      |        | (s) Search knowledge                                   | 28    |
+|                      |        +--------------------------------------------------------+       |
+|                      |    12  [Level: All v] [Kind: Memories v] [Author: All v]               |
+|                      |        [To check  x]  Clear                     <- chip 24, fill.selected|
+|                      |    24                                                                   |
+|                      |        [m] Tests in parallel  cargo test runs all tests conc..  F  Tue  |
+|                      |        [m] Credential entry   Credential Manager entry name  ..  F  2 Nov |
+|                      |        [m] Store path         Data lives under %APPDATA%\Acta    F  12 Jul |
+|                      |        [m] Schema at V6 *     On this branch the schema is V6   F  1 Jul |
+|                      |        [m] Sample data        Sample and test data uses Alex..  F  3 Jun |
++----------------------+-------------------------------------------------------------------------+
+  260                     column 560; F = flag 14 text.secondary in the 16 signal slot, then time 72
+```
+
+Tooltip of the first row's mark (one reason per line, most telling first):
+
+```
+                                         +------------------------------+
+                                         | May contradict K-21          |
+                                         | Not checked for 140 days     |
+                                         +------------------------------+
+```
+
+Annotations: the chip replaced "Not updated for 90 days". Row 4 shows `*`, the unread dot, in the slot instead of the mark: Claude Code changed it a moment ago, and the mark comes back once the row is seen. `V` on a row marks it as still true: its mark goes and the row stays where it is, so `V`, `J`, `V`, `J` walks the list. Without the chip, the same rows sit in their groups with the same mark, and a healthy list shows no mark at all. Without any filter, the last row of the list is the ghost "4 superseded or retired" (`type.small` `text.tertiary`), which sets the chip "Superseded and retired".
+
+### 8.32 Memory page with provenance, sources and a duplicate notice
+
+```
++----------------------+-------------------------------------------------------------------------+
+|  v Terminal          |    32                                                                   |
+|   [(.) Embed the..]  |        Shell detection                           <- type.title          |
+|                      |     8  Use COMSPEC on Windows, SHELL elsewhere   <- reading, secondary  |
+|                      |    12  Kind      Memory                                                 |
+|                      |        Level     Topic Embed the terminal                               |
+|                      |        Sources   T-12   Embed the terminal                    <- link   |
+|                      |                  Commit 9e92ba4                              <- copies  |
+|                      |                  crates/acta-app/src/terminal/shell.rs  changed since checked |
+|                      |     4  K-11 · Updated 10 min ago by Alexandre    <- meta line           |
+|                      |     4  Written by Claude Code 19 Nov 2026 · On branch feature/terminal  |
+|                      |     4  [bot] Claude Code is working with this memory on T-51            |
+|                      |    16  +--------------------------------------------------------+       |
+|                      |        | (i) Possible duplicate of K-4.   [Merge into K-4] [Keep both] | |
+|                      |        +--------------------------------------------------------+       |
+|                      |    12  [Edit] [History] [...]                    <- ghost               |
+|                      |    24  ----------------------------------------------------------       |
+|                      |    24  COMSPEC names cmd.exe on every Windows install; read it before  |
+|                      |        falling back to powershell.exe.           <- type.reading         |
++----------------------+-------------------------------------------------------------------------+
+```
+
+Annotations: rows of the properties block are 28 each, the file path in `type.code` 12 and middle-truncated; "changed since checked" is `type.small` `text.secondary`, no icon. The provenance line has no "From topic" segment because T-12 owns the memory (the Level row says it). The presence line exists only while another session touched the memory in the last 10 minutes. One notice only: this memory also has File changed, but the duplicate is the first that applies; the file reason is still in the row's tooltip and beside the path. On K-4's page the same pair reads "Possible duplicate of K-11." with "Merge K-11 into this". Merge opens K-4 in the editor with both bodies joined, toast "Merged into K-4. Undo".
+
+Other notices in the same place, one at a time:
+
+```
+        | (!) May contradict K-9.                         [This replaces it] [Keep both] |   triangle-alert, warning
+        | (i) Not checked for 140 days                                [Mark as still true] |
+        |     Its topic is done                                                           |   reasons, one per line
+        | (i) Superseded by Tests run serially on 20 Nov 2026.          [Make live again] |   the title is a link
+        | (i) Retired by Claude Code on 20 Nov 2026.                    [Make live again] |
+        |     The store moved to schema 7; this no longer applies.                        |   reason, text.secondary
+```
+
+### 8.33 History with the new change kinds
+
+```
+        Claude Code   Marked as still true                                     Today 09:12
+        Alexandre     Merged K-14 into this                       +3            Yesterday
+     >  Claude Code   Edited                                      +2 -1         Tue 14:05
+        Claude Code   Created                                     +4            19 Nov
+```
+
+Annotations: rows as in History (32, author mark first, not drawn here). "Marked as still true" has no line counts. Hovering "Claude Code" on the third row shows "A Claude Code session on T-51" and "Branch feature/terminal". On a superseded memory the newest row reads "Superseded by K-21", on a retired one "Retired: {reason}", and after Make live again, "Made live again".
