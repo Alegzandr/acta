@@ -8,6 +8,34 @@ use crate::model::{
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, ValueRef};
 
 macro_rules! text_enum {
+    // Open-ended: a text this build does not know (written by a newer
+    // build) reads as `$fallback` instead of failing the whole read.
+    ($ty:ty { $($variant:ident => $text:literal),+ $(,)? } else $fallback:ident) => {
+        impl $ty {
+            pub fn as_str(self) -> &'static str {
+                match self { $(<$ty>::$variant => $text,)+ <$ty>::$fallback => "unknown" }
+            }
+
+            /// `None` only for a text no build ever wrote here; unknown
+            /// texts are mapped by [`FromSql`].
+            pub fn parse(text: &str) -> Option<Self> {
+                match text { $($text => Some(<$ty>::$variant),)+ _ => None }
+            }
+        }
+
+        impl ToSql for $ty {
+            fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+                Ok(ToSqlOutput::from(self.as_str()))
+            }
+        }
+
+        impl FromSql for $ty {
+            fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
+                let text = value.as_str()?;
+                Ok(<$ty>::parse(text).unwrap_or(<$ty>::$fallback))
+            }
+        }
+    };
     ($ty:ty { $($variant:ident => $text:literal),+ $(,)? }) => {
         impl $ty {
             pub fn as_str(self) -> &'static str {
@@ -61,7 +89,7 @@ text_enum!(EventKind {
     Due => "due",
     Report => "report",
     Reported => "reported",
-});
+} else Unknown);
 text_enum!(QuestionStatus { Open => "open", Answered => "answered", Dropped => "dropped" });
 text_enum!(CommitMode { Manual => "manual", Commit => "commit", Push => "push" });
 text_enum!(KbKind { Document => "document", Memory => "memory" });
@@ -79,7 +107,7 @@ text_enum!(ChangeKind {
     Retired => "retired",
     MadeLive => "made_live",
     Merged => "merged",
-});
+} else Unknown);
 text_enum!(KbState { Live => "live", Superseded => "superseded", Retired => "retired" });
 text_enum!(KbPairKind { Duplicate => "duplicate", Conflict => "conflict" });
 text_enum!(KbPairState { Open => "open", Distinct => "distinct", Resolved => "resolved" });
@@ -94,7 +122,7 @@ text_enum!(KbLogEvent {
     StaleRefused => "stale_refused",
     AutoMerged => "auto_merged",
     FlaggedRead => "flagged_read",
-});
+} else Unknown);
 text_enum!(KbLinkKind {
     Topic => "topic",
     Entry => "entry",
@@ -170,6 +198,7 @@ mod tests {
         check(KbPairState::Distinct, KbPairState::Distinct.as_str());
         check(KbLinkKind::Commit, KbLinkKind::Commit.as_str());
         check(KbLogEvent::KeptBoth, KbLogEvent::KeptBoth.as_str());
+        check(ChangeKind::Unknown, "unknown");
         assert_eq!(Status::parse("Doing"), None);
     }
 }

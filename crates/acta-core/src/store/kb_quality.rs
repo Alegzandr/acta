@@ -114,6 +114,45 @@ pub struct KbMergeTrace {
     pub pairs_before: Vec<KbPair>,
 }
 
+/// What an entry's state was before a change (retire, make live, a
+/// supersede), so the app's undo takes it back in one step.
+#[derive(Clone, Debug, PartialEq)]
+pub struct KbStateTrace {
+    pub id: KbId,
+    /// The revision the change made (an undo is refused once it moved).
+    pub rev: i64,
+    pub state: KbState,
+    pub superseded_by: Option<KbId>,
+    /// For a supersede: the successor, and the pairs between the two
+    /// before the change.
+    pub other: Option<KbId>,
+    pub pairs: Vec<KbPair>,
+}
+
+/// What a verify replaced: the verified date and the file records.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KbVerifyTrace {
+    pub id: KbId,
+    pub rev: i64,
+    pub verified_at: i64,
+    pub verified_by: Author,
+    /// Link id and blob before.
+    pub blobs: Vec<(i64, Option<String>)>,
+}
+
+/// What clearing a branch memory's branch replaced.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KbBranchTrace {
+    pub id: KbId,
+    pub rev: i64,
+    pub branch: Option<String>,
+}
+
+/// How long after a merge the survivor may have been tidied by the human
+/// and the merge still be taken back (the editor opens on the merge; the
+/// app undoes the tidying saves first, then the merge).
+pub const UNMERGE_WINDOW_MS: i64 = 30 * 60_000;
+
 /// One row of the local quality log.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct KbLogRow {
@@ -146,23 +185,74 @@ pub struct KbFinding {
 
 impl Store {
     /// Writes `successor` and supersedes `olds` with it, in one
-    /// transaction (ADR 0015, 2). Returns the successor and its revision.
+    /// transaction (ADR 0015, 2). Returns the successor, its revision and
+    /// one trace per superseded entry.
     pub fn kb_supersede(
         &mut self,
         successor: KbSuccessor,
         olds: &[KbId],
         ctx: &KbWriteCtx,
         author: Author,
-    ) -> Result<(KbId, i64)> {
+    ) -> Result<(KbId, i64, Vec<KbStateTrace>)> {
         let tx = self.write()?;
         let now = now_ms();
         let (id, rev) = match successor {
             KbSuccessor::Create(new) => (create_in(&tx, new, ctx, author, now)?, 1),
             KbSuccessor::Update(id, update) => (id, update_in(&tx, id, update, ctx, author, now)?),
         };
-        supersede_in(&tx, id, olds, ctx, author, now)?;
+        let traces = supersede_in(&tx, id, olds, ctx, author, now)?;
         tx.commit()?;
-        Ok((id, rev))
+        Ok((id, rev, traces))
+    }
+
+    /// "This replaces it": `by`, unchanged, supersedes `olds` (a conflict
+    /// pair settled by the human). Undo with [`Store::kb_revert_state`].
+    pub fn kb_replace_with(
+        &mut self,
+        by: KbId,
+        olds: &[KbId],
+        author: Author,
+    ) -> Result<Vec<KbStateTrace>> {
+        let tx = self.write()?;
+        live(&read_kb(&tx, by)?)?;
+        let traces = supersede_in(&tx, by, olds, &KbWriteCtx::default(), author, now_ms())?;
+        tx.commit()?;
+        Ok(traces)
+    }
+
+    /// Takes back a retire, a make live or a supersede (the app's undo):
+    /// the state and successor as they were, as a revision, and for a
+    /// supersede the pairs between the two as they were. Refused once the
+    /// entry changed after it.
+    pub fn kb_revert_state(&mut self, trace: &KbStateTrace, author: Author) -> Result<i64> {
+        let tx = self.write()?;
+        let cur = read_kb(&tx, trace.id)?;
+        if cur.rev != trace.rev {
+            return Err(Error::Invalid(format!("{} changed since", trace.id)));
+        }
+        let change = match trace.state {
+            KbState::Live => ChangeKind::MadeLive,
+            KbState::Superseded => ChangeKind::Superseded,
+            KbState::Retired => ChangeKind::Retired,
+        };
+        let rev = state_revision(
+            &tx,
+            &cur,
+            change,
+            None,
+            &KbWriteCtx::default(),
+            author,
+            now_ms(),
+        )?;
+        tx.execute(
+            "UPDATE kb_entries SET state = ?2, superseded_by = ?3 WHERE id = ?1",
+            params![trace.id.0, trace.state, trace.superseded_by.map(|k| k.0)],
+        )?;
+        if let Some(other) = trace.other {
+            restore_pairs(&tx, trace.id, other, &trace.pairs)?;
+        }
+        tx.commit()?;
+        Ok(rev)
     }
 
     /// Vouches that an entry is still true (ADR 0015, 1): no new text, a
@@ -177,11 +267,24 @@ impl Store {
         blobs: &[(i64, Option<String>)],
         ctx: &KbWriteCtx,
         author: Author,
-    ) -> Result<i64> {
+    ) -> Result<KbVerifyTrace> {
         let tx = self.write()?;
         let cur = checked(&tx, id, expected_rev)?;
         live(&cur)?;
         let now = now_ms();
+        let mut before = Vec::new();
+        for (link, _) in blobs {
+            let old: Option<Option<String>> = tx
+                .query_row(
+                    "SELECT blob FROM kb_links WHERE id = ?1 AND entry_id = ?2",
+                    params![link, id.0],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            if let Some(old) = old {
+                before.push((*link, old));
+            }
+        }
         let rev = state_revision(&tx, &cur, ChangeKind::Verified, None, ctx, author, now)?;
         tx.execute(
             "UPDATE kb_entries SET verified_at = ?2, verified_by = ?3 WHERE id = ?1",
@@ -193,6 +296,91 @@ impl Store {
                 params![link, id.0, blob],
             )?;
         }
+        tx.commit()?;
+        Ok(KbVerifyTrace {
+            id,
+            rev,
+            verified_at: cur.verified_at,
+            verified_by: cur.verified_by,
+            blobs: before,
+        })
+    }
+
+    /// Takes back a verify (the app's undo): the previous verified date
+    /// and file records come back; the revision stays in history. Refused
+    /// once the entry changed after it.
+    pub fn kb_unverify(&mut self, trace: &KbVerifyTrace) -> Result<()> {
+        let tx = self.write()?;
+        let cur = read_kb(&tx, trace.id)?;
+        if cur.rev != trace.rev {
+            return Err(Error::Invalid(format!("{} changed since", trace.id)));
+        }
+        tx.execute(
+            "UPDATE kb_entries SET verified_at = ?2, verified_by = ?3 WHERE id = ?1",
+            params![trace.id.0, trace.verified_at, trace.verified_by],
+        )?;
+        for (link, blob) in &trace.blobs {
+            tx.execute(
+                "UPDATE kb_links SET blob = ?3 WHERE id = ?1 AND entry_id = ?2",
+                params![link, trace.id.0, blob],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Makes a branch memory true everywhere (ADR 0015, 4): its branch is
+    /// cleared, its folder kept for ranking. A revision records it.
+    pub fn kb_clear_branch(&mut self, id: KbId, author: Author) -> Result<KbBranchTrace> {
+        let tx = self.write()?;
+        let cur = read_kb(&tx, id)?;
+        if cur.context_branch.is_none() {
+            return Err(Error::Invalid(format!("{id} is not a branch memory")));
+        }
+        let rev = state_revision(
+            &tx,
+            &cur,
+            ChangeKind::Moved,
+            Some("all branches"),
+            &KbWriteCtx::default(),
+            author,
+            now_ms(),
+        )?;
+        tx.execute(
+            "UPDATE kb_entries SET context_branch = NULL WHERE id = ?1",
+            [id.0],
+        )?;
+        tx.commit()?;
+        Ok(KbBranchTrace {
+            id,
+            rev,
+            branch: cur.context_branch,
+        })
+    }
+
+    /// Takes back [`Store::kb_clear_branch`].
+    pub fn kb_restore_branch(&mut self, trace: &KbBranchTrace, author: Author) -> Result<i64> {
+        let tx = self.write()?;
+        let cur = read_kb(&tx, trace.id)?;
+        if cur.rev != trace.rev {
+            return Err(Error::Invalid(format!("{} changed since", trace.id)));
+        }
+        if cur.context_folder.is_none() {
+            return Err(Error::Invalid(format!("{} has no folder", trace.id)));
+        }
+        let rev = state_revision(
+            &tx,
+            &cur,
+            ChangeKind::Moved,
+            Some("its branch"),
+            &KbWriteCtx::default(),
+            author,
+            now_ms(),
+        )?;
+        tx.execute(
+            "UPDATE kb_entries SET context_branch = ?2 WHERE id = ?1",
+            params![trace.id.0, trace.branch],
+        )?;
         tx.commit()?;
         Ok(rev)
     }
@@ -207,7 +395,7 @@ impl Store {
         reason: &str,
         ctx: &KbWriteCtx,
         author: Author,
-    ) -> Result<i64> {
+    ) -> Result<KbStateTrace> {
         let reason = reason.split_whitespace().collect::<Vec<_>>().join(" ");
         let n = reason.chars().count();
         if n > RETIRE_REASON_MAX {
@@ -226,12 +414,19 @@ impl Store {
             [id.0],
         )?;
         tx.commit()?;
-        Ok(rev)
+        Ok(KbStateTrace {
+            id,
+            rev,
+            state: cur.state,
+            superseded_by: cur.superseded_by,
+            other: None,
+            pairs: Vec::new(),
+        })
     }
 
     /// Makes a superseded or retired entry live again ("Make live again",
     /// and unmerge after the undo window). Its pairs stay as they are.
-    pub fn kb_make_live(&mut self, id: KbId, author: Author) -> Result<i64> {
+    pub fn kb_make_live(&mut self, id: KbId, author: Author) -> Result<KbStateTrace> {
         let tx = self.write()?;
         let cur = read_kb(&tx, id)?;
         if cur.state == KbState::Live {
@@ -239,7 +434,14 @@ impl Store {
         }
         let rev = make_live_in(&tx, &cur, author, now_ms())?;
         tx.commit()?;
-        Ok(rev)
+        Ok(KbStateTrace {
+            id,
+            rev,
+            state: cur.state,
+            superseded_by: cur.superseded_by,
+            other: None,
+            pairs: Vec::new(),
+        })
     }
 
     /// Merges `other` into `survivor` (ADR 0015, 3): the survivor gets a
@@ -325,17 +527,34 @@ impl Store {
     }
 
     /// Takes back a merge (the app's undo): the survivor's text, level and
-    /// verified date as they were (a new revision), the copied sources
-    /// removed, the other entry live, the pairs as they were. Refused when
-    /// the survivor changed since the merge.
+    /// verified date as they were (a new revision; the merge and any
+    /// tidying stay in history), the copied sources removed, the other
+    /// entry live, the pairs as they were. The survivor may have been
+    /// tidied by the human in the editor the merge opens (text edits and
+    /// restores by the human within [`UNMERGE_WINDOW_MS`] of the merge);
+    /// anything else since refuses it.
     pub fn kb_unmerge(&mut self, trace: &KbMergeTrace, author: Author) -> Result<()> {
         let tx = self.write()?;
         let s = read_kb(&tx, trace.survivor)?;
         if s.rev != trace.merged_rev {
-            return Err(Error::Invalid(format!(
-                "{} changed since the merge",
-                trace.survivor
-            )));
+            let merged_at: i64 = tx.query_row(
+                "SELECT created_at FROM kb_revisions WHERE entry_id = ?1 AND rev = ?2",
+                params![trace.survivor.0, trace.merged_rev],
+                |r| r.get(0),
+            )?;
+            let other_changes: i64 = tx.query_row(
+                "SELECT count(*) FROM kb_revisions WHERE entry_id = ?1 AND rev > ?2
+                 AND NOT (author = 'human' AND created_at <= ?3
+                          AND change IN ('edited', 'replaced_section', 'appended_section', 'restored'))",
+                params![trace.survivor.0, trace.merged_rev, merged_at + UNMERGE_WINDOW_MS],
+                |r| r.get(0),
+            )?;
+            if other_changes > 0 {
+                return Err(Error::Invalid(format!(
+                    "{} changed since the merge",
+                    trace.survivor
+                )));
+            }
         }
         let o = read_kb(&tx, trace.other)?;
         if o.superseded_by != Some(trace.survivor) {
@@ -356,7 +575,13 @@ impl Store {
             .ok_or_else(|| {
                 Error::NotFound(format!("{} rev {}", trace.survivor, trace.survivor_rev))
             })?;
-        let (project, epic, topic) = owner_ids(&tx, trace.owner_before)?;
+        // The level it had, unless that owner went to the trash since:
+        // then it stays where the merge put it.
+        let (project, epic, topic) = match owner_ids(&tx, trace.owner_before) {
+            Ok(ids) => ids,
+            Err(Error::NotFound(_)) => owner_ids(&tx, s.owner)?,
+            Err(e) => return Err(e),
+        };
         let rev = next_rev(&tx, trace.survivor)?;
         tx.execute(
             "UPDATE kb_entries SET project_id = ?2, epic_id = ?3, topic_id = ?4, title = ?5, summary = ?6,
@@ -397,19 +622,7 @@ impl Store {
             )?;
         }
         make_live_in(&tx, &o, author, now)?;
-        let (a, b) = ordered(trace.survivor, trace.other);
-        tx.execute(
-            "DELETE FROM kb_pairs WHERE a = ?1 AND b = ?2",
-            params![a.0, b.0],
-        )?;
-        for p in &trace.pairs_before {
-            tx.execute(
-                "INSERT INTO kb_pairs (a, b, kind, state, score, created_at, created_by, resolved_at, resolved_by)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-                params![p.a.0, p.b.0, p.kind, p.state, p.score, p.created_at, p.created_by,
-                        p.resolved_at, p.resolved_by],
-            )?;
-        }
+        restore_pairs(&tx, trace.survivor, trace.other, &trace.pairs_before)?;
         tx.commit()?;
         Ok(())
     }
@@ -962,13 +1175,14 @@ fn supersede_in(
     ctx: &KbWriteCtx,
     author: Author,
     now: i64,
-) -> Result<()> {
+) -> Result<Vec<KbStateTrace>> {
     if olds.is_empty() || olds.len() > MAX_SUPERSEDES {
         return Err(Error::Invalid(format!(
             "supersedes names 1 to {MAX_SUPERSEDES} entries"
         )));
     }
     let successor = read_kb(tx, by)?;
+    let mut traces = Vec::new();
     for (i, &old) in olds.iter().enumerate() {
         if old == by {
             return Err(Error::Invalid(format!("{old} cannot supersede itself")));
@@ -986,9 +1200,9 @@ fn supersede_in(
         if cur.project != successor.project {
             return Err(Error::Invalid(format!("{old} is in another project")));
         }
-        supersede_one(tx, by, &cur, ctx, author, now)?;
+        traces.push(supersede_one(tx, by, &cur, ctx, author, now)?);
     }
-    Ok(())
+    Ok(traces)
 }
 
 fn supersede_one(
@@ -998,8 +1212,9 @@ fn supersede_one(
     ctx: &KbWriteCtx,
     author: Author,
     now: i64,
-) -> Result<()> {
-    state_revision(tx, old, ChangeKind::Superseded, None, ctx, author, now)?;
+) -> Result<KbStateTrace> {
+    let pairs = pairs_between(tx, by, old.id)?;
+    let rev = state_revision(tx, old, ChangeKind::Superseded, None, ctx, author, now)?;
     tx.execute(
         "UPDATE kb_entries SET state = 'superseded', superseded_by = ?2 WHERE id = ?1",
         params![old.id.0, by.0],
@@ -1010,6 +1225,31 @@ fn supersede_one(
          WHERE a = ?1 AND b = ?2 AND state <> 'resolved'",
         params![a.0, b.0, now, author],
     )?;
+    Ok(KbStateTrace {
+        id: old.id,
+        rev,
+        state: old.state,
+        superseded_by: old.superseded_by,
+        other: Some(by),
+        pairs,
+    })
+}
+
+/// The pairs between two entries back as they were.
+fn restore_pairs(tx: &rusqlite::Connection, x: KbId, y: KbId, pairs: &[KbPair]) -> Result<()> {
+    let (a, b) = ordered(x, y);
+    tx.execute(
+        "DELETE FROM kb_pairs WHERE a = ?1 AND b = ?2",
+        params![a.0, b.0],
+    )?;
+    for p in pairs {
+        tx.execute(
+            "INSERT INTO kb_pairs (a, b, kind, state, score, created_at, created_by, resolved_at, resolved_by)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![p.a.0, p.b.0, p.kind, p.state, p.score, p.created_at, p.created_by,
+                    p.resolved_at, p.resolved_by],
+        )?;
+    }
     Ok(())
 }
 

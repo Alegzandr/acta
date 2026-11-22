@@ -509,7 +509,12 @@ ALTER TABLE notes ADD COLUMN filed_entry_id INTEGER REFERENCES entries(id);
 ///   kept apart (`distinct`) or settled (`resolved`); `a < b`.
 /// - `kb_quality_log`: warnings and their outcomes for `acta kb quality`.
 ///   Local: never exported, pruned after 180 days.
+/// - `meta.min_compatible_version` is raised to 7: a 0.6 build (schema 6)
+///   opens this database read-only, since its writes would skip the
+///   verified date, the state and the pairs (ADR 0015, Migration).
 const V7: &str = r#"
+INSERT INTO meta (key, value) VALUES ('min_compatible_version', '7')
+    ON CONFLICT (key) DO UPDATE SET value = CAST(max(CAST(value AS INTEGER), 7) AS TEXT);
 ALTER TABLE kb_entries ADD COLUMN verified_at INTEGER;
 ALTER TABLE kb_entries ADD COLUMN verified_by TEXT;
 ALTER TABLE kb_entries ADD COLUMN state TEXT NOT NULL DEFAULT 'live'

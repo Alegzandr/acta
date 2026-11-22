@@ -181,13 +181,23 @@ const RECENT_SQL: &str = "SELECT e.topic_id, e.kind FROM entries e
 const INBOX_SQL: &str = "SELECT n.id, n.created_at FROM notes n
     WHERE n.project_id = ?1 AND n.deleted_at IS NULL AND n.filed_at IS NULL
     ORDER BY n.created_at, n.id";
-/// Live memories of a project last verified before a cutoff, oldest
-/// first (ADR 0015, 1: a move or a title edit does not make a memory
-/// fresh). A row an older build wrote has no verified date: its update
-/// stands in. The condition repeats `kb_verified`'s own.
+/// Live memories of a project with a store-computable reason to check
+/// them (ADR 0015, 1; components-knowledge.md, "To check"): verified
+/// before a cutoff (a move or a title edit does not make a memory
+/// fresh), an open duplicate or conflict pair with a live entry, a topic
+/// that is Done or Dropped, or a context folder in the trash; oldest
+/// verified first. A row an older build wrote has no verified date: its
+/// update stands in. The condition repeats `kb_verified`'s own.
 const STALE_SQL: &str = "SELECT k.id, coalesce(k.verified_at, k.updated_at) FROM kb_entries k
     WHERE k.project_id = ?1 AND k.kind = 'memory' AND k.deleted_at IS NULL AND k.state = 'live'
-      AND coalesce(k.verified_at, k.updated_at) < ?2
+      AND (coalesce(k.verified_at, k.updated_at) < ?2
+        OR EXISTS (SELECT 1 FROM topics t WHERE t.id = k.topic_id AND t.status IN ('done', 'dropped'))
+        OR (k.context_folder_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM folders f
+              WHERE f.id = k.context_folder_id AND f.deleted_at IS NULL))
+        OR EXISTS (SELECT 1 FROM kb_pairs p JOIN kb_entries o
+              ON o.id = CASE WHEN p.a = k.id THEN p.b ELSE p.a END
+              WHERE (p.a = k.id OR p.b = k.id) AND p.state = 'open'
+                AND o.deleted_at IS NULL AND o.state = 'live'))
     ORDER BY 2, k.id";
 /// The newest live entry of any topic of a project.
 const LAST_ACTIVITY_SQL: &str = "SELECT max((SELECT e.created_at FROM entries e

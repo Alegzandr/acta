@@ -211,7 +211,7 @@ fn a_newer_schema_is_left_alone_and_a_raised_minimum_makes_it_read_only() {
     newer
         .conn
         .execute(
-            "INSERT INTO meta (key, value) VALUES ('min_compatible_version', ?1)",
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('min_compatible_version', ?1)",
             [(crate::schema::SCHEMA_VERSION + 1).to_string()],
         )
         .unwrap();
@@ -1236,7 +1236,7 @@ fn a_dry_run_import_works_on_a_read_only_database() {
     b.store
         .conn
         .execute(
-            "INSERT INTO meta (key, value) VALUES ('min_compatible_version', ?1)",
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('min_compatible_version', ?1)",
             [(crate::schema::SCHEMA_VERSION + 1).to_string()],
         )
         .unwrap();

@@ -771,7 +771,7 @@ Also: the script must run from the repository root.",
             format!(", {} ago", ago(now - r.created_at))
         });
         let what = last.as_ref().map_or("", |r| match r.change {
-            ChangeKind::Edited => "edited",
+            ChangeKind::Edited | ChangeKind::Unknown => "edited",
             ChangeKind::ReplacedSection => "section replaced",
             ChangeKind::AppendedSection => "section appended",
             ChangeKind::Verified => "verified",

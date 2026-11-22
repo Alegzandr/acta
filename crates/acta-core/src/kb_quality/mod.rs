@@ -168,17 +168,39 @@ pub fn profile(text: &Text<'_>) -> Profile {
 
 /// Scores a pair and gives its verdict (ADR 0015, 3's table).
 pub fn compare(a: &Profile, b: &Profile) -> Comparison {
+    compare_at(a, b, Thresholds::DEFAULT)
+}
+
+/// The three thresholds; provisional (ADR 0015, Amendment): to be
+/// recalibrated from the quality log after dogfooding.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Thresholds {
+    pub duplicate: f64,
+    pub related: f64,
+    pub conflict: f64,
+}
+
+impl Thresholds {
+    pub const DEFAULT: Thresholds = Thresholds {
+        duplicate: DUPLICATE,
+        related: RELATED,
+        conflict: CONFLICT_OVERLAP,
+    };
+}
+
+/// [`compare`] with other thresholds (the fixture's hold-out tuning).
+pub fn compare_at(a: &Profile, b: &Profile, th: Thresholds) -> Comparison {
     let t = jaccard(&a.grams, &b.grams);
     let w = jaccard(&a.words, &b.words);
     let s = t.max(w).max(0.5 * t + 0.5 * w);
     let signal = conflict_signal(a, b);
     let verdict = if a.fields == b.fields && signal.is_none() {
         Verdict::Same
-    } else if signal.is_some() && s >= CONFLICT_OVERLAP {
+    } else if signal.is_some() && s >= th.conflict {
         Verdict::Conflict
-    } else if s >= DUPLICATE {
+    } else if s >= th.duplicate {
         Verdict::Duplicate
-    } else if s >= RELATED {
+    } else if s >= th.related {
         Verdict::Related
     } else {
         Verdict::Unrelated
@@ -200,7 +222,8 @@ pub fn fts_terms(text: &Text<'_>) -> Option<String> {
     for field in [text.title, text.summary, text.body] {
         for t in tokens(field) {
             // Words only: FTS5 splits paths and versions its own way.
-            if t.kind == Kind::Word && !t.stop && t.text.chars().count() >= 3 {
+            // 3 to 40 chars: a pasted blob is not a term.
+            if t.kind == Kind::Word && !t.stop && (3..=40).contains(&t.text.chars().count()) {
                 seen.insert(t.text);
             }
         }

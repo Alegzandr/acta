@@ -122,6 +122,9 @@ pub enum EventKind {
     /// Marked reported (new is the contact's UUID) or not reported (old
     /// is) (data.md request 19).
     Reported,
+    /// Written by a newer build: shown as a plain system line.
+    #[serde(other)]
+    Unknown,
 }
 
 /// Level a knowledge entry or a folder is attached to.
@@ -288,6 +291,9 @@ pub enum ChangeKind {
     MadeLive,
     /// Another entry's body was merged into this one (ADR 0015, 3).
     Merged,
+    /// Written by a newer build; shown as an edit.
+    #[serde(other)]
+    Unknown,
 }
 
 /// Whether a knowledge entry is current (ADR 0015, 2). Only live entries
@@ -341,6 +347,9 @@ pub enum KbLogEvent {
     AutoMerged,
     /// An agent read an entry that had a flag (metric 5).
     FlaggedRead,
+    /// Written by a newer build.
+    #[serde(other)]
+    Unknown,
 }
 
 /// What a knowledge entry names as its source (ADR 0015, 5).

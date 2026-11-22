@@ -2663,10 +2663,14 @@ impl Agent<'_> {
                         .collect();
                 }
             }
-            self.store.kb_verify(id, Some(rev), &blobs, &ctx, author)
+            self.store
+                .kb_verify(id, Some(rev), &blobs, &ctx, author)
+                .map(|t| t.rev)
         } else {
             check_len("reason", &a.text, crate::store::RETIRE_REASON_MAX)?;
-            self.store.kb_retire(id, Some(rev), &a.text, &ctx, author)
+            self.store
+                .kb_retire(id, Some(rev), &a.text, &ctx, author)
+                .map(|t| t.rev)
         };
         let new_rev = match done {
             Ok(r) => r,
@@ -2841,7 +2845,7 @@ impl Agent<'_> {
         } else {
             self.store
                 .kb_supersede(KbSuccessor::Update(id, update), &olds, &ctx, author)
-                .map(|(_, r)| r)
+                .map(|(_, r, _)| r)
         };
         let mut merged_over = String::new();
         let mut rev = match written {

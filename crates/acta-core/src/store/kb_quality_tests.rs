@@ -111,6 +111,17 @@ fn the_migration_backfills_the_verified_date_from_the_last_update() {
         (KbId(old.conn.last_insert_rowid()), 1000)
     };
     let s = Store::open(&config).unwrap();
+    // A 0.6 build (schema 6) now opens it read-only: the minimum it
+    // compares its own schema with is 7.
+    let min: String = s
+        .conn
+        .query_row(
+            "SELECT value FROM meta WHERE key = 'min_compatible_version'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(min, "7");
     let e = s.kb_entry(k).unwrap();
     assert_eq!((e.verified_at, e.verified_by), (updated, H));
     assert_eq!(e.state, KbState::Live);
@@ -185,7 +196,7 @@ fn verify_vouches_without_new_text_and_refuses_a_stale_revision() {
         s.kb_verify(k, Some(7), &[], &ctx, C),
         Err(crate::Error::StaleRevision { current: 1 })
     ));
-    let rev = s.kb_verify(k, Some(1), &[], &ctx, C).unwrap();
+    let rev = s.kb_verify(k, Some(1), &[], &ctx, C).unwrap().rev;
     assert_eq!(rev, 2);
     let e = s.kb_entry(k).unwrap();
     assert!(e.verified_at > 5);
@@ -222,7 +233,7 @@ fn supersede_retire_and_make_live_are_revisions_and_hide_from_scope_and_search()
         .unwrap();
     let gone = mem(s, Owner::Project(p), "Old release script");
     // A pair the checker found between them is resolved by the supersede.
-    let (new, rev) = s
+    let (new, rev, _) = s
         .kb_supersede(
             KbSuccessor::Create(memory(
                 Owner::Topic(t),
@@ -560,7 +571,7 @@ fn the_round_trip_keeps_quality_fields_and_an_older_file_imports_live() {
         replace_links: false,
     };
     let old = mem(s, Owner::Topic(t), "Old fact");
-    let (new, _) = s
+    let (new, _, _) = s
         .kb_supersede(
             KbSuccessor::Create(memory(Owner::Topic(t), "New fact", "Replaces it", "x")),
             &[old],
@@ -914,4 +925,282 @@ fn kb_check_timing_with_2000_memories() {
         "kb_check over 2,000 memories: {:?} per write ({found} findings)",
         start.elapsed() / runs
     );
+}
+
+#[test]
+fn an_unmerge_whose_old_owner_was_trashed_keeps_the_merged_level() {
+    let Seed {
+        mut ts, e, t, u, ..
+    } = seed();
+    let s = &mut ts.store;
+    let a = mem(s, Owner::Topic(t), "Keychain entry");
+    let b = mem(s, Owner::Topic(u), "Keychain entry name");
+    let trace = s.kb_merge(a, b, H).unwrap();
+    assert_eq!(s.kb_entry(a).unwrap().owner, Owner::Epic(e));
+    s.delete(Record::Topic(t), H).unwrap();
+    s.kb_unmerge(&trace, H).unwrap();
+    assert_eq!(s.kb_entry(a).unwrap().owner, Owner::Epic(e));
+    assert_eq!(s.kb_entry(b).unwrap().state, KbState::Live);
+}
+
+#[test]
+fn hidden_entries_leave_counts_unread_and_global_search() {
+    let Seed { mut ts, p, .. } = seed();
+    let s = &mut ts.store;
+    let k = s
+        .kb_create(
+            memory(
+                Owner::Project(p),
+                "Keychain entry",
+                "Where the key is",
+                "acta.db",
+            ),
+            C,
+        )
+        .unwrap();
+    let before = s.projects().unwrap()[0].knowledge;
+    s.kb_retire(k, None, "", &KbWriteCtx::default(), C).unwrap();
+    assert_eq!(s.projects().unwrap()[0].knowledge, before - 1);
+    let q = SearchQuery {
+        text: "keychain".into(),
+        project: Some(p),
+        kinds: vec![SearchKind::Kb],
+        ..SearchQuery::default()
+    };
+    assert_eq!(s.search(&q, PageReq::first(10)).unwrap().total, 0);
+    assert!(s.unread().unwrap().kb.iter().all(|(id, _)| *id != k));
+}
+
+#[test]
+fn the_overview_counts_every_store_reason() {
+    let Seed { mut ts, p, t, .. } = seed();
+    let repo = ts.dir.path().join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    let s = &mut ts.store;
+    let zone = Zone::UTC;
+    let today = zone.today();
+    let count = |s: &Store| {
+        s.overview(Scope::Project(p), today, zone)
+            .unwrap()
+            .stale_memories
+    };
+    let fresh = mem(s, Owner::Project(p), "Fresh");
+    assert_eq!(count(s), 0);
+    // An open pair with a live entry: both count; kept apart, neither.
+    let twin = mem(s, Owner::Project(p), "Twin");
+    s.kb_record_pair(fresh, twin, KbPairKind::Duplicate, 0.8, C)
+        .unwrap();
+    assert_eq!(count(s), 2);
+    s.kb_set_pair_state(fresh, twin, KbPairKind::Duplicate, KbPairState::Distinct, C)
+        .unwrap();
+    assert_eq!(count(s), 0);
+    // A closed topic.
+    let on_topic = mem(s, Owner::Topic(t), "On the topic");
+    s.update_topic(
+        t,
+        TopicPatch {
+            status: Some(Status::Dropped),
+            ..TopicPatch::default()
+        },
+        H,
+    )
+    .unwrap();
+    assert_eq!(count(s), 1);
+    // A context folder in the trash.
+    let f = s.add_folder(Owner::Project(p), &repo, H).unwrap();
+    s.kb_create_with(
+        memory(Owner::Project(p), "In a folder", "x", "y"),
+        &KbWriteCtx {
+            context_folder: Some(f),
+            ..KbWriteCtx::default()
+        },
+        C,
+    )
+    .unwrap();
+    assert_eq!(count(s), 1);
+    s.delete(Record::Folder(f), H).unwrap();
+    assert_eq!(count(s), 2);
+    // The list holds the same entries.
+    let list = s
+        .overview_list(
+            Scope::Project(p),
+            OverviewFilter::StaleMemories,
+            today,
+            zone,
+        )
+        .unwrap();
+    assert_eq!(list.len(), 2);
+    assert!(list.iter().any(|i| i.record == Record::Kb(on_topic)));
+}
+
+#[test]
+fn every_state_change_has_its_undo() {
+    let Seed { mut ts, p, t, .. } = seed();
+    let repo = ts.dir.path().join("repo2");
+    std::fs::create_dir_all(&repo).unwrap();
+    let s = &mut ts.store;
+    // Verify: the verified date and file records come back; the revision
+    // stays in history.
+    let f = s.add_folder(Owner::Project(p), &repo, H).unwrap();
+    let k = s
+        .kb_create_with(
+            memory(Owner::Project(p), "Store layout", "Where kb lives", "x"),
+            &KbWriteCtx {
+                links: vec![KbSource::File {
+                    folder: f,
+                    path: "src/kb.rs".into(),
+                    blob: Some("aaaa".into()),
+                }],
+                ..KbWriteCtx::default()
+            },
+            C,
+        )
+        .unwrap();
+    set_verified(s, k, 5);
+    let link = s.kb_links(k).unwrap()[0].id;
+    let v = s
+        .kb_verify(
+            k,
+            None,
+            &[(link, Some("bbbb".into()))],
+            &KbWriteCtx::default(),
+            H,
+        )
+        .unwrap();
+    assert_eq!(v.verified_at, 5);
+    assert_eq!(v.blobs, vec![(link, Some("aaaa".to_owned()))]);
+    s.kb_unverify(&v).unwrap();
+    assert_eq!(s.kb_entry(k).unwrap().verified_at, 5);
+    assert_eq!(s.kb_links(k).unwrap()[0].blob.as_deref(), Some("aaaa"));
+    assert_eq!(changes(s, k)[0], ChangeKind::Verified);
+    // Retire, then its undo: live again; a second undo is refused.
+    let r = s.kb_retire(k, None, "", &KbWriteCtx::default(), H).unwrap();
+    s.kb_revert_state(&r, H).unwrap();
+    assert_eq!(s.kb_entry(k).unwrap().state, KbState::Live);
+    assert!(s.kb_revert_state(&r, H).is_err());
+    // This replaces it (no text edit), then its undo: the other live, the
+    // pair open again, the survivor untouched.
+    let other = mem(s, Owner::Topic(t), "Store layout, older");
+    s.kb_record_pair(k, other, KbPairKind::Conflict, 0.5, C)
+        .unwrap();
+    let before_rev = s.kb_entry(k).unwrap().rev;
+    let traces = s.kb_replace_with(k, &[other], H).unwrap();
+    let o = s.kb_entry(other).unwrap();
+    assert_eq!((o.state, o.superseded_by), (KbState::Superseded, Some(k)));
+    assert_eq!(s.kb_pairs_of(k).unwrap()[0].state, KbPairState::Resolved);
+    assert_eq!(s.kb_entry(k).unwrap().rev, before_rev);
+    s.kb_revert_state(&traces[0], H).unwrap();
+    assert_eq!(s.kb_entry(other).unwrap().state, KbState::Live);
+    assert_eq!(s.kb_pairs_of(k).unwrap()[0].state, KbPairState::Open);
+    // Make live, then its undo: superseded again, by the same successor.
+    s.kb_replace_with(k, &[other], H).unwrap();
+    let live = s.kb_make_live(other, H).unwrap();
+    s.kb_revert_state(&live, H).unwrap();
+    let o = s.kb_entry(other).unwrap();
+    assert_eq!((o.state, o.superseded_by), (KbState::Superseded, Some(k)));
+    // A retired entry cannot replace anything.
+    let gone = mem(s, Owner::Project(p), "Gone");
+    s.kb_retire(gone, None, "", &KbWriteCtx::default(), H)
+        .unwrap();
+    let third = mem(s, Owner::Project(p), "Third");
+    assert!(s.kb_replace_with(gone, &[third], H).is_err());
+}
+
+fn body(text: &str) -> KbUpdate {
+    KbUpdate {
+        expected_rev: None,
+        title: None,
+        summary: None,
+        edit: KbEdit::Body(text.into()),
+    }
+}
+
+#[test]
+fn a_merge_tidied_by_the_human_is_still_taken_back() {
+    let Seed { mut ts, t, u, .. } = seed();
+    let s = &mut ts.store;
+    let a = s
+        .kb_create(
+            memory(Owner::Topic(t), "Keychain entry", "Name", "acta.db"),
+            C,
+        )
+        .unwrap();
+    let b = s
+        .kb_create(
+            memory(
+                Owner::Topic(u),
+                "Keychain entry name",
+                "Name",
+                "It is acta.db.",
+            ),
+            C,
+        )
+        .unwrap();
+    let trace = s.kb_merge(a, b, H).unwrap();
+    // The editor opened on the merge: the human tidies, twice.
+    for text in ["acta.db (both said so).", "The entry is acta.db."] {
+        s.kb_update(a, body(text), H).unwrap();
+    }
+    s.kb_unmerge(&trace, H).unwrap();
+    assert_eq!(s.kb_entry(a).unwrap().body, "acta.db");
+    assert_eq!(s.kb_entry(b).unwrap().state, KbState::Live);
+    // An agent's edit after the merge refuses it.
+    let trace = s.kb_merge(a, b, H).unwrap();
+    s.kb_update(a, body("The agent's text."), C).unwrap();
+    assert!(s.kb_unmerge(&trace, H).is_err());
+    // So does a tidy outside the window.
+    let c = mem(s, Owner::Topic(t), "Third");
+    let trace = s.kb_merge(a, c, H).unwrap();
+    s.conn
+        .execute(
+            "UPDATE kb_revisions SET created_at = created_at - ?2 WHERE entry_id = ?1 AND rev = ?3",
+            params![a.0, UNMERGE_WINDOW_MS + 1, trace.merged_rev],
+        )
+        .unwrap();
+    s.kb_update(a, body("Late tidy."), H).unwrap();
+    assert!(s.kb_unmerge(&trace, H).is_err());
+}
+
+#[test]
+fn a_branch_memory_can_be_made_true_everywhere_and_back() {
+    let Seed { mut ts, p, t, .. } = seed();
+    let repo = ts.dir.path().join("repo3");
+    std::fs::create_dir_all(&repo).unwrap();
+    let s = &mut ts.store;
+    let f = s.add_folder(Owner::Project(p), &repo, H).unwrap();
+    let k = s
+        .kb_create_with(
+            memory(Owner::Topic(t), "Schema at V7 here", "On this branch", "x"),
+            &KbWriteCtx {
+                context_folder: Some(f),
+                context_branch: Some("feature/kb".into()),
+                ..KbWriteCtx::default()
+            },
+            C,
+        )
+        .unwrap();
+    let place = KbPlace {
+        folder: Some(f),
+        branch: Some("main".into()),
+    };
+    let on_main = |s: &Store| {
+        s.kb_scope(
+            Owner::Topic(t),
+            &KbFilter {
+                place: Some(place.clone()),
+                ..KbFilter::default()
+            },
+            PageReq::first(10),
+        )
+        .unwrap()
+        .total
+    };
+    assert_eq!(on_main(s), 0);
+    let trace = s.kb_clear_branch(k, H).unwrap();
+    assert_eq!(on_main(s), 1);
+    let e = s.kb_entry(k).unwrap();
+    assert_eq!((e.context_branch, e.context_folder), (None, Some(f)));
+    assert!(s.kb_clear_branch(k, H).is_err());
+    s.kb_restore_branch(&trace, H).unwrap();
+    assert_eq!(on_main(s), 0);
 }

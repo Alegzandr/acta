@@ -128,7 +128,7 @@ impl Store {
                 "SELECT 'kb', x.id, x.project_id, x.topic_id, x.title,
                         snippet(kb_fts, -1, '{o}', '{c}', '…', 12), bm25(kb_fts)
                  FROM kb_fts JOIN kb_entries x ON x.id = kb_fts.rowid
-                 WHERE kb_fts MATCH ?1 AND x.deleted_at IS NULL{project}"
+                 WHERE kb_fts MATCH ?1 AND x.deleted_at IS NULL AND x.state = 'live'{project}"
             ));
         }
         if parts.is_empty() {

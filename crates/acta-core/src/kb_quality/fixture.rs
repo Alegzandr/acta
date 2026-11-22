@@ -10,7 +10,7 @@
 //! and recall 0.6. Any change to a threshold or a word list re-runs this
 //! and reports both.
 
-use super::{Text, Verdict, compare, profile};
+use super::{Profile, Text, Thresholds, Verdict, compare, compare_at, profile};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum L {
@@ -1233,6 +1233,93 @@ fn the_labelled_fixture_meets_the_adr_targets() {
     }
     assert!(dp >= 0.8 && dr >= 0.8, "duplicates {dp:.2} / {dr:.2}");
     assert!(cp >= 0.6 && cr >= 0.6, "conflicts {cp:.2} / {cr:.2}");
+}
+
+/// Precision and recall of duplicates and conflicts on `pairs` at `th`.
+fn measure(pairs: &[(L, Profile, Profile)], th: Thresholds) -> [f64; 4] {
+    let (mut dup, mut conflict) = ([0usize; 3], [0usize; 3]);
+    for (label, a, b) in pairs {
+        let v = compare_at(a, b, th).verdict;
+        let said_dup = matches!(v, Verdict::Same | Verdict::Duplicate);
+        let said_conflict = v == Verdict::Conflict;
+        dup[0] += usize::from(said_dup && *label == L::Dup);
+        dup[1] += usize::from(said_dup);
+        dup[2] += usize::from(*label == L::Dup);
+        conflict[0] += usize::from(said_conflict && *label == L::Conflict);
+        conflict[1] += usize::from(said_conflict);
+        conflict[2] += usize::from(*label == L::Conflict);
+    }
+    [
+        ratio(dup[0], dup[1]),
+        ratio(dup[0], dup[2]),
+        ratio(conflict[0], conflict[1]),
+        ratio(conflict[0], conflict[2]),
+    ]
+}
+
+fn f1(p: f64, r: f64) -> f64 {
+    if p + r == 0.0 {
+        0.0
+    } else {
+        2.0 * p * r / (p + r)
+    }
+}
+
+/// The thresholds that maximise the duplicate and conflict F1 on `pairs`
+/// (a grid of 0.05 steps; ties go to the higher, stricter value).
+fn tune(pairs: &[(L, Profile, Profile)]) -> Thresholds {
+    let mut best = (f64::MIN, Thresholds::DEFAULT);
+    for d in 6..=16 {
+        for c in 4..=12 {
+            let th = Thresholds {
+                duplicate: d as f64 * 0.05,
+                related: (d as f64 * 0.05 - 0.15).max(0.0),
+                conflict: c as f64 * 0.05,
+            };
+            let m = measure(pairs, th);
+            let score = f1(m[0], m[1]) + f1(m[2], m[3]);
+            if score >= best.0 - 1e-12 {
+                best = (score, th);
+            }
+        }
+    }
+    best.1
+}
+
+fn profiles(pairs: &[(L, M, M)]) -> Vec<(L, Profile, Profile)> {
+    let p = |m: &M| {
+        profile(&Text {
+            title: m[0],
+            summary: m[1],
+            body: m[2],
+        })
+    };
+    pairs.iter().map(|(l, a, b)| (*l, p(a), p(b))).collect()
+}
+
+/// Hold-out (review of 2026-11-22): thresholds tuned on one language,
+/// measured on the other, both ways, so the reported figures are not the
+/// ones the tuning saw. Printed and asserted at the ADR targets: the
+/// figures of record are these hold-out ones.
+#[test]
+fn hold_out_tuned_on_one_language_measured_on_the_other() {
+    let split = PAIRS
+        .iter()
+        .position(|(_, a, _)| a[0] == "Lancer les tests avec nextest")
+        .unwrap();
+    let en = profiles(&PAIRS[..split]);
+    let fr = profiles(&PAIRS[split..]);
+    for (name, train, test) in [("en->fr", &en, &fr), ("fr->en", &fr, &en)] {
+        let th = tune(train);
+        let m = measure(test, th);
+        let d = measure(test, Thresholds::DEFAULT);
+        println!(
+            "kb_quality hold-out {name}: tuned dup {:.2} conflict {:.2}; on held-out half: duplicates P {:.2} R {:.2}, conflicts P {:.2} R {:.2} (shipped thresholds there: {:.2} {:.2} {:.2} {:.2})",
+            th.duplicate, th.conflict, m[0], m[1], m[2], m[3], d[0], d[1], d[2], d[3]
+        );
+        assert!(m[0] >= 0.8 && m[1] >= 0.8, "{name} duplicates: {m:?}");
+        assert!(m[2] >= 0.6 && m[3] >= 0.6, "{name} conflicts: {m:?}");
+    }
 }
 
 #[test]

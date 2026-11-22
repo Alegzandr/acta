@@ -102,7 +102,7 @@ impl Store {
             .prepare(
                 "SELECT k.id, k.project_id FROM kb_entries k
                  LEFT JOIN read_markers m ON m.kind = 'kb' AND m.record_id = k.id
-                 WHERE k.deleted_at IS NULL AND k.updated_by = 'claude'
+                 WHERE k.deleted_at IS NULL AND k.state = 'live' AND k.updated_by = 'claude'
                    AND (m.last_seen_at IS NULL OR k.updated_at > m.last_seen_at)
                  ORDER BY k.id",
             )?

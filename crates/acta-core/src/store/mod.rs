@@ -35,9 +35,9 @@ pub use kb::{
     KbCounts, KbEdit, KbFilter, KbPlace, KbRevisionSummary, KbStates, KbUpdate, KbWriteCtx, NewKb,
 };
 pub use kb_quality::{
-    CANDIDATES, KbCandidate, KbFinding, KbLink, KbLinkTarget, KbLogRow, KbMergeTrace, KbPair,
-    KbQualityReport, KbSource, KbSuccessor, MAX_SUPERSEDES, QUALITY_LOG_DAYS, RETIRE_REASON_MAX,
-    SOURCE_TEXT_MAX,
+    CANDIDATES, KbBranchTrace, KbCandidate, KbFinding, KbLink, KbLinkTarget, KbLogRow,
+    KbMergeTrace, KbPair, KbQualityReport, KbSource, KbStateTrace, KbSuccessor, KbVerifyTrace,
+    MAX_SUPERSEDES, QUALITY_LOG_DAYS, RETIRE_REASON_MAX, SOURCE_TEXT_MAX, UNMERGE_WINDOW_MS,
 };
 pub use overview::{
     IDLE_DAYS, INBOX_DAYS, Overview, OverviewEpic, OverviewFilter, OverviewItem, STALE_MEMORY_DAYS,
