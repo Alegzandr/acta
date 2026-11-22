@@ -14,7 +14,7 @@ use acta_core::voice::engine::{Engine, EngineError, FakeStep, Lang};
 use acta_core::voice::protocol::{
     EXIT_ENGINE_GONE, EngineSpec, Init, Reply, Request, WORKER_ARG, read_reply, write_request,
 };
-use acta_core::voice::worker::{WorkerClient, worker_command};
+use acta_core::voice::worker::{WorkerClient, probe_gpu, worker_command};
 
 fn exe() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_Acta"))
@@ -50,6 +50,7 @@ fn frames_round_trip_and_a_kill_mid_phrase_ends_the_stream() {
                 FakeStep::Text("Hello Alexandre.".into()),
                 FakeStep::Stall(Duration::from_secs(30), "Never.".into()),
             ],
+            gpu: false,
         },
         idle_secs: 60,
     };
@@ -87,6 +88,7 @@ fn frames_round_trip_and_a_kill_mid_phrase_ends_the_stream() {
 fn the_client_sees_the_engine_error_and_starts_a_new_worker() {
     let spec = EngineSpec::Fake {
         script: vec![FakeStep::Text("Bonjour Alexandre.".into()), FakeStep::Exit],
+        gpu: false,
     };
     let mut client = WorkerClient::new(exe(), spec);
     client.start(Lang::French).unwrap();
@@ -113,6 +115,7 @@ fn the_worker_exits_with_its_code_when_the_engine_is_gone() {
     let init = Init {
         spec: EngineSpec::Fake {
             script: vec![FakeStep::Exit],
+            gpu: false,
         },
         idle_secs: 60,
     };
@@ -139,7 +142,10 @@ fn an_idle_worker_exits_and_one_whose_pipe_closes_too() {
     let mut child = command.spawn().unwrap();
     let mut stdin = child.stdin.take().unwrap();
     let init = Init {
-        spec: EngineSpec::Fake { script: vec![] },
+        spec: EngineSpec::Fake {
+            script: vec![],
+            gpu: false,
+        },
         idle_secs: 1,
     };
     write_request(&mut stdin, &Request::Init(init)).unwrap();
@@ -176,6 +182,7 @@ fn a_missing_model_is_a_model_error() {
 fn a_worker_that_idled_out_is_replaced_at_the_next_take() {
     let spec = EngineSpec::Fake {
         script: vec![FakeStep::Text("One.".into())],
+        gpu: false,
     };
     let mut client = WorkerClient::new(exe(), spec).with_idle(Duration::from_secs(1));
     client.start(Lang::English).unwrap();
@@ -192,6 +199,7 @@ fn a_worker_that_idled_out_is_replaced_at_the_next_take() {
 fn release_ends_the_worker_and_the_next_take_starts_one() {
     let spec = EngineSpec::Fake {
         script: vec![FakeStep::Text("One.".into())],
+        gpu: false,
     };
     let mut client = WorkerClient::new(exe(), spec);
     client.start(Lang::English).unwrap();
@@ -200,4 +208,60 @@ fn release_ends_the_worker_and_the_next_take_starts_one() {
     assert_eq!(client.pid(), None, "the model file is free");
     client.start(Lang::English).unwrap();
     assert_eq!(client.feed(&tone(1_600)).unwrap(), "One.");
+}
+
+#[test]
+fn a_worker_whose_graphics_card_fails_falls_back_to_the_processor() {
+    // The fake engine "on the graphics card" ends its worker as a broken
+    // driver would; the client decodes the same phrase on the processor.
+    let spec = EngineSpec::Fake {
+        script: vec![
+            FakeStep::Text("Bonjour Alexandre.".into()),
+            FakeStep::Text("Encore.".into()),
+        ],
+        gpu: true,
+    };
+    let mut client = WorkerClient::new(exe(), spec);
+    assert!(client.gpu());
+    client.start(Lang::French).unwrap();
+    let first = client.pid().unwrap();
+    assert_eq!(client.feed(&tone(4_000)).unwrap(), "Bonjour Alexandre.");
+    assert!(!client.gpu(), "the processor from now on");
+    let cpu = client.pid().unwrap();
+    assert_ne!(cpu, first);
+    assert_eq!(client.feed(&tone(4_000)).unwrap(), "Encore.");
+    client.stop();
+    // The next take stays on the processor, in the same worker.
+    client.start(Lang::French).unwrap();
+    assert_eq!(client.pid(), Some(cpu));
+    assert!(!client.gpu());
+    assert_eq!(client.feed(&tone(4_000)).unwrap(), "phrase 3");
+}
+
+#[test]
+fn a_missing_model_on_the_graphics_card_is_still_a_model_error() {
+    let spec = EngineSpec::Whisper {
+        model: std::env::temp_dir().join("acta-no-such-model-alexandre.bin"),
+        vad: None,
+        threads: 1,
+        gpu: true,
+    };
+    let mut client = WorkerClient::new(exe(), spec);
+    client.start(Lang::English).unwrap();
+    // Tried on the graphics card, then on the processor.
+    assert_eq!(client.feed(&tone(1_600)), Err(EngineError::Model));
+    assert!(!client.gpu());
+    assert_eq!(client.start(Lang::English), Err(EngineError::Model));
+    assert_eq!(client.pid(), None);
+}
+
+#[test]
+fn the_probe_answers_and_its_worker_ends() {
+    // Whatever this machine has (CI runners have no graphics card): an
+    // answer, quickly, from a worker that is gone afterwards.
+    let started = Instant::now();
+    let memory = probe_gpu(&exe(), Duration::from_secs(60));
+    eprintln!("graphics card memory: {memory:?}");
+    assert!(memory.is_some(), "the worker answered the probe");
+    assert!(started.elapsed() < Duration::from_secs(60));
 }

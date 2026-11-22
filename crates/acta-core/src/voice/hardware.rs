@@ -35,12 +35,26 @@ pub struct Machine {
     /// Apple Silicon. An x86 build under Rosetta is `false` here and
     /// `Cpu::X86_64` above.
     pub metal: bool,
+    /// Windows and Linux: the dedicated memory, in bytes, of the best
+    /// discrete graphics card Whisper can use through Vulkan (1.2 or later),
+    /// as a worker reported it; 0 for none, on macOS, or when the probe
+    /// failed.
+    pub vulkan_memory: u64,
+}
+
+impl Machine {
+    /// Whisper can use a graphics card here (the "Use the graphics card"
+    /// setting is offered).
+    pub fn gpu(&self) -> bool {
+        self.metal || self.vulkan_memory > 0
+    }
 }
 
 /// Why that model, one line in the UI.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Reason {
-    /// Apple Silicon with 8 GB or more: the large model on the GPU.
+    /// Apple Silicon with 8 GB or more, or a Vulkan graphics card with 4 GB
+    /// or more of its own memory: the large model on the GPU.
     Gpu,
     /// 8 GB, 4 cores and a fast vector unit: Small on the processor.
     Cpu,
@@ -67,7 +81,7 @@ pub struct Recommendation {
 pub fn recommend(m: Machine) -> Recommendation {
     let (model, reason) = if !whisper_runs(m.cpu) {
         (None, Reason::UnsupportedCpu)
-    } else if m.metal && m.memory >= 8 * GB {
+    } else if (m.metal && m.memory >= 8 * GB) || (m.vulkan_memory >= 4 * GB && m.memory >= 4 * GB) {
         (Some(ModelId::LargeTurbo), Reason::Gpu)
     } else if m.memory >= 8 * GB && m.physical_cores >= 4 {
         (Some(ModelId::Small), Reason::Cpu)
@@ -133,6 +147,14 @@ mod tests {
             physical_cores: cores,
             cpu,
             metal,
+            vulkan_memory: 0,
+        }
+    }
+
+    fn vk(memory: u64, cores: u32, cpu: Cpu, vulkan_memory: u64) -> Machine {
+        Machine {
+            vulkan_memory,
+            ..m(memory, cores, cpu, false)
         }
     }
 
@@ -209,6 +231,38 @@ mod tests {
         assert_eq!(pick(m(gb_tenths(19), 8, Cpu::Arm64, true)).0, None);
         // An 8 GiB machine reporting 7.8 GiB is still an 8 GB machine.
         assert_eq!(pick(m(78 * (1 << 30) / 10, 4, FAST, false)).0, Some(Small));
+    }
+
+    #[test]
+    fn a_vulkan_card_with_4_gb_is_the_gpu_tier() {
+        use ModelId::*;
+        const GIB: u64 = 1 << 30;
+        // A 4 GiB card on a 16 GB machine; a 16 GiB card.
+        assert_eq!(
+            pick(vk(16 * GB, 8, FAST, 4 * GIB)),
+            (Some(LargeTurbo), Reason::Gpu)
+        );
+        assert_eq!(pick(vk(8 * GB, 2, FAST, 16 * GIB)).0, Some(LargeTurbo));
+        // 3.9 GB of graphics memory: the processor's tier.
+        assert_eq!(
+            pick(vk(16 * GB, 8, FAST, gb_tenths(39))),
+            (Some(Small), Reason::Cpu)
+        );
+        // A card, but under 4 GB of system memory.
+        assert_eq!(pick(vk(gb_tenths(39), 4, FAST, 8 * GIB)).0, Some(Tiny));
+        // A card does not make an old processor run the worker.
+        let no_avx2 = Cpu::X86_64 {
+            avx2: false,
+            fma: true,
+        };
+        assert_eq!(
+            pick(vk(16 * GB, 8, no_avx2, 8 * GIB)),
+            (None, Reason::UnsupportedCpu)
+        );
+        // The setting is offered for any usable card, Metal included.
+        assert!(vk(16 * GB, 8, FAST, GIB).gpu());
+        assert!(m(16 * GB, 8, Cpu::Arm64, true).gpu());
+        assert!(!m(16 * GB, 8, FAST, false).gpu());
     }
 
     #[test]

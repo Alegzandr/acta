@@ -1,6 +1,6 @@
 # Contributing to Acta
 
-Thank you for taking the time. Acta is pre-alpha and moves milestone by milestone
+Thank you for taking the time. Acta is alpha and moves milestone by milestone
 ([PLAN.md](PLAN.md)), so the most useful contributions right now are bug reports from
 installing and updating on your system, and ideas that fit the plan.
 
@@ -20,12 +20,14 @@ change that departs from either updates that file in the same pull request and s
 
 ## Building
 
-See [Build from source](README.md#build-from-source) in the README. In short: install Rust
-with rustup (the toolchain is pinned), then `cargo run -p acta-app`.
+See [docs/building.md](docs/building.md). In short: install Rust with rustup (the
+toolchain is pinned) and the per-system prerequisites listed there, then
+`cargo run -p acta-app`.
 
 ## Before you open a pull request
 
-All three must pass; CI runs them on Windows, macOS and Linux:
+All three must pass; CI runs clippy and the tests on Windows, macOS and Linux, and the
+format check once:
 
 ```sh
 cargo fmt --all

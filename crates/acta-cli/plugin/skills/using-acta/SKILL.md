@@ -34,7 +34,7 @@ Acta holds the project's topics (T-n) in epics (E-n). Each topic has a current s
 
 ## People
 - A person is always an Acta contact (C-n): pass `report_to` / `asked_to` as `C-n` or a name Acta resolves to one contact; `find(kind="contact")` when unsure.
-- When the user names someone Acta does not know, say so; create the contact (`create(kind="contact")`, name only, at the narrowest level that fits) only once the user confirms it is someone new. Never invent one.
+- When the user names someone Acta does not know, say so; create the contact (`create`, item kind `contact`, name only, at the narrowest `level` that fits) only once the user confirms it is someone new. Never invent one.
 - Say you created a contact only when an ack says `created`; `(existing contact)` means Acta already knew them.
 - Before drafting a message to someone, read `find(person=...)` and follow its `address` line. Write as the user, from the briefing's `User:` line.
 

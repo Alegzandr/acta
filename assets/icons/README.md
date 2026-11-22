@@ -8,9 +8,9 @@ The icon is Companion: an ivory planet with a thin brass ring tilted around it, 
 |---|---|
 | `acta.ico` | Windows executable icon (`crates/acta-app/build.rs`, `scripts/package.ps1`). Sizes 16, 20, 24, 32, 40, 48, 64 and 256; the 256 entry is PNG-compressed. |
 | `acta.icns` | macOS bundle icon (`scripts/package.sh`). The full iconset from 16@1x to 512@2x, as PNG entries, on Apple's 824 px continuous-curvature plate inside a 1024 canvas, with no shadow. |
-| `acta.png` | 512 x 512. Used for the Linux desktop entry (`desktop_entry.rs`), the Velopack `--icon` and the updater window's app mark (`icons.rs`). |
+| `acta.png` | 512 x 512. Used for the Linux desktop entry (`desktop_entry.rs`), the Linux Velopack `--icon` (`scripts/package.sh`) and the updater window's app mark (`icons.rs`). |
 | `acta-symbolic.svg` | Monochrome silhouette in `currentColor`: planet, ring (the front arc cut out of the planet, the back arc hidden behind it) and moon. Hand-written. |
-| `hicolor/` | Freedesktop icon theme tree: 16, 22, 24, 32, 48, 64, 128 and 256 px, plus `symbolic/apps/acta-symbolic.svg`. |
+| `hicolor/` | Freedesktop icon theme tree: 16, 22, 24, 32, 48, 64, 128 and 256 px, plus `symbolic/apps/acta-symbolic.svg`. The 16, 24 and 32 px bitmaps are the titlebar icon on Windows and Linux (`titlebar.rs`), one per scale factor. |
 
 Nothing installs the `hicolor/` tree yet: the AppImage desktop entry installs only the 512 px `acta.png`.
 
