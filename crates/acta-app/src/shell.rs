@@ -2416,8 +2416,7 @@ impl Shell {
             let parsed = cx
                 .background_spawn(async move {
                     // The file is read before the store is taken.
-                    let text = std::fs::read_to_string(&path).map_err(acta_core::Error::Io)?;
-                    let file = ExportFile::from_json(&text)?;
+                    let file = ExportFile::read(&path)?;
                     let report = match db {
                         Some(db) => db.lock().import(&file, true)?,
                         None => {
@@ -2450,6 +2449,12 @@ impl Shell {
                                 Key::ImportNewer,
                                 &[("n", Arg::Text(&found.to_string()))],
                             ),
+                        }
+                    }
+                    Err(acta_core::Error::FileTooLarge { size, limit }) => {
+                        DialogKind::ImportRefused {
+                            file_name,
+                            message: crate::dialogs::import_too_large(locale, size, limit),
                         }
                     }
                     Err(_) => DialogKind::ImportRefused {
@@ -4104,15 +4109,21 @@ impl Shell {
             let mut imported = None;
             if let (Opened::Ready(store), Some(file)) = (&mut opened, file) {
                 let report = store.import(&file, false);
-                let paths: Vec<String> = file.folders.iter().map(|f| f.path.clone()).collect();
-                imported = Some((report.ok(), paths));
+                let paths = crate::dialogs::probe_safe_paths(&file);
+                // Commit modes never come from a file: a recovered folder
+                // that committed automatically is Manual now.
+                let had_auto = file
+                    .folders
+                    .iter()
+                    .any(|f| f.commit_mode != acta_core::model::CommitMode::Manual);
+                imported = Some((report.ok(), paths, had_auto));
             }
             (opened, imported)
         });
         self._open = cx.spawn_in(window, async move |shell, cx| {
             let (opened, imported) = opening.await;
             let missing = match &imported {
-                Some((_, paths)) => {
+                Some((_, paths, _)) => {
                     let paths = paths.clone();
                     cx.background_executor()
                         .spawn(async move { crate::workspace::missing_paths(paths).len() as u64 })
@@ -4125,10 +4136,12 @@ impl Shell {
                     Opened::Ready(store) => {
                         shell.start_workbench(Db::new(store), window, cx);
                         let locale = settings::locale(cx);
-                        if let Some((report, _)) = imported {
+                        if let Some((report, _, had_auto)) = imported {
                             let toast = match report {
                                 Some(report) => Toast {
-                                    message: crate::dialogs::import_done(locale, &report, missing),
+                                    message: crate::dialogs::recovery_done(
+                                        locale, &report, missing, had_auto,
+                                    ),
                                     kind: ToastKind::Done,
                                 },
                                 None => Toast {

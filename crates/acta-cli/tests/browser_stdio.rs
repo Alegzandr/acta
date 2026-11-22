@@ -261,10 +261,11 @@ mod windows {
         *store.derive_secret(acta_browser::auth::KEY_LABEL)
     }
 
-    /// Serves the pipe for `data` with `key`, one connection.
-    fn serve(data: &Path, key: [u8; 32]) -> std::thread::JoinHandle<()> {
+    /// Serves the pipe for `data` with `key`, one connection, under the
+    /// name `name_key` gives (the real one, also when `key` is wrong).
+    fn serve(data: &Path, name_key: [u8; 32], key: [u8; 32]) -> std::thread::JoinHandle<()> {
         let sid = acta_browser::pipe::user_sid().unwrap();
-        let name = acta_browser::pipe::pipe_name(&sid, data);
+        let name = acta_browser::pipe::pipe_name(&sid, &name_key, data);
         let mut pipe = acta_browser::pipe::Server::new(&name, &sid).unwrap();
         let page = Arc::new(Page {
             events: Events::default(),
@@ -284,7 +285,7 @@ mod windows {
     fn tools_reach_the_app_through_the_authenticated_pipe() {
         let tmp = tempfile::tempdir().unwrap();
         let key = key_of(tmp.path());
-        let app = serve(tmp.path(), key);
+        let app = serve(tmp.path(), key, key);
         let mut m = Mcp::start(tmp.path());
 
         let (err, text, _) = m.call("open", json!({"url": "http://127.0.0.1:5173/"}));
@@ -326,8 +327,8 @@ mod windows {
     #[test]
     fn a_pipe_server_without_the_key_is_refused() {
         let tmp = tempfile::tempdir().unwrap();
-        key_of(tmp.path());
-        let app = serve(tmp.path(), [7; 32]);
+        let real = key_of(tmp.path());
+        let app = serve(tmp.path(), real, [7; 32]);
         let mut m = Mcp::start(tmp.path());
         let (err, text, _) = m.call("console", json!({}));
         assert!(

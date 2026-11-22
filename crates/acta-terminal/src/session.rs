@@ -81,10 +81,40 @@ pub enum SessionEvent {
     /// like `Wakeup`.
     Title,
     Bell,
-    /// OSC 52: the child asks to put text on the clipboard.
+    /// OSC 52: the child asks to put text on the clipboard. The view
+    /// applies [`clipboard_store_allowed`] before writing it.
     ClipboardStore(String),
     /// The child exited; `None` when there is no code (killed by a signal).
     Exited(Option<i32>),
+}
+
+/// The largest OSC 52 store accepted, in bytes.
+pub const CLIPBOARD_STORE_MAX: usize = 64 * 1024;
+/// How recent the user's last key in the terminal must be for an OSC 52
+/// store to be accepted.
+pub const CLIPBOARD_STORE_WINDOW: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Whether an OSC 52 store from the child reaches the system clipboard:
+/// only while the terminal has the focus in the active window (`focused`,
+/// checked as the store arrives), within [`CLIPBOARD_STORE_WINDOW`] of a
+/// key pressed in it (Claude Code copies on the user's command), and up to
+/// [`CLIPBOARD_STORE_MAX`] bytes.
+///
+/// What this stops: stores from a program running in the background or
+/// after a delay, and stores while the user works elsewhere (another pane,
+/// another window, another app), which could swap what they are about to
+/// paste. What it does not stop: output of a command the user has just
+/// typed (`cat` of a hostile file, `npm install` running a script) within
+/// the window; that output can still set the clipboard.
+pub fn clipboard_store_allowed(
+    focused: bool,
+    last_key: Option<std::time::Instant>,
+    now: std::time::Instant,
+    len: usize,
+) -> bool {
+    focused
+        && len <= CLIPBOARD_STORE_MAX
+        && last_key.is_some_and(|at| now.saturating_duration_since(at) <= CLIPBOARD_STORE_WINDOW)
 }
 
 struct Shared {
@@ -641,6 +671,26 @@ fn grid_point<T>(term: &Term<T>, row: usize, col: usize) -> Point {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_osc_52_store_needs_focus_a_recent_key_and_a_small_payload() {
+        use std::time::{Duration, Instant};
+        let now = Instant::now();
+        let key = Some(now - Duration::from_secs(1));
+        assert!(clipboard_store_allowed(true, key, now, 10));
+        assert!(clipboard_store_allowed(true, key, now, CLIPBOARD_STORE_MAX));
+        // Not focused, no key yet, a key too long ago, too large.
+        assert!(!clipboard_store_allowed(false, key, now, 10));
+        assert!(!clipboard_store_allowed(true, None, now, 10));
+        let old = Some(now - Duration::from_secs(6));
+        assert!(!clipboard_store_allowed(true, old, now, 10));
+        assert!(!clipboard_store_allowed(
+            true,
+            key,
+            now,
+            CLIPBOARD_STORE_MAX + 1
+        ));
+    }
     use alacritty_terminal::event::VoidListener;
     use alacritty_terminal::vte::ansi::{Processor, StdSyncHandler};
     use std::time::{Duration, Instant};

@@ -18,8 +18,8 @@ mod timeline;
 mod trash;
 
 pub use exchange::{
-    ExportFile, FILE_EXTENSION, FORMAT_NAME, FORMAT_VERSION, ImportCounts, ImportReport, XEntry,
-    XEpic, XFolder, XKb, XNote, XProject, XRevision, XStamp, XTopic,
+    ExportFile, FILE_EXTENSION, FORMAT_NAME, FORMAT_VERSION, ImportCounts, ImportReport,
+    MAX_IMPORT_BYTES, XEntry, XEpic, XFolder, XKb, XNote, XProject, XRevision, XStamp, XTopic,
 };
 pub use folders::{AUTO_MEMORY_PREFIX, FolderResolution, VisibleFolder, VisibleFolders};
 pub use kb::{KbCounts, KbEdit, KbFilter, KbRevisionSummary, KbUpdate, NewKb};

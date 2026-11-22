@@ -14,7 +14,9 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use sha2::{Digest, Sha256};
-use windows::Win32::Foundation::{CloseHandle, ERROR_PIPE_CONNECTED, HANDLE, HLOCAL, LocalFree};
+use windows::Win32::Foundation::{
+    CloseHandle, ERROR_NO_DATA, ERROR_PIPE_CONNECTED, HANDLE, HLOCAL, LocalFree,
+};
 use windows::Win32::Security::Authorization::{
     ConvertSecurityDescriptorToStringSecurityDescriptorW, ConvertSidToStringSidW,
     ConvertStringSecurityDescriptorToSecurityDescriptorW, GetSecurityInfo, SDDL_REVISION_1,
@@ -27,8 +29,9 @@ use windows::Win32::Security::{
 };
 use windows::Win32::Storage::FileSystem::{FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_ACCESS_DUPLEX};
 use windows::Win32::System::Pipes::{
-    ConnectNamedPipe, CreateNamedPipeW, GetNamedPipeServerProcessId, PIPE_READMODE_BYTE,
-    PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
+    ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, GetNamedPipeServerProcessId,
+    PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES,
+    PIPE_WAIT,
 };
 use windows::Win32::System::Threading::{
     CreateMutexW, GetCurrentProcess, OpenMutexW, OpenProcess, OpenProcessToken,
@@ -85,19 +88,31 @@ pub fn user_sid() -> std::io::Result<String> {
     process_user(None)
 }
 
-/// The tag of a data directory: the first 8 hex digits of the SHA-256 of
-/// its path. It says nothing about the path.
+/// The tag of a data directory for the mutex: the first 8 hex digits of
+/// the SHA-256 of its path. It says nothing about the path. The mutex lives
+/// in the session's `Local\` namespace, out of other users' reach, and is
+/// needed before the database (and its key) is open.
 fn tag(data_dir: &Path) -> String {
     let path = data_dir.to_string_lossy().to_lowercase();
     let digest = Sha256::digest(path.as_bytes());
     digest[..4].iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// `\\.\pipe\acta-<user SID>-browser-<data dir tag>`. The SID keeps users
-/// apart; the tag keeps a development or test instance from meeting the
-/// installed app.
-pub fn pipe_name(sid: &str, data_dir: &Path) -> String {
-    format!(r"\\.\pipe\acta-{sid}-browser-{}", tag(data_dir))
+/// `\\.\pipe\acta-<user SID>-browser-<tag>`, the tag being the first 16 hex
+/// digits of HMAC-SHA256(pipe key, "pipe name v1" and the data directory).
+/// The SID keeps users apart; the data directory keeps a development or test
+/// instance from meeting the installed app; the key, which only the app
+/// and `acta mcp browser` hold, keeps another local user from computing the
+/// name in advance. Pipe names are listable, so this holds only until the
+/// name is observed; squatting it then is a denial of service, never
+/// impersonation (the first-instance flag and the key handshake).
+pub fn pipe_name(sid: &str, key: &[u8; 32], data_dir: &Path) -> String {
+    use hmac::{Hmac, Mac};
+    let mut m = <Hmac<Sha256> as Mac>::new_from_slice(key).expect("HMAC takes any key length");
+    m.update(b"pipe name v1");
+    m.update(data_dir.to_string_lossy().to_lowercase().as_bytes());
+    let tag = crate::auth::hex(&m.finalize().into_bytes()[..8]);
+    format!(r"\\.\pipe\acta-{sid}-browser-{tag}")
 }
 
 /// `Local\acta-<user SID>-app-<data dir tag>`: held by the app for its whole
@@ -346,11 +361,20 @@ impl Server {
             None => self.create()?.0,
         };
         let h = HANDLE(file.as_raw_handle());
-        // SAFETY: a live pipe instance owned by `file`.
-        if let Err(e) = unsafe { ConnectNamedPipe(h, None) }
-            && e.code() != ERROR_PIPE_CONNECTED.to_hresult()
-        {
-            return Err(e.into());
+        loop {
+            // SAFETY: a live pipe instance owned by `file`.
+            match unsafe { ConnectNamedPipe(h, None) } {
+                Ok(()) => break,
+                Err(e) if e.code() == ERROR_PIPE_CONNECTED.to_hresult() => break,
+                // A client connected and closed before this call: the
+                // instance is reset and waits for the next one, so the name
+                // stays served.
+                Err(e) if e.code() == ERROR_NO_DATA.to_hresult() => {
+                    // SAFETY: as above.
+                    unsafe { DisconnectNamedPipe(h)? };
+                }
+                Err(e) => return Err(e.into()),
+            }
         }
         let dacl = read_sddl(h);
         // The next instance exists before this one is handed off. If it
@@ -501,15 +525,18 @@ mod tests {
 
     #[test]
     fn names_carry_the_user_and_a_tag_of_the_data_dir() {
+        let key = [7u8; 32];
         let a = pipe_name(
             "S-1-5-21-1",
+            &key,
             Path::new(r"C:\Users\Alexandre\AppData\Local\ActaData"),
         );
         let b = pipe_name(
             "S-1-5-21-1",
+            &key,
             Path::new(r"c:\users\alexandre\appdata\local\actadata"),
         );
-        let c = pipe_name("S-1-5-21-1", Path::new(r"C:\Temp\acta-test"));
+        let c = pipe_name("S-1-5-21-1", &key, Path::new(r"C:\Temp\acta-test"));
         assert_eq!(a, b);
         assert_ne!(a, c);
         assert!(a.starts_with(r"\\.\pipe\acta-S-1-5-21-1-browser-"));
@@ -517,7 +544,46 @@ mod tests {
         assert_eq!(sddl("S-1-5-21-1"), "D:P(D;;GA;;;NU)(A;;GA;;;S-1-5-21-1)");
         let m = mutex_name("S-1-5-21-1", Path::new(r"C:\Temp\acta-test"));
         assert!(m.starts_with(r"Local\acta-S-1-5-21-1-app-"));
-        assert!(m.ends_with(&c[c.len() - 8..]));
+    }
+
+    /// Security audit: the old tag was the SHA-256 of the data directory,
+    /// which another local user can compute and use to create the pipe
+    /// first. The tag now needs the key both sides hold.
+    #[test]
+    fn the_pipe_name_needs_the_key() {
+        let dir = Path::new(r"C:\Users\Alexandre\AppData\Local\Acta");
+        let sid = "S-1-5-21-1";
+        let ours = pipe_name(sid, &[1u8; 32], dir);
+        // The app and `acta mcp browser` derive it the same way.
+        assert_eq!(ours, pipe_name(sid, &[1u8; 32], dir));
+        assert_ne!(ours, pipe_name(sid, &[2u8; 32], dir));
+        let old = format!(r"\\.\pipe\acta-{sid}-browser-{}", tag(dir));
+        assert_ne!(ours, old);
+        assert!(!ours.contains(&tag(dir)));
+        let tag = ours.rsplit('-').next().unwrap();
+        assert_eq!(tag.len(), 16);
+        assert!(tag.bytes().all(|b| b.is_ascii_hexdigit()));
+    }
+
+    /// Security audit: a client that connects and closes before the server
+    /// waits on the instance made `ConnectNamedPipe` fail with
+    /// `ERROR_NO_DATA`, and the server stopped for good.
+    #[test]
+    fn a_client_gone_before_the_wait_does_not_stop_the_server() {
+        let name = unique_name("nodata");
+        let mut server = Server::new(&name, &user_sid().unwrap()).unwrap();
+        server.next = Some(server.create().unwrap().0);
+        let early = connect(&name, Duration::from_secs(2)).unwrap();
+        drop(early);
+        let t = std::thread::spawn(move || {
+            let accepted = server.accept().map(|_| ());
+            (accepted, server)
+        });
+        std::thread::sleep(Duration::from_millis(100));
+        let client = connect(&name, Duration::from_secs(2));
+        let (accepted, _server) = t.join().unwrap();
+        assert!(accepted.is_ok(), "{accepted:?}");
+        assert!(client.is_ok());
     }
 
     #[test]

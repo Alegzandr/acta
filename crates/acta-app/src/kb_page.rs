@@ -1364,7 +1364,9 @@ impl DocPage {
             let target = path.clone();
             let written = cx
                 .background_executor()
-                .spawn(async move { std::fs::write(&target, content) })
+                .spawn(async move {
+                    acta_core::fsutil::write_private_atomic(&target, content.as_bytes())
+                })
                 .await;
             ws.update(cx, |ws, cx| {
                 let locale = settings::locale(cx);
