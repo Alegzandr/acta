@@ -8,11 +8,13 @@
 //!   sign-in, through an injectable runner.
 //! - [`commands`]: the install and update commands, compile-time constants
 //!   built as argv, or the official download page.
+//! - [`install`]: one install at a time, its log in memory only.
 //!
 //! Nothing here runs at import, touches the network or writes a file.
 
 pub mod commands;
 pub mod detect;
+pub mod install;
 pub mod locate;
 pub mod version;
 
@@ -20,6 +22,7 @@ pub use commands::{Choice, Distro, Plan, Platform, RunsIn, Scope, Source};
 pub use detect::{
     AuthMethod, Detection, Exec, Machine, Outcome, SignIn, State, SystemExec, ToolRow, detect,
 };
+pub use install::{Failure, Installer, InstallerEnv, Phase};
 pub use locate::{
     ClaudeProgram, claude_session_vars, git_bash, locate, resolve_claude, resolve_unix,
     resolve_windows,
