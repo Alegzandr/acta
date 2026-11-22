@@ -894,10 +894,10 @@ impl Dictation {
         }
         let prefs = Self::prefs(cx);
         let model = prefs.model?;
-        let metal = self.machine.is_some_and(|m| m.metal);
+        let gpu = self.machine.is_some_and(|m| m.gpu());
         Some(EngineFor::Whisper {
             model,
-            gpu: prefs.gpu && metal,
+            gpu: prefs.gpu && gpu,
         })
     }
 

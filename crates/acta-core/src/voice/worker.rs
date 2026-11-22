@@ -4,13 +4,18 @@
 //! stdout. Both sides live here so they share one definition:
 //!
 //! - [`serve`]: the worker's loop, generic over how an engine is made (the
-//!   app makes a Whisper engine; tests a fake one).
+//!   app makes a Whisper engine; tests a fake one) and how the graphics card
+//!   is probed.
+//! - [`probe_gpu`]: starts a worker only to look at the graphics card, so
+//!   no GPU driver is ever loaded into the GUI process.
 //! - [`WorkerClient`]: the app's side, an [`Engine`] that starts the worker
 //!   when a take starts, restarts it when it has exited, and ties it to
 //!   Acta's lifetime: a job object with kill-on-close on Windows, the
 //!   parent-death signal on Linux, and the end of its stdin everywhere (the
 //!   pipe closes when Acta exits), so it never outlives Acta. Its stderr is
-//!   discarded.
+//!   discarded. A worker asked to use the graphics card that dies or
+//!   cannot load is replaced by one on the processor, once, and the phrase
+//!   is decoded there.
 
 use std::collections::VecDeque;
 use std::io::{self, BufReader, BufWriter, Read, Write};
@@ -41,14 +46,16 @@ pub enum ServeEnd {
     Broken,
 }
 
-/// The worker's loop. `make` builds the engine from the `Init` request.
-/// Requests are read on a thread of their own so the idle clock runs while
-/// the pipe is quiet.
-pub fn serve<R, W, F>(input: R, output: W, mut make: F) -> ServeEnd
+/// The worker's loop. `make` builds the engine from the `Init` request;
+/// `probe` answers a `Probe` (the graphics card's dedicated memory, 0 for
+/// none). Requests are read on a thread of their own so the idle clock runs
+/// while the pipe is quiet.
+pub fn serve<R, W, F, P>(input: R, output: W, mut make: F, mut probe: P) -> ServeEnd
 where
     R: Read + Send + 'static,
     W: Write,
     F: FnMut(&EngineSpec) -> Result<Box<dyn Engine>, EngineError>,
+    P: FnMut() -> u64,
 {
     let (tx, rx) = mpsc::sync_channel::<io::Result<Option<Request>>>(1);
     let reader = std::thread::Builder::new()
@@ -111,6 +118,7 @@ where
                 }
                 None
             }
+            Request::Probe => Some(Reply::Gpu(probe())),
         };
         let Some(mut reply) = reply else {
             continue;
@@ -154,6 +162,36 @@ pub fn worker_command(exe: &Path) -> Command {
         }
     }
     command
+}
+
+/// The dedicated memory of the best graphics card Whisper can use (0 for
+/// none), asked of a worker started for that alone and ended after. `None`
+/// when the worker did not answer within `timeout` (a driver that hangs) or
+/// died (one that crashes): no graphics card, then.
+pub fn probe_gpu(exe: &Path, timeout: Duration) -> Option<u64> {
+    let mut command = worker_command(exe);
+    let (mut child, tree) = spawn_in_tree(&mut command).ok()?;
+    let answer = (|| {
+        let mut stdin = child.stdin.take()?;
+        let stdout = child.stdout.take()?;
+        protocol::write_request(&mut stdin, &Request::Probe).ok()?;
+        // The end of its input ends the worker once it has answered.
+        drop(stdin);
+        let (tx, rx) = mpsc::channel();
+        std::thread::Builder::new()
+            .name("acta-voice-probe".into())
+            .spawn(move || {
+                let _ = tx.send(read_reply(&mut BufReader::new(stdout)));
+            })
+            .ok()?;
+        match rx.recv_timeout(timeout) {
+            Ok(Ok(Some(Reply::Gpu(memory)))) => Some(memory),
+            _ => None,
+        }
+    })();
+    tree.kill(&mut child);
+    let _ = child.wait();
+    answer
 }
 
 struct Running {
@@ -216,6 +254,9 @@ pub struct WorkerClient {
     /// The worker failed to load the model: later takes report it at once
     /// until the spec changes.
     model_failed: bool,
+    /// The language of the take in progress, to start it again on the
+    /// processor when the graphics card fails.
+    lang: Option<Lang>,
 }
 
 impl WorkerClient {
@@ -229,7 +270,14 @@ impl WorkerClient {
             },
             running: None,
             model_failed: false,
+            lang: None,
         }
+    }
+
+    /// Whether the worker runs on the graphics card (false once it fell
+    /// back to the processor).
+    pub fn gpu(&self) -> bool {
+        self.init.spec.gpu()
     }
 
     /// Shorter idle exit, for tests.
@@ -283,6 +331,22 @@ impl WorkerClient {
         self.running.as_mut().ok_or(EngineError::Exited)
     }
 
+    /// Sends the phrase and reads its text; errors are handled by the caller.
+    fn decode(&mut self, phrase: &[f32]) -> Result<String, EngineError> {
+        let Some(r) = self.running.as_mut() else {
+            return Err(EngineError::Exited);
+        };
+        r.last_sent = Instant::now();
+        if protocol::write_phrase(&mut r.stdin, phrase).is_err() {
+            return Err(EngineError::Exited);
+        }
+        match r.settle() {
+            Ok(Reply::Text(t)) => Ok(t),
+            Ok(Reply::Error(e)) | Err(e) => Err(e),
+            Ok(_) => Err(EngineError::Exited),
+        }
+    }
+
     fn fail(&mut self, e: EngineError) -> EngineError {
         if e == EngineError::Model {
             self.model_failed = true;
@@ -303,6 +367,7 @@ impl Engine for WorkerClient {
         if self.model_failed {
             return Err(EngineError::Model);
         }
+        self.lang = Some(lang);
         let first = self.alive().and_then(|r| {
             r.send(&Request::Start(lang))
                 .map_err(|_| EngineError::Exited)?;
@@ -326,21 +391,30 @@ impl Engine for WorkerClient {
     }
 
     fn feed(&mut self, phrase: &[f32]) -> Result<String, EngineError> {
-        let Some(r) = self.running.as_mut() else {
-            return Err(EngineError::Exited);
-        };
-        r.last_sent = Instant::now();
-        if protocol::write_phrase(&mut r.stdin, phrase).is_err() {
-            return Err(self.fail(EngineError::Exited));
-        }
-        match r.settle() {
-            Ok(Reply::Text(t)) => Ok(t),
-            Ok(Reply::Error(e)) | Err(e) => Err(self.fail(e)),
-            Ok(_) => Err(self.fail(EngineError::Exited)),
+        match self.decode(phrase) {
+            // The graphics card failed (a driver fault, too little memory,
+            // no usable device): the same phrase on the processor, and the
+            // processor from now on.
+            Err(EngineError::Exited | EngineError::Model) if self.init.spec.gpu() => {
+                if let Some(r) = self.running.take() {
+                    r.end();
+                }
+                self.init.spec = self.init.spec.without_gpu();
+                self.model_failed = false;
+                let lang = self.lang.ok_or(EngineError::Exited)?;
+                let r = self.alive()?;
+                r.send(&Request::Start(lang))
+                    .map_err(|_| EngineError::Exited)?;
+                r.owed.push_back(Owed::Started);
+                self.decode(phrase).map_err(|e| self.fail(e))
+            }
+            Err(e) => Err(self.fail(e)),
+            Ok(text) => Ok(text),
         }
     }
 
     fn stop(&mut self) {
+        self.lang = None;
         if let Some(r) = self.running.as_mut() {
             let _ = r.send(&Request::Stop);
         }
@@ -373,9 +447,13 @@ mod tests {
 
     fn fake_maker(spec: &EngineSpec) -> Result<Box<dyn Engine>, EngineError> {
         match spec {
-            EngineSpec::Fake { script } => Ok(Box::new(FakeEngine::new(script.clone()))),
+            EngineSpec::Fake { script, .. } => Ok(Box::new(FakeEngine::new(script.clone()))),
             EngineSpec::Whisper { .. } => Err(EngineError::Model),
         }
+    }
+
+    fn no_gpu() -> u64 {
+        0
     }
 
     fn requests(reqs: &[Request]) -> Vec<u8> {
@@ -396,7 +474,7 @@ mod tests {
 
     fn init(script: Vec<FakeStep>) -> Request {
         Request::Init(Init {
-            spec: EngineSpec::Fake { script },
+            spec: EngineSpec::Fake { script, gpu: false },
             idle_secs: 60,
         })
     }
@@ -418,7 +496,7 @@ mod tests {
             Request::Stop,
         ]);
         let mut out = Vec::new();
-        let end = serve(io::Cursor::new(input), &mut out, fake_maker);
+        let end = serve(io::Cursor::new(input), &mut out, fake_maker, no_gpu);
         assert_eq!(end, ServeEnd::Closed);
         assert_eq!(
             replies(&out),
@@ -435,7 +513,7 @@ mod tests {
     fn serve_without_init_and_with_a_bad_model() {
         let input = requests(&[Request::Start(Lang::French), phrase()]);
         let mut out = Vec::new();
-        serve(io::Cursor::new(input), &mut out, fake_maker);
+        serve(io::Cursor::new(input), &mut out, fake_maker, no_gpu);
         assert_eq!(
             replies(&out),
             vec![
@@ -453,7 +531,7 @@ mod tests {
             idle_secs: 60,
         })]);
         let mut out = Vec::new();
-        serve(io::Cursor::new(input), &mut out, fake_maker);
+        serve(io::Cursor::new(input), &mut out, fake_maker, no_gpu);
         assert_eq!(replies(&out), vec![Reply::Error(EngineError::Model)]);
     }
 
@@ -466,7 +544,7 @@ mod tests {
             phrase(),
         ]);
         let mut out = Vec::new();
-        let end = serve(io::Cursor::new(input), &mut out, fake_maker);
+        let end = serve(io::Cursor::new(input), &mut out, fake_maker, no_gpu);
         assert_eq!(end, ServeEnd::EngineGone);
         assert_eq!(
             replies(&out),
@@ -479,12 +557,31 @@ mod tests {
     }
 
     #[test]
+    fn serve_answers_a_probe_without_loading_anything() {
+        let input = requests(&[Request::Probe]);
+        let mut out = Vec::new();
+        let mut made = false;
+        let end = serve(
+            io::Cursor::new(input),
+            &mut out,
+            |spec: &EngineSpec| {
+                made = true;
+                fake_maker(spec)
+            },
+            || 8 << 30,
+        );
+        assert_eq!(end, ServeEnd::Closed);
+        assert!(!made);
+        assert_eq!(replies(&out), vec![Reply::Gpu(8 << 30)]);
+    }
+
+    #[test]
     fn serve_breaks_on_a_bad_frame() {
         let mut input = requests(&[init(vec![])]);
         input.extend_from_slice(&[1, 0, 0, 0, 0x55]);
         let mut out = Vec::new();
         assert_eq!(
-            serve(io::Cursor::new(input), &mut out, fake_maker),
+            serve(io::Cursor::new(input), &mut out, fake_maker, no_gpu),
             ServeEnd::Broken
         );
     }
@@ -504,13 +601,16 @@ mod tests {
     fn serve_exits_when_idle() {
         // Init with a 1 s idle time, then silence.
         let init = requests(&[Request::Init(Init {
-            spec: EngineSpec::Fake { script: vec![] },
+            spec: EngineSpec::Fake {
+                script: vec![],
+                gpu: false,
+            },
             idle_secs: 1,
         })]);
         let input = io::Cursor::new(init).chain(Quiet);
         let mut out = Vec::new();
         let started = std::time::Instant::now();
-        assert_eq!(serve(input, &mut out, fake_maker), ServeEnd::Idle);
+        assert_eq!(serve(input, &mut out, fake_maker, no_gpu), ServeEnd::Idle);
         assert!(started.elapsed() >= Duration::from_secs(1));
         assert!(started.elapsed() < Duration::from_secs(10));
     }
