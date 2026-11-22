@@ -193,12 +193,14 @@ pub fn merge(ws: &Entity<Workspace>, from: ContactId, into: ContactId, name: &st
                 .into_iter()
                 .map(|u| u.record)
                 .collect();
-            store.merge_contacts(from, into, Author::Human)?;
+            let trace = store.merge_contacts(from, into, Author::Human)?;
             Ok((
                 Undo::Unmerge {
                     from,
                     before: Box::new(before),
+                    after: Box::new(store.contact(into)?),
                     uses,
+                    trace,
                 },
                 (),
             ))

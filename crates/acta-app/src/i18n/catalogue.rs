@@ -1937,6 +1937,10 @@ catalogue! {
         en: t("Session ended. {keys} to restart."),
         fr: t("Session terminée. {keys} pour relancer."),
     }
+    TerminalEndedOnce "terminal.ended_once" {
+        en: t("Session ended."),
+        fr: t("Session terminée."),
+    }
     TerminalAskTitle "terminal.ask.title" {
         en: t("Where should Claude Code start?"),
         fr: t("Où Claude Code doit-il démarrer\u{202f}?"),
@@ -2036,6 +2040,10 @@ catalogue! {
     QuitBody "quit.body" {
         en: t("Claude Code is still running in the terminal of {project}."),
         fr: t("Claude Code est encore en cours d\u{2019}exécution dans le terminal de {project}."),
+    }
+    QuitInstalling "quit.installing" {
+        en: t("{name} is still installing. It goes on after Acta quits, but its log is lost."),
+        fr: t("{name} est encore en cours d\u{2019}installation. Elle continue après la fermeture d\u{2019}Acta, mais son journal est perdu."),
     }
     QuitConfirm "quit.confirm" {
         en: t("Quit"),
@@ -2845,6 +2853,274 @@ catalogue! {
         en: t("Divider"),
         fr: t("Séparateur"),
     }
+    ReadyTitle "ready.title" {
+        en: t("Ready for Claude Code"),
+        fr: t("Prêt pour Claude Code"),
+    }
+    ReadyHint "ready.hint" {
+        en: t("What Claude Code uses on this computer. Nothing is installed without your click."),
+        fr: t("Ce que Claude Code utilise sur cet ordinateur. Rien n\u{2019}est installé sans votre clic."),
+    }
+    ReadyClaude "ready.claude" {
+        en: t("Claude Code"),
+        fr: t("Claude Code"),
+    }
+    ReadyClaudeWhy "ready.claude.why" {
+        en: t("Runs in Acta\u{2019}s terminal and does the work. Required."),
+        fr: t("S\u{2019}exécute dans le terminal d\u{2019}Acta et fait le travail. Requis."),
+    }
+    ReadySignin "ready.signin" {
+        en: t("Signed in to Claude"),
+        fr: t("Connecté à Claude"),
+    }
+    ReadySigninWhy "ready.signin.why" {
+        en: t("Claude Code needs your Claude subscription. You sign in once, in Acta\u{2019}s terminal."),
+        fr: t("Claude Code a besoin de votre abonnement Claude. Vous vous connectez une fois, dans le terminal d\u{2019}Acta."),
+    }
+    ReadyGit "ready.git" {
+        en: t("Git"),
+        fr: t("Git"),
+    }
+    ReadyGitWhy "ready.git.why" {
+        en: t("Commits, branches and worktrees. Recommended."),
+        fr: t("Commits, branches et worktrees. Recommandé."),
+    }
+    ReadyGitWhyWindows "ready.git.why_windows" {
+        en: t("Commits and branches, and Git Bash, the shell Claude Code prefers on Windows. Recommended."),
+        fr: t("Commits et branches, et Git Bash, le shell que Claude Code préfère sous Windows. Recommandé."),
+    }
+    ReadyGh "ready.gh" {
+        en: t("GitHub CLI"),
+        fr: t("GitHub CLI"),
+    }
+    ReadyGhWhy "ready.gh.why" {
+        en: t("Lets Claude Code open pull requests and read issues on GitHub. Optional."),
+        fr: t("Permet à Claude Code d\u{2019}ouvrir des pull requests et de lire les issues sur GitHub. Facultatif."),
+    }
+    ReadyStateFound "ready.state.found" {
+        en: t("{version}"),
+        fr: t("{version}"),
+    }
+    ReadyStateWithBash "ready.state.with_bash" {
+        en: t("{version} · with Git Bash"),
+        fr: t("{version} · avec Git Bash"),
+    }
+    ReadyStateWithoutBash "ready.state.without_bash" {
+        en: t("{version} · without Git Bash: Claude Code will use PowerShell"),
+        fr: t("{version} · sans Git Bash\u{a0}: Claude Code utilisera PowerShell"),
+    }
+    ReadyStateMissing "ready.state.missing" {
+        en: t("Not installed"),
+        fr: t("Non installé"),
+    }
+    ReadyStateMissingOptional "ready.state.missing_optional" {
+        en: t("Not installed · optional"),
+        fr: t("Non installé · facultatif"),
+    }
+    ReadyStateOutdated "ready.state.outdated" {
+        en: t("{version} · {minimum} or later needed"),
+        fr: t("{version} · {minimum} ou ultérieure requise"),
+    }
+    ReadyStateInstalling "ready.state.installing" {
+        en: t("Installing\u{2026} {elapsed}"),
+        fr: t("Installation\u{2026} {elapsed}"),
+    }
+    ReadyStateUpdating "ready.state.updating" {
+        en: t("Updating\u{2026} {elapsed}"),
+        fr: t("Mise à jour\u{2026} {elapsed}"),
+    }
+    ReadyStateTerminal "ready.state.terminal" {
+        en: t("Finish in the terminal"),
+        fr: t("Terminez dans le terminal"),
+    }
+    ReadyStateMacos "ready.state.macos" {
+        en: t("Finish in the macOS window"),
+        fr: t("Terminez dans la fenêtre de macOS"),
+    }
+    ReadyStateFailed "ready.state.failed" {
+        en: t("Install failed"),
+        fr: t("Échec de l\u{2019}installation"),
+    }
+    ReadyStateSignedIn "ready.state.signed_in" {
+        en: t("Signed in"),
+        fr: t("Connecté"),
+    }
+    ReadyStateApiKeyUsed "ready.state.api_key" {
+        en: t("Using an API key"),
+        fr: t("Clé API utilisée"),
+    }
+    ReadyStateApiKeyTip "ready.state.api_key.tip" {
+        en: t("Acta works best with a Claude subscription."),
+        fr: t("Acta fonctionne au mieux avec un abonnement Claude."),
+    }
+    ReadyStateSignedOut "ready.state.signed_out" {
+        en: t("Not signed in"),
+        fr: t("Non connecté"),
+    }
+    ReadyInstall "ready.install" {
+        en: t("Install\u{2026}"),
+        fr: t("Installer\u{2026}"),
+    }
+    ReadyUpdate "ready.update" {
+        en: t("Update\u{2026}"),
+        fr: t("Mettre à jour\u{2026}"),
+    }
+    ReadySigninButton "ready.signin_button" {
+        en: t("Sign in\u{2026}"),
+        fr: t("Se connecter\u{2026}"),
+    }
+    ReadySigninNeedsClaude "ready.signin.needs_claude" {
+        en: t("Install Claude Code first"),
+        fr: t("Installez d\u{2019}abord Claude Code"),
+    }
+    ReadyShowCommand "ready.show_command" {
+        en: t("Show command"),
+        fr: t("Afficher la commande"),
+    }
+    ReadyDownload "ready.download" {
+        en: t("Open download page"),
+        fr: t("Ouvrir la page de téléchargement"),
+    }
+    ReadyWingetInstead "ready.winget_instead" {
+        en: t("Install with winget instead"),
+        fr: t("Installer avec winget à la place"),
+    }
+    ReadyShowTerminal "ready.show_terminal" {
+        en: t("Show terminal"),
+        fr: t("Afficher le terminal"),
+    }
+    ReadyShowLog "ready.show_log" {
+        en: t("Show log"),
+        fr: t("Afficher le journal"),
+    }
+    ReadyHideLog "ready.hide_log" {
+        en: t("Hide log"),
+        fr: t("Masquer le journal"),
+    }
+    ReadyCopyLog "ready.copy_log" {
+        en: t("Copy log"),
+        fr: t("Copier le journal"),
+    }
+    ReadyCopyCommand "ready.copy_command" {
+        en: t("Copy command"),
+        fr: t("Copier la commande"),
+    }
+    ReadyCheckAgain "ready.check_again" {
+        en: t("Check again"),
+        fr: t("Vérifier à nouveau"),
+    }
+    ReadyOneAtATime "ready.one_at_a_time" {
+        en: t("One install at a time"),
+        fr: t("Une installation à la fois"),
+    }
+    ReadyFailedExit "ready.failed.exit" {
+        en: t("The installer stopped with code {code}."),
+        fr: t("Le programme d\u{2019}installation s\u{2019}est arrêté avec le code {code}."),
+    }
+    ReadyFailedNotFound "ready.failed.not_found" {
+        en: t("Installed, but Acta cannot find {name} yet. Restart Acta."),
+        fr: t("Installé, mais Acta ne trouve pas encore {name}. Redémarrez Acta."),
+    }
+    ReadyFailedNoStart "ready.failed.no_start" {
+        en: t("Could not start the installer."),
+        fr: t("Impossible de lancer le programme d\u{2019}installation."),
+    }
+    ReadyNoManager "ready.no_manager" {
+        en: t("No package manager Acta can use was found here. Install {name} from its download page, then check again."),
+        fr: t("Aucun gestionnaire de paquets utilisable par Acta n\u{2019}a été trouvé. Installez {name} depuis sa page de téléchargement, puis vérifiez à nouveau."),
+    }
+    ReadyDialogInstall "ready.dialog.install" {
+        en: t("Install {name}?"),
+        fr: t("Installer {name}\u{202f}?"),
+    }
+    ReadyDialogUpdate "ready.dialog.update" {
+        en: t("Update {name}?"),
+        fr: t("Mettre à jour {name}\u{202f}?"),
+    }
+    ReadyFromVendor "ready.from.vendor" {
+        en: t("Acta runs {name}\u{2019}s official installer, exactly as its documentation gives it."),
+        fr: t("Acta exécute le programme d\u{2019}installation officiel de {name}, tel que le donne sa documentation."),
+    }
+    ReadyFromWinget "ready.from.winget" {
+        en: t("Acta runs Windows Package Manager (winget), which downloads {name} from its publisher and checks it against the hash in winget\u{2019}s catalogue."),
+        fr: t("Acta exécute le gestionnaire de paquets de Windows (winget), qui télécharge {name} depuis son éditeur et le vérifie avec l\u{2019}empreinte du catalogue de winget."),
+    }
+    ReadyFromHomebrew "ready.from.homebrew" {
+        en: t("Acta runs Homebrew, which downloads {name} and checks it."),
+        fr: t("Acta exécute Homebrew, qui télécharge {name} et le vérifie."),
+    }
+    ReadyFromApple "ready.from.apple" {
+        en: t("macOS installs Apple\u{2019}s Command Line Tools, which include Git, in its own window."),
+        fr: t("macOS installe les Command Line Tools d\u{2019}Apple, qui contiennent Git, dans sa propre fenêtre."),
+    }
+    ReadyFromSystem "ready.from.system" {
+        en: t("Your system\u{2019}s package manager installs it, in Acta\u{2019}s terminal. It asks for your password there; Acta never sees it."),
+        fr: t("Le gestionnaire de paquets de votre système l\u{2019}installe, dans le terminal d\u{2019}Acta. Il y demande votre mot de passe\u{202f}; Acta ne le voit jamais."),
+    }
+    ReadyScopeUser "ready.scope.user" {
+        en: t("For you only. No administrator rights needed."),
+        fr: t("Pour vous seulement. Aucun droit d\u{2019}administrateur nécessaire."),
+    }
+    ReadyScopeUserUac "ready.scope.user_uac" {
+        en: t("For you only. Windows may still ask for permission."),
+        fr: t("Pour vous seulement. Windows peut tout de même demander une autorisation."),
+    }
+    ReadyScopeSystem "ready.scope.system" {
+        en: t("For all users of this computer. Administrator rights needed."),
+        fr: t("Pour tous les utilisateurs de cet ordinateur. Droits d\u{2019}administrateur nécessaires."),
+    }
+    ReadyAgreements "ready.agreements" {
+        en: t("Installing accepts the publisher\u{2019}s licence and the terms of winget\u{2019}s catalogue."),
+        fr: t("Installer vaut acceptation de la licence de l\u{2019}éditeur et des conditions du catalogue de winget."),
+    }
+    ReadyUpdatesSelf "ready.updates.self" {
+        en: t("Claude Code then updates itself."),
+        fr: t("Claude Code se met ensuite à jour tout seul."),
+    }
+    ReadyUpdatesWinget "ready.updates.winget" {
+        en: t("Updates come from winget, not from Acta."),
+        fr: t("Les mises à jour viennent de winget, pas d\u{2019}Acta."),
+    }
+    ReadyUpdatesHomebrew "ready.updates.homebrew" {
+        en: t("Updates come from Homebrew, not from Acta."),
+        fr: t("Les mises à jour viennent de Homebrew, pas d\u{2019}Acta."),
+    }
+    ReadyUpdatesApple "ready.updates.apple" {
+        en: t("Updates come from macOS Software Update."),
+        fr: t("Les mises à jour viennent de la mise à jour de logiciels de macOS."),
+    }
+    ReadyUpdatesSystem "ready.updates.system" {
+        en: t("Updates come with your system\u{2019}s updates, not from Acta."),
+        fr: t("Les mises à jour arrivent avec celles de votre système, pas d\u{2019}Acta."),
+    }
+    ReadyUninstall "ready.uninstall" {
+        en: t("To remove it later, use {manager}; removing Acta leaves it installed."),
+        fr: t("Pour le retirer plus tard, utilisez {manager}\u{202f}; désinstaller Acta le laisse en place."),
+    }
+    ReadyUninstallNative "ready.uninstall.native" {
+        en: t("the steps on Claude Code\u{2019}s setup page"),
+        fr: t("les étapes de la page d\u{2019}installation de Claude Code"),
+    }
+    ReadyDialogCommand "ready.dialog.command" {
+        en: t("Command"),
+        fr: t("Commande"),
+    }
+    ReadyDialogConfirmInstall "ready.dialog.confirm_install" {
+        en: t("Install"),
+        fr: t("Installer"),
+    }
+    ReadyDialogConfirmUpdate "ready.dialog.confirm_update" {
+        en: t("Update"),
+        fr: t("Mettre à jour"),
+    }
+    ReadyDialogConfirmTerminal "ready.dialog.confirm_terminal" {
+        en: t("Open in terminal"),
+        fr: t("Ouvrir dans le terminal"),
+    }
+    ReadySigninHint "ready.signin.hint" {
+        en: t("A terminal opens with Claude Code. Follow its steps in your browser; Acta never sees your password or token."),
+        fr: t("Un terminal s\u{2019}ouvre avec Claude Code. Suivez ses étapes dans votre navigateur\u{202f}; Acta ne voit jamais votre mot de passe ni votre jeton."),
+    }
     SettingsAppearance "settings.appearance" {
         en: t("Appearance"),
         fr: t("Apparence"),
@@ -2968,10 +3244,6 @@ catalogue! {
     SettingsClaude "settings.claude" {
         en: t("Claude Code"),
         fr: t("Claude Code"),
-    }
-    SettingsCheckCli "settings.check.cli" {
-        en: t("Claude Code found"),
-        fr: t("Claude Code trouvé"),
     }
     SettingsCheckFiles "settings.check.files" {
         en: t("Plugin files written"),
@@ -3132,6 +3404,14 @@ catalogue! {
     StatusbarVersion "statusbar.version" {
         en: t("Acta {version}"),
         fr: t("Acta {version}"),
+    }
+    StatusClaudeMissing "status.claude.missing" {
+        en: t("Claude Code: not installed"),
+        fr: t("Claude Code\u{a0}: non installé"),
+    }
+    StatusClaudeSignedOut "status.claude.signed_out" {
+        en: t("Claude Code: not signed in"),
+        fr: t("Claude Code\u{a0}: non connecté"),
     }
     UpdateReady "update.ready" {
         en: t("Restart to update"),

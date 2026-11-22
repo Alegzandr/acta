@@ -336,12 +336,20 @@ mod tests {
             part
         };
         let parts: Vec<&str> = text.split(" \u{b7} ").collect();
-        if parts.len() == 2
-            && !matches!(
-                key,
-                "kb.scope" | "import.meta" | "meta.record" | "questions.scope" | "contact.meta"
-            )
-        {
+        // A middle dot that separates parts of one string, not plural forms.
+        let one_string = matches!(
+            key,
+            "kb.scope"
+                | "import.meta"
+                | "meta.record"
+                | "questions.scope"
+                | "contact.meta"
+                | "ready.state.with_bash"
+                | "ready.state.without_bash"
+                | "ready.state.missing_optional"
+                | "ready.state.outdated"
+        );
+        if parts.len() == 2 && !one_string {
             parts.into_iter().map(typeset).collect()
         } else {
             vec![typeset(&text)]

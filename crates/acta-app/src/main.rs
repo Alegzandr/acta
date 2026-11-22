@@ -49,6 +49,8 @@ mod preferences;
 mod question_view;
 mod questions_model;
 mod questions_page;
+mod ready;
+mod ready_model;
 mod record;
 mod record_page;
 mod route;

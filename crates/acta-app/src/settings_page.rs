@@ -16,9 +16,9 @@
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    App, AppContext, Context, Div, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement,
-    KeyDownEvent, ParentElement, Render, StatefulInteractiveElement, Styled, Subscription, Task,
-    Window, div, px,
+    App, AppContext, Context, Div, Entity, EventEmitter, FocusHandle, Focusable,
+    InteractiveElement, IntoElement, KeyDownEvent, ParentElement, Render,
+    StatefulInteractiveElement, Styled, Subscription, Task, Window, div, px,
 };
 
 use crate::i18n::{Key, Locale, text};
@@ -183,7 +183,16 @@ pub struct SettingsPage {
     profile_fresh: bool,
     _profile: Vec<Subscription>,
     _profile_load: Task<()>,
+    /// The page scroll, and a pending scroll to the Ready block (the
+    /// status bar opens Settings there).
+    scroll: gpui_kit::ScrollHandle,
+    reveal_ready: std::rc::Rc<std::cell::Cell<u8>>,
 }
+
+impl EventEmitter<crate::ready::Request> for SettingsPage {}
+
+/// How many frames a scroll to the Ready block waits for the page layout.
+const REVEAL_FRAMES: u8 = 10;
 
 impl SettingsPage {
     #[cfg(windows)]
@@ -252,7 +261,17 @@ impl SettingsPage {
             _ws_sub: None,
             cli: None,
             _cli: cli_task,
+            scroll: gpui_kit::ScrollHandle::new(),
+            reveal_ready: Default::default(),
         }
+    }
+
+    /// Scroll to the Ready for Claude Code block once it is laid out (the
+    /// status bar opens Settings there while a required row waits).
+    pub fn reveal_ready(&mut self, cx: &mut Context<Self>) {
+        // Tried for a few frames: the page may not be laid out yet.
+        self.reveal_ready.set(REVEAL_FRAMES);
+        cx.notify();
     }
 
     /// Debug builds: the language menu open, for captures.
@@ -523,6 +542,7 @@ impl Render for SettingsPage {
             .id("settings")
             .size_full()
             .overflow_y_scroll()
+            .track_scroll(&self.scroll)
             .flex()
             .flex_col()
             .items_center()
@@ -1220,6 +1240,36 @@ impl SettingsPage {
                 .child(text(locale, Key::SettingsClaude))
                 .into_any_element(),
         ];
+        // Ready for Claude Code (ADR 0013) heads the section; the status
+        // bar can ask to scroll here.
+        let reveal = self.reveal_ready.clone();
+        let scroll = self.scroll.clone();
+        out.push(
+            div()
+                .relative()
+                .flex()
+                .flex_col()
+                .children(crate::ready::block::<Self, crate::ready::Request>(
+                    false, locale, t, cx,
+                ))
+                .child(ui::measure(move |bounds, window| {
+                    let left = reveal.get();
+                    if left == 0 {
+                        return;
+                    }
+                    if f32::from(scroll.max_offset().y) > 0. || left == 1 {
+                        ui::scroll_into_view(&scroll, bounds, ui::Reveal::Top);
+                        reveal.set(0);
+                    } else {
+                        reveal.set(left - 1);
+                    }
+                    window.refresh();
+                }))
+                .into_any_element(),
+        );
+        let ready_primary = crate::ready::has_primary(cx, false);
+        // Acta's own setup, 16 below.
+        out.push(div().h(px(16.)).into_any_element());
         // The status row.
         let (glyph, color, words) = match status {
             SetupStatus::Ready => (
@@ -1290,7 +1340,6 @@ impl SettingsPage {
         );
         if unfolded {
             let rows = [
-                (Key::SettingsCheckCli, check.claude),
                 (Key::SettingsCheckFiles, check.files),
                 (Key::SettingsCheckPlugin, check.plugin),
                 (Key::SettingsCheckRule, check.rule),
@@ -1378,6 +1427,10 @@ impl SettingsPage {
         // changes" (copy.md 7).
         let (setup_key, setup_variant) = if check.complete() {
             (Key::SettingsSetupAgain, ui::Variant::Secondary)
+        } else if ready_primary {
+            // The Ready block has the primary until its required rows are
+            // ready.
+            (Key::SettingsSetup, ui::Variant::Secondary)
         } else {
             (Key::SettingsSetup, ui::Variant::Primary)
         };
@@ -1698,18 +1751,11 @@ mod tests {
         assert_eq!(setup_status(false, None), SetupStatus::Pending);
         assert_eq!(setup_status(true, None), SetupStatus::Unknown);
         let all = Check {
-            claude: true,
             files: true,
             plugin: true,
             rule: true,
         };
         assert_eq!(setup_status(true, Some(all)), SetupStatus::Ready);
-        // Claude Code itself missing is not a step of setup.
-        let no_cli = Check {
-            claude: false,
-            ..all
-        };
-        assert_eq!(setup_status(true, Some(no_cli)), SetupStatus::Ready);
         let one = Check {
             plugin: false,
             rule: false,

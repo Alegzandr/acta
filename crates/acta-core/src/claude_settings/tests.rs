@@ -356,9 +356,110 @@ fn the_columns_decide_and_the_deepest_folder_wins() {
     // A name given in Acta is the display name.
     s.set_folder_name(o, "Acta app", Author::Human).unwrap();
     assert_eq!(at(s, &outer).unwrap().1, "Acta app");
-    // The ledger alone decides nothing.
+    // What the file holds counts too: the stricter of the column and the
+    // mode last written (a folder left Push while offline stays guarded).
     apply(s, &inner, mode(CommitMode::Push, false)).unwrap();
-    assert_eq!(at(s, &inner).unwrap().0, CommitMode::Manual);
+    assert_eq!(at(s, &inner).unwrap().0, CommitMode::Push);
+}
+
+/// Every spelling of one folder reaches the same ledger: the path as
+/// given, its stored form, a trailing separator, and on Windows a `\\?\\`
+/// prefix, another case and the 8.3 name the temp directory often has.
+#[test]
+fn every_spelling_of_a_folder_finds_its_ledger() {
+    let mut t = open();
+    let tmp = tempfile::tempdir().unwrap();
+    let s = &mut t.store;
+    let f = tmp.path().join("Repo");
+    fs::create_dir_all(&f).unwrap();
+    attach(s, &f);
+    // Written through the raw temp path (8.3 on Windows), read back through
+    // the stored form, as the guard does.
+    apply(s, &f, mode(CommitMode::Push, false)).unwrap();
+    let canon = stored(&f);
+    assert_eq!(
+        s.local_values(LEDGER_PREFIX).unwrap()[0].0,
+        format!("{LEDGER_PREFIX}{canon}"),
+        "the key is the stored form"
+    );
+    let mut spellings = vec![
+        f.clone(),
+        PathBuf::from(&canon),
+        PathBuf::from(format!("{canon}{}", std::path::MAIN_SEPARATOR)),
+    ];
+    if cfg!(windows) {
+        spellings.push(PathBuf::from(format!(r"\\?\{canon}")));
+        spellings.push(PathBuf::from(canon.to_lowercase()));
+        spellings.push(PathBuf::from(canon.to_uppercase()));
+    }
+    for p in &spellings {
+        let l = read_ledger(s, p).unwrap();
+        assert_eq!(
+            l.and_then(|l| l.commit).map(|c| c.mode),
+            Some(CommitMode::Push),
+            "{}",
+            p.display()
+        );
+    }
+    // The guard's reading: the stricter of column (Manual) and ledger.
+    assert_eq!(
+        commit_settings_for(s, &canon)
+            .unwrap()
+            .unwrap()
+            .settings
+            .mode,
+        CommitMode::Push
+    );
+    // Offline (the folder gone): the textual form still finds it, in any
+    // case on Windows, and a write goes to the same key.
+    let away = tmp.path().join("away");
+    fs::rename(&f, &away).unwrap();
+    let offline = if cfg!(windows) {
+        canon.to_lowercase()
+    } else {
+        canon.clone()
+    };
+    assert!(read_ledger(s, Path::new(&offline)).unwrap().is_some());
+    save_ledger(
+        s,
+        Path::new(&offline),
+        &read_ledger(s, Path::new(&offline)).unwrap().unwrap(),
+    )
+    .unwrap();
+    assert_eq!(s.local_values(LEDGER_PREFIX).unwrap().len(), 1);
+    fs::rename(&away, &f).unwrap();
+    apply(s, &f, mode(CommitMode::Manual, false)).unwrap();
+    assert!(s.local_values(LEDGER_PREFIX).unwrap().is_empty());
+}
+
+/// An 8.3 short name (Windows): written through it, found through the
+/// long name. Skipped when the volume has no short names.
+#[cfg(windows)]
+#[test]
+fn a_short_name_and_the_long_name_share_a_ledger() {
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    let mut t = open();
+    let tmp = tempfile::tempdir().unwrap();
+    let s = &mut t.store;
+    let long = tmp.path().join("A rather long folder name");
+    fs::create_dir_all(&long).unwrap();
+    let wide: Vec<u16> = long.as_os_str().encode_wide().chain([0]).collect();
+    let mut buf = vec![0u16; 1024];
+    // SAFETY: a NUL-terminated wide string and a buffer of the length given.
+    let n = unsafe {
+        windows_sys::Win32::Storage::FileSystem::GetShortPathNameW(
+            wide.as_ptr(),
+            buf.as_mut_ptr(),
+            buf.len() as u32,
+        )
+    } as usize;
+    let short = std::path::PathBuf::from(std::ffi::OsString::from_wide(&buf[..n]));
+    if n == 0 || short == long {
+        return;
+    }
+    apply(s, &short, mode(CommitMode::Commit, false)).unwrap();
+    assert!(read_ledger(s, &long).unwrap().is_some());
+    assert_eq!(stored_form(&short), stored_form(&long));
 }
 
 #[test]

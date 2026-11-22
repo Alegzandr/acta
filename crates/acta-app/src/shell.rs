@@ -582,6 +582,24 @@ impl Shell {
         // Focus inside the window, so its keys reach the shell. This does
         // not raise or activate the window.
         window.focus(&focus, cx);
+        // An install has no cancel (ADR 0013): quitting while one runs
+        // asks first.
+        let me = cx.entity().downgrade();
+        window.on_window_should_close(cx, move |window, cx| {
+            let Some(tool) = crate::ready::busy(cx) else {
+                return true;
+            };
+            if cx
+                .try_global::<crate::ready::Ready>()
+                .is_some_and(|r| r.quit_confirmed)
+            {
+                return true;
+            }
+            let _ = me.update(cx, |shell, cx| {
+                shell.open_dialog(DialogKind::QuitInstalling { tool }, window, cx)
+            });
+            false
+        });
         // layout.md 4.6: the setup is checked again when the window
         // regains focus. A drag ends with the window's focus (4.8.7).
         let activation = cx.observe_window_activation(window, |shell, window, cx| {
@@ -592,6 +610,10 @@ impl Shell {
                 && let Content::Workbench(bench) = &shell.content
             {
                 claude_setup::refresh_if_stale(cx);
+                // The Ready rows only while their block is shown (10 s apart).
+                if matches!(bench.page, PageView::Settings(_) | PageView::FirstRun(_)) {
+                    crate::ready::check_if_stale(cx);
+                }
                 // ADR 0008, "Live files": focus is the fallback for a
                 // change the folder monitor could not prove on its own.
                 bench.ws.update(cx, |ws, cx| ws.check_folders_again(cx));
@@ -643,6 +665,10 @@ impl Shell {
         // store for setup's folder links, and this build's plugin files
         // for the sessions the terminal starts (ADR 0008 amendment).
         crate::sessions::start(db.clone(), cx);
+        // Ready for Claude Code (ADR 0013): the Claude Code and sign-in
+        // rows once at launch, for the status bar.
+        crate::ready::init(db.clone(), cx);
+        crate::ready::launch_check(cx);
         crate::sessions::watch_usage(cx);
         cx.background_executor()
             .spawn(async { claude_setup::write_plugin_files() })
@@ -677,9 +703,17 @@ impl Shell {
                     DockEvent::AddFolder(origin) => {
                         shell.open_folders_of(origin.owner, true, window, cx)
                     }
+                    DockEvent::OneOffEnded(row) => crate::ready::terminal_ended(*row, cx),
                 },
             ),
             cx.subscribe_in(&sessions, window, Self::on_sessions),
+            cx.subscribe_in(
+                &settings_page,
+                window,
+                |shell, _, request: &crate::ready::Request, window, cx| {
+                    shell.on_ready(request.clone(), window, cx)
+                },
+            ),
         ];
         #[cfg(windows)]
         subs.push(cx.subscribe_in(&chat, window, Self::on_chat));
@@ -998,6 +1032,18 @@ impl Shell {
                 })
                 .detach();
             }
+            // Ready for Claude Code (ADR 0013), with `ACTA_DEV_READY`: the
+            // install confirmation of Git (`-update`: of Claude Code), the
+            // quit confirmation during an install, and a one-off session
+            // running `where git` (prints, starts nothing else).
+            #[cfg(debug_assertions)]
+            Ok(
+                which @ ("ready-dialog"
+                | "ready-dialog-update"
+                | "ready-quit"
+                | "ready-oneoff"
+                | "ready-reveal"),
+            ) => self.dev_ready(which, window, cx),
             Ok("capture") => self.open_capture(window, cx),
             Ok("terminal") => self.view_action(ViewId::Terminal, ViewAction::Show, window, cx),
             // Shown without taking the keyboard, for captures.
@@ -1174,6 +1220,8 @@ impl Shell {
     }
 
     fn show_first_run(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // First run shows the Ready block while something is missing.
+        crate::ready::check_if_stale(cx);
         let Some(bench) = self.bench() else { return };
         if matches!(bench.page, PageView::FirstRun(_)) {
             return;
@@ -1196,6 +1244,7 @@ impl Shell {
             window,
             |shell, _, event: &FirstRunEvent, window, cx| match event {
                 FirstRunEvent::ChooseFolder => shell.new_project(window, cx),
+                FirstRunEvent::Ready(request) => shell.on_ready(request.clone(), window, cx),
             },
         )
     }
@@ -1453,6 +1502,10 @@ impl Shell {
         let Some(tab) = self.bench().map(|b| b.current) else {
             return;
         };
+        // Settings opens: every Ready row is checked (ADR 0013).
+        if route == Route::Settings {
+            crate::ready::check_if_stale(cx);
+        }
         let (page, sub) = self.make_view(route, tab, window, cx);
         let Some(bench) = self.bench() else { return };
         bench.page = page;
@@ -1747,6 +1800,15 @@ impl Shell {
         let Some(bench) = self.bench() else { return };
         let mut collapsed: Vec<String> = bench.folds.collapsed.iter().cloned().collect();
         let mut closed: Vec<String> = bench.folds.closed_shown.iter().cloned().collect();
+        // The Questions sections' folds share the list (record pages write
+        // them): they are kept, never dropped by the tree's.
+        closed.extend(
+            settings::current(cx)
+                .closed_shown
+                .iter()
+                .filter(|k| k.starts_with("questions:"))
+                .cloned(),
+        );
         collapsed.sort();
         closed.sort();
         let pages: Vec<(TabId, String)> = bench
@@ -2668,6 +2730,17 @@ impl Shell {
                     shell.close_overlay(window, cx);
                     claude_setup::run_install(*project, cx);
                 }
+                DialogEvent::ReadyRun { tool, plan, update } => {
+                    shell.close_overlay(window, cx);
+                    shell.run_ready(*tool, plan.clone(), *update, window, cx);
+                }
+                DialogEvent::Quit => {
+                    shell.close_overlay(window, cx);
+                    if cx.has_global::<crate::ready::Ready>() {
+                        cx.global_mut::<crate::ready::Ready>().quit_confirmed = true;
+                    }
+                    window.remove_window();
+                }
                 #[cfg(windows)]
                 DialogEvent::BrowserClear => {
                     shell.close_overlay(window, cx);
@@ -2916,6 +2989,196 @@ impl Shell {
             });
         })
         .detach();
+    }
+
+    /// Development captures of the Ready block's dialogs and terminal.
+    #[cfg(debug_assertions)]
+    fn dev_ready(&mut self, which: &str, window: &mut Window, cx: &mut Context<Self>) {
+        use acta_core::prereqs::commands::{install_plan, update_plan};
+        use acta_core::prereqs::{Choice, Kind, Tool};
+        let Some(platform) = crate::ready::platform(cx) else {
+            return;
+        };
+        match which {
+            "ready-dialog" | "ready-dialog-update" => {
+                let update = which == "ready-dialog-update";
+                let (tool, choice) = if update {
+                    (
+                        Tool::Claude,
+                        update_plan(Tool::Claude, Kind::Native, &platform),
+                    )
+                } else {
+                    (Tool::Git, install_plan(Tool::Git, &platform))
+                };
+                if let Choice::Run(plan) = choice {
+                    self.on_ready(
+                        crate::ready::Request::Confirm { tool, plan, update },
+                        window,
+                        cx,
+                    );
+                }
+            }
+            // Settings scrolled to the block, as the status bar opens it.
+            "ready-reveal" => {
+                self.open_settings(window, cx);
+                if let Some(bench) = self.bench() {
+                    let page = bench.settings.clone();
+                    page.update(cx, |page, cx| page.reveal_ready(cx));
+                }
+            }
+            "ready-quit" => {
+                self.open_dialog(DialogKind::QuitInstalling { tool: Tool::Git }, window, cx)
+            }
+            "ready-oneoff" => {
+                let argv: Vec<std::ffi::OsString> = vec!["where".into(), "git".into()];
+                let title = "where git".to_owned();
+                let spec = cx
+                    .background_executor()
+                    .spawn(async move { crate::ready::one_off_spec(&argv) });
+                cx.spawn_in(window, async move |shell, cx| {
+                    let Some(spec) = spec.await else { return };
+                    let _ = shell.update_in(cx, |shell, window, cx| {
+                        shell.open_one_off(crate::ready_model::Row::Git, title, spec, window, cx)
+                    });
+                })
+                .detach();
+            }
+            _ => {}
+        }
+    }
+
+    /// A button of the Ready for Claude Code block (ADR 0013).
+    pub(crate) fn on_ready(
+        &mut self,
+        request: crate::ready::Request,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::ready::Request;
+        match request {
+            Request::Confirm { tool, plan, update } => {
+                let Some(platform) = crate::ready::platform(cx) else {
+                    return;
+                };
+                let kind = DialogKind::ReadyInstall {
+                    tool,
+                    plan,
+                    update,
+                    platform,
+                };
+                self.open_dialog(kind, window, cx);
+            }
+            Request::SignIn => self.ready_sign_in(window, cx),
+            Request::ShowTerminal => self.show_one_off(window, cx),
+        }
+    }
+
+    /// A confirmed install: a child with its log, a one-off session of
+    /// the terminal (Linux root installs), or Apple's own window.
+    fn run_ready(
+        &mut self,
+        tool: acta_core::prereqs::Tool,
+        plan: acta_core::prereqs::Plan,
+        update: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use acta_core::prereqs::RunsIn;
+        match plan.runs_in {
+            RunsIn::Child => crate::ready::start(tool, &plan, update, cx),
+            RunsIn::AppleDialog => crate::ready::start_apple(&plan, cx),
+            RunsIn::Terminal => {
+                let row = crate::ready_model::Row::of(tool);
+                if crate::ready::is_dev(cx) {
+                    // Never a real install from a development state.
+                    crate::ready::wait_terminal(row, cx);
+                    return;
+                }
+                let title = plan.display();
+                let argv = plan.argv.clone();
+                let spec = cx
+                    .background_executor()
+                    .spawn(async move { crate::ready::one_off_spec(&argv) });
+                cx.spawn_in(window, async move |shell, cx| {
+                    let Some(spec) = spec.await else { return };
+                    let _ = shell.update_in(cx, |shell, window, cx| {
+                        shell.open_one_off(row, title, spec, window, cx)
+                    });
+                })
+                .detach();
+            }
+            RunsIn::Copy => {}
+        }
+    }
+
+    /// "Sign in...": Claude Code alone in a one-off session, in the open
+    /// project's folder or the home folder; its own first run signs in.
+    fn ready_sign_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let row = crate::ready_model::Row::SignIn;
+        if crate::ready::is_dev(cx) {
+            crate::ready::wait_terminal(row, cx);
+            return;
+        }
+        let Some(bench) = self.bench() else { return };
+        let project = bench.active_project;
+        let folder = bench.ws.read(cx).db.run(cx, move |store| {
+            let Some(p) = project else { return Ok(None) };
+            Ok(store
+                .folders(Owner::Project(p))?
+                .first()
+                .map(|f| std::path::PathBuf::from(&f.path)))
+        });
+        cx.spawn_in(window, async move |shell, cx| {
+            let cwd = folder.await.ok().flatten();
+            let spec = cx
+                .background_executor()
+                .spawn(async move { crate::ready::sign_in_spec(cwd) })
+                .await;
+            let Some(spec) = spec else { return };
+            let _ = shell.update_in(cx, |shell, window, cx| {
+                shell.open_one_off(
+                    row,
+                    acta_core::prereqs::Tool::Claude.display_name().to_owned(),
+                    spec,
+                    window,
+                    cx,
+                )
+            });
+        })
+        .detach();
+    }
+
+    /// Start a one-off session for `row` in the terminal and show it.
+    fn open_one_off(
+        &mut self,
+        row: crate::ready_model::Row,
+        title: String,
+        spec: acta_terminal::LaunchSpec,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        crate::ready::wait_terminal(row, cx);
+        let Some(bench) = self.bench() else { return };
+        let dock = bench.dock.clone();
+        dock.update(cx, |dock, cx| {
+            dock.open_one_off(row, title, spec, window, cx)
+        });
+        self.show_one_off(window, cx);
+    }
+
+    /// Show the terminal on its one-off session.
+    fn show_one_off(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.change_layout(None, window, cx, |l| {
+            l.show_view(ViewId::Terminal).is_some()
+        });
+        let Some(bench) = self.bench() else { return };
+        // Shown already: showing it starts no session of the project.
+        bench.ui.terminal_shown = true;
+        let dock = bench.dock.clone();
+        dock.update(cx, |dock, cx| dock.select_one_off(cx));
+        let focus = dock.read(cx).focus_handle(cx);
+        window.focus(&focus, cx);
+        cx.notify();
     }
 
     /// The Sessions view's actions (components-app.md 5).
@@ -4042,17 +4305,26 @@ impl Shell {
         });
         let facts = self.facts.clone().filter(|f| Some(f.project) == active);
         let check = claude_setup::state(cx).and_then(|s| s.check);
-        let status = claude_setup::status(check, facts.as_ref().map(|f| f.has_folder));
+        let status = claude_setup::status(
+            crate::ready::readiness(cx),
+            check,
+            facts.as_ref().map(|f| f.has_folder),
+        );
         let (glyph, glyph_color, key) = match status {
+            claude_setup::Status::NotInstalled => (
+                Icon::CircleSlash,
+                tokens.text_tertiary,
+                Key::StatusClaudeMissing,
+            ),
+            claude_setup::Status::SignedOut => (
+                Icon::CircleDashed,
+                tokens.text_tertiary,
+                Key::StatusClaudeSignedOut,
+            ),
             claude_setup::Status::NotSetUp => (
                 Icon::CircleDashed,
                 tokens.text_tertiary,
                 Key::StatusbarNotSetUp,
-            ),
-            claude_setup::Status::NotFound => (
-                Icon::CircleSlash,
-                tokens.text_tertiary,
-                Key::StatusbarNotFound,
             ),
             claude_setup::Status::NoFolder => {
                 (Icon::Circle, tokens.text_secondary, Key::StatusbarNoFolder)
@@ -4111,10 +4383,17 @@ impl Shell {
                 .child(type_scale::SMALL.el().child(text(locale, key)))
                 .when_some(last_wrote, |this, tip| this.tooltip(ui::tip(tip)))
                 .on_click(cx.listener(move |shell, _, window, cx| {
-                    if status == claude_setup::Status::NoFolder {
-                        shell.set_project_folder(window, cx);
-                    } else {
-                        shell.open_settings(window, cx);
+                    match status {
+                        claude_setup::Status::NoFolder => shell.set_project_folder(window, cx),
+                        // A required row is not ready: Settings, at the block.
+                        claude_setup::Status::NotInstalled | claude_setup::Status::SignedOut => {
+                            shell.open_settings(window, cx);
+                            if let Some(bench) = shell.bench() {
+                                let page = bench.settings.clone();
+                                page.update(cx, |page, cx| page.reveal_ready(cx));
+                            }
+                        }
+                        _ => shell.open_settings(window, cx),
                     }
                 })),
         };

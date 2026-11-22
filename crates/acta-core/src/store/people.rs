@@ -12,7 +12,7 @@ use super::timeline::system_event;
 use super::{STAMP_COLS, Store, new_uuid, stamp};
 use crate::error::{Error, Result};
 use crate::model::{
-    Author, Contact, ContactId, ContactLevel, ContactRef, ContactUse, EpicId, EpicSummary,
+    Author, Contact, ContactId, ContactLevel, ContactRef, ContactUse, EntryId, EpicId, EpicSummary,
     EventKind, Lift, Note, NoteId, Owner, Place, Profile, ProjectId, QuestionId, Record, TopicId,
     TopicSummary, visible,
 };
@@ -471,6 +471,16 @@ pub struct ContactSummary {
     pub last_named: i64,
 }
 
+/// What a merge rewrote beyond the references (the app's undo takes it
+/// back): the system events that named the merged contact, as the entry
+/// and whether it was the new value (else the old), and the pairs "Keep
+/// both" had kept apart that it deleted.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MergeTrace {
+    pub events: Vec<(EntryId, bool)>,
+    pub distinct: Vec<(ContactId, ContactId)>,
+}
+
 /// What is still to be reported to one contact (`find(person=...)`).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ReportTargets {
@@ -718,7 +728,7 @@ impl Store {
         from: ContactId,
         into: ContactId,
         author: Author,
-    ) -> Result<()> {
+    ) -> Result<MergeTrace> {
         if from == into {
             return Err(Error::Invalid(
                 "a contact cannot be merged into itself".into(),
@@ -763,7 +773,19 @@ impl Store {
                 params![from.0, into.0, now, author],
             )?;
         }
-        for col in ["old_value", "new_value"] {
+        let mut trace = MergeTrace::default();
+        for (col, new) in [("old_value", false), ("new_value", true)] {
+            let ids: Vec<i64> = {
+                let mut stmt = tx.prepare(&format!(
+                    "SELECT id FROM entries WHERE kind = 'system' AND event IN ('report', 'reported')
+                       AND {col} = (SELECT uuid FROM contacts WHERE id = ?1)"
+                ))?;
+                stmt.query_map([from.0], |r| r.get(0))?
+                    .collect::<rusqlite::Result<_>>()?
+            };
+            trace
+                .events
+                .extend(ids.iter().map(|id| (EntryId(*id), new)));
             tx.execute(
                 &format!(
                     "UPDATE entries SET {col} = (SELECT uuid FROM contacts WHERE id = ?2),
@@ -774,6 +796,14 @@ impl Store {
                 params![from.0, into.0, now, author],
             )?;
         }
+        trace.distinct = {
+            let mut stmt =
+                tx.prepare("SELECT a, b FROM contact_distinct WHERE a = ?1 OR b = ?1")?;
+            stmt.query_map([from.0], |r| {
+                Ok((ContactId(r.get(0)?), ContactId(r.get(1)?)))
+            })?
+            .collect::<rusqlite::Result<_>>()?
+        };
         tx.execute(
             "DELETE FROM contact_distinct WHERE a = ?1 OR b = ?1",
             [from.0],
@@ -784,18 +814,20 @@ impl Store {
             params![from.0, into.0, now, author, new_uuid()],
         )?;
         tx.commit()?;
-        Ok(())
+        Ok(trace)
     }
 
     /// Takes back a merge (the app's undo): `from` comes back from the
     /// trash, the records in `uses` (what named `from` before the merge)
     /// name it again, and `into` gets back its details and level as
-    /// `before` held them.
+    /// `before` held them; the events and "Keep both" pairs of `trace`
+    /// come back too.
     pub fn unmerge_contacts(
         &mut self,
         from: ContactId,
         before: &Contact,
         uses: &[Record],
+        trace: &MergeTrace,
         author: Author,
     ) -> Result<()> {
         let tx = self.write()?;
@@ -828,6 +860,24 @@ impl Store {
                     "UPDATE {table} SET {col} = ?2, updated_at = ?3, updated_by = ?4 WHERE id = ?1 AND {col} = ?5"
                 ),
                 params![id, from.0, now, author, before.id.0],
+            )?;
+        }
+        // Only events still naming the contact it went into go back.
+        for (entry, new) in &trace.events {
+            let col = if *new { "new_value" } else { "old_value" };
+            tx.execute(
+                &format!(
+                    "UPDATE entries SET {col} = (SELECT uuid FROM contacts WHERE id = ?2),
+                            updated_at = ?3, updated_by = ?4
+                     WHERE id = ?1 AND {col} = (SELECT uuid FROM contacts WHERE id = ?5)"
+                ),
+                params![entry.0, from.0, now, author, before.id.0],
+            )?;
+        }
+        for (a, b) in &trace.distinct {
+            tx.execute(
+                "INSERT OR IGNORE INTO contact_distinct (a, b) VALUES (?1, ?2)",
+                params![a.0, b.0],
             )?;
         }
         tx.commit()?;

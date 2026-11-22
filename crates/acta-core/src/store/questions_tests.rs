@@ -1114,6 +1114,9 @@ fn an_unmerge_puts_back_the_contact_its_uses_and_the_other_contact() {
     s.set_report_to(Record::Topic(f.topic), Some(a), H).unwrap();
     let q = ask(s, Owner::Topic(f.other), "Sign?", Some(a), None);
     let kept = ask(s, Owner::Topic(f.other), "Other?", Some(b), None);
+    let third = contact(s, "Marie", ContactLevel::All);
+    s.mark_distinct(a, third).unwrap();
+    let uuid_a = s.contact(a).unwrap().stamp.uuid;
     let before = s.contact(b).unwrap();
     let uses: Vec<Record> = s
         .contact_uses(a)
@@ -1121,8 +1124,29 @@ fn an_unmerge_puts_back_the_contact_its_uses_and_the_other_contact() {
         .into_iter()
         .map(|u| u.record)
         .collect();
-    s.merge_contacts(a, b, H).unwrap();
-    s.unmerge_contacts(a, &before, &uses, H).unwrap();
+    let trace = s.merge_contacts(a, b, H).unwrap();
+    assert_eq!(trace.events.len(), 1, "the report event named a");
+    assert_eq!(trace.distinct.len(), 1);
+    s.unmerge_contacts(a, &before, &uses, &trace, H).unwrap();
+    // The event names `a` again, and "Keep both" holds again.
+    let events: Vec<Option<String>> = s
+        .entries(
+            f.topic,
+            &EntryFilter {
+                include_system: true,
+                ..Default::default()
+            },
+            PageReq::first(50),
+        )
+        .unwrap()
+        .items
+        .into_iter()
+        .filter_map(|e| e.event)
+        .filter(|e| e.kind == EventKind::Report)
+        .map(|e| e.new)
+        .collect();
+    assert_eq!(events, [Some(uuid_a)]);
+    assert!(s.is_distinct(a, third).unwrap());
     let back = s.contact(a).unwrap();
     assert_eq!(back.merged_into, None);
     assert_eq!(back.level, ContactLevel::Epic(p, f.epic));

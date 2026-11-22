@@ -492,6 +492,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `terminal.on_project` | project {name} | projet {name} |
 | `terminal.restart_here` | Restart here | Redémarrer ici |
 | `terminal.ended` | Session ended. {keys} to restart. | Session terminée. {keys} pour relancer. |
+| `terminal.ended_once` | Session ended. | Session terminée. |
 | `terminal.ask.title` | Where should Claude Code start? | Où Claude Code doit-il démarrer ? |
 | `terminal.ask.topic` | {name} has no working folder, and neither has its epic or its project. | {name} n'a pas de dossier de travail, son epic et son projet non plus. |
 | `terminal.ask.epic` | {name} has no working folder, and neither has its project. | {name} n'a pas de dossier de travail, son projet non plus. |
@@ -517,6 +518,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `terminal.close.confirm` | Close terminal | Fermer le terminal |
 | `quit.title` | Quit Acta? | Quitter Acta ? |
 | `quit.body` | Claude Code is still running in the terminal of {project}. | Claude Code est encore en cours d'exécution dans le terminal de {project}. |
+| `quit.installing` | {name} is still installing. It goes on after Acta quits, but its log is lost. | {name} est encore en cours d'installation. Elle continue après la fermeture d'Acta, mais son journal est perdu. |
 | `quit.confirm` | Quit | Quitter |
 | `chat.title` | Chat | Chat |
 | `chat.open_browser` | Open in browser | Ouvrir dans le navigateur |
@@ -719,6 +721,73 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `slash.code` | Code block | Bloc de code |
 | `slash.table` | Table | Tableau |
 | `slash.divider` | Divider | Séparateur |
+| `ready.title` | Ready for Claude Code | Prêt pour Claude Code |
+| `ready.hint` | What Claude Code uses on this computer. Nothing is installed without your click. | Ce que Claude Code utilise sur cet ordinateur. Rien n'est installé sans votre clic. |
+| `ready.claude` | Claude Code | Claude Code |
+| `ready.claude.why` | Runs in Acta's terminal and does the work. Required. | S'exécute dans le terminal d'Acta et fait le travail. Requis. |
+| `ready.signin` | Signed in to Claude | Connecté à Claude |
+| `ready.signin.why` | Claude Code needs your Claude subscription. You sign in once, in Acta's terminal. | Claude Code a besoin de votre abonnement Claude. Vous vous connectez une fois, dans le terminal d'Acta. |
+| `ready.git` | Git | Git |
+| `ready.git.why` | Commits, branches and worktrees. Recommended. | Commits, branches et worktrees. Recommandé. |
+| `ready.git.why_windows` | Commits and branches, and Git Bash, the shell Claude Code prefers on Windows. Recommended. | Commits et branches, et Git Bash, le shell que Claude Code préfère sous Windows. Recommandé. |
+| `ready.gh` | GitHub CLI | GitHub CLI |
+| `ready.gh.why` | Lets Claude Code open pull requests and read issues on GitHub. Optional. | Permet à Claude Code d'ouvrir des pull requests et de lire les issues sur GitHub. Facultatif. |
+| `ready.state.found` | {version} | {version} |
+| `ready.state.with_bash` | {version} · with Git Bash | {version} · avec Git Bash |
+| `ready.state.without_bash` | {version} · without Git Bash: Claude Code will use PowerShell | {version} · sans Git Bash : Claude Code utilisera PowerShell |
+| `ready.state.missing` | Not installed | Non installé |
+| `ready.state.missing_optional` | Not installed · optional | Non installé · facultatif |
+| `ready.state.outdated` | {version} · {minimum} or later needed | {version} · {minimum} ou ultérieure requise |
+| `ready.state.installing` | Installing... {elapsed} | Installation... {elapsed} |
+| `ready.state.updating` | Updating... {elapsed} | Mise à jour... {elapsed} |
+| `ready.state.terminal` | Finish in the terminal | Terminez dans le terminal |
+| `ready.state.macos` | Finish in the macOS window | Terminez dans la fenêtre de macOS |
+| `ready.state.failed` | Install failed | Échec de l'installation |
+| `ready.state.signed_in` | Signed in | Connecté |
+| `ready.state.api_key` | Using an API key | Clé API utilisée |
+| `ready.state.api_key.tip` | Acta works best with a Claude subscription. | Acta fonctionne au mieux avec un abonnement Claude. |
+| `ready.state.signed_out` | Not signed in | Non connecté |
+| `ready.install` | Install... | Installer... |
+| `ready.update` | Update... | Mettre à jour... |
+| `ready.signin_button` | Sign in... | Se connecter... |
+| `ready.signin.needs_claude` | Install Claude Code first | Installez d'abord Claude Code |
+| `ready.show_command` | Show command | Afficher la commande |
+| `ready.download` | Open download page | Ouvrir la page de téléchargement |
+| `ready.winget_instead` | Install with winget instead | Installer avec winget à la place |
+| `ready.show_terminal` | Show terminal | Afficher le terminal |
+| `ready.show_log` | Show log | Afficher le journal |
+| `ready.hide_log` | Hide log | Masquer le journal |
+| `ready.copy_log` | Copy log | Copier le journal |
+| `ready.copy_command` | Copy command | Copier la commande |
+| `ready.check_again` | Check again | Vérifier à nouveau |
+| `ready.one_at_a_time` | One install at a time | Une installation à la fois |
+| `ready.failed.exit` | The installer stopped with code {code}. | Le programme d'installation s'est arrêté avec le code {code}. |
+| `ready.failed.not_found` | Installed, but Acta cannot find {name} yet. Restart Acta. | Installé, mais Acta ne trouve pas encore {name}. Redémarrez Acta. |
+| `ready.failed.no_start` | Could not start the installer. | Impossible de lancer le programme d'installation. |
+| `ready.no_manager` | No package manager Acta can use was found here. Install {name} from its download page, then check again. | Aucun gestionnaire de paquets utilisable par Acta n'a été trouvé. Installez {name} depuis sa page de téléchargement, puis vérifiez à nouveau. |
+| `ready.dialog.install` | Install {name}? | Installer {name} ? |
+| `ready.dialog.update` | Update {name}? | Mettre à jour {name} ? |
+| `ready.from.vendor` | Acta runs {name}'s official installer, exactly as its documentation gives it. | Acta exécute le programme d'installation officiel de {name}, tel que le donne sa documentation. |
+| `ready.from.winget` | Acta runs Windows Package Manager (winget), which downloads {name} from its publisher and checks it against the hash in winget's catalogue. | Acta exécute le gestionnaire de paquets de Windows (winget), qui télécharge {name} depuis son éditeur et le vérifie avec l'empreinte du catalogue de winget. |
+| `ready.from.homebrew` | Acta runs Homebrew, which downloads {name} and checks it. | Acta exécute Homebrew, qui télécharge {name} et le vérifie. |
+| `ready.from.apple` | macOS installs Apple's Command Line Tools, which include Git, in its own window. | macOS installe les Command Line Tools d'Apple, qui contiennent Git, dans sa propre fenêtre. |
+| `ready.from.system` | Your system's package manager installs it, in Acta's terminal. It asks for your password there; Acta never sees it. | Le gestionnaire de paquets de votre système l'installe, dans le terminal d'Acta. Il y demande votre mot de passe ; Acta ne le voit jamais. |
+| `ready.scope.user` | For you only. No administrator rights needed. | Pour vous seulement. Aucun droit d'administrateur nécessaire. |
+| `ready.scope.user_uac` | For you only. Windows may still ask for permission. | Pour vous seulement. Windows peut tout de même demander une autorisation. |
+| `ready.scope.system` | For all users of this computer. Administrator rights needed. | Pour tous les utilisateurs de cet ordinateur. Droits d'administrateur nécessaires. |
+| `ready.agreements` | Installing accepts the publisher's licence and the terms of winget's catalogue. | Installer vaut acceptation de la licence de l'éditeur et des conditions du catalogue de winget. |
+| `ready.updates.self` | Claude Code then updates itself. | Claude Code se met ensuite à jour tout seul. |
+| `ready.updates.winget` | Updates come from winget, not from Acta. | Les mises à jour viennent de winget, pas d'Acta. |
+| `ready.updates.homebrew` | Updates come from Homebrew, not from Acta. | Les mises à jour viennent de Homebrew, pas d'Acta. |
+| `ready.updates.apple` | Updates come from macOS Software Update. | Les mises à jour viennent de la mise à jour de logiciels de macOS. |
+| `ready.updates.system` | Updates come with your system's updates, not from Acta. | Les mises à jour arrivent avec celles de votre système, pas d'Acta. |
+| `ready.uninstall` | To remove it later, use {manager}; removing Acta leaves it installed. | Pour le retirer plus tard, utilisez {manager} ; désinstaller Acta le laisse en place. |
+| `ready.uninstall.native` | the steps on Claude Code's setup page | les étapes de la page d'installation de Claude Code |
+| `ready.dialog.command` | Command | Commande |
+| `ready.dialog.confirm_install` | Install | Installer |
+| `ready.dialog.confirm_update` | Update | Mettre à jour |
+| `ready.dialog.confirm_terminal` | Open in terminal | Ouvrir dans le terminal |
+| `ready.signin.hint` | A terminal opens with Claude Code. Follow its steps in your browser; Acta never sees your password or token. | Un terminal s'ouvre avec Claude Code. Suivez ses étapes dans votre navigateur ; Acta ne voit jamais votre mot de passe ni votre jeton. |
 | `settings.appearance` | Appearance | Apparence |
 | `settings.profile` | Profile | Profil |
 | `settings.profile.hint` | Claude Code sees your name and job title. | Claude Code voit votre nom et votre fonction. |
@@ -750,7 +819,6 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `settings.auto_commit` | Automatic commits | Commits automatiques |
 | `settings.auto_commit.hint` | Default for folders that commit automatically. | Par défaut pour les dossiers qui commitent automatiquement. |
 | `settings.claude` | Claude Code | Claude Code |
-| `settings.check.cli` | Claude Code found | Claude Code trouvé |
 | `settings.check.files` | Plugin files written | Fichiers du plugin écrits |
 | `settings.check.plugin` | Plugin installed | Plugin installé |
 | `settings.check.rule` | Permission rule added | Règle d'autorisation ajoutée |
@@ -791,6 +859,8 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `statusbar.ready` | Claude Code: ready | Claude Code : prêt |
 | `statusbar.last_wrote` | Last wrote {when} in {topic} | Dernière écriture {when} dans {topic} |
 | `statusbar.version` | Acta {version} | Acta {version} |
+| `status.claude.missing` | Claude Code: not installed | Claude Code : non installé |
+| `status.claude.signed_out` | Claude Code: not signed in | Claude Code : non connecté |
 | `update.ready` | Restart to update | Redémarrer pour mettre à jour |
 | `update.done` | Updated to {version} | Mise à jour {version} installée |
 | `update.failed` | Update failed | Échec de la mise à jour |
@@ -1047,81 +1117,9 @@ New with attachments (2026-11-21; components-attachments.md 5, ADR 0012, data.md
 
 `{date}` and `{time}` in `attach.pasted_name` are `2026-11-21` and `14.05` in both languages: a file name is not localised (10.2). The units B / KB / MB and o / Ko / Mo are formats, not keys. `attach.moved_to` is plural in French because it heads a list of files. ("Open in another app" was rejected by the user, ADR 0012, 8: its three keys are gone.) Agent-facing text (`· files: A-4 plan.pdf 2.1M`) is protocol, English only, and not in this catalogue (10).
 
-### 10.4.8 Keys of Ready for Claude Code (ADR 0013), pending
+### 10.4.8 Keys of Ready for Claude Code (ADR 0013)
 
-New with ADR 0013 (2026-11-22; components-app.md 5, screens.md 8.26). They stay here until the checklist is implemented; the implementing change moves them into 10.4 and `catalogue.rs` in one commit, as a `ready.*` family before the `settings.*` keys, removes `settings.check.cli` (its row is now `ready.claude`), and puts the two `status.*` keys beside the status bar's. `{name}` is a tool's name, never translated ("Git", "GitHub CLI", "Claude Code"); `{version}` and `{minimum}` are version numbers as the tool prints them; `{elapsed}` is `m:ss`; `{code}` the exit code in decimal. Package ids and commands are protocol, not copy, and are never translated.
-
-| Key | English | French |
-|---|---|---|
-| `ready.title` | Ready for Claude Code | Prêt pour Claude Code |
-| `ready.hint` | What Claude Code uses on this computer. Nothing is installed without your click. | Ce que Claude Code utilise sur cet ordinateur. Rien n'est installé sans votre clic. |
-| `ready.claude` | Claude Code | Claude Code |
-| `ready.claude.why` | Runs in Acta's terminal and does the work. Required. | S'exécute dans le terminal d'Acta et fait le travail. Requis. |
-| `ready.signin` | Signed in to Claude | Connecté à Claude |
-| `ready.signin.why` | Claude Code needs your Claude subscription. You sign in once, in Acta's terminal. | Claude Code a besoin de votre abonnement Claude. Vous vous connectez une fois, dans le terminal d'Acta. |
-| `ready.git` | Git | Git |
-| `ready.git.why` | Commits, branches and worktrees. Recommended. | Commits, branches et worktrees. Recommandé. |
-| `ready.git.why_windows` | Commits and branches, and Git Bash, the shell Claude Code prefers on Windows. Recommended. | Commits et branches, et Git Bash, le shell que Claude Code préfère sous Windows. Recommandé. |
-| `ready.gh` | GitHub CLI | GitHub CLI |
-| `ready.gh.why` | Lets Claude Code open pull requests and read issues on GitHub. Optional. | Permet à Claude Code d'ouvrir des pull requests et de lire les issues sur GitHub. Facultatif. |
-| `ready.state.found` | {version} | {version} |
-| `ready.state.with_bash` | {version} · with Git Bash | {version} · avec Git Bash |
-| `ready.state.without_bash` | {version} · without Git Bash: Claude Code will use PowerShell | {version} · sans Git Bash : Claude Code utilisera PowerShell |
-| `ready.state.missing` | Not installed | Non installé |
-| `ready.state.missing_optional` | Not installed · optional | Non installé · facultatif |
-| `ready.state.outdated` | {version} · {minimum} or later needed | {version} · {minimum} ou ultérieure requise |
-| `ready.state.installing` | Installing... {elapsed} | Installation... {elapsed} |
-| `ready.state.updating` | Updating... {elapsed} | Mise à jour... {elapsed} |
-| `ready.state.terminal` | Finish in the terminal | Terminez dans le terminal |
-| `ready.state.macos` | Finish in the macOS window | Terminez dans la fenêtre de macOS |
-| `ready.state.failed` | Install failed | Échec de l'installation |
-| `ready.state.signed_in` | Signed in | Connecté |
-| `ready.state.api_key` | Using an API key | Clé API utilisée |
-| `ready.state.api_key.tip` | Acta works best with a Claude subscription. | Acta fonctionne au mieux avec un abonnement Claude. |
-| `ready.state.signed_out` | Not signed in | Non connecté |
-| `ready.install` | Install... | Installer... |
-| `ready.update` | Update... | Mettre à jour... |
-| `ready.signin_button` | Sign in... | Se connecter... |
-| `ready.signin.needs_claude` | Install Claude Code first | Installez d'abord Claude Code |
-| `ready.show_command` | Show command | Afficher la commande |
-| `ready.download` | Open download page | Ouvrir la page de téléchargement |
-| `ready.winget_instead` | Install with winget instead | Installer avec winget à la place |
-| `ready.show_terminal` | Show terminal | Afficher le terminal |
-| `ready.show_log` | Show log | Afficher le journal |
-| `ready.hide_log` | Hide log | Masquer le journal |
-| `ready.copy_log` | Copy log | Copier le journal |
-| `ready.copy_command` | Copy command | Copier la commande |
-| `ready.check_again` | Check again | Vérifier à nouveau |
-| `ready.one_at_a_time` | One install at a time | Une installation à la fois |
-| `ready.failed.exit` | The installer stopped with code {code}. | Le programme d'installation s'est arrêté avec le code {code}. |
-| `ready.failed.not_found` | Installed, but Acta cannot find {name} yet. Restart Acta. | Installé, mais Acta ne trouve pas encore {name}. Redémarrez Acta. |
-| `ready.failed.no_start` | Could not start the installer. | Impossible de lancer le programme d'installation. |
-| `ready.no_manager` | No package manager Acta can use was found here. Install {name} from its download page, then check again. | Aucun gestionnaire de paquets utilisable par Acta n'a été trouvé. Installez {name} depuis sa page de téléchargement, puis vérifiez à nouveau. |
-| `ready.dialog.install` | Install {name}? | Installer {name} ? |
-| `ready.dialog.update` | Update {name}? | Mettre à jour {name} ? |
-| `ready.from.vendor` | Acta runs {name}'s official installer, exactly as its documentation gives it. | Acta exécute le programme d'installation officiel de {name}, tel que le donne sa documentation. |
-| `ready.from.winget` | Acta runs Windows Package Manager (winget), which downloads {name} from its publisher and checks it against the hash in winget's catalogue. | Acta exécute le gestionnaire de paquets de Windows (winget), qui télécharge {name} depuis son éditeur et le vérifie avec l'empreinte du catalogue de winget. |
-| `ready.from.homebrew` | Acta runs Homebrew, which downloads {name} and checks it. | Acta exécute Homebrew, qui télécharge {name} et le vérifie. |
-| `ready.from.apple` | macOS installs Apple's Command Line Tools, which include Git, in its own window. | macOS installe les Command Line Tools d'Apple, qui contiennent Git, dans sa propre fenêtre. |
-| `ready.from.system` | Your system's package manager installs it, in Acta's terminal. It asks for your password there; Acta never sees it. | Le gestionnaire de paquets de votre système l'installe, dans le terminal d'Acta. Il y demande votre mot de passe ; Acta ne le voit jamais. |
-| `ready.scope.user` | For you only. No administrator rights needed. | Pour vous seulement. Aucun droit d'administrateur nécessaire. |
-| `ready.scope.user_uac` | For you only. Windows may still ask for permission. | Pour vous seulement. Windows peut tout de même demander une autorisation. |
-| `ready.scope.system` | For all users of this computer. Administrator rights needed. | Pour tous les utilisateurs de cet ordinateur. Droits d'administrateur nécessaires. |
-| `ready.agreements` | Installing accepts the publisher's licence and the terms of winget's catalogue. | Installer vaut acceptation de la licence de l'éditeur et des conditions du catalogue de winget. |
-| `ready.updates.self` | Claude Code then updates itself. | Claude Code se met ensuite à jour tout seul. |
-| `ready.updates.winget` | Updates come from winget, not from Acta. | Les mises à jour viennent de winget, pas d'Acta. |
-| `ready.updates.homebrew` | Updates come from Homebrew, not from Acta. | Les mises à jour viennent de Homebrew, pas d'Acta. |
-| `ready.updates.apple` | Updates come from macOS Software Update. | Les mises à jour viennent de la mise à jour de logiciels de macOS. |
-| `ready.updates.system` | Updates come with your system's updates, not from Acta. | Les mises à jour arrivent avec celles de votre système, pas d'Acta. |
-| `ready.uninstall` | To remove it later, use {manager}; removing Acta leaves it installed. | Pour le retirer plus tard, utilisez {manager} ; désinstaller Acta le laisse en place. |
-| `ready.uninstall.native` | the steps on Claude Code's setup page | les étapes de la page d'installation de Claude Code |
-| `ready.dialog.command` | Command | Commande |
-| `ready.dialog.confirm_install` | Install | Installer |
-| `ready.dialog.confirm_update` | Update | Mettre à jour |
-| `ready.dialog.confirm_terminal` | Open in terminal | Ouvrir dans le terminal |
-| `ready.signin.hint` | A terminal opens with Claude Code. Follow its steps in your browser; Acta never sees your password or token. | Un terminal s'ouvre avec Claude Code. Suivez ses étapes dans votre navigateur ; Acta ne voit jamais votre mot de passe ni votre jeton. |
-| `status.claude.missing` | Claude Code: not installed | Claude Code : non installé |
-| `status.claude.signed_out` | Claude Code: not signed in | Claude Code : non connecté |
+New with ADR 0013 (2026-11-22; components-app.md 5, screens.md 8.26). Moved into 10.4 and `catalogue.rs` when the checklist was implemented, as a `ready.*` family before the `settings.*` keys, with the two `status.*` keys beside the status bar's; `settings.check.cli` is removed (its row is now `ready.claude`). Added with the implementation, for review: `quit.installing` (the quit confirmation while an install runs) and `terminal.ended_once` (the last line of a one-off terminal session, which has no restart). `{name}` is a tool's name, never translated ("Git", "GitHub CLI", "Claude Code"); `{version}` and `{minimum}` are version numbers as the tool prints them; `{elapsed}` is `m:ss`; `{code}` the exit code in decimal. Package ids and commands are protocol, not copy, and are never translated.
 
 `{manager}` in `ready.uninstall` is the manager's name as a proper noun ("winget", "Homebrew", "apt"), or `ready.uninstall.native` for Claude Code's native install. `ready.agreements` is shown only for winget commands, which pass `--accept-package-agreements` and `--accept-source-agreements` (winget has no stdin to ask on). Retry on a failed row is `common.retry`; everywhere else re-checking is `ready.check_again`.
 

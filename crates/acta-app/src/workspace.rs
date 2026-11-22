@@ -174,11 +174,14 @@ pub enum Undo {
         back: ContactFields,
         expect: ContactFields,
     },
-    /// A merge of `from` into `before.id`: take it back.
+    /// A merge of `from` into `before.id`: take it back, while the
+    /// contact it went into still holds what the merge left (`after`).
     Unmerge {
         from: ContactId,
         before: Box<acta_core::model::Contact>,
+        after: Box<acta_core::model::Contact>,
         uses: Vec<Record>,
+        trace: acta_core::store::MergeTrace,
     },
     /// An unmerge taken back: merge again.
     Merge {
@@ -323,9 +326,28 @@ impl Undo {
             Undo::ReportTo { record, expect, .. } => report_state(store, *record)? == *expect,
             Undo::ContactLevel { id, expect, .. } => store.contact(*id)?.level == *expect,
             Undo::ContactFields { id, expect, .. } => contact_fields(store, *id)? == *expect,
-            Undo::Unmerge { from, before, .. } => {
+            Undo::Unmerge {
+                from,
+                before,
+                after,
+                ..
+            } => {
+                let now = store.contact(before.id)?;
                 store.contact_any(*from)?.merged_into == Some(before.id)
                     && !is_live(store, Record::Contact(*from))?
+                    && (
+                        &now.name,
+                        &now.job_title,
+                        &now.company,
+                        &now.address_note,
+                        now.level,
+                    ) == (
+                        &after.name,
+                        &after.job_title,
+                        &after.company,
+                        &after.address_note,
+                        after.level,
+                    )
             }
             Undo::Merge { from, .. } => is_live(store, Record::Contact(*from))?,
             Undo::Unfile(id) => !store.note(*id)?.is_open(),
@@ -584,8 +606,14 @@ impl Undo {
                     expect: contact_fields(store, *id)?,
                 }
             }
-            Undo::Unmerge { from, before, uses } => {
-                store.unmerge_contacts(*from, before, uses, me)?;
+            Undo::Unmerge {
+                from,
+                before,
+                uses,
+                trace,
+                ..
+            } => {
+                store.unmerge_contacts(*from, before, uses, trace, me)?;
                 Undo::Merge {
                     from: *from,
                     before: before.clone(),
@@ -593,11 +621,13 @@ impl Undo {
                 }
             }
             Undo::Merge { from, before, uses } => {
-                store.merge_contacts(*from, before.id, me)?;
+                let trace = store.merge_contacts(*from, before.id, me)?;
                 Undo::Unmerge {
                     from: *from,
                     before: before.clone(),
+                    after: Box::new(store.contact(before.id)?),
                     uses: uses.clone(),
+                    trace,
                 }
             }
             Undo::Unfile(id) => {
@@ -2143,12 +2173,36 @@ mod tests {
             .into_iter()
             .map(|u| u.record)
             .collect();
-        store.merge_contacts(a, b, Author::Human).unwrap();
+        let trace = store.merge_contacts(a, b, Author::Human).unwrap();
         let step = Undo::Unmerge {
             from: a,
             before: Box::new(before),
+            after: Box::new(store.contact(b).unwrap()),
             uses,
+            trace,
         };
+        // Changed since the merge: the undo is skipped.
+        store
+            .update_contact(
+                b,
+                acta_core::store::ContactPatch {
+                    company: Some(Some("Acme".into())),
+                    ..Default::default()
+                },
+                Author::Human,
+            )
+            .unwrap();
+        assert!(step.apply(store).unwrap().is_none());
+        store
+            .update_contact(
+                b,
+                acta_core::store::ContactPatch {
+                    company: Some(None),
+                    ..Default::default()
+                },
+                Author::Human,
+            )
+            .unwrap();
         let redo = step.apply(store).unwrap().expect("undone");
         assert_eq!(report_state(store, Record::Topic(id)).unwrap().0, Some(a));
         assert!(redo.apply(store).unwrap().is_some());
