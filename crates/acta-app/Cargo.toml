@@ -17,6 +17,9 @@ acta-core = { workspace = true, features = ["voice-download"] }
 acta-terminal = { path = "../acta-terminal" }
 # Local UTC offset for the time forms of docs/design/copy.md 10.2.
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+# Images decoded in memory for the file viewer and thumbnails (ADR 0012), and a
+# pasted bitmap stored as PNG. The version acta-core and GPUI use.
+image = { version = "0.25", default-features = false, features = ["png"] }
 # Exact pins: ADR 0001 (UI stack) and ADR 0004 (must match the vpk tool version).
 gpui-kit = "=0.10.0"
 serde = { version = "1", features = ["derive"] }

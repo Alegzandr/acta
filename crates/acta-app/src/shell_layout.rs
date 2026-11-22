@@ -927,6 +927,7 @@ impl Shell {
             Toast {
                 message,
                 kind: ToastKind::LayoutNoRoom,
+                action: None,
             },
             cx,
         );
@@ -1114,6 +1115,7 @@ impl Shell {
                 Toast {
                     message,
                     kind: ToastKind::LayoutReset,
+                    action: None,
                 },
                 cx,
             );
@@ -1171,6 +1173,7 @@ impl Shell {
             Toast {
                 message,
                 kind: ToastKind::Layout,
+                action: None,
             },
             cx,
         );

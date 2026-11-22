@@ -743,6 +743,18 @@ impl UndoStack {
 pub struct Toast {
     pub message: String,
     pub kind: ToastKind,
+    /// An action of its own beside the message (a file's toasts).
+    pub action: Option<ToastAction>,
+}
+
+/// The action a toast offers besides Undo (components-attachments.md 5,
+/// Save as).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ToastAction {
+    /// "Show in folder": the file manager on the parent, the file selected.
+    Reveal(std::path::PathBuf),
+    /// Retry: Save as to the same path again.
+    RetrySave(Box<acta_core::model::Attachment>, std::path::PathBuf),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1091,6 +1103,11 @@ impl Workspace {
                 match result {
                     Ok(value) => Ok(value),
                     Err(acta_core::Error::StaleRevision { .. }) => Err(WriteError::Stale),
+                    // An editor's file a purge took meanwhile says so.
+                    Err(acta_core::Error::StagedGone) => {
+                        ws.toast_error(Key::AttachGone, cx);
+                        Err(WriteError::Failed)
+                    }
                     Err(err) => {
                         crate::log::line(&format!("store: write failed: {}", err_kind(&err)));
                         ws.toast_error(failure, cx);
@@ -1145,6 +1162,7 @@ impl Workspace {
                     cx.emit(WorkspaceEvent::Toast(Toast {
                         message,
                         kind: ToastKind::Undo,
+                        action: None,
                     }));
                 }
             });
@@ -1657,7 +1675,11 @@ impl Workspace {
     }
 
     pub fn toast(&mut self, message: String, kind: ToastKind, cx: &mut Context<Self>) {
-        cx.emit(WorkspaceEvent::Toast(Toast { message, kind }));
+        cx.emit(WorkspaceEvent::Toast(Toast {
+            message,
+            kind,
+            action: None,
+        }));
     }
 
     pub fn toast_error(&mut self, key: Key, cx: &mut Context<Self>) {
@@ -1719,7 +1741,8 @@ pub fn deleted_key(record: Record) -> Option<Key> {
         Record::Kb(_) => Key::KbDeleted,
         Record::Question(_) => Key::QuestionDeleted,
         Record::Contact(_) => Key::ContactDeleted,
-        Record::Folder(_) | Record::Attachment(_) => return None,
+        Record::Attachment(_) => Key::AttachRemoved,
+        Record::Folder(_) => return None,
     })
 }
 
