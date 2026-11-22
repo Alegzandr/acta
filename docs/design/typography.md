@@ -30,6 +30,7 @@ Two weights of the sans: 400 and 600 (Segoe UI Variable's Regular and Semibold i
 | `type.document` | Sans | 17 / 28 (Text size: 16 / 26, 17 / 28, 19 / 30) | 400 | Document body, in the reading view and in its editor |
 | `type.ui` | Sans | 14 / 20 | 400 | Everything else: rows, buttons, inputs, menus, property values |
 | `type.ui-strong` | Sans | 14 / 20 | 600 | Author names, selected segment, primary button, project and epic rows, Markdown h3, the section header of a page ("Current state", "Description", "Knowledge", "Timeline", "Overview"), in `text.secondary` |
+| `type.menu` | Sans | 13 / 18 | 400 | Items of context menus, dropdown menus, the slash menu and the tab overflow menu (user feedback 2026-11-22: 14 read too big in a floating layer). Not the palette, which is a search surface and keeps `type.ui` |
 | `type.small` | Sans | 12 / 16 | 400 | Timestamps, counts, breadcrumb, tooltips, hints, status bar, kbd hints |
 | `type.label` | Sans | 12 / 16 | 600 | Table and tool window headers, view tabs, the tree's area header |
 | `type.code` | Mono | 13 / 20 | 400 | Inline code, code blocks, paths, ids, "Claude Code" author name |
@@ -37,7 +38,7 @@ Two weights of the sans: 400 and 600 (Segoe UI Variable's Regular and Semibold i
 
 **Text size** (Settings > Appearance, and the palette: "Text size: Small / Default / Large"; stored in `preferences.json`, applied live) scales `type.reading` and `type.document` only, the two roles people read for minutes; the interface chrome keeps its sizes so rows, controls and the tree do not reflow. Every step keeps a line height of about 1.6 em and an even line height, so baselines stay on whole pixels.
 
-**Why page sections are 14, not 12** (clarity review 2026-11-22). A page reads title 24, property labels 14, section header, body 16. At 12 the section headers were smaller than the property labels above them and than every row under them, so the eye read "Description" as a caption and the page as one long run; at 14 / 600 in `text.secondary` they sit one clear step under the title and over the rows, with no new size. The rendered set of sizes on a record page is then 24, 16, 14 and 12, plus 13 for mono, and no role is used out of its row of this table.
+**Why page sections are 14, not 12** (clarity review 2026-11-22). A page reads title 24, property labels 14, section header, body 16. At 12 the section headers were smaller than the property labels above them and than every row under them, so the eye read "Description" as a caption and the page as one long run; at 14 / 600 in `text.secondary` they sit one clear step under the title and over the rows, with no new size. The rendered set of sizes on a record page is then 24, 16, 14 and 12, plus 13 for mono and for an open menu (`type.menu`), and no role is used out of its row of this table.
 
 **Mono beside sans.** `type.code` is 13 / 20 and sits on a 14 / 20 line, so ids and paths in a sans row share its baseline grid; where mono is a value among sans metadata at 12 (the meta line's id), it is set at 12 / 16, the one place mono takes the small size.
 

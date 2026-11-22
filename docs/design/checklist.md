@@ -23,6 +23,9 @@ Run against every screen, in dark and in light, in English and in French. One fa
 - [ ] Workbench: a page's location (project, epic) appears only in the titlebar breadcrumb; no tab bar with a single tab in a single group; every side area and the bottom panel has its 28 header per group, with view tabs when it holds two views or more; the status bar holds only project, Claude Code status, update and version.
 - [ ] Layout (4.8): every area respects its size range and every view its minimum, in every area it can be moved to; the page area keeps 420 (400 per group); narrow windows give way in the order of 4.8.10 and nothing of it is saved; a page that is not Inbox or Knowledge never leaves the page area.
 
+- [ ] Hover and focus never move anything: every revealed control (chips, `ellipsis`, `plus`, `x`, chevrons) sits in space reserved or empty at rest; move the pointer slowly over the properties block, the folders row, every row and header, and nothing below shifts.
+- [ ] Menus set their items in `type.menu` (13 / 18) on rows of 28; the palette keeps `type.ui` on rows of 32.
+
 **States**
 - [ ] Each interactive element has default, hover, pressed, keyboard focus and disabled, as specified in 5.
 - [ ] Empty, loading (over 400 ms only), error and long-content states exist: a 200-character title, a 500-entry timeline, 0 and 1,000 topics.
