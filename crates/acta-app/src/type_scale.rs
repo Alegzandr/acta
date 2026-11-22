@@ -51,6 +51,9 @@ pub const SMALL: TypeRole = sans("type.small", 12., 16., FontWeight::NORMAL);
 pub const LABEL: TypeRole = sans("type.label", 12., 16., FontWeight::SEMIBOLD);
 pub const CODE: TypeRole = mono("type.code", 13., 20.);
 pub const TERMINAL: TypeRole = mono("type.terminal", 13., 17.);
+/// `type.code` among `type.small` metadata (the meta line's id): mono at
+/// the small size, the one place mono takes it (typography.md 3.2).
+pub const CODE_SMALL: TypeRole = mono("type.code", 12., 16.);
 
 /// The sans roles, in table order.
 pub const SANS_ROLES: [TypeRole; 9] = [

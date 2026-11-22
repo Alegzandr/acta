@@ -65,8 +65,16 @@ pub fn author(locale: Locale, author: Author) -> String {
     }
 }
 
-/// The user's name as the OS gives it, with a capital initial.
+/// The name of the sample data's human (CLAUDE.md).
+pub const SAMPLE_HUMAN: &str = "Alexandre";
+
+/// The user's name as the OS gives it, with a capital initial. A debug
+/// build run on the dev seed (`ACTA_DEV_SEED`) shows the sample data's
+/// human instead, so captures never carry the OS user's name.
 pub fn human_name(locale: Locale) -> String {
+    if cfg!(debug_assertions) && std::env::var_os("ACTA_DEV_SEED").is_some() {
+        return SAMPLE_HUMAN.into();
+    }
     let name = std::env::var("USERNAME")
         .or_else(|_| std::env::var("USER"))
         .unwrap_or_default();

@@ -18,7 +18,6 @@ pub enum Command {
     NewProject,
     /// "Projects: Collapse all" (layout.md 4.2.1).
     TreeCollapseAll,
-    AddEntry,
     Capture,
     GoInbox,
     GoKnowledge,
@@ -225,7 +224,6 @@ impl Command {
             ]);
         }
         if ctx.on_topic {
-            out.push(Command::AddEntry);
             out.extend(Status::ALL.into_iter().map(Command::SetStatus));
         }
         if let Some(dated) = ctx.due {
@@ -381,7 +379,6 @@ impl Command {
             Command::NewEpic => Key::CmdNewEpic,
             Command::NewProject => Key::CmdNewProject,
             Command::TreeCollapseAll => Key::CmdTreeCollapseAll,
-            Command::AddEntry => Key::CmdAddEntry,
             Command::Capture => Key::CmdCapture,
             Command::GoInbox => Key::CmdGoInbox,
             Command::GoKnowledge => Key::CmdKbGo,
@@ -518,7 +515,6 @@ impl Command {
             Command::GoTopic => vec![m, "P"],
             Command::SwitchProject => vec![m, "O"],
             Command::NewTopic => vec![m, "T"],
-            Command::AddEntry => vec![m, "E"],
             Command::Capture => vec![m, "N"],
             Command::GoInbox => vec![m, "I"],
             Command::GoKnowledge => vec![m, "L"],
@@ -646,7 +642,7 @@ mod tests {
         );
         assert_eq!(
             Command::OverviewMore.label(Locale::Fr),
-            "Vue d\u{2019}ensemble\u{202f}: afficher plus"
+            "Vue d\u{2019}ensemble\u{a0}: afficher plus"
         );
         assert_eq!(Command::SetDue.shortcut(Locale::En, false), ["D"]);
     }
@@ -735,7 +731,7 @@ mod tests {
         assert!(!commands.contains(&Command::JoinGroups), "one group");
         assert_eq!(
             terminal(ViewAction::MoveTo(Place::Side(Side::Bottom))).label(Locale::Fr),
-            "Terminal\u{202f}: déplacer dans le panneau du bas"
+            "Terminal\u{a0}: déplacer dans le panneau du bas"
         );
         assert_eq!(
             Command::View(ViewAction::Show, ViewId::Projects).label(Locale::En),

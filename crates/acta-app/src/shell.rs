@@ -126,8 +126,6 @@ actions!(
         SwitchProject,
         /// `Mod+T`.
         NewTopic,
-        /// `Mod+E`.
-        AddEntry,
         /// `Mod+N`.
         CaptureNote,
         /// `Mod+I`.
@@ -273,7 +271,6 @@ fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new(m("cmd-p", "ctrl-p"), GoToTopic, app),
         KeyBinding::new(m("cmd-o", "ctrl-o"), SwitchProject, app),
         KeyBinding::new(m("cmd-t", "ctrl-t"), NewTopic, app),
-        KeyBinding::new(m("cmd-e", "ctrl-e"), AddEntry, app),
         KeyBinding::new(m("cmd-n", "ctrl-n"), CaptureNote, app),
         KeyBinding::new(m("cmd-i", "ctrl-i"), GoInbox, app),
         KeyBinding::new(m("cmd-l", "ctrl-l"), GoKnowledge, app),
@@ -440,6 +437,8 @@ struct Bench {
     tree: tree_ui::TreeState,
     /// The tree's open menu (`Shift+F10`, `S`, `M`).
     tree_menu: Option<TreeMenu>,
+    /// Where the tree's menu hangs: its row's title.
+    tree_menu_anchor: crate::menu::AnchorBounds,
     /// The due date picker on a tree row (`D`).
     tree_due: Option<TreeDue>,
     /// The row being renamed in place.
@@ -692,6 +691,7 @@ impl Shell {
             cursor: tree::Cursor::default(),
             tree: tree_ui::TreeState::default(),
             tree_menu: None,
+            tree_menu_anchor: Default::default(),
             tree_due: None,
             rename: None,
             find: (String::new(), None),
@@ -2029,11 +2029,6 @@ impl Shell {
             Command::NewEpic => self.open_palette(None, Some(CreateKind::Epic), window, cx),
             Command::NewProject => self.new_project(window, cx),
             Command::TreeCollapseAll => self.collapse_all(cx),
-            Command::AddEntry => self.with_record(
-                cx,
-                |page, window, cx| page.focus_composer(window, cx),
-                window,
-            ),
             Command::Capture => self.open_capture(window, cx),
             Command::GoInbox => self.go_project_page(Route::Inbox, window, cx),
             Command::GoKnowledge => self.go_project_page(Route::Knowledge, window, cx),
@@ -4599,17 +4594,14 @@ enum TreeKey {
 
 /// The plan usage meters of the status bar (components-app.md 5, Plan
 /// usage): "5h 42%" and "7d 18%", each with a 24 x 4 bar, `warning` above
-/// 80 %, dimmed once its window has reset; "Plan usage: no data yet" until
-/// Claude Code first reports it.
+/// 80 %, dimmed once its window has reset; nothing until Claude Code first
+/// reports it.
 fn usage_items(t: &Tokens, locale: Locale, cx: &mut Context<Shell>) -> Vec<AnyElement> {
     let now = acta_core::time::now_ms();
+    // Nothing until there is a number (layout.md 4.6): why the bar is
+    // empty is the tooltip of the Settings row.
     let Some(usage) = crate::sessions::plan_usage(cx) else {
-        return vec![
-            ui::bar_item("status-usage", t)
-                .child(type_scale::SMALL.el().child(text(locale, Key::UsageNoData)))
-                .tooltip(ui::tip(text(locale, Key::UsageNoDataTip)))
-                .into_any_element(),
-        ];
+        return Vec::new();
     };
     let windows = [
         (
@@ -4649,7 +4641,7 @@ fn usage_items(t: &Tokens, locale: Locale, cx: &mut Context<Shell>) -> Vec<AnyEl
             let filled = 24. * f32::from(m.percent.min(100)) / 100.;
             Some(
                 ui::bar_item(id, t)
-                    .gap(px(6.))
+                    .gap(px(4.))
                     .child(
                         type_scale::SMALL
                             .el()
@@ -4676,6 +4668,7 @@ fn usage_items(t: &Tokens, locale: Locale, cx: &mut Context<Shell>) -> Vec<AnyEl
 /// The open menu of a tree row (components.md 5, Context menu): the row
 /// menu, the status menu (`S`, then `1` to `6`) or the epics (`M`).
 fn tree_menu(
+    anchor: &crate::menu::AnchorBounds,
     items: &[MenuItem],
     menu: TreeMenu,
     status: Option<Status>,
@@ -4728,13 +4721,13 @@ fn tree_menu(
             })),
         );
     }
-    deferred(
-        gpui_kit::anchored()
-            .offset(point(px(0.), px(28.)))
-            .child(panel),
-    )
-    .with_priority(1)
-    .into_any_element()
+    // Over the row's title, one row high: the menu hangs 4 under the row.
+    div()
+        .size_full()
+        .relative()
+        .child(anchor.measure())
+        .children(anchor.below(panel, crate::menu::Align::Start))
+        .into_any_element()
 }
 
 impl Render for Shell {
@@ -4876,9 +4869,6 @@ impl Render for Shell {
             }))
             .on_action(
                 cx.listener(|s, _: &NewTopic, w, cx| s.run_command(Command::NewTopic, w, cx)),
-            )
-            .on_action(
-                cx.listener(|s, _: &AddEntry, w, cx| s.run_command(Command::AddEntry, w, cx)),
             )
             .on_action(cx.listener(|s, _: &CaptureNote, w, cx| s.open_capture(w, cx)))
             .on_action(cx.listener(|s, _: &GoInbox, w, cx| s.toggle_view(ViewId::Inbox, w, cx)))

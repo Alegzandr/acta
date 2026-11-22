@@ -13,7 +13,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, ParentElement, Render, StatefulInteractiveElement, Styled,
-    Subscription, Task, Window, anchored, deferred, div, point, px,
+    Subscription, Task, Window, div, px,
 };
 
 use crate::diff::{self, Change};
@@ -212,6 +212,8 @@ pub struct KnowledgePage {
     search: Entity<InputState>,
     filters: Filters,
     menu: Option<FilterMenu>,
+    /// Where the open filter menu hangs.
+    menu_anchor: menu::AnchorBounds,
     open_memory: Option<KbId>,
     /// Shown as the Knowledge view (workbench.md 4.8.3): no title, no
     /// meta line, following the active project.
@@ -306,6 +308,7 @@ impl KnowledgePage {
             search,
             filters,
             menu: None,
+            menu_anchor: Default::default(),
             open_memory: None,
             as_view,
             stale: None,
@@ -557,18 +560,26 @@ impl KnowledgePage {
                     }),
                 )
             });
-            deferred(
-                anchored().offset(point(px(0.), px(32.))).child(
-                    menu::panel("kb-filter-menu", t)
-                        .on_mouse_down_out(cx.listener(|page, _, _, cx| {
-                            page.menu = None;
-                            cx.notify();
-                        }))
-                        .children(items),
-                ),
+            self.menu_anchor.below_keyed(
+                which as u64,
+                menu::panel("kb-filter-menu", t)
+                    .on_mouse_down_out(cx.listener(|page, _, _, cx| {
+                        page.menu = None;
+                        cx.notify();
+                    }))
+                    .children(items),
+                menu::Align::Start,
+                1,
             )
         });
-        div().child(button).children(menu).into_any_element()
+        div()
+            .relative()
+            .child(button)
+            .children(
+                (self.menu == Some(which)).then(|| self.menu_anchor.measure_keyed(which as u64)),
+            )
+            .children(menu.flatten())
+            .into_any_element()
     }
 }
 
@@ -900,6 +911,7 @@ pub struct DocPage {
     show_theirs: bool,
     /// The `ellipsis` menu of the reading view is open.
     doc_menu: bool,
+    doc_menu_anchor: menu::AnchorBounds,
     /// The page's scroll, and where each heading of the body was laid out
     /// (by its index in the outline), for "Go to heading".
     scroll: gpui_kit::ScrollHandle,
@@ -998,6 +1010,7 @@ impl DocPage {
             saving: false,
             conflict: None,
             doc_menu: false,
+            doc_menu_anchor: Default::default(),
             scroll: gpui_kit::ScrollHandle::new(),
             headings: Default::default(),
             focus: cx.focus_handle(),
@@ -1809,21 +1822,49 @@ impl Render for DocPage {
                     KbKind::Memory => Key::KindMemory,
                 },
             );
-            let updated = {
-                let when = when::long_alone(locale, entry.stamp.updated_at);
-                let author = when::author(locale, entry.stamp.updated_by);
-                tr(
-                    locale,
-                    Key::CommonBy,
-                    &[("when", Arg::Text(&when)), ("author", Arg::Text(&author))],
+            // The meta line (components-records.md 5): the id, then who
+            // changed it last and when, the full date as its tooltip.
+            let (before, after) = crate::record_page::meta_parts(
+                locale,
+                true,
+                entry.stamp.updated_at,
+                entry.stamp.updated_by,
+            );
+            let full = when::datetime(locale, entry.stamp.updated_at);
+            let id = entry.id.to_string();
+            let copy = id.clone();
+            let hover = t.fill_hover;
+            let meta = type_scale::SMALL
+                .el()
+                .flex()
+                .flex_row()
+                .items_center()
+                .min_h(px(20.))
+                .mt(px(4.))
+                .text_color(t.text_tertiary)
+                .font_features(type_scale::tabular())
+                .when(!before.is_empty(), |this| this.child(before))
+                .child(
+                    ui::focusable(type_scale::CODE_SMALL.el().id("doc-meta-id"), &t, false)
+                        .px(px(4.))
+                        .mx(px(-4.))
+                        .rounded(px(crate::theme::RADIUS_XS))
+                        .hover(move |s| s.bg(hover))
+                        .tooltip(ui::tip(text(locale, Key::MetaCopyId)))
+                        .on_click(move |_, _, cx| {
+                            cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(copy.clone()))
+                        })
+                        .child(id),
                 )
-            };
-            let labels = [
-                text(locale, Key::PropKind),
-                text(locale, Key::PropLevel),
-                text(locale, Key::PropId),
-                text(locale, Key::PropUpdated),
-            ];
+                .child(
+                    div()
+                        .id("doc-meta-updated")
+                        .min_w_0()
+                        .truncate()
+                        .tooltip(ui::tip(full))
+                        .child(after),
+                );
+            let labels = [text(locale, Key::PropKind), text(locale, Key::PropLevel)];
             let width = ui::label_width(&labels.iter().map(String::as_str).collect::<Vec<_>>(), cx);
             let macos = cfg!(target_os = "macos");
             let _ = macos;
@@ -1866,21 +1907,7 @@ impl Render for DocPage {
                                 .child(level),
                             &t,
                         ))
-                        .child(ui::property(
-                            labels[2].clone(),
-                            width,
-                            type_scale::CODE
-                                .el()
-                                .text_color(t.text_secondary)
-                                .child(entry.id.to_string()),
-                            &t,
-                        ))
-                        .child(ui::property(
-                            labels[3].clone(),
-                            width,
-                            div().child(updated),
-                            &t,
-                        )),
+                        .child(meta),
                 )
                 .child(
                     div()
@@ -1927,6 +1954,7 @@ impl Render for DocPage {
                             // components-knowledge.md 5: Go to heading, Save
                             // as file, Move, then Delete, last and in danger.
                             div()
+                                .relative()
                                 .child(
                                     ui::ghost_icon_button(
                                         "doc-more",
@@ -1944,110 +1972,91 @@ impl Render for DocPage {
                                         },
                                     )),
                                 )
+                                .child(self.doc_menu_anchor.measure())
                                 .when(self.doc_menu, |this| {
-                                    this.child(
-                                        gpui_kit::deferred(
-                                            gpui_kit::anchored()
-                                                .offset(gpui_kit::point(px(0.), px(32.)))
+                                    this.children(
+                                        self.doc_menu_anchor.below(
+                                            menu::panel("doc-menu", &t)
+                                                .on_mouse_down_out(cx.listener(|page, _, _, cx| {
+                                                    page.doc_menu = false;
+                                                    cx.notify();
+                                                }))
                                                 .child(
-                                                    menu::panel("doc-menu", &t)
-                                                        .on_mouse_down_out(cx.listener(
-                                                            |page, _, _, cx| {
-                                                                page.doc_menu = false;
-                                                                cx.notify();
-                                                            },
-                                                        ))
-                                                        .child(
-                                                            menu::item(
-                                                                "doc-heading",
-                                                                None,
-                                                                text(locale, Key::DocGoHeading),
-                                                                Some(
-                                                                    ui::kbd(
-                                                                        &[
-                                                                            KeyName::Mod.label(
-                                                                                locale,
-                                                                                cfg!(
-                                                                                    target_os =
-                                                                                        "macos"
-                                                                                ),
-                                                                            ),
-                                                                            KeyName::Shift.label(
-                                                                                locale,
-                                                                                cfg!(
-                                                                                    target_os =
-                                                                                        "macos"
-                                                                                ),
-                                                                            ),
-                                                                            "O",
-                                                                        ],
-                                                                        &t,
-                                                                    )
-                                                                    .into_any_element(),
-                                                                ),
-                                                                false,
+                                                    menu::item(
+                                                        "doc-heading",
+                                                        None,
+                                                        text(locale, Key::DocGoHeading),
+                                                        Some(
+                                                            ui::kbd(
+                                                                &[
+                                                                    KeyName::Mod.label(
+                                                                        locale,
+                                                                        cfg!(target_os = "macos"),
+                                                                    ),
+                                                                    KeyName::Shift.label(
+                                                                        locale,
+                                                                        cfg!(target_os = "macos"),
+                                                                    ),
+                                                                    "O",
+                                                                ],
                                                                 &t,
                                                             )
-                                                            .on_click(cx.listener(
-                                                                |page, _, _, cx| {
-                                                                    page.doc_menu = false;
-                                                                    page.go_to_heading(cx)
-                                                                },
-                                                            )),
-                                                        )
-                                                        .child(
-                                                            menu::item(
-                                                                "doc-save-file",
-                                                                None,
-                                                                text(locale, Key::KbSaveFile),
-                                                                None,
-                                                                false,
-                                                                &t,
-                                                            )
-                                                            .on_click(cx.listener(
-                                                                |page, _, _, cx| {
-                                                                    page.doc_menu = false;
-                                                                    page.save_as_file(cx)
-                                                                },
-                                                            )),
-                                                        )
-                                                        .child(
-                                                            menu::item(
-                                                                "doc-move",
-                                                                None,
-                                                                text(locale, Key::KbMoveTo),
-                                                                None,
-                                                                false,
-                                                                &t,
-                                                            )
-                                                            .on_click(cx.listener(
-                                                                |page, _, _, cx| {
-                                                                    page.doc_menu = false;
-                                                                    page.move_to(cx)
-                                                                },
-                                                            )),
-                                                        )
-                                                        .child(menu::separator(&t))
-                                                        .child(
-                                                            menu::item(
-                                                                "doc-delete",
-                                                                None,
-                                                                text(locale, Key::CommonDelete),
-                                                                None,
-                                                                false,
-                                                                &t,
-                                                            )
-                                                            .text_color(t.danger)
-                                                            .on_click(cx.listener(
-                                                                |page, _, _, cx| {
-                                                                    page.doc_menu = false;
-                                                                    page.delete(cx)
-                                                                },
-                                                            )),
+                                                            .into_any_element(),
                                                         ),
+                                                        false,
+                                                        &t,
+                                                    )
+                                                    .on_click(cx.listener(|page, _, _, cx| {
+                                                        page.doc_menu = false;
+                                                        page.go_to_heading(cx)
+                                                    })),
+                                                )
+                                                .child(
+                                                    menu::item(
+                                                        "doc-save-file",
+                                                        None,
+                                                        text(locale, Key::KbSaveFile),
+                                                        None,
+                                                        false,
+                                                        &t,
+                                                    )
+                                                    .on_click(cx.listener(|page, _, _, cx| {
+                                                        page.doc_menu = false;
+                                                        page.save_as_file(cx)
+                                                    })),
+                                                )
+                                                .child(
+                                                    menu::item(
+                                                        "doc-move",
+                                                        None,
+                                                        text(locale, Key::KbMoveTo),
+                                                        None,
+                                                        false,
+                                                        &t,
+                                                    )
+                                                    .on_click(cx.listener(|page, _, _, cx| {
+                                                        page.doc_menu = false;
+                                                        page.move_to(cx)
+                                                    })),
+                                                )
+                                                .child(menu::separator(&t))
+                                                .child(
+                                                    menu::item(
+                                                        "doc-delete",
+                                                        None,
+                                                        text(locale, Key::CommonDelete),
+                                                        None,
+                                                        false,
+                                                        &t,
+                                                    )
+                                                    .text_color(t.danger)
+                                                    .on_click(cx.listener(|page, _, _, cx| {
+                                                        page.doc_menu = false;
+                                                        page.delete(cx)
+                                                    })),
                                                 ),
-                                        )
-                                        .with_priority(1),
+                                            menu::Align::End,
+                                        ),
                                     )
                                 }),
                         ),

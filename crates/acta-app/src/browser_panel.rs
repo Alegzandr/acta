@@ -269,6 +269,7 @@ pub struct BrowserPanel {
     place: Place,
     can_split: bool,
     menu: bool,
+    menu_anchor: crate::menu::AnchorBounds,
     tip: Option<Tip>,
     web: Option<Web>,
     shared: Arc<Shared>,
@@ -345,6 +346,7 @@ impl BrowserPanel {
             place: Place::Side(Side::Right),
             can_split: false,
             menu: false,
+            menu_anchor: Default::default(),
             tip: None,
             web: None,
             shared,
@@ -1082,6 +1084,8 @@ impl BrowserPanel {
             )
             .child(
                 div()
+                    .relative()
+                    .child(self.menu_anchor.measure())
                     .child(
                         ui::ghost_icon_button(
                             "browser-menu",
@@ -1199,9 +1203,9 @@ impl BrowserPanel {
                 cx.emit(BrowserEvent::View(ViewAction::Hide));
             })),
         );
-        deferred(anchored().offset(point(px(-176.), px(28.))).child(panel))
-            .with_priority(1)
-            .into_any_element()
+        self.menu_anchor
+            .below(panel, crate::menu::Align::End)
+            .unwrap_or_else(|| div().into_any_element())
     }
 
     /// The address field, 28 high, under the header.
@@ -1348,7 +1352,6 @@ impl BrowserPanel {
             Phase::Idle => empty()
                 .child(heading(Key::BrowserIdleTitle))
                 .child(reading(Key::BrowserIdleBody))
-                .child(small(Key::BrowserIdleMemory).mt(px(8.)))
                 .into_any_element(),
             Phase::Starting => empty()
                 .child(small(Key::BrowserStarting))

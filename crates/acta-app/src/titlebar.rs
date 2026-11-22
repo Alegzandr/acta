@@ -459,18 +459,23 @@ pub fn render(
             ),
         );
     }
-    let layout_menu = button("titlebar-layout", Icon::PanelsTopLeft, false, false)
-        .tooltip(ui::tip(text(locale, Key::LayoutMenu)))
+    let layout_measure = shell.menu_button_measure("titlebar-layout");
+    let layout_open = layout_measure.is_some();
+    let layout_menu = button("titlebar-layout", Icon::PanelsTopLeft, layout_open, false)
+        .relative()
+        .children(layout_measure)
+        .when(!layout_open, |this| {
+            this.tooltip(ui::tip(text(locale, Key::LayoutMenu)))
+        })
         .on_mouse_down(MouseButton::Left, |_, window, cx| {
             window.prevent_default();
             cx.stop_propagation();
         })
-        .on_click(cx.listener(move |shell, e: &gpui_kit::ClickEvent, _, cx| {
-            let p = e.position();
-            shell.open_menu(
+        .on_click(cx.listener(move |shell, _, _, cx| {
+            shell.open_menu_under(
                 crate::shell::LayoutMenu::Layout,
-                f32::from(p.x) - 240.,
-                f32::from(p.y) + 12.,
+                "titlebar-layout",
+                crate::menu::Align::End,
                 cx,
             )
         }));

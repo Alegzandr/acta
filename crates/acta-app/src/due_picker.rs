@@ -6,18 +6,15 @@
 //! The host (a record page or the tree) opens it, writes what it is told
 //! to on [`DuePickerEvent::Done`], and returns focus to the anchor.
 
-use std::cell::Cell;
-use std::rc::Rc;
-
 use acta_core::date::Date;
 use gpui_kit::component::input::{
     Escape, IndentInline, Input, InputEvent, InputState, MoveDown, OutdentInline,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    Anchor, AnyElement, AppContext, Bounds, Context, Entity, EventEmitter, FocusHandle,
-    InteractiveElement, IntoElement, KeyBinding, ParentElement, Pixels, Render,
-    StatefulInteractiveElement, Styled, Subscription, Window, anchored, deferred, div, point, px,
+    AnyElement, AppContext, Context, Entity, EventEmitter, FocusHandle, InteractiveElement,
+    IntoElement, KeyBinding, ParentElement, Render, StatefulInteractiveElement, Styled,
+    Subscription, Window, div, px,
 };
 
 use crate::due::{self, Area, GridKey, Outcome, Picker, Preview, Tone};
@@ -467,38 +464,4 @@ impl Render for DuePicker {
     }
 }
 
-/// Where a floating layer hangs: the bounds of its anchor, recorded each
-/// time the anchor is laid out.
-#[derive(Clone, Default)]
-pub struct AnchorBounds(Rc<Cell<Option<Bounds<Pixels>>>>);
-
-impl AnchorBounds {
-    /// An element over the anchor that records its bounds; a change
-    /// redraws, so a layer opened before the anchor was laid out appears
-    /// on the next frame.
-    pub fn measure(&self) -> AnyElement {
-        let cell = self.0.clone();
-        ui::measure(move |bounds, window| {
-            if cell.get() != Some(bounds) {
-                cell.set(Some(bounds));
-                window.refresh();
-            }
-        })
-    }
-
-    /// `layer` 4 below the anchor, left edges aligned, flipped above when
-    /// there is less room below (components-records.md 5).
-    pub fn below(&self, layer: AnyElement) -> Option<AnyElement> {
-        let bounds = self.0.get()?;
-        Some(
-            deferred(
-                anchored()
-                    .attach(bounds, Anchor::BottomLeft)
-                    .offset(point(px(0.), px(4.)))
-                    .child(layer),
-            )
-            .with_priority(2)
-            .into_any_element(),
-        )
-    }
-}
+pub use crate::menu::AnchorBounds;

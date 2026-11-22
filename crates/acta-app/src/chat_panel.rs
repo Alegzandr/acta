@@ -97,6 +97,7 @@ pub struct ChatPanel {
     help: bool,
     /// The header's menu is open (it would fall under the web view).
     menu: bool,
+    menu_anchor: crate::menu::AnchorBounds,
     signals: Sender<Signal>,
     web: Option<Web>,
     /// The profile is being deleted; a start waits for it.
@@ -160,6 +161,7 @@ impl ChatPanel {
             can_split: false,
             help: false,
             menu: false,
+            menu_anchor: Default::default(),
             signals,
             web: None,
             clearing: false,
@@ -650,6 +652,8 @@ impl ChatPanel {
             )
             .child(
                 div()
+                    .relative()
+                    .child(self.menu_anchor.measure())
                     .child(
                         ui::ghost_icon_button(
                             "chat-menu",
@@ -767,9 +771,9 @@ impl ChatPanel {
                 cx.emit(ChatEvent::View(ViewAction::Hide));
             })),
         );
-        deferred(anchored().offset(point(px(-176.), px(28.))).child(panel))
-            .with_priority(1)
-            .into_any_element()
+        self.menu_anchor
+            .below(panel, crate::menu::Align::End)
+            .unwrap_or_else(|| div().into_any_element())
     }
 
     fn body(&mut self, cx: &mut Context<Self>) -> AnyElement {
@@ -805,7 +809,6 @@ impl ChatPanel {
             Surface::NotStarted => empty()
                 .child(heading(Key::ChatStartTitle))
                 .child(reading(Key::ChatStartBody))
-                .child(small(Key::ChatStartMemory).mt(px(8.)))
                 .child(
                     buttons()
                         .child(
@@ -816,6 +819,8 @@ impl ChatPanel {
                                 false,
                                 &t,
                             )
+                            // What it costs is read once: the tooltip.
+                            .tooltip(ui::tip(text(locale, Key::ChatStartMemory)))
                             .on_click(cx.listener(|panel, _, window, cx| panel.start(window, cx))),
                         )
                         .child(browser(

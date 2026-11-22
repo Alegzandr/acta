@@ -7,7 +7,7 @@ use std::rc::Rc;
 use acta_core::model::FolderId;
 use gpui_kit::{
     AnyElement, Context, Div, InteractiveElement, IntoElement, ParentElement, SharedString,
-    Stateful, StatefulInteractiveElement, Styled, Window, anchored, deferred, div, point, px,
+    Stateful, StatefulInteractiveElement, Styled, Window, div, px,
 };
 
 use crate::folders_model::{self, GitLine};
@@ -105,10 +105,12 @@ pub struct SwitchActions<V> {
 /// The switcher's menu (screens.md 8.11): every folder the page sees,
 /// grouped by origin, "Active" on the active one, "Not found" (not
 /// choosable) on a folder that was not found; then "Edit folders..." and
-/// "Add folder...". Anchored under the switcher by the caller's position.
+/// "Add folder...". Hangs under the switcher, measured by `anchor`.
 /// `highlight` indexes [`choosable`].
+#[allow(clippy::too_many_arguments)]
 pub fn switcher_menu<V: 'static>(
     id: &'static str,
+    anchor: &menu::AnchorBounds,
     groups: &[SwitchGroup],
     highlight: Option<usize>,
     locale: Locale,
@@ -205,9 +207,9 @@ pub fn switcher_menu<V: 'static>(
             )
             .on_click(cx.listener(move |v, _, window, cx| add(v, window, cx))),
         );
-    deferred(anchored().offset(point(px(0.), px(26.))).child(panel))
-        .with_priority(1)
-        .into_any_element()
+    anchor
+        .below(panel, menu::Align::Start)
+        .unwrap_or_else(|| div().into_any_element())
 }
 
 /// The git state (ADR 0011, 2): `git-branch` 12 and the branch, then

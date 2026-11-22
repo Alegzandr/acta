@@ -6,9 +6,8 @@
 //!
 //! Rows are the palette commands with a direct key, with the labels and
 //! keys the palette shows, and the keys that have no command (tabs, focus,
-//! lists and the tree, editors). Keys that do nothing yet are left out
-//! (entry types in the composer), except the area keys the spec lists as
-//! reserved.
+//! lists and the tree, editors). Keys that do nothing yet are left out,
+//! except the area keys the spec lists as reserved.
 
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::{
@@ -69,7 +68,6 @@ pub fn groups(locale: Locale, macos: bool) -> Vec<(Key, Vec<Row>)> {
             Command::GoTopic,
             Command::SwitchProject,
             Command::NewTopic,
-            Command::AddEntry,
             Command::Capture,
             Command::GoInbox,
             Command::GoKnowledge,

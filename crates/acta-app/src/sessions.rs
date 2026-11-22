@@ -515,7 +515,7 @@ mod tests {
         );
         assert_eq!(
             status_text(Locale::Fr, c).as_deref(),
-            Some("Claude Code\u{202f}: 1 vous attend \u{b7} 2 au travail")
+            Some("Claude Code\u{a0}: 1 vous attend \u{b7} 2 au travail")
         );
         assert_eq!(status_text(Locale::En, Counts::default()), None);
     }

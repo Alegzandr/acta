@@ -241,6 +241,7 @@ impl Shell {
         // pointer input never draws (interaction.md 6.2).
         let ring = tree_focus.is_focused(window) && window.last_input_was_keyboard();
         let menu = bench.tree_menu;
+        let menu_anchor = bench.tree_menu_anchor.clone();
         let tree_due = bench
             .tree_due
             .as_ref()
@@ -301,7 +302,7 @@ impl Shell {
                     Row::Topic { status, .. } => Some(*status),
                     _ => None,
                 };
-                tree_menu(&menu_items, m, status, locale, t, cx)
+                tree_menu(&menu_anchor, &menu_items, m, status, locale, t, cx)
             });
             let menu = menu.or_else(|| {
                 let (_, anchor, picker) = tree_due.as_ref().filter(|(row, _, _)| *row == key)?;
@@ -313,7 +314,7 @@ impl Shell {
                         .h(px(tree::ROW))
                         .relative()
                         .child(anchor.measure())
-                        .children(anchor.below(picker.clone().into_any_element()))
+                        .children(anchor.below_at(picker.clone(), crate::menu::Align::Start, 2))
                         .into_any_element(),
                 )
             });
@@ -937,8 +938,16 @@ fn tree_row(
             );
         }
     }
-    el.children(menu.map(|menu| div().absolute().top_0().left(px(8. + indent)).child(menu)))
-        .into_any_element()
+    el.children(menu.map(|menu| {
+        div()
+            .absolute()
+            .top_0()
+            .left(px(8. + indent))
+            .w(px(1.))
+            .h(px(tree::ROW))
+            .child(menu)
+    }))
+    .into_any_element()
 }
 
 /// A pinned row of the sidebar (components.md 5, Tree row): weight 400 in

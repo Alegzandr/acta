@@ -16,14 +16,13 @@
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     App, Context, Div, Entity, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent,
-    ParentElement, Render, StatefulInteractiveElement, Styled, Subscription, Task, Window,
-    anchored, deferred, div, point, px,
+    ParentElement, Render, StatefulInteractiveElement, Styled, Subscription, Task, Window, div, px,
 };
 
 use crate::i18n::{Key, Locale, text};
 use crate::icons::{Icon, icon};
 use crate::settings;
-use crate::theme::{RADIUS_LG, RADIUS_SM, ThemeSetting, Tokens};
+use crate::theme::{RADIUS_SM, ThemeSetting, Tokens};
 use crate::type_scale;
 use crate::ui;
 use crate::workspace::Workspace;
@@ -159,6 +158,11 @@ pub struct SettingsPage {
     language_focus: FocusHandle,
     language_menu_open: bool,
     language_highlighted: usize,
+    language_anchor: crate::menu::AnchorBounds,
+    /// The setup checks unfolded or folded by the reader (`None`: as the
+    /// status asks), and "What setup changes" unfolded.
+    checks_open: Option<bool>,
+    setup_what_open: bool,
     _language_blur: Subscription,
     ws: Option<Entity<Workspace>>,
     facts: Option<DataFacts>,
@@ -203,6 +207,9 @@ impl SettingsPage {
             language_focus,
             language_menu_open: false,
             language_highlighted: 0,
+            language_anchor: Default::default(),
+            checks_open: None,
+            setup_what_open: false,
             _language_blur: language_blur,
             ws: None,
             facts: None,
@@ -347,8 +354,10 @@ impl SettingsPage {
                 page.language_highlighted = selected;
                 cx.notify();
             }))
+            .relative()
             .child(locale.native_name())
-            .child(icon(Icon::ChevronDown, 16., t.text_secondary));
+            .child(icon(Icon::ChevronDown, 16., t.text_secondary))
+            .child(self.language_anchor.measure());
 
         let control = focus_ring("language-control", &self.language_focus, RADIUS_SM, t)
             .on_key_down(cx.listener(move |page, event: &KeyDownEvent, _, cx| {
@@ -399,29 +408,17 @@ impl SettingsPage {
                         this.child(icon(Icon::Check, 16., t.text_secondary))
                     })
             });
-            deferred(
-                anchored().offset(point(px(0.), px(32.))).child(
-                    div()
-                        .id("language-menu")
-                        .occlude()
-                        .flex()
-                        .flex_col()
-                        .min_w(px(200.))
-                        .p(px(4.))
-                        .bg(t.bg_overlay)
-                        .border_1()
-                        .border_color(t.border_default)
-                        .rounded(px(RADIUS_LG))
-                        .shadow(vec![t.shadow_overlay()])
-                        .on_mouse_down_out(cx.listener(|page, _, _, cx| {
-                            page.language_menu_open = false;
-                            cx.notify();
-                        }))
-                        .children(items),
-                ),
-            )
+            crate::menu::panel("language-menu", t)
+                .on_mouse_down_out(cx.listener(|page, _, _, cx| {
+                    page.language_menu_open = false;
+                    cx.notify();
+                }))
+                .children(items)
         });
 
+        // Under the control, right edges aligned: the control ends the row.
+        let menu =
+            menu.and_then(|panel| self.language_anchor.below(panel, crate::menu::Align::End));
         div().child(control).children(menu)
     }
 }
@@ -505,7 +502,7 @@ impl Render for SettingsPage {
                     )
                     .child(setting_row(
                         text(locale, Key::SettingsTheme),
-                        text(locale, Key::SettingsThemeHint),
+                        String::new(),
                         theme_control,
                         &t,
                     ))
@@ -517,7 +514,7 @@ impl Render for SettingsPage {
                     ))
                     .child(setting_row(
                         text(locale, Key::SettingsReadingWidth),
-                        text(locale, Key::SettingsReadingWidthHint),
+                        String::new(),
                         reading_width_control,
                         &t,
                     ))
@@ -857,7 +854,7 @@ impl SettingsPage {
                 snapshots,
                 action(
                     "settings-snapshots",
-                    text(locale, Key::CmdSnapshot),
+                    text(locale, Key::SettingsRestore),
                     Box::new(crate::shell::RestoreSnapshot),
                 ),
                 t,
@@ -874,7 +871,7 @@ impl SettingsPage {
                 ),
                 action(
                     "settings-trash",
-                    text(locale, Key::CmdTrash),
+                    text(locale, Key::CommonOpen),
                     Box::new(crate::shell::OpenTrash),
                 ),
                 t,
@@ -940,11 +937,11 @@ impl SettingsPage {
         out.push(subtitle(Key::SettingsChat));
         let chat_row = if cfg!(windows) {
             setting_row(
-                text(locale, Key::ChatSignout),
-                text(locale, Key::ChatSignoutBody),
+                text(locale, Key::SettingsChatData),
+                String::new(),
                 action(
                     "settings-chat-signout",
-                    text(locale, Key::ChatSignoutConfirm),
+                    format!("{}\u{2026}", text(locale, Key::ChatSignoutConfirm)),
                     Box::new(crate::shell::ChatSignOut),
                 ),
                 t,
@@ -966,6 +963,45 @@ impl SettingsPage {
     }
 }
 
+/// The one status row of Acta's setup (components-app.md 5, Settings):
+/// nothing until the first check answers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SetupStatus {
+    Pending,
+    Ready,
+    /// This many of the three steps are done.
+    Partial(u64),
+    /// The check could not run.
+    Unknown,
+}
+
+/// The status of the three steps setup itself makes (plugin files, plugin,
+/// permission rule). Whether Claude Code is installed is a fact about the
+/// computer, shown with the checks, not a step of setup.
+fn setup_status(checked: bool, answer: Option<crate::claude_setup::Check>) -> SetupStatus {
+    match (checked, answer) {
+        (false, _) => SetupStatus::Pending,
+        (true, None) => SetupStatus::Unknown,
+        (true, Some(check)) => {
+            let done = [check.files, check.plugin, check.rule]
+                .into_iter()
+                .filter(|d| *d)
+                .count() as u64;
+            if done == 3 {
+                SetupStatus::Ready
+            } else {
+                SetupStatus::Partial(done)
+            }
+        }
+    }
+}
+
+/// The checks start unfolded while a step is missing, folded otherwise;
+/// the reader's own choice wins.
+fn checks_unfolded(status: SetupStatus, chosen: Option<bool>) -> bool {
+    chosen.unwrap_or(matches!(status, SetupStatus::Partial(_)))
+}
+
 /// The word after a setup check: nothing until the first check answers;
 /// "Could not check" when the check itself could not run (the `acta`
 /// command missing next to the app), rather than claiming a step is
@@ -979,10 +1015,23 @@ fn check_word(checked: bool, answered: bool, done: bool) -> Option<Key> {
     }
 }
 
+/// A ghost disclosure button: the label, then `chevron-down` / `chevron-up`.
+fn disclosure(id: &'static str, label: String, open: bool, t: &Tokens) -> gpui_kit::Stateful<Div> {
+    ui::button(id, label, ui::Variant::Ghost, false, t).child(icon(
+        if open {
+            Icon::ChevronUp
+        } else {
+            Icon::ChevronDown
+        },
+        14.,
+        t.text_tertiary,
+    ))
+}
+
 impl SettingsPage {
-    /// Claude Code (components-app.md 5, Settings): the four checks of
-    /// `acta setup --check`, then Set up (primary while anything is
-    /// missing, then a secondary "Run setup again") and Remove.
+    /// Claude Code (components-app.md 5, Settings): one status row with
+    /// its checks behind "Details", then Set up with one plain line and
+    /// "What setup changes", Remove, and the commit and session settings.
     fn claude_section(
         &self,
         locale: Locale,
@@ -994,6 +1043,7 @@ impl SettingsPage {
         let check = answer.unwrap_or_default();
         let checked = state.is_some_and(|s| s.checked);
         let busy = state.is_some_and(|s| s.busy);
+        let status = setup_status(checked, answer);
         let mut out = vec![
             type_scale::SUBTITLE
                 .el()
@@ -1003,73 +1053,207 @@ impl SettingsPage {
                 .child(text(locale, Key::SettingsClaude))
                 .into_any_element(),
         ];
-        let rows = [
-            (Key::SettingsCheckCli, check.claude),
-            (Key::SettingsCheckFiles, check.files),
-            (Key::SettingsCheckPlugin, check.plugin),
-            (Key::SettingsCheckRule, check.rule),
-        ];
-        for (key, done) in rows {
-            let word = check_word(checked, answer.is_some(), done);
-            let (glyph, color) = if done {
-                (Icon::Check, t.success)
-            } else {
-                (Icon::CircleDashed, t.text_tertiary)
-            };
-            out.push(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(8.))
-                    .h(px(28.))
-                    .child(icon(glyph, 14., color))
-                    .child(
-                        type_scale::UI
-                            .el()
-                            .flex_1()
-                            .text_color(t.text_primary)
-                            .child(text(locale, key)),
-                    )
-                    .children(word.map(|w| {
-                        type_scale::UI
-                            .el()
-                            .text_color(if done {
-                                t.text_primary
-                            } else {
-                                t.text_tertiary
-                            })
-                            .child(text(locale, w))
-                    }))
-                    .into_any_element(),
-            );
-        }
-        let complete = check.complete();
-        let (setup_key, setup_variant) = if complete {
-            (Key::SettingsSetupAgain, ui::Variant::Secondary)
-        } else {
-            (Key::SettingsSetup, ui::Variant::Primary)
+        // The status row.
+        let (glyph, color, words) = match status {
+            SetupStatus::Ready => (
+                Icon::CircleCheck,
+                t.success,
+                text(locale, Key::SettingsStatusReady),
+            ),
+            SetupStatus::Partial(n) => (
+                Icon::CircleDashed,
+                t.text_tertiary,
+                crate::i18n::tr(
+                    locale,
+                    Key::SettingsStatusPartial,
+                    &[("n", crate::i18n::Arg::Count(n))],
+                ),
+            ),
+            SetupStatus::Unknown => (
+                Icon::CircleSlash,
+                t.text_tertiary,
+                text(locale, Key::SettingsStatusUnknown),
+            ),
+            SetupStatus::Pending => (Icon::CircleDashed, t.text_tertiary, String::new()),
         };
+        let unfolded = checks_unfolded(status, self.checks_open);
         out.push(
             div()
                 .flex()
                 .flex_row()
                 .items_center()
                 .gap(px(8.))
-                .mt(px(8.))
+                .min_h(px(44.))
+                .child(icon(glyph, 16., color))
                 .child(
-                    ui::button(
-                        "settings-setup",
-                        text(locale, setup_key),
-                        setup_variant,
-                        busy,
+                    type_scale::UI
+                        .el()
+                        .flex_1()
+                        .min_w_0()
+                        .text_color(t.text_primary)
+                        .child(words),
+                )
+                .when(status == SetupStatus::Unknown, |this| {
+                    this.child(
+                        ui::button(
+                            "settings-check-again",
+                            text(locale, Key::CommonTryAgain),
+                            ui::Variant::Ghost,
+                            busy,
+                            t,
+                        )
+                        .when(!busy, |this| {
+                            this.on_click(|_, _, cx| crate::claude_setup::refresh(cx))
+                        }),
+                    )
+                })
+                .child(
+                    disclosure(
+                        "settings-check-details",
+                        text(locale, Key::CommonDetails),
+                        unfolded,
                         t,
                     )
-                    .when(!busy, |this| {
-                        this.on_click(|_, window, cx| {
-                            window.dispatch_action(Box::new(crate::shell::SetUpClaude), cx)
-                        })
-                    }),
+                    .on_click(cx.listener(move |page, _, _, cx| {
+                        page.checks_open = Some(!unfolded);
+                        cx.notify();
+                    })),
+                )
+                .into_any_element(),
+        );
+        if unfolded {
+            let rows = [
+                (Key::SettingsCheckCli, check.claude),
+                (Key::SettingsCheckFiles, check.files),
+                (Key::SettingsCheckPlugin, check.plugin),
+                (Key::SettingsCheckRule, check.rule),
+            ];
+            let mut list = div().flex().flex_col().pl(px(24.)).mb(px(8.));
+            for (key, done) in rows {
+                let word = check_word(checked, answer.is_some(), done);
+                let (glyph, color) = if done {
+                    (Icon::Check, t.success)
+                } else {
+                    (Icon::CircleDashed, t.text_tertiary)
+                };
+                list = list.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(8.))
+                        .h(px(28.))
+                        .child(icon(glyph, 14., color))
+                        .child(
+                            type_scale::UI
+                                .el()
+                                .flex_1()
+                                .min_w_0()
+                                .text_color(t.text_primary)
+                                .child(text(locale, key)),
+                        )
+                        .children(word.map(|w| {
+                            type_scale::UI
+                                .el()
+                                .text_color(if done {
+                                    t.text_primary
+                                } else {
+                                    t.text_tertiary
+                                })
+                                .child(text(locale, w))
+                        })),
+                );
+            }
+            // The `acta` command, for running setup by hand.
+            if let Some(path) = &self.cli {
+                let full = path.to_string_lossy().into_owned();
+                let copy = full.clone();
+                list = list.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(8.))
+                        .h(px(28.))
+                        .child(
+                            type_scale::CODE
+                                .el()
+                                .id("settings-cli-path")
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .text_color(t.text_secondary)
+                                .tooltip(ui::tip(full.clone()))
+                                .child(crate::paths_view::fit(
+                                    &full,
+                                    crate::paths_view::budget(400.),
+                                )),
+                        )
+                        .child(
+                            ui::button(
+                                "settings-cli-copy",
+                                text(locale, Key::FoldersCopyPath),
+                                ui::Variant::Ghost,
+                                false,
+                                t,
+                            )
+                            .on_click(move |_, _, cx| {
+                                cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(
+                                    copy.clone(),
+                                ))
+                            }),
+                        ),
+                );
+            }
+            out.push(list.into_any_element());
+        }
+        // Set up, with one plain line; the mechanics behind "What setup
+        // changes" (copy.md 7).
+        let (setup_key, setup_variant) = if check.complete() {
+            (Key::SettingsSetupAgain, ui::Variant::Secondary)
+        } else {
+            (Key::SettingsSetup, ui::Variant::Primary)
+        };
+        out.push(
+            setting_row(
+                text(locale, setup_key),
+                text(locale, Key::SettingsSetupHint),
+                ui::button(
+                    "settings-setup",
+                    text(locale, setup_key),
+                    setup_variant,
+                    busy,
+                    t,
+                )
+                .when(!busy, |this| {
+                    this.on_click(|_, window, cx| {
+                        window.dispatch_action(Box::new(crate::shell::SetUpClaude), cx)
+                    })
+                }),
+                t,
+            )
+            .into_any_element(),
+        );
+        let what = self.setup_what_open;
+        out.push(
+            div()
+                .flex()
+                .flex_row()
+                .flex_wrap()
+                .items_center()
+                .gap(px(8.))
+                .ml(px(-12.))
+                .child(
+                    disclosure(
+                        "settings-setup-what",
+                        text(locale, Key::SettingsSetupWhat),
+                        what,
+                        t,
+                    )
+                    .on_click(cx.listener(|page, _, _, cx| {
+                        page.setup_what_open = !page.setup_what_open;
+                        cx.notify();
+                    })),
                 )
                 .child(
                     ui::button(
@@ -1088,128 +1272,130 @@ impl SettingsPage {
                 )
                 .into_any_element(),
         );
-        out.push(
-            type_scale::SMALL
-                .el()
-                .mt(px(8.))
-                .max_w(px(420.))
-                .text_color(t.text_tertiary)
-                .child(text(locale, Key::SettingsSetupHint))
-                .into_any_element(),
-        );
-        if let Some(path) = &self.cli {
-            let full = path.to_string_lossy().into_owned();
-            let copy = full.clone();
+        if what {
             out.push(
                 div()
                     .flex()
-                    .flex_row()
-                    .items_center()
+                    .flex_col()
                     .gap(px(8.))
-                    .mt(px(8.))
+                    .mt(px(4.))
+                    .max_w(px(420.))
                     .child(
-                        type_scale::CODE
+                        type_scale::SMALL
                             .el()
-                            .id("settings-cli-path")
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .text_color(t.text_secondary)
-                            .tooltip(ui::tip(full.clone()))
-                            .child(crate::paths_view::fit(
-                                &full,
-                                crate::paths_view::budget(420.),
-                            )),
+                            .text_color(t.text_tertiary)
+                            .child(text(locale, Key::SettingsSetupDetails)),
                     )
                     .child(
-                        ui::button(
-                            "settings-cli-copy",
-                            text(locale, Key::FoldersCopyPath),
-                            ui::Variant::Ghost,
-                            false,
-                            t,
-                        )
-                        .on_click(move |_, _, cx| {
-                            cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(copy.clone()))
-                        }),
+                        type_scale::SMALL
+                            .el()
+                            .text_color(t.text_tertiary)
+                            .child(text(locale, Key::SettingsPluginHint)),
                     )
                     .into_any_element(),
             );
         }
         // Automatic commits (ADR 0011): the default of "Commit in my name";
-        // changing it rewrites every automatic folder that follows it.
+        // changing it rewrites every automatic folder that follows it. The
+        // checkbox's own label wraps inside its column, never past it.
         let as_user = self.facts.as_ref().is_some_and(|f| f.as_user_default);
         let ws = self.ws.clone();
         out.push(
-            setting_row(
-                text(locale, Key::SettingsAutoCommit),
-                text(locale, Key::SettingsAutoCommitHint),
-                div()
-                    .id("settings-auto-commit")
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(8.))
-                    .max_w(px(260.))
-                    .child(ui::checkbox(as_user, t))
-                    .child(
-                        type_scale::UI
-                            .el()
-                            .text_color(t.text_primary)
-                            .child(text(locale, Key::FoldersCommitAsUser)),
-                    )
-                    .on_click(move |_, _, cx| {
-                        if let Some(ws) = &ws {
-                            ws.update(cx, |ws, cx| {
-                                // Toggled from the value the store holds now,
-                                // not the one this frame showed.
-                                ws.write_detached(cx, Key::ErrorSave, |store| {
-                                    let on = acta_core::claude_settings::as_user_default(store)?;
-                                    acta_core::claude_settings::set_as_user_default(store, !on)
-                                })
-                            });
-                        }
-                    }),
-                t,
-            )
-            .mt(px(16.))
-            .into_any_element(),
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .justify_between()
+                .gap(px(24.))
+                .min_h(px(44.))
+                .py(px(8.))
+                .mt(px(16.))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .min_w_0()
+                        .child(
+                            type_scale::UI
+                                .el()
+                                .text_color(t.text_primary)
+                                .child(text(locale, Key::SettingsAutoCommit)),
+                        )
+                        .child(
+                            type_scale::SMALL
+                                .el()
+                                .text_color(t.text_tertiary)
+                                .child(text(locale, Key::SettingsAutoCommitHint)),
+                        ),
+                )
+                .child(
+                    div()
+                        .id("settings-auto-commit")
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(8.))
+                        .flex_shrink(1.)
+                        .min_w_0()
+                        .max_w(px(260.))
+                        .child(div().flex_shrink_0().child(ui::checkbox(as_user, t)))
+                        .child(
+                            type_scale::UI
+                                .el()
+                                .flex_1()
+                                .min_w_0()
+                                .text_color(t.text_primary)
+                                .child(text(locale, Key::FoldersCommitAsUser)),
+                        )
+                        .on_click(move |_, _, cx| {
+                            if let Some(ws) = &ws {
+                                ws.update(cx, |ws, cx| {
+                                    // Toggled from the value the store holds
+                                    // now, not the one this frame showed.
+                                    ws.write_detached(cx, Key::ErrorSave, |store| {
+                                        let on =
+                                            acta_core::claude_settings::as_user_default(store)?;
+                                        acta_core::claude_settings::set_as_user_default(store, !on)
+                                    })
+                                });
+                            }
+                        }),
+                )
+                .into_any_element(),
         );
         // How Acta starts and shows Claude Code (components-app.md 5,
-        // Claude Code sessions and Plan usage).
+        // Claude Code sessions and Plan usage): labels that say it all.
         let prefs = crate::settings::current(cx).clone();
         out.push(
             setting_row(
                 text(locale, Key::SettingsResume),
-                text(locale, Key::SettingsResumeHint),
+                String::new(),
                 checkbox("settings-resume", !prefs.new_conversations, t).on_click(|_, _, cx| {
                     crate::settings::change(cx, |p| p.new_conversations = !p.new_conversations);
                     cx.refresh_windows();
                 }),
                 t,
             )
-            .mt(px(16.))
             .into_any_element(),
         );
+        // Until a report has arrived, the row says why the bar is empty.
+        let no_usage = crate::sessions::plan_usage(cx).is_none();
         out.push(
             setting_row(
                 text(locale, Key::SettingsUsage),
-                text(locale, Key::SettingsUsageHint),
+                String::new(),
                 checkbox("settings-usage", !prefs.hide_usage, t).on_click(|_, _, cx| {
                     crate::settings::change(cx, |p| p.hide_usage = !p.hide_usage);
                     cx.refresh_windows();
                 }),
                 t,
             )
+            .id("settings-usage-row")
+            .when(no_usage, |this| {
+                this.tooltip(ui::tip(text(locale, Key::UsageNoDataTip)))
+            })
             .into_any_element(),
-        );
-        out.push(
-            type_scale::SMALL
-                .el()
-                .max_w(px(420.))
-                .text_color(t.text_tertiary)
-                .child(text(locale, Key::SettingsPluginHint))
-                .into_any_element(),
         );
         if cfg!(windows) {
             out.push(
@@ -1289,7 +1475,7 @@ fn about_section(locale: Locale, t: &Tokens) -> Vec<gpui_kit::AnyElement> {
             String::new(),
             ui::button(
                 "settings-shortcuts",
-                text(locale, Key::CmdShortcuts),
+                text(locale, Key::CommonOpen),
                 ui::Variant::Secondary,
                 false,
                 t,
@@ -1335,6 +1521,45 @@ mod tests {
         );
         assert_eq!(check_word(true, true, true), Some(Key::SettingsCheckDone));
         assert_eq!(check_word(false, false, false), None);
+    }
+
+    #[test]
+    fn the_status_row_counts_the_three_steps_of_setup() {
+        use crate::claude_setup::Check;
+        assert_eq!(setup_status(false, None), SetupStatus::Pending);
+        assert_eq!(setup_status(true, None), SetupStatus::Unknown);
+        let all = Check {
+            claude: true,
+            files: true,
+            plugin: true,
+            rule: true,
+        };
+        assert_eq!(setup_status(true, Some(all)), SetupStatus::Ready);
+        // Claude Code itself missing is not a step of setup.
+        let no_cli = Check {
+            claude: false,
+            ..all
+        };
+        assert_eq!(setup_status(true, Some(no_cli)), SetupStatus::Ready);
+        let one = Check {
+            plugin: false,
+            rule: false,
+            ..all
+        };
+        assert_eq!(setup_status(true, Some(one)), SetupStatus::Partial(1));
+        assert_eq!(
+            setup_status(true, Some(Check::default())),
+            SetupStatus::Partial(0)
+        );
+    }
+
+    #[test]
+    fn the_checks_unfold_while_a_step_is_missing_unless_folded_by_hand() {
+        assert!(checks_unfolded(SetupStatus::Partial(2), None));
+        assert!(!checks_unfolded(SetupStatus::Ready, None));
+        assert!(!checks_unfolded(SetupStatus::Unknown, None));
+        assert!(!checks_unfolded(SetupStatus::Partial(2), Some(false)));
+        assert!(checks_unfolded(SetupStatus::Ready, Some(true)));
     }
 
     #[test]
