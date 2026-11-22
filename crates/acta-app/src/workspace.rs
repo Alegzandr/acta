@@ -127,6 +127,9 @@ pub enum Undo {
         id: TopicId,
         back: (Option<EpicId>, usize),
         expect: (Option<EpicId>, usize),
+        /// Contacts the drop lifted (name, level now): undoing the drop
+        /// leaves them at that level and says so.
+        kept: Vec<(String, acta_core::model::ContactLevel)>,
     },
     /// A record moved among its siblings.
     Reorder {
@@ -539,12 +542,15 @@ impl Undo {
                     expect: store.kb_entry(*id)?.owner,
                 }
             }
-            Undo::TopicPlace { id, back, expect } => {
+            Undo::TopicPlace {
+                id, back, expect, ..
+            } => {
                 put_topic(store, *id, *back, me)?;
                 Undo::TopicPlace {
                     id: *id,
                     back: *expect,
                     expect: topic_place(store, *id)?,
+                    kept: Vec::new(),
                 }
             }
             Undo::Reorder {
@@ -1491,12 +1497,27 @@ impl Workspace {
             let back = topic_place(store, id)?;
             store.take_lifts();
             put_topic(store, id, (epic, index), Author::Human)?;
+            // The lifts are not taken back with the drop: their undo
+            // toast says the contacts stay where they are now.
+            let lifts = store.take_lifts();
+            let mut kept = Vec::new();
+            let mut lifted = Vec::new();
+            for l in lifts {
+                let name = store.contact(l.contact)?.name;
+                kept.push((name.clone(), l.to));
+                lifted.push(Lifted {
+                    name,
+                    to: l.to,
+                    record: store.topic(id)?.title,
+                });
+            }
             let moved = Undo::TopicPlace {
                 id,
                 back,
                 expect: topic_place(store, id)?,
+                kept,
             };
-            with_lifts(store, moved)
+            Ok((moved, lifted))
         });
         self.toast_lifts(task, cx);
     }
@@ -1703,6 +1724,15 @@ impl Workspace {
                     return;
                 };
                 ws.sync_folder_paths(touched, cx);
+                // A drag that lifted contacts went back; they stay.
+                if !redo && let Undo::TopicPlace { kept, .. } = &step {
+                    let locale = crate::settings::locale(cx);
+                    for (name, at) in kept {
+                        let message =
+                            crate::contacts_model::lift_kept(locale, name, *at, &ws.projects);
+                        ws.toast(message, ToastKind::Done, cx);
+                    }
+                }
                 let (from, to) = if redo {
                     (&mut ws.redo, &mut ws.undo)
                 } else {
@@ -2630,6 +2660,7 @@ mod tests {
             id: a,
             back,
             expect: topic_place(store, a).unwrap(),
+            kept: Vec::new(),
         };
         let redo = step.apply(store).unwrap().expect("unchanged since");
         assert_eq!(order(store, None), vec![a, b]);

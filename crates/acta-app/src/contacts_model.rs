@@ -465,6 +465,22 @@ pub fn lifted(
     }
 }
 
+/// Undoing a tree drag that lifted a contact: the topic goes back, the
+/// contact stays at its wider level, and the toast says so.
+pub fn lift_kept(locale: Locale, name: &str, at: ContactLevel, projects: &[ProjectTree]) -> String {
+    match at {
+        ContactLevel::Project(p) => tr(
+            locale,
+            Key::ContactLiftKeptProject,
+            &[
+                ("name", Arg::Text(name)),
+                ("project", Arg::Text(&project_title(projects, p))),
+            ],
+        ),
+        _ => tr(locale, Key::ContactLiftKept, &[("name", Arg::Text(name))]),
+    }
+}
+
 /// The other live contacts with the same key as `contact` whose level
 /// overlaps its own (one sees the other), not kept apart by "Keep both":
 /// the duplicate notice (components-contacts.md 5).
@@ -703,6 +719,15 @@ mod tests {
             &[],
         );
         assert!(to_p.ends_with(": Marie."), "{to_p}");
+    }
+
+    #[test]
+    fn undoing_a_drag_says_the_lifted_contact_stays() {
+        assert_eq!(
+            lift_kept(Locale::En, "Marie", ContactLevel::All, &[]),
+            "Marie stays a contact of all projects."
+        );
+        assert!(lift_kept(Locale::Fr, "Marie", ContactLevel::All, &[]).ends_with("Marie."));
     }
 
     #[test]

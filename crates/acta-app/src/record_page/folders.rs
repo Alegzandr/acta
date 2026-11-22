@@ -2229,19 +2229,37 @@ impl RecordPage {
                     .child(after)
                     .into_any_element()
             }
+            // Two or more: each of the first two names a link carrying its
+            // level word ("topic Scrollback"), then how many more.
             others => {
-                let name = |i: usize| others.get(i).map_or("", |(_, n)| n.as_str());
-                div()
-                    .child(tr(
-                        locale,
-                        Key::FoldersAlsoMore,
-                        &[
-                            ("a", Arg::Text(name(0))),
-                            ("b", Arg::Text(name(1))),
-                            ("n", Arg::Count(others.len().saturating_sub(2) as u64)),
-                        ],
-                    ))
-                    .into_any_element()
+                const A: &str = "\u{1}";
+                const B: &str = "\u{2}";
+                let line = also_line(locale, others.len(), A, B);
+                let mut parts = div().flex().flex_row().flex_wrap();
+                let mut rest = line.as_str();
+                for (i, mark) in [A, B].into_iter().enumerate() {
+                    let Some((before, after)) = rest.split_once(mark) else {
+                        continue;
+                    };
+                    let (owner, name) = &others[i];
+                    let label = also_name(locale, *owner, name);
+                    let to = route(*owner);
+                    parts = parts.child(before.to_owned()).child(
+                        crate::question_view::name_link(
+                            SharedString::from(format!("{row_id}-also-{i}")),
+                            &label,
+                            false,
+                            locale,
+                            t,
+                        )
+                        .on_click(cx.listener(move |_, _, _, cx| {
+                            cx.stop_propagation();
+                            cx.emit(PageEvent::Open(to));
+                        })),
+                    );
+                    rest = after;
+                }
+                parts.child(rest.to_owned()).into_any_element()
             }
         };
         div()
@@ -2684,6 +2702,37 @@ const ICON_GAP: f32 = 2.;
 /// The width that lays `count` icon toggles out in rows of equal length
 /// within `room`: `None` when they fit on one line (or the room is not
 /// known), else the width of the longest balanced row.
+/// The "Also attached to" sentence for `count` other owners (two or
+/// more), with `a` and `b` standing where the first two names go.
+fn also_line(locale: Locale, count: usize, a: &str, b: &str) -> String {
+    if count == 2 {
+        tr(
+            locale,
+            Key::FoldersAlsoTwo,
+            &[("a", Arg::Text(a)), ("b", Arg::Text(b))],
+        )
+    } else {
+        tr(
+            locale,
+            Key::FoldersAlsoMore,
+            &[
+                ("a", Arg::Text(a)),
+                ("b", Arg::Text(b)),
+                ("n", Arg::Count(count.saturating_sub(2) as u64)),
+            ],
+        )
+    }
+}
+
+/// An owner's name with its level word: "topic Scrollback".
+fn also_name(locale: Locale, owner: Owner, name: &str) -> String {
+    let key = match owner {
+        Owner::Epic(_) => Key::FoldersAlsoNameEpic,
+        _ => Key::FoldersAlsoNameTopic,
+    };
+    tr(locale, key, &[("name", Arg::Text(name))])
+}
+
 /// What a key does on a folder of the list (interaction.md 6.1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum FolderKey {
@@ -2762,6 +2811,36 @@ fn move_options(own: &[FolderId], id: FolderId) -> (bool, bool) {
 #[cfg(test)]
 mod form_tests {
     use super::*;
+
+    #[test]
+    fn two_other_owners_are_named_and_more_are_counted() {
+        let en = Locale::En;
+        assert_eq!(
+            also_line(
+                en,
+                2,
+                &also_name(en, Owner::Topic(acta_core::model::TopicId(2)), "Scrollback"),
+                "topic Links"
+            ),
+            "Also attached to topic Scrollback and topic Links."
+        );
+        assert_eq!(
+            also_line(en, 4, "topic A", "topic B"),
+            "Also attached to topic A, topic B and 2 more."
+        );
+        assert_eq!(
+            also_line(Locale::Fr, 3, "sujet A", "sujet B"),
+            "Également rattaché à sujet A, à sujet B et à 1 autre."
+        );
+        assert_eq!(
+            also_name(
+                Locale::Fr,
+                Owner::Epic(acta_core::model::EpicId(1)),
+                "Notes"
+            ),
+            "epic Notes"
+        );
+    }
 
     #[test]
     fn folder_rows_take_the_keys_of_the_keyboard_map() {
