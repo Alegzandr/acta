@@ -817,6 +817,102 @@ catalogue! {
         en: t("No filed notes yet."),
         fr: t("Aucune note classée pour l\u{2019}instant."),
     }
+    AttachButton "attach.button" {
+        en: t("Attach files\u{2026}"),
+        fr: t("Joindre des fichiers\u{2026}"),
+    }
+    AttachDrop "attach.drop" {
+        en: t("Drop to attach"),
+        fr: t("Déposer pour joindre"),
+    }
+    AttachAdding "attach.adding" {
+        en: t("Adding\u{2026} {percent}"),
+        fr: t("Ajout\u{2026} {percent}"),
+    }
+    AttachPastedName "attach.pasted_name" {
+        en: t("Pasted image {date} {time}.png"),
+        fr: t("Image collée {date} {time}.png"),
+    }
+    AttachTooLarge "attach.too_large" {
+        en: t("{name} is {size}; the limit is 25 MB per file."),
+        fr: t("{name} pèse {size}\u{202f}; la limite est de 25\u{202f}Mo par fichier."),
+    }
+    AttachTooMany "attach.too_many" {
+        en: t("20 files is the most a note, an entry or a description can hold."),
+        fr: t("Une note, une entrée ou une description contient 20 fichiers au plus."),
+    }
+    AttachReadFailed "attach.read_failed" {
+        en: t("Could not read {name}. It may have moved or be in use."),
+        fr: t("Impossible de lire {name}. Il a peut-être été déplacé, ou il est utilisé."),
+    }
+    AttachLargeNotice "attach.large_notice" {
+        en: t("Files over 10 MB are also kept in every snapshot."),
+        fr: t("Les fichiers de plus de 10\u{202f}Mo sont aussi conservés dans chaque instantané."),
+    }
+    AttachCount "attach.count" {
+        en: p("{n} file", "{n} files"),
+        fr: p("{n} fichier", "{n} fichiers"),
+    }
+    AttachView "attach.view" {
+        en: t("View"),
+        fr: t("Afficher"),
+    }
+    AttachSaveAs "attach.save_as" {
+        en: t("Save as\u{2026}"),
+        fr: t("Enregistrer sous\u{2026}"),
+    }
+    AttachSaved "attach.saved" {
+        en: t("Saved to {folder}."),
+        fr: t("Enregistré dans {folder}."),
+    }
+    AttachShowInFolder "attach.show_in_folder" {
+        en: t("Show in folder"),
+        fr: t("Afficher dans le dossier"),
+    }
+    AttachSaveFailed "attach.save_failed" {
+        en: t("Could not save {name}. {reason}"),
+        fr: t("Impossible d\u{2019}enregistrer {name}. {reason}"),
+    }
+    AttachRemove "attach.remove" {
+        en: t("Remove"),
+        fr: t("Retirer"),
+    }
+    AttachRemoved "attach.removed" {
+        en: t("File removed."),
+        fr: t("Fichier retiré."),
+    }
+    AttachRestored "attach.restored" {
+        en: t("File restored."),
+        fr: t("Fichier restauré."),
+    }
+    AttachMovedTo "attach.moved_to" {
+        en: t("Moved to {id}"),
+        fr: t("Déplacés vers {id}"),
+    }
+    AttachPosition "attach.position" {
+        en: t("{i} of {n}"),
+        fr: t("{i} sur {n}"),
+    }
+    AttachPrev "attach.prev" {
+        en: t("Previous file"),
+        fr: t("Fichier précédent"),
+    }
+    AttachNext "attach.next" {
+        en: t("Next file"),
+        fr: t("Fichier suivant"),
+    }
+    AttachFit "attach.fit" {
+        en: t("Fit"),
+        fr: t("Ajuster"),
+    }
+    AttachActual "attach.actual" {
+        en: t("Actual size"),
+        fr: t("Taille réelle"),
+    }
+    AttachTruncated "attach.truncated" {
+        en: t("First 1 MB shown. Save the file to see all of it."),
+        fr: t("Premier Mo affiché. Enregistrez le fichier pour le voir en entier."),
+    }
     KbNewDocument "kb.new_document" {
         en: t("New document"),
         fr: t("Nouveau document"),
@@ -2705,6 +2801,14 @@ catalogue! {
         en: t("Save as file\u{2026}"),
         fr: t("Enregistrer comme fichier\u{2026}"),
     }
+    CmdAttach "cmd.attach" {
+        en: t("Attach files\u{2026}"),
+        fr: t("Joindre des fichiers\u{2026}"),
+    }
+    CmdAttachmentSave "cmd.attachment_save" {
+        en: t("Save file as\u{2026}"),
+        fr: t("Enregistrer le fichier sous\u{2026}"),
+    }
     CmdExport "cmd.export" {
         en: t("Export\u{2026}"),
         fr: t("Exporter\u{2026}"),
@@ -3353,6 +3457,10 @@ catalogue! {
         en: t("Database"),
         fr: t("Base de données"),
     }
+    SettingsAttachments "settings.attachments" {
+        en: t("Attached files: {size} in {count}"),
+        fr: t("Fichiers joints\u{a0}: {size} dans {count}"),
+    }
     SettingsChat "settings.chat" {
         en: t("Chat"),
         fr: t("Chat"),
@@ -3457,6 +3565,14 @@ catalogue! {
         en: t("The file is not encrypted: anyone who opens it can read these projects."),
         fr: t("Le fichier n\u{2019}est pas chiffré\u{a0}: quiconque l\u{2019}ouvre peut lire ces projets."),
     }
+    ExportIncludeFiles "export.include_files" {
+        en: t("Include attached files ({size})"),
+        fr: t("Inclure les fichiers joints ({size})"),
+    }
+    ExportTooLarge "export.too_large" {
+        en: t("With its files this export would be about {size}, more than an import can read ({limit}). Export without files: their names and sizes stay."),
+        fr: t("Avec ses fichiers, cet export ferait environ {size}, plus qu\u{2019}un import ne peut en lire ({limit}). Exportez sans les fichiers\u{a0}: leurs noms et tailles sont conservés."),
+    }
     ExportPassphrase "export.passphrase" {
         en: t("Protect with a passphrase"),
         fr: t("Protéger par une phrase secrète"),
@@ -3560,6 +3676,10 @@ catalogue! {
     ImportNetworkFolders "import.network_folders" {
         en: p("{n} working folder on a network path was left out. Add it again from its project, epic or topic.", "{n} working folders on a network path were left out. Add each one again from its project, epic or topic."),
         fr: p("{n} dossier de travail sur un chemin réseau a été écarté. Ajoutez-le de nouveau depuis son projet, son epic ou son sujet.", "{n} dossiers de travail sur un chemin réseau ont été écartés. Ajoutez chacun de nouveau depuis son projet, son epic ou son sujet."),
+    }
+    ImportFilesMissing "import.files_missing" {
+        en: p("{n} file was not in the export.", "{n} files were not in the export."),
+        fr: p("{n} fichier n\u{2019}était pas dans l\u{2019}export.", "{n} fichiers n\u{2019}étaient pas dans l\u{2019}export."),
     }
     ImportRecoveredManual "import.recovered_manual" {
         en: t("Commit modes come back as Manual: set them again in each folder\u{2019}s settings."),
