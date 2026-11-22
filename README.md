@@ -107,9 +107,14 @@ Install Rust with [rustup](https://rustup.rs); the toolchain is pinned in
   the Whisper bindings; set `LIBCLANG_PATH` if it is not in `C:\Program Files\LLVM\bin`).
   The encrypted storage builds a vendored OpenSSL, which needs a native Perl such as
   [Strawberry Perl](https://strawberryperl.com); Git's Perl does not work. Point
-  `OPENSSL_SRC_PERL` at its `perl.exe` if it is not first on your PATH.
+  `OPENSSL_SRC_PERL` at its `perl.exe` if it is not first on your PATH. Dictation's
+  Vulkan backend needs the [Vulkan SDK](https://vulkan.lunarg.com/sdk/home) (free; set
+  `VULKAN_SDK`, which its installer does). Keep the target directory on a short path:
+  the shader generator's nested CMake build fails beyond 260 characters.
 - **macOS:** Xcode command line tools and CMake.
-- **Linux:** the packages listed in `scripts/ci/linux-deps.sh` (Ubuntu names).
+- **Linux:** the packages listed in `scripts/ci/linux-deps.sh` (Ubuntu names), and the
+  Vulkan SDK's headers and `glslc`: `scripts/ci/vulkan-sdk.sh <folder>` fetches them,
+  then set `VULKAN_SDK` to that folder (a distribution's `glslc` package works too).
 
 ```sh
 cargo run -p acta-app

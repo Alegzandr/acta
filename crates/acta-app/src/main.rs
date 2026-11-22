@@ -79,6 +79,8 @@ mod updater_window;
 mod user_path;
 mod voice;
 mod voice_worker;
+#[cfg(any(windows, target_os = "linux"))]
+mod vulkan_shim;
 #[cfg(windows)]
 mod webview_build;
 mod when;
