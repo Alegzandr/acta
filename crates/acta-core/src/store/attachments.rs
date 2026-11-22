@@ -39,7 +39,8 @@ pub const LARGE_FILE_BYTES: u64 = 10 * 1024 * 1024;
 pub const MAX_FILES_PER_OWNER: i64 = 20;
 /// Longest stored file name, in characters.
 pub const NAME_MAX: usize = 255;
-/// A blob still being written by another process is left alone this long.
+/// A blob still being written, or just looked up, by another process is
+/// left alone this long.
 const PENDING_GRACE_MS: i64 = 60 * 60 * 1000;
 
 /// Where the bytes of a new attachment come from.
@@ -530,11 +531,56 @@ impl Store {
             return Err(too_large(size));
         }
         let scan = scan(&source)?;
-        // Known content: one short transaction, the row only.
-        let blob = match complete_blob(&self.conn, &scan.hash)? {
-            Some(blob) => blob,
-            None => self.store_blob(&source, &scan, progress)?,
-        };
+        // Content already stored is linked; new content is written as a
+        // pending blob first. Either way the row goes in with one final
+        // transaction that re-reads the blob, so a purge (which deletes
+        // only blobs no row names) can never take it in between: if the
+        // linked blob went meanwhile, the content is stored again.
+        for _ in 0..2 {
+            let pending = match complete_blob(&self.conn, &scan.hash)? {
+                Some(_) => None,
+                None => Some(self.store_pending(&source, &scan, progress)?),
+            };
+            #[cfg(test)]
+            BEFORE_ROW.with(|f| {
+                if let Some(f) = f.borrow_mut().as_mut() {
+                    f(&self.conn)
+                }
+            });
+            let done = self.finish_attach(owner, project, &name, &scan, pending, author);
+            match done {
+                Ok(Some(a)) => {
+                    progress(scan.size, scan.size);
+                    return Ok(a);
+                }
+                Ok(None) => continue,
+                Err(e) => {
+                    if let Some(blob) = pending
+                        && let Ok(tx) = self.write()
+                    {
+                        // Best effort; the purge removes what this leaves.
+                        let _ = drop_blob(&tx, blob).map(|_| tx.commit());
+                    }
+                    return Err(e);
+                }
+            }
+        }
+        Err(changed())
+    }
+
+    /// The row, in one transaction with the blob it names: the stored blob
+    /// with this hash if there is one (a pending blob of ours is then
+    /// dropped), else ours, completed here. `None` when there is neither
+    /// (the linked blob was purged since it was looked up).
+    fn finish_attach(
+        &mut self,
+        owner: AttachOwner,
+        project: ProjectId,
+        name: &str,
+        scan: &Scan,
+        pending: Option<i64>,
+        author: Author,
+    ) -> Result<Option<Attachment>> {
         let tx = self.write()?;
         owner_project(&tx, owner)?;
         if live_count(&tx, owner)? >= MAX_FILES_PER_OWNER {
@@ -542,17 +588,31 @@ impl Store {
                 limit: MAX_FILES_PER_OWNER,
             });
         }
-        let id = insert_row(&tx, owner, project, blob, &name, author)?;
+        let blob = match (complete_blob(&tx, &scan.hash)?, pending) {
+            (Some(theirs), Some(ours)) => {
+                drop_blob(&tx, ours)?;
+                theirs
+            }
+            (Some(theirs), None) => theirs,
+            (None, Some(ours)) => {
+                tx.execute(
+                    "UPDATE attachment_blobs SET hash = ?2, complete = 1 WHERE id = ?1",
+                    params![ours, scan.hash],
+                )?;
+                ours
+            }
+            (None, None) => return Ok(None),
+        };
+        let id = insert_row(&tx, owner, project, blob, name, author)?;
         let a = read_attachment_row(&tx, id)?;
         tx.commit()?;
-        progress(scan.size, scan.size);
-        Ok(a)
+        Ok(Some(a))
     }
 
     /// The second pass: chunks written one transaction each under a
-    /// pending hash, then the blob completed (or, if another process
-    /// stored the same bytes meanwhile, dropped for theirs).
-    fn store_blob(
+    /// pending hash. The blob stays pending (no purge touches it for an
+    /// hour) until [`Store::finish_attach`] completes it with its row.
+    fn store_pending(
         &mut self,
         source: &AttachSource,
         scan: &Scan,
@@ -579,32 +639,13 @@ impl Store {
             tx.commit()?;
             blob
         };
-        let written = self.write_chunks(blob, source, scan, progress);
-        let finished = written.and_then(|()| {
-            let tx = self.write()?;
-            let id = match complete_blob(&tx, &scan.hash)? {
-                Some(theirs) => {
-                    drop_blob(&tx, blob)?;
-                    theirs
-                }
-                None => {
-                    tx.execute(
-                        "UPDATE attachment_blobs SET hash = ?2, complete = 1 WHERE id = ?1",
-                        params![blob, scan.hash],
-                    )?;
-                    blob
-                }
-            };
-            tx.commit()?;
-            Ok(id)
-        });
-        if finished.is_err() {
-            // Best effort; the purge removes what a failure leaves.
+        if let Err(e) = self.write_chunks(blob, source, scan, progress) {
             if let Ok(tx) = self.write() {
                 let _ = drop_blob(&tx, blob).map(|_| tx.commit());
             }
+            return Err(e);
         }
-        finished
+        Ok(blob)
     }
 
     fn write_chunks(
@@ -709,6 +750,20 @@ impl Store {
         Ok(rows)
     }
 
+    /// The content hash of a live attachment: what caches of its derived
+    /// text are keyed by (never shown).
+    pub fn attachment_hash(&self, id: AttachmentId) -> Result<String> {
+        self.conn
+            .query_row(
+                "SELECT b.hash FROM attachments a JOIN attachment_blobs b ON b.id = a.blob_id
+                 WHERE a.id = ?1 AND a.deleted_at IS NULL AND b.complete = 1",
+                [id.0],
+                |r| r.get(0),
+            )
+            .optional()?
+            .ok_or_else(|| Error::NotFound(id.to_string()))
+    }
+
     /// The stored PNG thumbnail of an image attachment.
     pub fn attachment_thumbnail(&self, id: AttachmentId) -> Result<Option<Vec<u8>>> {
         self.conn
@@ -797,9 +852,11 @@ impl Store {
             "DELETE FROM attachments WHERE deleted_at IS NOT NULL AND deleted_at <= ?1",
             [cutoff],
         )? as i64;
+        // Blobs younger than the grace stay, complete or not: one may be
+        // between its lookup and its row in another process.
         let orphans = "SELECT id FROM attachment_blobs b
              WHERE NOT EXISTS (SELECT 1 FROM attachments a WHERE a.blob_id = b.id)
-               AND (b.complete = 1 OR b.created_at <= ?1)";
+               AND b.created_at <= ?1";
         let (blobs, bytes): (i64, i64) = tx.query_row(
             &format!(
                 "SELECT count(*), coalesce(sum(size), 0) FROM attachment_blobs WHERE id IN ({orphans})"
@@ -841,4 +898,15 @@ fn changed() -> Error {
 /// The SHA-256 of `bytes`, lowercase hex, as blobs are keyed.
 pub(crate) fn hash_of(bytes: &[u8]) -> String {
     hex(&Sha256::digest(bytes))
+}
+
+#[cfg(test)]
+pub(crate) type RowHook = Option<Box<dyn FnMut(&Connection)>>;
+
+#[cfg(test)]
+thread_local! {
+    /// Runs between the blob lookup and the row's transaction (tests of
+    /// the attach and purge race).
+    pub(crate) static BEFORE_ROW: std::cell::RefCell<RowHook> =
+        std::cell::RefCell::new(None);
 }

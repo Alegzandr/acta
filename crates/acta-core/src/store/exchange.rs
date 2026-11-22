@@ -494,6 +494,22 @@ fn xreport(r: &rusqlite::Row<'_>, at: usize) -> rusqlite::Result<XReport> {
     })
 }
 
+impl Store {
+    /// Bytes of the distinct contents an export would carry.
+    fn export_files_bytes(&self, project: Option<ProjectId>) -> Result<u64> {
+        let only = project.map_or(String::new(), |p| format!(" WHERE project_id = {}", p.0));
+        let n: i64 = self.conn.query_row(
+            &format!(
+                "SELECT coalesce(sum(size), 0) FROM attachment_blobs
+                 WHERE complete = 1 AND id IN (SELECT blob_id FROM attachments{only})"
+            ),
+            [],
+            |r| r.get(0),
+        )?;
+        Ok(n.max(0) as u64)
+    }
+}
+
 /// The blobs the exported attachments name, each once, sorted by hash;
 /// the content read chunk by chunk.
 fn export_blobs(
@@ -566,11 +582,34 @@ impl Store {
     /// [`Store::export`]; with `include_files` false, attachments keep
     /// their names and sizes and the blobs carry no content (the export
     /// dialog's checkbox, ADR 0012, 9).
+    ///
+    /// With files, an export an import could not read back (over
+    /// [`MAX_IMPORT_BYTES`]) is refused with [`Error::ExportTooLarge`]:
+    /// export without files then (ADR 0012, 9).
     pub fn export_with(
         &self,
         project: Option<ProjectId>,
         include_files: bool,
     ) -> Result<ExportFile> {
+        self.export_within(project, include_files, MAX_IMPORT_BYTES)
+    }
+
+    /// [`Store::export_with`] against a given import limit (tests).
+    pub(crate) fn export_within(
+        &self,
+        project: Option<ProjectId>,
+        include_files: bool,
+        limit: u64,
+    ) -> Result<ExportFile> {
+        if include_files {
+            let bytes = self.export_files_bytes(project)?;
+            // Base64 is 4 characters per 3 bytes; the records around it
+            // get a 64th of the limit.
+            let size = bytes.div_ceil(3) * 4;
+            if size + limit / 64 > limit {
+                return Err(Error::ExportTooLarge { size, limit });
+            }
+        }
         let project_uuid = match project {
             Some(p) => Some(
                 self.conn
@@ -1798,9 +1837,30 @@ fn merge_attachments(
         let id = match (local, &b.content) {
             (Some(id), _) => id,
             (None, Some(text)) => {
+                // Over the attachment limit, or longer than its own size
+                // says: refused before anything is decoded.
+                let max = super::attachments::MAX_FILE_BYTES;
+                if b.size < 0
+                    || b.size as u64 > max
+                    || text.len() as u64 > (b.size as u64).div_ceil(3) * 4 + 4
+                {
+                    return Err(Error::Invalid(format!(
+                        "blob {} is over the {} limit for a file, or larger than its size says",
+                        b.hash,
+                        crate::files::size_label(max as i64)
+                    )));
+                }
                 let bytes = base64::engine::general_purpose::STANDARD
                     .decode(text)
                     .map_err(|_| Error::Invalid(format!("blob {} is not valid base64", b.hash)))?;
+                if bytes.len() as i64 != b.size {
+                    return Err(Error::Invalid(format!(
+                        "blob {} has {} bytes, not the {} it declares",
+                        b.hash,
+                        bytes.len(),
+                        b.size
+                    )));
+                }
                 if super::attachments::hash_of(&bytes) != b.hash {
                     return Err(Error::Invalid(format!(
                         "blob {} does not match its hash",

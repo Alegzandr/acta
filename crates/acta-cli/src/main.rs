@@ -273,6 +273,19 @@ enum Command {
         #[arg(long)]
         no_files: bool,
     },
+    /// Internal: the text of some pages of an attached PDF, as JSON. Run
+    /// by `acta mcp` and `acta attachment` as a child with a time, memory
+    /// and output limit, so a malformed file never reaches the server.
+    #[command(hide = true)]
+    PdfText {
+        id: String,
+        #[arg(long, default_value_t = 1)]
+        from: u32,
+        #[arg(long, default_value_t = 1)]
+        to: u32,
+        #[arg(long, default_value_t = 8_000)]
+        max_chars: usize,
+    },
     /// Read one attached file (A-n): its text, a PDF's text, or what an
     /// image is (the picture itself reaches Claude through the MCP tool)
     Attachment {
@@ -465,6 +478,14 @@ fn finish(r: Result<String, String>) -> ExitCode {
 
 fn run(command: Command) -> ExitCode {
     let opener = Opener::from_env();
+    // PDFs are parsed by a child of this same executable (`pdf-text`).
+    if matches!(
+        command,
+        Command::Mcp { server: None } | Command::Attachment { .. }
+    ) && let Ok(exe) = std::env::current_exe()
+    {
+        acta_core::agent::set_pdf_worker(exe);
+    }
     match command {
         Command::Version => {
             println!("{}", version_line());
@@ -509,6 +530,12 @@ fn run(command: Command) -> ExitCode {
                 )
             }
         }
+        Command::PdfText {
+            id,
+            from,
+            to,
+            max_chars,
+        } => finish(pdf_text(&opener, &id, from, to, max_chars)),
         Command::Statusline => {
             let input = statusline::read_stdin();
             let data_dir = opener.data_dir();
@@ -519,6 +546,32 @@ fn run(command: Command) -> ExitCode {
             ExitCode::SUCCESS
         }
         other => finish(with_store(&opener, other)),
+    }
+}
+
+/// `acta pdf-text`: the child that parses one attached PDF. It reads the
+/// file from the store itself (only an id is on its command line) and
+/// prints the pages as JSON on stdout.
+fn pdf_text(
+    opener: &Opener,
+    id: &str,
+    from: u32,
+    to: u32,
+    max_chars: usize,
+) -> Result<String, String> {
+    let store = opener.open()?;
+    let id = acta_core::model::AttachmentId::parse(id).ok_or("not a file id")?;
+    let att = store.attachment(id).map_err(|e| e.to_string())?;
+    if att.kind != acta_core::model::FileKind::Pdf {
+        return Err("not a PDF".into());
+    }
+    let bytes = store
+        .attachment_prefix(id, att.size.max(0) as usize)
+        .map_err(|e| e.to_string())?;
+    drop(store);
+    match acta_core::files::pdf_pages(&bytes, from, to, max_chars) {
+        acta_core::files::PdfText::Pages(p) => serde_json::to_string(&p).map_err(|e| e.to_string()),
+        acta_core::files::PdfText::Unreadable => Err("unreadable".into()),
     }
 }
 
@@ -633,7 +686,13 @@ fn run_setup(
     } else if remove {
         s.remove()
     } else {
-        s.install_with(!no_allow, !no_statusline)
+        let steps = s.install_with(!no_allow, !no_statusline);
+        // The one-time switch to incremental auto-vacuum (ADR 0012, 4), if
+        // the app has not done it yet; quiet, and skipped when busy.
+        if let Some(Ok(mut store)) = opener.open_existing() {
+            let _ = store.enable_incremental_vacuum();
+        }
+        steps
     };
     if check {
         steps.push(link_index_step(opener));
@@ -1066,6 +1125,7 @@ fn run_on(store: &mut acta_core::Store, command: Command) -> Result<String, Stri
         | Command::Import { .. }
         | Command::Snapshot { .. }
         | Command::Sessions
+        | Command::PdfText { .. }
         | Command::Statusline => Err("handled elsewhere".into()),
     }
 }

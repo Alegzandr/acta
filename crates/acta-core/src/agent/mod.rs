@@ -13,7 +13,7 @@ pub mod render;
 pub mod session;
 pub mod tools;
 
-pub use attach::{Answer, AttachReply};
+pub use attach::{Answer, AttachReply, Step, set_pdf_worker};
 pub use session::{Launch, Session, parse_owner};
 pub use tools::{Agent, INSTRUCTIONS, NOT_LINKED, PRE_COMPACT, Reply, hook_json};
 

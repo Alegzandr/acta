@@ -188,6 +188,12 @@ impl Store {
     /// this on a background thread after start and once a day; hooks and the
     /// CLI do not, so they stay fast.
     pub fn snapshot_if_due(&mut self) -> Result<Option<Snapshot>> {
+        // The one-time switch to incremental auto-vacuum after the schema 6
+        // upgrade: here, so only the app runs it (see
+        // [`Store::enable_incremental_vacuum`]).
+        if self.writable {
+            self.enable_incremental_vacuum()?;
+        }
         let all = snapshots::list(&self.data_dir)?;
         let now = crate::time::now_ms();
         if snapshots::daily_due(&all, now) {
@@ -199,6 +205,18 @@ impl Store {
         } else {
             Ok(None)
         }
+    }
+
+    /// Switches a database upgraded to schema 6 to incremental
+    /// auto-vacuum with one `VACUUM` (ADR 0012, 4). The app's background
+    /// maintenance and `acta setup` call it; it gives up at once when
+    /// another connection is busy (`Ok(false)`), to be tried later.
+    pub fn enable_incremental_vacuum(&mut self) -> Result<bool> {
+        self.check_writable()?;
+        if !self.conn.is_autocommit() {
+            return Ok(false);
+        }
+        Ok(db::enable_incremental_vacuum(&self.conn)?)
     }
 
     pub fn snapshots(&self) -> Result<Vec<Snapshot>> {

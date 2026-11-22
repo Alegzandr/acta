@@ -18,8 +18,12 @@ pub const MODEL_FULL_PX: u32 = 1_568;
 /// The largest image Acta decodes, per side: a decompression bomb stops
 /// here instead of filling memory.
 const MAX_SIDE: u32 = 16_384;
-/// The most memory one decode may take.
+/// The most memory one decode may take: when a file is added (the app,
+/// off the UI thread).
 const MAX_ALLOC: u64 = 512 * 1024 * 1024;
+/// The most memory one decode for the agent may take (`acta mcp` stays
+/// small; a larger image is described in one line instead).
+pub const MODEL_MAX_ALLOC: u64 = 128 * 1024 * 1024;
 
 pub const MEDIA_PNG: &str = "image/png";
 pub const MEDIA_JPEG: &str = "image/jpeg";
@@ -75,15 +79,24 @@ pub fn kind_of(media_type: &str) -> FileKind {
 /// Decodes an image with Acta's limits and turns it the way its EXIF
 /// orientation says, so pixel sizes and thumbnails match what people see.
 pub fn decode(bytes: &[u8]) -> Option<DynamicImage> {
+    decode_within(bytes, MAX_ALLOC)
+}
+
+/// [`decode`] with at most `max_alloc` bytes for the pixels.
+pub fn decode_within(bytes: &[u8], max_alloc: u64) -> Option<DynamicImage> {
     let mut reader = ImageReader::new(Cursor::new(bytes))
         .with_guessed_format()
         .ok()?;
     let mut limits = Limits::default();
     limits.max_image_width = Some(MAX_SIDE);
     limits.max_image_height = Some(MAX_SIDE);
-    limits.max_alloc = Some(MAX_ALLOC);
+    limits.max_alloc = Some(max_alloc);
     reader.limits(limits);
     let mut decoder = reader.into_decoder().ok()?;
+    // The pixels must fit the allowance (the decoders do not all check it).
+    if decoder.total_bytes() > max_alloc {
+        return None;
+    }
     let orientation = decoder.orientation().ok();
     let mut img = DynamicImage::from_decoder(decoder).ok()?;
     if let Some(o) = orientation {
@@ -150,7 +163,7 @@ pub struct ModelImage {
 }
 
 pub fn for_model(bytes: &[u8], source_type: &str, max: u32) -> Option<ModelImage> {
-    let img = fit(&decode(bytes)?, max);
+    let img = fit(&decode_within(bytes, MODEL_MAX_ALLOC)?, max);
     let photo = matches!(source_type, "image/jpeg" | "image/webp");
     let mut out = Vec::new();
     let media_type = if photo || !img.color().has_alpha() && png_too_big(&img) {
@@ -178,21 +191,58 @@ fn png_too_big(img: &DynamicImage) -> bool {
         .map_or(true, |_| probe.len() > 1_500_000)
 }
 
+/// Text of some pages of a PDF.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PdfPages {
+    /// Pages in the document.
+    pub count: u32,
+    /// `(page number, text)`, in order, from the first page asked.
+    pub pages: Vec<(u32, String)>,
+}
+
 /// What a PDF holds as text.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PdfText {
-    /// One string per page.
-    Pages(Vec<String>),
-    /// The file did not parse (damaged, encrypted, or not really a PDF).
+    Pages(PdfPages),
+    /// The file did not parse (damaged, encrypted, or not really a PDF),
+    /// or its parser ran out of time or memory.
     Unreadable,
 }
 
-/// The text of every page, by a pure-Rust parser (pdf-extract, MIT). The
-/// parser can panic on malformed files; that is caught and reported as
-/// unreadable. It writes nothing to standard output.
-pub fn pdf_text(bytes: &[u8]) -> PdfText {
-    let run = std::panic::catch_unwind(|| pdf_extract::extract_text_from_mem_by_pages(bytes));
+/// The text of pages `from..=to` (1-based), stopping once `max_chars`
+/// characters are collected; a page is cut at `max_chars`. Pure Rust
+/// (pdf-extract, MIT). Runs in the `acta pdf-text` child process, so a
+/// malformed file can only cost that process ([`crate::agent::attach`]
+/// gives it a time, memory and output limit). Panics are caught.
+pub fn pdf_pages(bytes: &[u8], from: u32, to: u32, max_chars: usize) -> PdfText {
+    let run = std::panic::catch_unwind(|| -> Option<PdfPages> {
+        let doc = pdf_extract::Document::load_mem(bytes).ok()?;
+        if doc.is_encrypted() {
+            return None;
+        }
+        let count = doc.get_pages().len() as u32;
+        let mut pages = Vec::new();
+        let mut used = 0usize;
+        for p in from.max(1)..=to.min(count) {
+            let mut text = String::new();
+            {
+                let mut out = pdf_extract::PlainTextOutput::new(&mut text);
+                // A page that fails reads as empty; the others still count.
+                if pdf_extract::output_doc_page(&doc, &mut out, p).is_err() {
+                    text.clear();
+                }
+            }
+            let text: String = text.chars().take(max_chars).collect();
+            used += text.chars().count();
+            pages.push((p, text));
+            if used >= max_chars {
+                break;
+            }
+        }
+        Some(PdfPages { count, pages })
+    });
     match run {
-        Ok(Ok(pages)) => PdfText::Pages(pages),
+        Ok(Some(p)) => PdfText::Pages(p),
         _ => PdfText::Unreadable,
     }
 }
@@ -324,6 +374,17 @@ mod tests {
 
     #[test]
     fn garbage_pdfs_are_unreadable_not_a_panic() {
-        assert!(matches!(pdf_text(b"%PDF-1.4 garbage"), PdfText::Unreadable));
+        assert_eq!(
+            pdf_pages(b"%PDF-1.4 garbage", 1, 5, 100),
+            PdfText::Unreadable
+        );
+    }
+
+    #[test]
+    fn agent_decodes_stop_at_their_memory_allowance() {
+        // The allowance is checked before the pixels are allocated.
+        let img = png(1000, 1000);
+        assert!(decode_within(&img, MODEL_MAX_ALLOC).is_some());
+        assert!(decode_within(&img, 1024 * 1024).is_none());
     }
 }

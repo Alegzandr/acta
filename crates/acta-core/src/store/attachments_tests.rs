@@ -258,6 +258,10 @@ fn purge_deletes_expired_rows_then_blobs_no_row_names_and_returns_the_pages() {
     let now = crate::time::now_ms();
     // Nothing is over 30 days yet.
     assert_eq!(s.purge_attachments(now).unwrap(), Purged::default());
+    // Blobs stored now are within the grace; these were stored long ago.
+    s.conn
+        .execute("UPDATE attachment_blobs SET created_at = 0", [])
+        .unwrap();
     // `a` and `c` expire; `b` (same content as `a`) is still in the trash.
     let old = now - TRASH_RETENTION_MS - 1;
     s.conn
@@ -537,6 +541,10 @@ fn the_migration_snapshot_restores_and_the_upgrade_sets_incremental_vacuum() {
     // A schema 5 database (0.5.0) with a project in it.
     let p = {
         let mut old = Store::open_with(&config, &schema::MIGRATIONS[..5]).unwrap();
+        // 0.5.0 made databases without auto-vacuum.
+        old.conn
+            .execute_batch("PRAGMA auto_vacuum = NONE; VACUUM;")
+            .unwrap();
         assert_eq!(crate::db::auto_vacuum_mode(&old.conn).unwrap(), 0);
         old.create_project("Alexandre's project", "", H).unwrap()
     };
@@ -546,6 +554,23 @@ fn the_migration_snapshot_restores_and_the_upgrade_sets_incremental_vacuum() {
         crate::db::user_version(&s.conn).unwrap(),
         schema::SCHEMA_VERSION
     );
+    // Opening (as a hook, `acta mcp` or the CLI do) never runs the VACUUM.
+    assert_eq!(crate::db::auto_vacuum_mode(&s.conn).unwrap(), 0);
+    // While another connection writes, the switch gives up at once.
+    {
+        let other = crate::db::connect(
+            &s.db_path(),
+            &s.key,
+            crate::db::Mode::Live { create: false },
+        )
+        .unwrap();
+        other.execute_batch("BEGIN IMMEDIATE;").unwrap();
+        let started = std::time::Instant::now();
+        assert!(!s.enable_incremental_vacuum().unwrap());
+        assert!(started.elapsed() < std::time::Duration::from_secs(3));
+        other.execute_batch("COMMIT").unwrap();
+    }
+    assert!(s.enable_incremental_vacuum().unwrap());
     assert_eq!(crate::db::auto_vacuum_mode(&s.conn).unwrap(), 2);
     let snap = s
         .snapshots()
@@ -564,8 +589,106 @@ fn the_migration_snapshot_restores_and_the_upgrade_sets_incremental_vacuum() {
         crate::db::user_version(&s.conn).unwrap(),
         schema::SCHEMA_VERSION
     );
+    // The app's daily maintenance switches it again.
+    assert_eq!(crate::db::auto_vacuum_mode(&s.conn).unwrap(), 0);
+    s.snapshot_if_due().unwrap();
     assert_eq!(crate::db::auto_vacuum_mode(&s.conn).unwrap(), 2);
     assert_eq!(count(&s, "SELECT count(*) FROM attachments"), 0);
     let n = s.add_note(p, "Files work after the restore", H).unwrap();
     add(&mut s, AttachOwner::Note(n), "again.txt", b"again".to_vec());
+}
+
+#[test]
+fn a_purge_between_lookup_and_row_never_leaves_a_row_without_content() {
+    let (mut ts, p, _) = setup();
+    let s = &mut ts.store;
+    let n = s.add_note(p, "Race", H).unwrap();
+    let data = bytes(13, CHUNK_BYTES + 5);
+    let a = add(s, AttachOwner::Note(n), "first.bin", data.clone());
+    // The row goes (an expired trash row, deleted by a purge); its blob is
+    // an orphan, young, so the purge keeps it for now.
+    s.conn
+        .execute("DELETE FROM attachments WHERE id = ?1", [a.id.0])
+        .unwrap();
+    let now = crate::time::now_ms();
+    assert_eq!(
+        s.purge_attachments(now).unwrap().blobs,
+        0,
+        "within the grace"
+    );
+    // Another process purges it between this attach's lookup and its row.
+    let ran = std::rc::Rc::new(std::cell::Cell::new(0));
+    let seen = ran.clone();
+    super::attachments::BEFORE_ROW.with(|h| {
+        *h.borrow_mut() = Some(Box::new(move |conn: &rusqlite::Connection| {
+            if seen.get() == 0 {
+                conn.execute_batch("DELETE FROM attachment_chunks; DELETE FROM attachment_blobs;")
+                    .unwrap();
+            }
+            seen.set(seen.get() + 1);
+        }));
+    });
+    let again = add(s, AttachOwner::Note(n), "again.bin", data.clone());
+    super::attachments::BEFORE_ROW.with(|h| *h.borrow_mut() = None);
+    assert_eq!(ran.get(), 2, "looked up, lost it, stored it again");
+    assert_eq!(content(s, &again), data);
+    assert_eq!(count(s, "SELECT count(*) FROM attachment_blobs"), 1);
+    // An hour later an orphan goes.
+    s.conn
+        .execute("DELETE FROM attachments WHERE id = ?1", [again.id.0])
+        .unwrap();
+    assert_eq!(s.purge_attachments(now + 2 * 3_600_000).unwrap().blobs, 1);
+}
+
+#[test]
+fn an_export_an_import_could_not_read_is_refused_unless_without_files() {
+    let (mut ts, p, _) = setup();
+    let s = &mut ts.store;
+    let n = s.add_note(p, "Big", H).unwrap();
+    add(s, AttachOwner::Note(n), "big.bin", bytes(3, 30_000));
+    let e = s.export_within(None, true, 20_000).unwrap_err();
+    assert!(
+        matches!(
+            e,
+            Error::ExportTooLarge {
+                size: 40_000,
+                limit: 20_000
+            }
+        ),
+        "{e}"
+    );
+    assert!(e.to_string().contains("--no-files"), "{e}");
+    let light = s.export_within(None, false, 20_000).unwrap();
+    assert_eq!(light.attachments.len(), 1);
+    assert!(s.export_within(None, true, 1_000_000).is_ok());
+}
+
+#[test]
+fn imported_blobs_over_the_limit_or_unlike_their_size_are_refused() {
+    use base64::Engine as _;
+    let (mut ts, p, _) = setup();
+    let s = &mut ts.store;
+    let n = s.add_note(p, "Blob checks", H).unwrap();
+    add(s, AttachOwner::Note(n), "x.bin", bytes(5, 3_000));
+    let good = s.export(None).unwrap();
+    let import = |f: &ExportFile| fresh().store.import(f, false);
+    assert!(import(&good).is_ok());
+    // Declared size not the decoded length.
+    let mut f = good.clone();
+    f.blobs[0].size -= 100;
+    assert!(
+        import(&f)
+            .unwrap_err()
+            .to_string()
+            .contains("larger than its size says")
+    );
+    let mut f = good.clone();
+    f.blobs[0].size += 3;
+    let e = import(&f).unwrap_err().to_string();
+    assert!(e.contains("not the"), "{e}");
+    // Over 25 MB: refused before decoding.
+    let mut f = good.clone();
+    f.blobs[0].size = MAX_FILE_BYTES as i64 + 1;
+    f.blobs[0].content = Some(base64::engine::general_purpose::STANDARD.encode(vec![0u8; 3]));
+    assert!(import(&f).unwrap_err().to_string().contains("limit"));
 }

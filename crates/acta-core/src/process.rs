@@ -21,15 +21,41 @@ pub struct Bounded {
 /// process group elsewhere) and reaped. On Windows it runs with no console
 /// window.
 pub fn output_within(command: &mut Command, limit: Duration) -> io::Result<Option<Bounded>> {
+    output_limited(
+        command,
+        Limits {
+            time: limit,
+            memory: None,
+            output: None,
+        },
+    )
+}
+
+/// What a bounded run may use.
+#[derive(Clone, Copy, Debug)]
+pub struct Limits {
+    pub time: Duration,
+    /// Memory the whole tree may commit, in bytes (a job object limit on
+    /// Windows, `RLIMIT_AS` on Unix). Over it, allocations fail and the
+    /// child ends with an error.
+    pub memory: Option<u64>,
+    /// Bytes of stdout and of stderr kept; a child writing more is killed
+    /// and the run gives `None`, as a timeout does.
+    pub output: Option<usize>,
+}
+
+/// [`output_within`] with a memory cap and an output cap as well.
+pub fn output_limited(command: &mut Command, limits: Limits) -> io::Result<Option<Bounded>> {
     command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let (mut child, tree) = spawn_in_tree(command)?;
+    let (mut child, tree) = spawn_limited(command, limits.memory)?;
     // The pipes are drained on their own threads, so a chatty child never
     // blocks on a full pipe while we wait.
-    let stdout = drain(child.stdout.take());
-    let stderr = drain(child.stderr.take());
+    let stdout = drain(child.stdout.take(), limits.output);
+    let stderr = drain(child.stderr.take(), limits.output);
+    let limit = limits.time;
     let deadline = Instant::now() + limit;
     let killed = |child: &mut Child| {
         tree.kill(child);
@@ -52,10 +78,10 @@ pub fn output_within(command: &mut Command, limit: Duration) -> io::Result<Optio
             .saturating_duration_since(Instant::now())
             .max(Duration::from_millis(50))
     };
-    let Ok(out) = stdout.recv_timeout(left()) else {
+    let Ok(Some(out)) = stdout.recv_timeout(left()) else {
         return killed(&mut child);
     };
-    let Ok(err) = stderr.recv_timeout(left()) else {
+    let Ok(Some(err)) = stderr.recv_timeout(left()) else {
         return killed(&mut child);
     };
     Ok(Some(Bounded {
@@ -65,14 +91,31 @@ pub fn output_within(command: &mut Command, limit: Duration) -> io::Result<Optio
     }))
 }
 
-fn drain<R: Read + Send + 'static>(pipe: Option<R>) -> mpsc::Receiver<Vec<u8>> {
+/// Reads a pipe to its end on its own thread. `None` when it gave more
+/// than `cap` bytes: the reading stops there.
+fn drain<R: Read + Send + 'static>(
+    pipe: Option<R>,
+    cap: Option<usize>,
+) -> mpsc::Receiver<Option<Vec<u8>>> {
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
         let mut out = Vec::new();
-        if let Some(mut pipe) = pipe {
-            let _ = pipe.read_to_end(&mut out);
+        if let Some(pipe) = pipe {
+            match cap {
+                Some(cap) => {
+                    let _ = pipe.take(cap as u64 + 1).read_to_end(&mut out);
+                    if out.len() > cap {
+                        let _ = tx.send(None);
+                        return;
+                    }
+                }
+                None => {
+                    let mut pipe = pipe;
+                    let _ = pipe.read_to_end(&mut out);
+                }
+            }
         }
-        let _ = tx.send(out);
+        let _ = tx.send(Some(out));
     });
     rx
 }
@@ -90,6 +133,11 @@ pub use tree::Tree;
 /// left running (a credential helper, git's fsmonitor daemon) does not
 /// outlive the run.
 pub fn spawn_in_tree(command: &mut Command) -> io::Result<(Child, Tree)> {
+    spawn_limited(command, None)
+}
+
+/// [`spawn_in_tree`], with the memory the tree may commit capped.
+fn spawn_limited(command: &mut Command, memory: Option<u64>) -> io::Result<(Child, Tree)> {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt as _;
@@ -97,9 +145,15 @@ pub fn spawn_in_tree(command: &mut Command) -> io::Result<(Child, Tree)> {
         const CREATE_SUSPENDED: u32 = 0x0000_0004;
         command.creation_flags(CREATE_NO_WINDOW | CREATE_SUSPENDED);
         let mut child = command.spawn()?;
-        let (tree, resumed) = Tree::of(&child);
-        if resumed {
+        let (tree, resumed) = Tree::of(&child, memory);
+        if resumed && (memory.is_none() || tree.is_job()) {
             return Ok((child, tree));
+        }
+        // A capped run never goes on without its cap.
+        if memory.is_some() {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(io::Error::other("could not limit the child's memory"));
         }
         let _ = child.kill();
         let _ = child.wait();
@@ -111,6 +165,22 @@ pub fn spawn_in_tree(command: &mut Command) -> io::Result<(Child, Tree)> {
     {
         use std::os::unix::process::CommandExt as _;
         command.process_group(0);
+        if let Some(bytes) = memory {
+            // SAFETY: `setrlimit` is async-signal-safe; nothing else runs
+            // between fork and exec here.
+            unsafe {
+                command.pre_exec(move || {
+                    let lim = libc::rlimit {
+                        rlim_cur: bytes as libc::rlim_t,
+                        rlim_max: bytes as libc::rlim_t,
+                    };
+                    if libc::setrlimit(libc::RLIMIT_AS, &lim) != 0 {
+                        return Err(io::Error::last_os_error());
+                    }
+                    Ok(())
+                });
+            }
+        }
         let child = command.spawn()?;
         let tree = Tree::of(&child);
         Ok((child, tree))
@@ -134,12 +204,16 @@ mod tree {
         /// A job object holding the child (and everything it starts),
         /// closed with the job (`KILL_ON_JOB_CLOSE`), and whether the
         /// suspended child was resumed.
-        pub(super) fn of(child: &Child) -> (Tree, bool) {
+        pub(super) fn is_job(&self) -> bool {
+            self.0.is_some()
+        }
+
+        pub(super) fn of(child: &Child, memory: Option<u64>) -> (Tree, bool) {
             use std::os::windows::io::AsRawHandle as _;
             use windows_sys::Win32::System::JobObjects::{
-                AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-                JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
-                SetInformationJobObject,
+                AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_JOB_MEMORY,
+                JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+                JobObjectExtendedLimitInformation, SetInformationJobObject,
             };
             // SAFETY: plain Win32 calls; the job handle is owned by `Tree`
             // and closed in `Drop` (or here when it could not take the
@@ -151,6 +225,10 @@ mod tree {
                 } else {
                     let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
                     info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+                    if let Some(bytes) = memory {
+                        info.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_JOB_MEMORY;
+                        info.JobMemoryLimit = bytes as usize;
+                    }
                     let limited = SetInformationJobObject(
                         job,
                         JobObjectExtendedLimitInformation,
@@ -297,6 +375,58 @@ mod tests {
             "{:?}",
             started.elapsed()
         );
+    }
+
+    #[test]
+    fn output_over_the_cap_ends_the_run() {
+        let script = if cfg!(windows) {
+            "for /L %i in (1,1,2000) do @echo Alexandre Alexandre Alexandre"
+        } else {
+            "i=0; while [ $i -lt 2000 ]; do echo Alexandre Alexandre Alexandre; i=$((i+1)); done"
+        };
+        let limits = |output| Limits {
+            time: Duration::from_secs(20),
+            memory: Some(256 * 1024 * 1024),
+            output,
+        };
+        let out = output_limited(&mut shell(script), limits(Some(1_000))).unwrap();
+        assert!(out.is_none());
+        let out = output_limited(&mut shell(script), limits(Some(1_000_000)))
+            .unwrap()
+            .expect("under the cap");
+        assert!(out.stdout.len() > 50_000);
+    }
+
+    /// A child that allocates past the cap fails instead of growing.
+    #[test]
+    fn a_child_over_its_memory_cap_fails() {
+        let mut cmd = if cfg!(windows) {
+            let mut c = Command::new("powershell");
+            c.args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "$ErrorActionPreference = 'Stop'; $b = New-Object byte[] 1GB; $b[1] = 1; 'allocated'",
+            ]);
+            c
+        } else {
+            shell("head -c 400000000 /dev/zero | tr '\\0' a | awk '{ print \"allocated\" }'")
+        };
+        let out = output_limited(
+            &mut cmd,
+            Limits {
+                time: Duration::from_secs(60),
+                memory: Some(200 * 1024 * 1024),
+                output: Some(64 * 1024),
+            },
+        )
+        .unwrap();
+        if let Some(out) = out {
+            assert!(
+                !String::from_utf8_lossy(&out.stdout).contains("allocated"),
+                "{out:?}"
+            );
+        }
     }
 
     #[test]

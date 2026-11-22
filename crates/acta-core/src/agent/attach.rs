@@ -6,10 +6,13 @@
 use super::args::AttachmentArgs;
 use super::render::{self, Fence, Text, budget};
 use super::tools::{Agent, err};
-use crate::files::{self, PdfText};
+use crate::files::{self, PdfPages, PdfText};
 use crate::model::{AttachOwner, Attachment, AttachmentId, FileKind};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::{BufRead, BufReader};
+use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
 
 /// What the `attachment` tool returns: text, and for an image the
 /// re-encoded picture with its media type.
@@ -19,6 +22,261 @@ pub struct Answer {
 }
 
 pub type AttachReply = Result<Answer, String>;
+
+/// The `attachment` tool in two halves, so that the slow part runs without
+/// the store (the MCP server holds its state lock only for the first):
+/// [`Agent::attachment_step`] checks and reads under the lock, and
+/// [`Step::finish`] parses a PDF (in a child process) or decodes an image
+/// after it.
+pub enum Step {
+    Done(Answer),
+    Pdf(PdfJob),
+    Image(ImageJob),
+}
+
+impl Step {
+    pub fn finish(self) -> AttachReply {
+        match self {
+            Step::Done(a) => Ok(a),
+            Step::Pdf(j) => j.finish(),
+            Step::Image(j) => Ok(j.finish()),
+        }
+    }
+}
+
+/// A PDF to read: which pages, and where its text comes from.
+pub struct PdfJob {
+    id: AttachmentId,
+    hash: String,
+    head: String,
+    name: String,
+    from: u32,
+    to: u32,
+    /// `pages` was given (else: the first pages that fit).
+    asked: bool,
+    /// The content, read only when no worker is set (tests): the parser
+    /// then runs in this process.
+    bytes: Option<Vec<u8>>,
+}
+
+/// An image to send, read under the lock, decoded after it.
+pub struct ImageJob {
+    id: AttachmentId,
+    head: String,
+    name: String,
+    size: i64,
+    pixels: Option<(u32, u32)>,
+    media_type: String,
+    max: u32,
+    bytes: Vec<u8>,
+}
+
+/// Limits of one `acta pdf-text` child (ADR 0012, 10, as amended by the
+/// review): time, memory of its whole tree, and output.
+pub const PDF_TIME: Duration = Duration::from_secs(10);
+pub const PDF_MEMORY: u64 = 512 * 1024 * 1024;
+pub const PDF_OUTPUT: usize = 1024 * 1024;
+/// Characters a PDF read collects: a little more than the budget shows.
+const PDF_CHARS: usize = budget::KB_READ + 2_000;
+/// Pages a read without `pages` looks at.
+const PDF_DEFAULT_PAGES: u32 = 30;
+/// Characters of PDF text kept in memory across calls, for all files.
+const PDF_CACHE_CHARS: usize = 2 * 1024 * 1024;
+
+static PDF_WORKER: OnceLock<PathBuf> = OnceLock::new();
+
+/// The executable whose `pdf-text` command parses PDFs (the CLI's own
+/// path, set by `main`). Unset (unit tests), the parser runs in-process.
+pub fn set_pdf_worker(exe: PathBuf) {
+    let _ = PDF_WORKER.set(exe);
+}
+
+/// Extracted pages per content hash, for this process: a second read of
+/// the same pages runs no parser. Plaintext in memory only, like the rest
+/// of what the store reads.
+#[derive(Default)]
+struct PdfCache {
+    docs: HashMap<String, (u32, BTreeMap<u32, String>)>,
+    chars: usize,
+}
+
+fn cache() -> &'static Mutex<PdfCache> {
+    static CACHE: OnceLock<Mutex<PdfCache>> = OnceLock::new();
+    CACHE.get_or_init(Mutex::default)
+}
+
+fn lock_cache() -> std::sync::MutexGuard<'static, PdfCache> {
+    match cache().lock() {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
+    }
+}
+
+/// Runs `acta pdf-text` on one attachment with the limits above. A
+/// timeout, a crash, a memory failure or too much output: unreadable.
+pub fn pdf_pages_in_child(exe: &std::path::Path, id: AttachmentId, from: u32, to: u32) -> PdfText {
+    let mut cmd = std::process::Command::new(exe);
+    cmd.args([
+        "pdf-text".to_owned(),
+        id.to_string(),
+        "--from".into(),
+        from.to_string(),
+        "--to".into(),
+        to.to_string(),
+        "--max-chars".into(),
+        PDF_CHARS.to_string(),
+    ]);
+    let limits = crate::process::Limits {
+        time: PDF_TIME,
+        memory: Some(PDF_MEMORY),
+        output: Some(PDF_OUTPUT),
+    };
+    match crate::process::output_limited(&mut cmd, limits) {
+        Ok(Some(out)) if out.status.success() => serde_json::from_slice::<PdfPages>(&out.stdout)
+            .map_or(PdfText::Unreadable, PdfText::Pages),
+        _ => PdfText::Unreadable,
+    }
+}
+
+impl PdfJob {
+    /// The pages asked, from the cache where it has them, the rest from
+    /// the parser; then the reply.
+    pub fn finish(self) -> AttachReply {
+        let mut got: Vec<(u32, String)> = Vec::new();
+        let mut used = 0usize;
+        let mut count: Option<u32> = None;
+        let mut next = self.from;
+        {
+            let c = lock_cache();
+            if let Some((n, pages)) = c.docs.get(&self.hash) {
+                count = Some(*n);
+                while next <= self.to.min(*n) && used < PDF_CHARS {
+                    let Some(t) = pages.get(&next) else { break };
+                    used += t.chars().count();
+                    got.push((next, t.clone()));
+                    next += 1;
+                }
+            }
+        }
+        let done = count.is_some_and(|n| next > self.to.min(n)) || used >= PDF_CHARS;
+        if !done {
+            let fresh = match (&self.bytes, PDF_WORKER.get()) {
+                (Some(b), _) => files::pdf_pages(b, next, self.to, PDF_CHARS - used),
+                (None, Some(exe)) => pdf_pages_in_child(exe, self.id, next, self.to),
+                (None, None) => PdfText::Unreadable,
+            };
+            let PdfText::Pages(fresh) = fresh else {
+                return Ok(one_line(
+                    &format!("{} · could not read this PDF", self.head),
+                    &self.name,
+                ));
+            };
+            count = Some(fresh.count);
+            let mut c = lock_cache();
+            if c.chars > PDF_CACHE_CHARS {
+                *c = PdfCache::default();
+            }
+            let added: usize = fresh.pages.iter().map(|(_, t)| t.chars().count()).sum();
+            c.chars += added;
+            let entry = c
+                .docs
+                .entry(self.hash.clone())
+                .or_insert_with(|| (fresh.count, BTreeMap::new()));
+            for (p, t) in &fresh.pages {
+                entry.1.insert(*p, t.clone());
+            }
+            got.extend(fresh.pages);
+        }
+        let count = count.unwrap_or(0);
+        self.render(count, &got)
+    }
+
+    fn render(&self, count: u32, got: &[(u32, String)]) -> AttachReply {
+        let head = &self.head;
+        let name = &self.name;
+        if self.from > count {
+            return Err(format!("{} has {count} pages", self.id));
+        }
+        let to = self.to.min(count);
+        if got.iter().all(|(_, t)| t.trim().is_empty()) && got.len() as u32 > to - self.from {
+            let what = if self.from == 1 && to == count {
+                "no text layer (scanned images); not readable here".to_owned()
+            } else {
+                format!("no text in pages {}-{to}", self.from)
+            };
+            return Ok(one_line(&format!("{head} · {count} pages · {what}"), name));
+        }
+        const FOOT_ROOM: usize = 90;
+        let mut out = Text::new(budget::KB_READ - FOOT_ROOM);
+        out.line_clipped(format!("{head} · {count} pages"));
+        out.open_fence(&Fence::new());
+        out.line_clipped(name);
+        let mut cut: Option<u32> = None;
+        let mut last_full = self.from - 1;
+        'pages: for (p, text) in got {
+            if !out.line(format!("--- page {p} ---")) {
+                cut = Some(*p);
+                break;
+            }
+            for l in text.lines().filter(|l| !l.trim().is_empty()) {
+                for chunk in l.chars().collect::<Vec<_>>().chunks(WRAP) {
+                    if !out.line(chunk.iter().collect::<String>()) {
+                        cut = Some(*p);
+                        break 'pages;
+                    }
+                }
+            }
+            last_full = *p;
+        }
+        let mut text = out.finish();
+        let last = if self.asked { to } else { count };
+        match cut {
+            Some(p) => text.push_str(&format!(
+                "\n[cut in page {p}: read on with pages=\"{p}-{last}\"]"
+            )),
+            None if last_full < last => text.push_str(&format!(
+                "\n[pages {}-{last_full} of {count}: more with pages=\"{}-{last}\"]",
+                self.from,
+                last_full + 1
+            )),
+            None => {}
+        }
+        Ok(Answer {
+            text: render::finish(text, budget::KB_READ),
+            image: None,
+        })
+    }
+}
+
+impl ImageJob {
+    /// Decodes and re-encodes within the agent's allowance
+    /// ([`files::MODEL_MAX_ALLOC`]); an image over it gets one line.
+    pub fn finish(self) -> Answer {
+        let Some(img) = files::for_model(&self.bytes, &self.media_type, self.max) else {
+            return one_line(
+                &format!("{} · could not decode this image here", self.head),
+                &self.name,
+            );
+        };
+        let pixels = self
+            .pixels
+            .map_or(String::new(), |(w, h)| format!(" · {w}x{h}"));
+        let line = format!(
+            "{} · image{pixels} · {} · sent {}x{}",
+            self.id,
+            files::size_label(self.size),
+            img.width,
+            img.height
+        );
+        Answer {
+            text: render::finish(
+                format!("{line}\n{}", Fence::new().wrap(&self.name)),
+                budget::KB_READ,
+            ),
+            image: Some((img.bytes, img.media_type)),
+        }
+    }
+}
 
 /// Longest file name in a list line.
 const NAME_IN_LIST: usize = 40;
@@ -85,15 +343,22 @@ fn kind_word(k: FileKind) -> &'static str {
 }
 
 impl Agent<'_> {
-    /// `attachment(id, lines?, pages?, size?)`: one file of this project.
+    /// `attachment(id, lines?, pages?, size?)`: one file of this project,
+    /// both halves in a row (the CLI and tests).
     pub fn attachment(&mut self, a: AttachmentArgs) -> AttachReply {
+        self.attachment_step(a)?.finish()
+    }
+
+    /// The first half of `attachment`: checks, text files, and what the
+    /// second half needs.
+    pub fn attachment_step(&mut self, a: AttachmentArgs) -> Result<Step, String> {
         self.project()?;
         let id = AttachmentId::parse(&a.id)
             .filter(|_| a.id.trim().to_ascii_uppercase().starts_with("A-"))
             .ok_or_else(|| format!("{} is not a file id (A-n)", render::clip(&a.id, 20)))?;
         let att = self.store.attachment(id).map_err(err)?;
         self.check_project(att.project, &id.to_string())?;
-        let mismatch = |param: &str, wanted: &str| {
+        let mismatch = |param: &str, wanted: &str| -> Result<Step, String> {
             Err(format!(
                 "{param} applies to {wanted}; {id} is {}",
                 match att.kind {
@@ -123,10 +388,12 @@ impl Agent<'_> {
             render::clip(&render::one_line(&att.name), files_name_max())
         );
         match att.kind {
-            FileKind::Text => self.text_file(&att, &head, &name, a.lines.as_deref()),
-            FileKind::Pdf => self.pdf_file(&att, &head, &name, a.pages.as_deref()),
-            FileKind::Image => self.image_file(&att, &head, &name, a.size.as_deref()),
-            FileKind::Other => Ok(binary(&head, &name)),
+            FileKind::Text => self
+                .text_file(&att, &head, &name, a.lines.as_deref())
+                .map(Step::Done),
+            FileKind::Pdf => self.pdf_job(&att, head, name, a.pages.as_deref()),
+            FileKind::Image => self.image_job(&att, head, name, a.size.as_deref()),
+            FileKind::Other => Ok(Step::Done(binary(&head, &name))),
         }
     }
 
@@ -179,89 +446,48 @@ impl Agent<'_> {
         })
     }
 
-    fn pdf_file(
+    fn pdf_job(
         &self,
         att: &Attachment,
-        head: &str,
-        name: &str,
+        head: String,
+        name: String,
         pages: Option<&str>,
-    ) -> AttachReply {
-        let bytes = self
-            .store
-            .attachment_prefix(att.id, att.size.max(0) as usize)
-            .map_err(err)?;
-        let all = match files::pdf_text(&bytes) {
-            PdfText::Pages(p) => p,
-            PdfText::Unreadable => {
-                return Ok(one_line(
-                    &format!("{head} · could not read its text (damaged or encrypted)"),
-                    name,
-                ));
-            }
-        };
-        let count = all.len();
-        if all.iter().all(|p| p.trim().is_empty()) {
-            return Ok(one_line(
-                &format!(
-                    "{head} · {count} pages · no text layer (scanned images); not readable here"
-                ),
-                name,
-            ));
-        }
+    ) -> Result<Step, String> {
         let (from, to) = match pages {
-            Some(r) => range(r, "pages")?,
-            None => (1, count),
+            Some(r) => {
+                let (a, b) = range(r, "pages")?;
+                (a as u32, b.min(u32::MAX as usize) as u32)
+            }
+            None => (1, PDF_DEFAULT_PAGES),
         };
-        if from > count {
-            return Err(format!("{} has {count} pages", att.id));
-        }
-        let to = to.min(count);
-        const FOOT_ROOM: usize = 90;
-        let mut out = Text::new(budget::KB_READ - FOOT_ROOM);
-        out.line_clipped(format!("{head} · {count} pages"));
-        out.open_fence(&Fence::new());
-        out.line_clipped(name);
-        let mut cut: Option<usize> = None;
-        let mut last_full = from - 1;
-        'pages: for p in from..=to {
-            if !out.line(format!("--- page {p} ---")) {
-                cut = Some(p);
-                break;
-            }
-            for l in all[p - 1].lines().filter(|l| !l.trim().is_empty()) {
-                for chunk in l.chars().collect::<Vec<_>>().chunks(WRAP) {
-                    if !out.line(chunk.iter().collect::<String>()) {
-                        cut = Some(p);
-                        break 'pages;
-                    }
-                }
-            }
-            last_full = p;
-        }
-        let mut text = out.finish();
-        match cut {
-            Some(p) => text.push_str(&format!(
-                "\n[cut in page {p}: read on with pages=\"{p}-{to}\"]"
-            )),
-            None if to < count => text.push_str(&format!(
-                "\n[pages {from}-{last_full} of {count}: more with pages=\"{}-{count}\"]",
-                last_full + 1
-            )),
-            None => {}
-        }
-        Ok(Answer {
-            text: render::finish(text, budget::KB_READ),
-            image: None,
-        })
+        let hash = self.store.attachment_hash(att.id).map_err(err)?;
+        let bytes = match PDF_WORKER.get() {
+            Some(_) => None,
+            None => Some(
+                self.store
+                    .attachment_prefix(att.id, att.size.max(0) as usize)
+                    .map_err(err)?,
+            ),
+        };
+        Ok(Step::Pdf(PdfJob {
+            id: att.id,
+            hash,
+            head,
+            name,
+            from,
+            to,
+            asked: pages.is_some(),
+            bytes,
+        }))
     }
 
-    fn image_file(
+    fn image_job(
         &self,
         att: &Attachment,
-        head: &str,
-        name: &str,
+        head: String,
+        name: String,
         size: Option<&str>,
-    ) -> AttachReply {
+    ) -> Result<Step, String> {
         let max = match size.map(|s| s.trim().to_ascii_lowercase()) {
             None => files::MODEL_PX,
             Some(s) if s == "full" => files::MODEL_FULL_PX,
@@ -272,26 +498,16 @@ impl Agent<'_> {
             .store
             .attachment_prefix(att.id, att.size.max(0) as usize)
             .map_err(err)?;
-        let Some(img) = files::for_model(&bytes, &att.media_type, max) else {
-            return Ok(binary(head, name));
-        };
-        let pixels = att
-            .pixels
-            .map_or(String::new(), |(w, h)| format!(" · {w}x{h}"));
-        let line = format!(
-            "{} · image{pixels} · {} · sent {}x{}",
-            att.id,
-            files::size_label(att.size),
-            img.width,
-            img.height
-        );
-        Ok(Answer {
-            text: render::finish(
-                format!("{line}\n{}", Fence::new().wrap(name)),
-                budget::KB_READ,
-            ),
-            image: Some((img.bytes, img.media_type)),
-        })
+        Ok(Step::Image(ImageJob {
+            id: att.id,
+            head,
+            name,
+            size: att.size,
+            pixels: att.pixels,
+            media_type: att.media_type.clone(),
+            max,
+            bytes,
+        }))
     }
 }
 

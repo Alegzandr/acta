@@ -411,27 +411,35 @@ impl ActaServer {
         annotations(read_only_hint = true)
     )]
     fn attachment(&self, Parameters(a): Parameters<AttachmentArgs>) -> CallToolResult {
-        let mut image = None;
-        let call = self.run(|ag| {
-            ag.attachment(a).map(|answer| {
-                image = answer.image;
-                answer.text
-            })
-        });
+        // Checks and reads under the state lock; a PDF's parsing (a child
+        // process) and an image's decoding after it, so other calls never
+        // wait on them.
+        let step = {
+            let mut guard = self.lock();
+            let state = &mut *guard;
+            match state.ensure_open() {
+                Err(msg) => Err(msg),
+                Ok(()) => {
+                    let (store, session) = state.open.as_mut().expect("opened above");
+                    Agent { store, session }.attachment_step(a)
+                }
+            }
+        };
+        let answer = match step.and_then(|s| s.finish()) {
+            Ok(answer) => answer,
+            Err(msg) => return result(Err(msg)),
+        };
+        let mut content = vec![ContentBlock::text(answer.text)];
         // The picture after its text line (ADR 0012, 10): base64 in an
         // image block, never in text.
-        match (call.is_error, image) {
-            (Some(true), _) | (_, None) => call,
-            (_, Some((bytes, media_type))) => {
-                use base64::Engine as _;
-                let mut content = call.content;
-                content.push(ContentBlock::image(
-                    base64::engine::general_purpose::STANDARD.encode(bytes),
-                    media_type,
-                ));
-                CallToolResult::success(content)
-            }
+        if let Some((bytes, media_type)) = answer.image {
+            use base64::Engine as _;
+            content.push(ContentBlock::image(
+                base64::engine::general_purpose::STANDARD.encode(bytes),
+                media_type,
+            ));
         }
+        CallToolResult::success(content)
     }
 
     #[tool(

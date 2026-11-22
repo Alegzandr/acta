@@ -1733,13 +1733,9 @@ fn attachments_over_stdio() {
             .unwrap();
         for (name, bytes) in [
             ("screenshot.png", png),
-            (
-                "notes.md",
-                b"# Plan
-Ship attachments.
-"
-                .to_vec(),
-            ),
+            ("notes.md", b"# Plan\nShip attachments.\n".to_vec()),
+            ("spec.pdf", one_page_pdf("Storage spec for Alexandre")),
+            ("broken.pdf", b"%PDF-1.4 not really a PDF".to_vec()),
         ] {
             store
                 .attach(
@@ -1775,6 +1771,14 @@ Ship attachments.
     assert_eq!(content[1]["mimeType"], json!("image/png"));
     let b64 = content[1]["data"].as_str().unwrap();
     assert!(b64.len() < 2_000_000, "{}", b64.len());
+    // PDFs are parsed in an `acta pdf-text` child.
+    let (err, text) = m.call("attachment", json!({"id": "A-3"}));
+    assert!(
+        !err && text.contains("Storage spec for Alexandre"),
+        "{text}"
+    );
+    let (err, text) = m.call("attachment", json!({"id": "A-4"}));
+    assert!(!err && text.contains("could not read this PDF"), "{text}");
     let (err, text) = m.call("attachment", json!({"id": "A-1", "lines": "1-2"}));
     assert!(
         err && text.contains("lines applies to text files"),
@@ -1786,9 +1790,43 @@ Ship attachments.
         ok && out.contains("Ship attachments.") && !out.contains("# Plan"),
         "{out}"
     );
+    let (ok, out, _) = cli(&data, &repo, &["attachment", "A-3", "--pages", "1"], "");
+    assert!(ok && out.contains("Storage spec for Alexandre"), "{out}");
     let (ok, out, _) = cli(&data, &repo, &["attachment", "A-1"], "");
     assert!(
         ok && out.contains("sent 1092x546") && out.contains("MCP"),
         "{out}"
     );
+}
+
+/// A one-page PDF with one line of Helvetica text and a correct xref.
+fn one_page_pdf(text: &str) -> Vec<u8> {
+    let stream = format!("BT /F1 12 Tf 72 720 Td ({text}) Tj ET");
+    let objs = [
+        "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
+        "<< /Type /Pages /Kids [4 0 R] /Count 1 >>".to_owned(),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"
+            .to_owned(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R >>".to_owned(),
+        format!("<< /Length {} >>\nstream\n{stream}\nendstream", stream.len()),
+    ];
+    let mut out = String::from("%PDF-1.4\n");
+    let mut offsets = Vec::new();
+    for (i, o) in objs.iter().enumerate() {
+        offsets.push(out.len());
+        out.push_str(&format!("{} 0 obj\n{o}\nendobj\n", i + 1));
+    }
+    let xref = out.len();
+    out.push_str(&format!(
+        "xref\n0 {}\n0000000000 65535 f \n",
+        objs.len() + 1
+    ));
+    for off in offsets {
+        out.push_str(&format!("{off:010} 00000 n \n"));
+    }
+    out.push_str(&format!(
+        "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+        objs.len() + 1
+    ));
+    out.into_bytes()
 }
