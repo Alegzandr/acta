@@ -58,6 +58,8 @@ fn kind_icon(record: Record) -> Icon {
         Record::Note(_) => Icon::StickyNote,
         Record::Kb(_) => Icon::FileText,
         Record::Folder(_) => Icon::FolderOpen,
+        Record::Question(_) => Icon::CircleQuestionMark,
+        Record::Contact(_) => Icon::Circle,
     }
 }
 

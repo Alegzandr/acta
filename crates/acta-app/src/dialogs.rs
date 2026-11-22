@@ -37,6 +37,8 @@ pub struct Confirm {
     pub on_confirm: crate::palette::OnPick,
 }
 
+// One dialog lives at a time: the import report's size does not matter.
+#[allow(clippy::large_enum_variant)]
 pub enum Kind {
     Export {
         project: Option<(ProjectId, String)>,
@@ -240,6 +242,9 @@ pub fn report_into_empty(file: &ExportFile) -> ImportReport {
         revisions: created(file.knowledge.iter().map(|k| k.revisions.len()).sum()),
         folders: created(probe_safe_paths(file).len()),
         folders_refused: (file.folders.len() - probe_safe_paths(file).len()) as i64,
+        questions: created(file.questions.len()),
+        contacts: created(file.contacts.len()),
+        lifted: 0,
     }
 }
 

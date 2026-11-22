@@ -1,7 +1,9 @@
 //! Text forms of the domain enums in the database and in exports. They are
 //! the serde names, so the database, the export file and agent output agree.
 
-use crate::model::{Author, ChangeKind, CommitMode, EntryKind, EventKind, KbKind, Level, Status};
+use crate::model::{
+    Author, ChangeKind, CommitMode, EntryKind, EventKind, KbKind, Level, QuestionStatus, Status,
+};
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, ValueRef};
 
 macro_rules! text_enum {
@@ -56,7 +58,10 @@ text_enum!(EventKind {
     Restored => "restored",
     Edited => "edited",
     Due => "due",
+    Report => "report",
+    Reported => "reported",
 });
+text_enum!(QuestionStatus { Open => "open", Answered => "answered", Dropped => "dropped" });
 text_enum!(CommitMode { Manual => "manual", Commit => "commit", Push => "push" });
 text_enum!(KbKind { Document => "document", Memory => "memory" });
 text_enum!(Level { Project => "project", Epic => "epic", Topic => "topic" });
@@ -104,6 +109,15 @@ mod tests {
         check(EventKind::Restored, EventKind::Restored.as_str());
         check(EventKind::Edited, EventKind::Edited.as_str());
         check(EventKind::Due, EventKind::Due.as_str());
+        check(EventKind::Report, EventKind::Report.as_str());
+        check(EventKind::Reported, EventKind::Reported.as_str());
+        for q in [
+            QuestionStatus::Open,
+            QuestionStatus::Answered,
+            QuestionStatus::Dropped,
+        ] {
+            check(q, q.as_str());
+        }
         for m in [CommitMode::Manual, CommitMode::Commit, CommitMode::Push] {
             check(m, m.as_str());
         }

@@ -13,7 +13,7 @@
 //! `project_id` is always set so roll-up queries need no join.
 
 /// Step `i` takes `user_version` from `i` to `i + 1`.
-pub const MIGRATIONS: &[&str] = &[V1, V2, V3, V4];
+pub const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5];
 
 /// The version this build writes.
 pub const SCHEMA_VERSION: i64 = MIGRATIONS.len() as i64;
@@ -309,4 +309,111 @@ CREATE INDEX entries_recent ON entries(created_at)
 -- "no activity" line): entries_topic needs a row read per entry for
 -- deleted_at, which missed the 5 ms budget on 10,000 topics.
 CREATE INDEX entries_live ON entries(topic_id, created_at) WHERE deleted_at IS NULL;
+"#;
+
+/// Questions (data.md request 18), contacts with Report to (requests 19
+/// and 22) and the profile (request 23), in one additive step.
+///
+/// - `contacts`: a person work is asked of or reported to, at one level:
+///   all projects (`project_id` and `epic_id` null), a project, or an epic
+///   of that project. `name_key` is `person::person_key(name)`, written by
+///   the store, never read from a file. `merged_into` names the contact a
+///   merged one went into (the trash row).
+/// - `contact_distinct`: pairs the human kept apart ("Keep both").
+/// - `profile`: the human's own name and job title; one row.
+/// - `questions`: exactly one owner, as knowledge entries and folders
+///   have it (`project_id` always set; `epic_id` or `topic_id` for an
+///   epic or a topic), the text, the contact asked, the day the answer is
+///   expected, the state, the answer, who resolved it and when, the
+///   decision entry logged with the answer, the stored order.
+/// - Notes, topics and epics name the contact to report to; topics and
+///   epics also when it was reported and by whom. Projects have none.
+/// - `record_markers`: when this installation last showed a question or
+///   a contact (request 1); local, never exported. Neither exists before
+///   this step, so nothing is seeded.
+const V5: &str = r#"
+CREATE TABLE contacts (
+    id INTEGER PRIMARY KEY,
+    uuid TEXT NOT NULL UNIQUE,
+    project_id INTEGER REFERENCES projects(id),
+    epic_id INTEGER REFERENCES epics(id),
+    name TEXT NOT NULL,
+    name_key TEXT NOT NULL,
+    job_title TEXT,
+    company TEXT,
+    address_note TEXT,
+    merged_into INTEGER REFERENCES contacts(id),
+    created_by TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    updated_by TEXT NOT NULL,
+    deleted_at INTEGER,
+    deleted_by TEXT,
+    deleted_batch TEXT,
+    CHECK (epic_id IS NULL OR project_id IS NOT NULL)
+) STRICT;
+CREATE INDEX contacts_key ON contacts(name_key) WHERE deleted_at IS NULL;
+CREATE INDEX contacts_level ON contacts(project_id, epic_id) WHERE deleted_at IS NULL;
+
+CREATE TABLE contact_distinct (
+    a INTEGER NOT NULL REFERENCES contacts(id),
+    b INTEGER NOT NULL REFERENCES contacts(id),
+    PRIMARY KEY (a, b),
+    CHECK (a < b)
+) WITHOUT ROWID;
+
+CREATE TABLE profile (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    name TEXT,
+    job_title TEXT,
+    updated_at INTEGER NOT NULL
+) STRICT;
+
+CREATE TABLE questions (
+    id INTEGER PRIMARY KEY,
+    uuid TEXT NOT NULL UNIQUE,
+    project_id INTEGER NOT NULL REFERENCES projects(id),
+    epic_id INTEGER REFERENCES epics(id),
+    topic_id INTEGER REFERENCES topics(id),
+    text TEXT NOT NULL,
+    asked_contact_id INTEGER REFERENCES contacts(id),
+    expected_on TEXT
+        CHECK (expected_on IS NULL OR expected_on GLOB '20[0-9][0-9]-[01][0-9]-[0-3][0-9]'),
+    status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'answered', 'dropped')),
+    answer TEXT,
+    resolved_at INTEGER,
+    resolved_by TEXT,
+    decision_entry_id INTEGER REFERENCES entries(id) ON DELETE SET NULL,
+    position INTEGER NOT NULL,
+    created_by TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    updated_by TEXT NOT NULL,
+    deleted_at INTEGER,
+    deleted_by TEXT,
+    deleted_batch TEXT,
+    CHECK (epic_id IS NULL OR topic_id IS NULL)
+) STRICT;
+CREATE INDEX questions_owner ON questions(project_id, epic_id, topic_id, status, position);
+CREATE INDEX questions_due ON questions(project_id, status, expected_on);
+CREATE INDEX questions_contact ON questions(project_id, asked_contact_id)
+    WHERE asked_contact_id IS NOT NULL;
+
+CREATE TABLE record_markers (
+    kind TEXT NOT NULL CHECK (kind IN ('question', 'contact')),
+    record_id INTEGER NOT NULL,
+    last_seen_at INTEGER NOT NULL,
+    PRIMARY KEY (kind, record_id)
+) WITHOUT ROWID;
+
+ALTER TABLE notes ADD COLUMN report_contact_id INTEGER REFERENCES contacts(id);
+ALTER TABLE topics ADD COLUMN report_contact_id INTEGER REFERENCES contacts(id);
+ALTER TABLE topics ADD COLUMN reported_at INTEGER;
+ALTER TABLE topics ADD COLUMN reported_by TEXT;
+ALTER TABLE epics ADD COLUMN report_contact_id INTEGER REFERENCES contacts(id);
+ALTER TABLE epics ADD COLUMN reported_at INTEGER;
+ALTER TABLE epics ADD COLUMN reported_by TEXT;
+CREATE INDEX notes_report ON notes(project_id, report_contact_id) WHERE report_contact_id IS NOT NULL;
+CREATE INDEX topics_report ON topics(project_id, report_contact_id) WHERE report_contact_id IS NOT NULL;
+CREATE INDEX epics_report ON epics(project_id, report_contact_id) WHERE report_contact_id IS NOT NULL;
 "#;

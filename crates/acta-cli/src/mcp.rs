@@ -84,7 +84,7 @@ pub struct ActaServer {
 
 /// Drops what costs context and tells the model nothing: `$schema`, integer
 /// formats, `null` in the types of optional fields (they are already absent
-/// from `required`) and `null` defaults. `tools/list` stays under 7,000
+/// from `required`) and empty defaults (`null`, `""`, `false`). `tools/list` stays under 7,000
 /// characters (ADR 0005).
 pub(crate) fn compact_schema(v: &mut serde_json::Value) {
     use serde_json::Value;
@@ -92,7 +92,13 @@ pub(crate) fn compact_schema(v: &mut serde_json::Value) {
         Value::Object(o) => {
             o.remove("$schema");
             o.remove("format");
-            if o.get("default") == Some(&Value::Null) {
+            // A default that only says "absent" (null, "", false) tells
+            // the model nothing the optional field does not.
+            if matches!(
+                o.get("default"),
+                Some(Value::Null) | Some(Value::Bool(false))
+            ) || o.get("default").and_then(Value::as_str) == Some("")
+            {
                 o.remove("default");
             }
             if let Some(Value::Array(types)) = o.get("type") {
@@ -336,7 +342,6 @@ impl ActaServer {
     #[tool(
         name = "log",
         description = "After a decision, a finished step or a dead end worth not repeating (never per file edit): appends to the topic's timeline; can refresh its state and status too.",
-        annotations(idempotent_hint = false),
         meta = always_load()
     )]
     fn log(&self, Parameters(a): Parameters<LogArgs>) -> CallToolResult {
@@ -351,8 +356,7 @@ impl ActaServer {
 
     #[tool(
         name = "update",
-        description = "Changes a topic, epic or note: title, description, state (the old one stays in history), status, due date, a topic's epic. A note's status open puts it back in the inbox.",
-        annotations(idempotent_hint = false)
+        description = "Changes a topic, epic, note, question (its answer) or contact (its level). A replaced state stays in history; a note's status open puts it back in the inbox."
     )]
     fn update(&self, Parameters(a): Parameters<UpdateArgs>) -> CallToolResult {
         self.run(|ag| ag.update(a))
@@ -360,7 +364,7 @@ impl ActaServer {
 
     #[tool(
         name = "find",
-        description = "Locates topics, epics, notes or timeline entries by query or filters. kind=note without query: the inbox; due: deadlines.",
+        description = "Locates topics, epics, notes, entries, questions or contacts by query or filters. kind=note without query: the inbox; due: deadlines; person: what is open with someone.",
         annotations(read_only_hint = true)
     )]
     fn find(&self, Parameters(a): Parameters<FindArgs>) -> CallToolResult {
@@ -369,8 +373,7 @@ impl ActaServer {
 
     #[tool(
         name = "create",
-        description = "Creates topics, epics or notes (up to 10), or applies an agreed inbox triage all-or-nothing: from_notes files notes into each item, kind=entry into an existing topic, dismiss closes the rest.",
-        annotations(idempotent_hint = false)
+        description = "Creates topics, epics, notes, questions or contacts (up to 10), or applies an agreed inbox triage all-or-nothing: from_notes files notes into each item, kind=entry into an existing topic, dismiss closes the rest."
     )]
     fn create(&self, Parameters(a): Parameters<CreateArgs>) -> CallToolResult {
         self.run(|ag| ag.create(a))
@@ -396,8 +399,7 @@ impl ActaServer {
 
     #[tool(
         name = "kb_write",
-        description = "Saves a durable fact (memory) or long reference (document), or edits one by section. Use it instead of your own memory files; search with kb first.",
-        annotations(idempotent_hint = false)
+        description = "Saves a durable fact (memory) or long reference (document), or edits one by section. Use it instead of your own memory files; search with kb first."
     )]
     fn kb_write(&self, Parameters(a): Parameters<KbWriteArgs>) -> CallToolResult {
         self.run(|ag| ag.kb_write(a))

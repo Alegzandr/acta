@@ -97,6 +97,20 @@ pub enum Error {
     /// The database was written by a newer Acta whose changes this build must
     /// not overwrite (`min_compatible_version`); restart after the update.
     ReadOnly,
+    /// A contact cannot move to a level that some of its uses would not
+    /// see (data.md request 22): the places naming it outside, as short
+    /// ids with the field.
+    ContactInUse {
+        contact: String,
+        level: String,
+        places: Vec<(String, &'static str)>,
+    },
+    /// A reference to a contact the record cannot see.
+    OutOfScope {
+        contact: String,
+        record: String,
+        level: String,
+    },
     /// An export file of a newer format than this build reads.
     FormatTooNew {
         found: i64,
@@ -121,6 +135,35 @@ impl fmt::Display for Error {
                 write!(f, "stale revision: the current revision is {current}")
             }
             Error::ParentDeleted(what) => write!(f, "{what} is in the trash; restore it first"),
+            Error::ContactInUse {
+                contact,
+                level,
+                places,
+            } => {
+                let shown: Vec<String> = places
+                    .iter()
+                    .take(3)
+                    .map(|(id, field)| format!("{id} ({field})"))
+                    .collect();
+                let more = if places.len() > 3 {
+                    format!(" +{}", places.len() - 3)
+                } else {
+                    String::new()
+                };
+                write!(
+                    f,
+                    "{contact} is named outside {level}: {}{more}; change those first",
+                    shown.join(", ")
+                )
+            }
+            Error::OutOfScope {
+                contact,
+                record,
+                level,
+            } => write!(
+                f,
+                "{contact} is not visible from {record} (it belongs to {level})"
+            ),
             Error::ReadOnly => f.write_str(
                 "the database was upgraded by a newer Acta; restart Acta to finish the update",
             ),

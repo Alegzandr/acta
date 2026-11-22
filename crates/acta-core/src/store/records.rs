@@ -5,7 +5,8 @@ use crate::date::Date;
 use crate::error::{Error, Result};
 use crate::model::{
     Author, Epic, EpicId, EpicSummary, EventKind, FolderId, Owner, Page, PageReq, Progress,
-    Project, ProjectId, ProjectSummary, ProjectTree, Record, Status, Topic, TopicId, TopicSummary,
+    Project, ProjectId, ProjectSummary, ProjectTree, Record, Report, Status, Topic, TopicId,
+    TopicSummary,
 };
 use crate::time::now_ms;
 use rusqlite::{OptionalExtension, params};
@@ -55,11 +56,13 @@ pub struct TopicFilter {
     pub due_before: Option<Date>,
 }
 
-const TOPIC_SUMMARY_COLS: &str = "t.id, t.epic_id, t.title, t.status, t.position,
+pub(super) const TOPIC_SUMMARY_COLS: &str = "t.id, t.epic_id, t.title, t.status, t.position,
     (SELECT count(*) FROM entries e WHERE e.topic_id = t.id AND e.deleted_at IS NULL AND e.kind <> 'system'),
-    t.updated_at, t.updated_by, t.due_on";
+    t.updated_at, t.updated_by, t.due_on, t.report_contact_id,
+    (SELECT c.name FROM contacts c WHERE c.id = t.report_contact_id),
+    (SELECT c.deleted_at IS NOT NULL FROM contacts c WHERE c.id = t.report_contact_id), t.reported_at";
 
-fn topic_summary(row: &rusqlite::Row<'_>) -> rusqlite::Result<TopicSummary> {
+pub(super) fn topic_summary(row: &rusqlite::Row<'_>) -> rusqlite::Result<TopicSummary> {
     Ok(TopicSummary {
         id: TopicId(row.get(0)?),
         epic: row.get::<_, Option<i64>>(1)?.map(EpicId),
@@ -70,6 +73,8 @@ fn topic_summary(row: &rusqlite::Row<'_>) -> rusqlite::Result<TopicSummary> {
         updated_at: row.get(6)?,
         updated_by: row.get(7)?,
         due_on: row.get(8)?,
+        report_to: super::people::contact_ref(row, 9)?,
+        reported: row.get::<_, Option<i64>>(12)?.is_some(),
     })
 }
 
@@ -213,7 +218,10 @@ impl Store {
             "SELECT e.id, e.title, e.position, e.updated_at,
                (SELECT count(*) FROM topics t WHERE t.epic_id = e.id AND t.deleted_at IS NULL AND t.status = 'done'),
                (SELECT count(*) FROM topics t WHERE t.epic_id = e.id AND t.deleted_at IS NULL AND t.status <> 'dropped'),
-               e.due_on
+               e.due_on, e.report_contact_id,
+               (SELECT c.name FROM contacts c WHERE c.id = e.report_contact_id),
+               (SELECT c.deleted_at IS NOT NULL FROM contacts c WHERE c.id = e.report_contact_id),
+               e.reported_at
              FROM epics e WHERE e.project_id = ?1 AND e.deleted_at IS NULL ORDER BY e.position, e.id",
         )?;
         let rows = stmt.query_map([project.0], |r| {
@@ -227,6 +235,8 @@ impl Store {
                     total: r.get(5)?,
                 },
                 due_on: r.get(6)?,
+                report_to: super::people::contact_ref(r, 7)?,
+                reported: r.get::<_, Option<i64>>(10)?.is_some(),
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
@@ -386,8 +396,9 @@ impl Store {
                 cur.project
             )));
         }
-        apply_topic_patch(&tx, &cur, patch, author, now_ms())?;
+        let lifts = apply_topic_patch(&tx, &cur, patch, author, now_ms())?;
         tx.commit()?;
+        self.lifts.borrow_mut().extend(lifts);
         Ok(())
     }
 
@@ -603,13 +614,15 @@ fn next_topic_position(
 }
 
 /// Applies a topic patch inside a transaction, writing the system events.
+/// A move to another epic lifts the contacts the topic names that the new
+/// place cannot see (data.md request 22); the lifts are returned.
 pub(crate) fn apply_topic_patch(
     tx: &rusqlite::Connection,
     cur: &Topic,
     patch: TopicPatch,
     author: Author,
     now: i64,
-) -> Result<()> {
+) -> Result<Vec<crate::model::Lift>> {
     use super::timeline::system_event;
     let title = match &patch.title {
         Some(t) => required("title", t)?,
@@ -702,7 +715,25 @@ pub(crate) fn apply_topic_patch(
             author
         ],
     )?;
-    Ok(())
+    if epic != cur.epic {
+        return super::people::lift_for(tx, Record::Topic(cur.id), author, now);
+    }
+    Ok(Vec::new())
+}
+
+/// The Report to columns of a topic or an epic.
+const REPORT_COLS: &str = "report_contact_id,
+    (SELECT c.name FROM contacts c WHERE c.id = report_contact_id),
+    (SELECT c.deleted_at IS NOT NULL FROM contacts c WHERE c.id = report_contact_id),
+    reported_at, reported_by";
+
+/// Reads [`REPORT_COLS`] starting at column `at`.
+fn report(row: &rusqlite::Row<'_>, at: usize) -> rusqlite::Result<Report> {
+    Ok(Report {
+        to: super::people::contact_ref(row, at)?,
+        at: row.get(at + 3)?,
+        by: row.get(at + 4)?,
+    })
 }
 
 pub(crate) fn read_project(conn: &rusqlite::Connection, id: ProjectId) -> Result<Project> {
@@ -729,58 +760,60 @@ pub(crate) fn read_project(conn: &rusqlite::Connection, id: ProjectId) -> Result
 }
 
 pub(crate) fn read_epic(conn: &rusqlite::Connection, id: EpicId) -> Result<Epic> {
-    conn
-        .query_row(
-            &format!(
-                "SELECT id, project_id, title, description, state, position, active_folder_id, due_on, {STAMP_COLS}
+    conn.query_row(
+        &format!(
+            "SELECT id, project_id, title, description, state, position, active_folder_id, due_on,
+                        {REPORT_COLS}, {STAMP_COLS}
                  FROM epics WHERE id = ?1 AND deleted_at IS NULL"
-            ),
-            [id.0],
-            |r| {
-                Ok(Epic {
-                    id: EpicId(r.get(0)?),
-                    project: ProjectId(r.get(1)?),
-                    title: r.get(2)?,
-                    description: r.get(3)?,
-                    state: r.get(4)?,
-                    position: r.get(5)?,
-                    active_folder: r.get::<_, Option<i64>>(6)?.map(FolderId),
-                    due_on: r.get(7)?,
-                    stamp: stamp(r, 8)?,
-                })
-            },
-        )
-        .optional()?
-        .ok_or_else(|| Error::NotFound(id.to_string()))
+        ),
+        [id.0],
+        |r| {
+            Ok(Epic {
+                id: EpicId(r.get(0)?),
+                project: ProjectId(r.get(1)?),
+                title: r.get(2)?,
+                description: r.get(3)?,
+                state: r.get(4)?,
+                position: r.get(5)?,
+                active_folder: r.get::<_, Option<i64>>(6)?.map(FolderId),
+                due_on: r.get(7)?,
+                report: report(r, 8)?,
+                stamp: stamp(r, 13)?,
+            })
+        },
+    )
+    .optional()?
+    .ok_or_else(|| Error::NotFound(id.to_string()))
 }
 
 pub(crate) fn read_topic(conn: &rusqlite::Connection, id: TopicId) -> Result<Topic> {
-    conn
-        .query_row(
-            &format!(
-                "SELECT id, project_id, epic_id, title, description, status, state,
-                        state_updated_at, state_updated_by, position, active_folder_id, due_on, {STAMP_COLS}
+    conn.query_row(
+        &format!(
+            "SELECT id, project_id, epic_id, title, description, status, state,
+                        state_updated_at, state_updated_by, position, active_folder_id, due_on,
+                        {REPORT_COLS}, {STAMP_COLS}
                  FROM topics WHERE id = ?1 AND deleted_at IS NULL"
-            ),
-            [id.0],
-            |r| {
-                Ok(Topic {
-                    id: TopicId(r.get(0)?),
-                    project: ProjectId(r.get(1)?),
-                    epic: r.get::<_, Option<i64>>(2)?.map(EpicId),
-                    title: r.get(3)?,
-                    description: r.get(4)?,
-                    status: r.get(5)?,
-                    state: r.get(6)?,
-                    state_updated_at: r.get(7)?,
-                    state_updated_by: r.get(8)?,
-                    position: r.get(9)?,
-                    active_folder: r.get::<_, Option<i64>>(10)?.map(FolderId),
-                    due_on: r.get(11)?,
-                    stamp: stamp(r, 12)?,
-                })
-            },
-        )
-        .optional()?
-        .ok_or_else(|| Error::NotFound(id.to_string()))
+        ),
+        [id.0],
+        |r| {
+            Ok(Topic {
+                id: TopicId(r.get(0)?),
+                project: ProjectId(r.get(1)?),
+                epic: r.get::<_, Option<i64>>(2)?.map(EpicId),
+                title: r.get(3)?,
+                description: r.get(4)?,
+                status: r.get(5)?,
+                state: r.get(6)?,
+                state_updated_at: r.get(7)?,
+                state_updated_by: r.get(8)?,
+                position: r.get(9)?,
+                active_folder: r.get::<_, Option<i64>>(10)?.map(FolderId),
+                due_on: r.get(11)?,
+                report: report(r, 12)?,
+                stamp: stamp(r, 17)?,
+            })
+        },
+    )
+    .optional()?
+    .ok_or_else(|| Error::NotFound(id.to_string()))
 }

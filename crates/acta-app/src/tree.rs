@@ -858,6 +858,8 @@ pub mod sample {
             due_on: None,
             updated_at: 0,
             updated_by: Author::Human,
+            report_to: None,
+            reported: false,
         }
     }
 
@@ -869,6 +871,8 @@ pub mod sample {
             progress: Progress::default(),
             due_on: None,
             updated_at: 0,
+            report_to: None,
+            reported: false,
         }
     }
 

@@ -1038,6 +1038,22 @@ mod tests {
         assert!(text.lines().count() < 80, "{}", text.lines().count());
         assert!(text.contains("\n## Commits\n"));
         assert!(text.contains("exactly `git push`"));
+        // Data.md requests 18 and 19: the two sections, short.
+        let section = |name: &str| -> usize {
+            let start = text.find(&format!("\n## {name}\n")).expect(name);
+            text[start + 1..]
+                .lines()
+                .skip(1)
+                .take_while(|l| !l.starts_with("## "))
+                .filter(|l| !l.trim().is_empty())
+                .count()
+        };
+        assert!(section("Questions for others") < 12);
+        assert_eq!(section("Reporting back"), 4);
+        assert!(section("People") <= 6);
+        assert!(text.contains("Never invent one"));
+        assert!(text.contains("Asking never changes the topic's status"));
+        assert!(text.contains("only when an ack says `created`"));
     }
 
     #[test]

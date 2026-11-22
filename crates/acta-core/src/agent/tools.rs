@@ -7,30 +7,32 @@
 
 use super::args::*;
 use super::due;
+use super::questions as q;
 use super::render::{self, Fence, Text, budget, limit};
 use super::session::{Session, parse_owner};
 use crate::date::{Date, DueState, due_state};
 use crate::error::Error;
 use crate::markdown;
 use crate::model::{
-    Author, Entry, EntryKind, EpicId, EpicSummary, KbId, KbKind, KbSummary, Level, Note, NoteFate,
-    NoteId, Owner, PageReq, ProjectId, Record, Status, TopicId, TopicSummary,
+    Author, ContactId, ContactLevel, Entry, EntryKind, EpicId, EpicSummary, KbId, KbKind,
+    KbSummary, Level, Note, NoteFate, NoteId, Owner, PageReq, Place, ProjectId, QuestionId,
+    QuestionStatus, Record, Status, TopicId, TopicSummary,
 };
 use crate::store::{
-    EntryFilter, EpicPatch, INBOX_DAYS, KbEdit, KbFilter, KbUpdate, NewEntry, NewKb, NewTopic,
-    OverviewFilter, OverviewItem, SNIPPET_CLOSE, SNIPPET_OPEN, Scope, SearchKind, SearchQuery,
-    Store, TopicFilter, TopicPatch,
+    ANSWER_MAX, EntryFilter, EpicPatch, INBOX_DAYS, KbEdit, KbFilter, KbUpdate, NewEntry, NewKb,
+    NewQuestion, NewTopic, OverviewFilter, OverviewItem, QUESTION_MAX, SNIPPET_CLOSE, SNIPPET_OPEN,
+    Scope, SearchKind, SearchQuery, Store, TopicFilter, TopicPatch,
 };
 
 /// The server `instructions` (ADR 0005, section 2). Under 800 characters.
-pub const INSTRUCTIONS: &str = "Acta is this project's tracker and your working memory: topics (T-n) in epics (E-n), each with a current state, a timeline and a knowledge base (K-n: documents and memories). The session briefing names your focus topic. Call `brief` when unsure where things stand. After a meaningful step or a decision call `log`, and refresh the state in the same call. Save durable facts with `kb_write` instead of your own memory files; check `kb` before working on an unfamiliar area. Tools default to the focus topic; pass an id to address another. Subagents always pass ids. Do not copy code or long output into Acta.";
+pub const INSTRUCTIONS: &str = "Acta is this project's tracker and your working memory: topics (T-n) in epics (E-n), each with a current state, a timeline and a knowledge base (K-n: documents and memories). The session briefing names your focus topic. Call `brief` when unsure where things stand. After a meaningful step or a decision call `log`, and refresh the state in the same call. Save durable facts with `kb_write` instead of your own memory files; check `kb` before working on an unfamiliar area. Record what only someone else can answer with `create` (kind question), and the answers with `update`. Tools default to the focus topic; pass an id to address another. Subagents always pass ids. Do not copy code or long output into Acta.";
 
 pub const NOT_LINKED: &str = "This folder is not linked to an Acta project, so Acta is off here. The user can link it with `acta link`.";
 
 /// What a tool returns: the text for the agent, or a refusal.
 pub type Reply = Result<String, String>;
 
-fn err(e: Error) -> String {
+pub(super) fn err(e: Error) -> String {
     match e {
         Error::NotFound(what) => format!("{what} not found (or in the trash)"),
         other => other.to_string(),
@@ -74,6 +76,27 @@ fn check_len(field: &str, text: &str, max: usize) -> Result<(), String> {
     } else {
         Ok(())
     }
+}
+
+/// A contact level argument: `all`, `P-n` or `E-n`.
+fn level_arg(store: &Store, text: &str) -> Result<ContactLevel, String> {
+    let t = text.trim();
+    if t.eq_ignore_ascii_case("all") {
+        return Ok(ContactLevel::All);
+    }
+    match parse_owner(t) {
+        Some(Owner::Project(p)) => Ok(ContactLevel::Project(p)),
+        Some(Owner::Epic(e)) => Ok(ContactLevel::Epic(store.epic(e).map_err(err)?.project, e)),
+        _ => Err("level must be all, P-n or E-n".into()),
+    }
+}
+
+/// A contact named in a `create` item: an existing one, or a contact item
+/// of the same call (`@k`).
+#[derive(Clone, Copy)]
+pub(super) enum PersonRef {
+    Existing(ContactId),
+    Item(usize),
 }
 
 fn kind_word(k: KbKind) -> &'static str {
@@ -267,6 +290,13 @@ impl Agent<'_> {
         let blocked: Vec<String> = next().into_iter().map(|i| i.record.to_string()).collect();
         let mut overdue = with_days(next());
         let idle = with_days(next());
+        let late: Vec<(String, i64)> = self
+            .store
+            .late_answers(scope, today)
+            .map_err(err)?
+            .into_iter()
+            .map(|(id, d)| (id.to_string(), d))
+            .collect();
         let mut inbox = None;
         if let Scope::Project(p) = scope {
             for e in self.store.epics(p).map_err(err)? {
@@ -290,6 +320,7 @@ impl Agent<'_> {
             &[
                 ("blocked", blocked),
                 ("overdue", days(overdue)),
+                ("answers late", days(late)),
                 ("idle", days(idle)),
             ],
             inbox,
@@ -345,6 +376,17 @@ impl Agent<'_> {
                 };
                 let today = self.session.today();
                 let due = due::segment(t.due_on, today, t.status.is_open());
+                let report = match &t.report.to {
+                    Some(p) => {
+                        let d = self
+                            .store
+                            .contact_any(p.id)
+                            .map(|c| q::details(&c))
+                            .unwrap_or_default();
+                        q::header_segment(p, &d, t.report.is_reported())
+                    }
+                    None => String::new(),
+                };
                 // An idle Active topic: its state may be out of date.
                 let idle = self
                     .store
@@ -352,7 +394,7 @@ impl Agent<'_> {
                     .map_err(err)?
                     .map_or(String::new(), |d| format!(" · no activity {d}d"));
                 out.line_clipped(format!(
-                    "{id} {} · {}{due}{idle}{epic}{}",
+                    "{id} {} · {}{due}{idle}{report}{epic}{}",
                     render::clip(&render::one_line(&t.title), 80),
                     t.status.as_str(),
                     self.focus_mark(o)
@@ -364,6 +406,18 @@ impl Agent<'_> {
                     .map_err(err)?;
                 // Reserve room for the counts so they always print.
                 let reserve = render::chars(&counts) + 20;
+                // Open questions, after the state and before the entries:
+                // over budget, entries give way first, then question lines
+                // from the last; the count line always stays.
+                let open = self.open_questions(o)?;
+                let qcount = q::count_line(&open, today);
+                let qlines: Vec<String> = open
+                    .iter()
+                    .take(3)
+                    .map(|x| q::brief_line(x, today))
+                    .collect();
+                let qroom = qcount.as_ref().map_or(0, |c| render::chars(c) + 1)
+                    + qlines.iter().map(|l| render::chars(l) + 1).sum::<usize>();
                 // Stored text is flattened to one line: it cannot forge a
                 // header or an entry line.
                 let state = if t.state.trim().is_empty() {
@@ -376,8 +430,17 @@ impl Agent<'_> {
                     let who = t.state_updated_by.map(render::author_word).unwrap_or("");
                     format!("State ({when}, {who}): {}", render::one_line(&t.state))
                 };
-                let room = out.left().saturating_sub(reserve + 3 * 60);
-                out.line(render::defuse(&render::clip(&state, room.max(80))));
+                let room = out.left().saturating_sub(reserve + qroom + 2 * 60);
+                out.line(render::defuse(&render::clip(&state, room.max(160))));
+                if let Some(c) = &qcount {
+                    out.line(c);
+                    for l in &qlines {
+                        if out.left() < reserve + render::chars(l) {
+                            break;
+                        }
+                        out.line(l);
+                    }
+                }
                 for e in &page.items {
                     let room = out.left().saturating_sub(reserve);
                     if room < 40 {
@@ -403,8 +466,19 @@ impl Agent<'_> {
                 });
                 let today = self.session.today();
                 let open = s.as_ref().is_none_or(|s| s.progress.is_open());
+                let report = match (&e.report.to, &s) {
+                    (Some(p), Some(s)) => {
+                        let d = self
+                            .store
+                            .contact_any(p.id)
+                            .map(|c| q::details(&c))
+                            .unwrap_or_default();
+                        q::header_segment(p, &d, s.reported)
+                    }
+                    _ => String::new(),
+                };
                 out.line_clipped(format!(
-                    "{id} {}{progress}{}{}",
+                    "{id} {}{progress}{}{report}{}",
                     render::clip(&render::one_line(&e.title), 80),
                     due::segment(e.due_on, today, open),
                     self.focus_mark(o)
@@ -419,6 +493,21 @@ impl Agent<'_> {
                     ));
                 }
                 let counts = self.counts_line(o, e.project, None);
+                // The epic's own open questions: the count and two lines.
+                let own = self.open_questions(o)?;
+                if let Some(c) = q::count_line(&own, today) {
+                    out.line(c);
+                    for x in own.iter().take(2) {
+                        if out.left() < 300 {
+                            break;
+                        }
+                        out.line(q::brief_line(x, today));
+                    }
+                }
+                let per_topic = self
+                    .store
+                    .open_questions_by_topic(e.project, today)
+                    .map_err(err)?;
                 let topics = self
                     .store
                     .topics(
@@ -433,12 +522,16 @@ impl Agent<'_> {
                     .items
                     .iter()
                     .map(|t| {
+                        let qn = per_topic
+                            .get(&t.id)
+                            .map_or(String::new(), |(n, _)| format!(" · {n}q"));
                         format!(
-                            "{} {}  {}{}",
+                            "{} {}  {}{}{qn}{}",
                             t.id,
                             t.status.as_str(),
                             render::clip(&render::one_line(&t.title), 80),
-                            due::short_segment(t.due_on, today, t.status.is_open())
+                            due::short_segment(t.due_on, today, t.status.is_open()),
+                            q::topic_segment(t)
                         )
                     })
                     .collect();
@@ -654,10 +747,26 @@ impl Agent<'_> {
         self.project()?;
         // Validated first: a bad date refuses the whole call.
         let due = a.due.as_deref().map(due::parse_arg).transpose()?;
-        let id = a.id.trim();
-        if let Some(p) = ProjectId::parse(id).filter(|_| id.to_ascii_uppercase().starts_with("P-"))
-        {
+        let id = a.id.trim().to_owned();
+        let id = id.as_str();
+        let upper = id.to_ascii_uppercase();
+        if let Some(qid) = QuestionId::parse(id).filter(|_| upper.starts_with("Q-")) {
+            return self.update_question(qid, a, due);
+        }
+        if let Some(cid) = ContactId::parse(id).filter(|_| upper.starts_with("C-")) {
+            return self.update_contact(cid, a);
+        }
+        if a.level.is_some() {
+            return Err("level is for contacts (C-n)".into());
+        }
+        if a.asked_to.is_some() || a.answer.is_some() || a.log_decision.is_some() {
+            return Err("asked_to, answer and log_decision are for questions (Q-n)".into());
+        }
+        if let Some(p) = ProjectId::parse(id).filter(|_| upper.starts_with("P-")) {
             self.owner_project(Owner::Project(p))?;
+            if a.report_to.is_some() || a.reported.is_some() {
+                return Err("projects have no report_to".into());
+            }
             let others = a.title.is_some()
                 || a.description.is_some()
                 || a.state.is_some()
@@ -677,6 +786,26 @@ impl Agent<'_> {
                 budget::ACK,
             ));
         }
+        // Who to report to: a contact the record sees, by id or by a name
+        // that resolves to exactly one.
+        let report_to: Option<Option<ContactId>> = match a.report_to.as_deref() {
+            None => None,
+            Some(p) => {
+                let record = if upper.starts_with("T-") {
+                    TopicId::parse(id).map(Record::Topic)
+                } else if upper.starts_with("E-") {
+                    EpicId::parse(id).map(Record::Epic)
+                } else if upper.starts_with("N-") {
+                    NoteId::parse(id).map(Record::Note)
+                } else {
+                    None
+                }
+                .ok_or("id must be T-n, E-n, N-n, Q-n, C-n or P-n")?;
+                let place = self.store.place(record).map_err(err)?;
+                self.check_project(place.project, id)?;
+                Some(self.person_ref(p, place, id)?)
+            }
+        };
         let mut fields = Vec::new();
         if let Some(t) = &a.title {
             check_len("title", t, limit::TITLE)?;
@@ -715,6 +844,8 @@ impl Agent<'_> {
                 epic,
             };
             let changed = !fields.is_empty();
+            let reported = a.reported;
+            let person = report_to;
             self.store
                 .atomically(|store| {
                     if changed {
@@ -722,6 +853,12 @@ impl Agent<'_> {
                     }
                     if let Some(d) = due {
                         store.set_due(Owner::Topic(t), d, author)?;
+                    }
+                    if let Some(p) = person {
+                        store.set_report_to(Record::Topic(t), p, author)?;
+                    }
+                    if let Some(r) = reported {
+                        store.set_reported(Record::Topic(t), r, author)?;
                     }
                     Ok(())
                 })
@@ -740,6 +877,8 @@ impl Agent<'_> {
                 state: a.state,
             };
             let changed = !fields.is_empty();
+            let reported = a.reported;
+            let person = report_to;
             self.store
                 .atomically(|store| {
                     if changed {
@@ -747,6 +886,12 @@ impl Agent<'_> {
                     }
                     if let Some(d) = due {
                         store.set_due(Owner::Epic(e), d, author)?;
+                    }
+                    if let Some(p) = person {
+                        store.set_report_to(Record::Epic(e), p, author)?;
+                    }
+                    if let Some(r) = reported {
+                        store.set_reported(Record::Epic(e), r, author)?;
                     }
                     Ok(())
                 })
@@ -763,6 +908,9 @@ impl Agent<'_> {
             if due.is_some() {
                 return Err("a note has no due date; set it on a topic, epic or project".into());
             }
+            if a.reported.is_some() {
+                return Err("a note has no reported; set it on the topic or epic it became".into());
+            }
             let text = a.description.or(a.title);
             let fate = match a.status.as_deref().map(|s| s.trim().to_ascii_lowercase()) {
                 None => None,
@@ -770,9 +918,9 @@ impl Agent<'_> {
                 Some(s) if s == "dismissed" => Some(false),
                 Some(_) => return Err("a note's status is open or dismissed".into()),
             };
-            if text.is_none() && fate.is_none() {
+            if text.is_none() && fate.is_none() && report_to.is_none() {
                 return Err(
-                    "nothing to change: pass description (new text) or status (open, dismissed)"
+                    "nothing to change: pass description (new text), status (open, dismissed) or report_to"
                         .into(),
                 );
             }
@@ -796,10 +944,14 @@ impl Agent<'_> {
                 }
             }
             let already_open = fate == Some(true) && note.is_open();
+            let person = report_to;
             self.store
                 .atomically(|store| {
                     if let Some(t) = &text {
                         store.update_note(n, t, author)?;
+                    }
+                    if let Some(p) = person {
+                        store.set_report_to(Record::Note(n), p, author)?;
                     }
                     match fate {
                         Some(true) if !already_open => store.unfile_note(n, author),
@@ -814,7 +966,7 @@ impl Agent<'_> {
             }
             match fate {
                 Some(true) if already_open => {
-                    if text.is_none() {
+                    if text.is_none() && report_to.is_none() {
                         return Ok(format!("{n} is already in the inbox; nothing changed"));
                     }
                     fields.push("already in the inbox");
@@ -825,20 +977,227 @@ impl Agent<'_> {
             }
             n.to_string()
         } else {
-            return Err("id must be T-n, E-n, N-n or P-n".into());
+            return Err("id must be T-n, E-n, N-n, Q-n, C-n or P-n".into());
         };
-        let due_ack = due.map(|d| due::ack(d, self.session.today()));
-        let text = match (fields.is_empty(), due_ack) {
-            (true, None) => {
+        let mut tail: Vec<String> = Vec::new();
+        if let Some(d) = due {
+            tail.push(due::ack(d, self.session.today()));
+        }
+        // Contacts by id only: names are stored text, read fenced.
+        match &report_to {
+            Some(Some(c)) => tail.push(format!("report to {c} (existing contact)")),
+            Some(None) => tail.push("report_to cleared".into()),
+            None => {}
+        }
+        match a.reported {
+            Some(true) => {
+                let who = match parse_owner(&label) {
+                    Some(Owner::Topic(t)) => self.store.topic(t).ok().and_then(|t| t.report.to),
+                    Some(Owner::Epic(e)) => self.store.epic(e).ok().and_then(|e| e.report.to),
+                    _ => None,
+                };
+                tail.push(match who {
+                    Some(c) => format!("reported to {}", c.id),
+                    None => "reported".into(),
+                });
+            }
+            Some(false) => tail.push("not reported".into()),
+            None => {}
+        }
+        let text = match (fields.is_empty(), tail.is_empty()) {
+            (true, true) => {
                 return Err(
-                    "nothing to change: pass title, description, state, status, epic or due".into(),
+                    "nothing to change: pass title, description, state, status, epic, due, report_to or reported"
+                        .into(),
                 );
             }
-            (true, Some(d)) => format!("ok {label} · {d}"),
-            (false, Some(d)) => format!("ok {label} updated: {} · {d}", fields.join(", ")),
-            (false, None) => format!("ok {label} updated: {}", fields.join(", ")),
+            (true, false) => format!("ok {label} · {}", tail.join(" · ")),
+            (false, false) => format!(
+                "ok {label} updated: {} · {}",
+                fields.join(", "),
+                tail.join(" · ")
+            ),
+            (false, true) => format!("ok {label} updated: {}", fields.join(", ")),
         };
         Ok(render::finish(text, budget::ACK))
+    }
+
+    /// `update` on a contact: its level only (data.md request 22). A move
+    /// down is refused while a record outside the new level names it.
+    /// The name and details, merging and deleting are the user's, in Acta.
+    fn update_contact(&mut self, id: ContactId, a: UpdateArgs) -> Reply {
+        let c = self.store.contact(id).map_err(err)?;
+        if let Some(p) = c.level.project() {
+            self.check_project(p, &id.to_string())?;
+        }
+        let others = a.title.is_some()
+            || a.description.is_some()
+            || a.state.is_some()
+            || a.status.is_some()
+            || a.epic.is_some()
+            || a.due.is_some()
+            || a.asked_to.is_some()
+            || a.answer.is_some()
+            || a.log_decision.is_some()
+            || a.report_to.is_some()
+            || a.reported.is_some();
+        if others {
+            return Err(
+                "a contact takes only level here; its name and details are the user's, in Acta"
+                    .into(),
+            );
+        }
+        let Some(level) = a.level.as_deref() else {
+            return Err("nothing to change: pass level (all, P-n or E-n)".into());
+        };
+        let level = level_arg(self.store, level)?;
+        if let Some(p) = level.project() {
+            self.check_project(p, &level.to_string())?;
+        }
+        self.store
+            .move_contact(id, level, self.author())
+            .map_err(err)?;
+        Ok(render::finish(
+            format!("ok {id} · level {}", q::level_short(level)),
+            budget::ACK,
+        ))
+    }
+
+    /// `update` on a question (data.md request 18): text, person, answer
+    /// date, state, answer, and the decision logged with the answer.
+    fn update_question(
+        &mut self,
+        id: QuestionId,
+        a: UpdateArgs,
+        due: Option<Option<Date>>,
+    ) -> Reply {
+        let cur = self.store.question(id).map_err(err)?;
+        self.check_project(cur.project, &id.to_string())?;
+        if a.description.is_some()
+            || a.state.is_some()
+            || a.epic.is_some()
+            || a.report_to.is_some()
+            || a.reported.is_some()
+        {
+            return Err(
+                "a question takes title, asked_to, due, status, answer and log_decision".into(),
+            );
+        }
+        if let Some(t) = &a.title {
+            check_len("title", t, QUESTION_MAX)?;
+        }
+        if a.level.is_some() {
+            return Err("level is for contacts (C-n)".into());
+        }
+        let asked: Option<Option<ContactId>> = match a.asked_to.as_deref() {
+            None => None,
+            Some(p) => {
+                let place = self.store.place(Record::Question(id)).map_err(err)?;
+                Some(self.person_ref(p, place, &id.to_string())?)
+            }
+        };
+        if let Some(ans) = &a.answer {
+            check_len("answer", ans, ANSWER_MAX)?;
+        }
+        let status = match a.status.as_deref().map(|s| s.trim().to_ascii_lowercase()) {
+            None => None,
+            Some(s) => Some(
+                QuestionStatus::parse(&s)
+                    .ok_or("a question's status is open, answered or dropped")?,
+            ),
+        };
+        let log = a.log_decision.unwrap_or(false);
+        if log && status != Some(QuestionStatus::Answered) {
+            return Err("log_decision goes with status=\"answered\"".into());
+        }
+        if log && !matches!(cur.owner, Owner::Topic(_)) {
+            return Err(format!(
+                "log_decision needs a question on a topic; {id} is on {}",
+                cur.owner
+            ));
+        }
+        if a.answer.is_some() && status.is_none() && cur.status != QuestionStatus::Answered {
+            return Err(format!(
+                "{id} is {}; pass status=\"answered\" with the answer",
+                cur.status.as_str()
+            ));
+        }
+        if a.answer.is_some()
+            && matches!(status, Some(QuestionStatus::Open | QuestionStatus::Dropped))
+        {
+            return Err("answer goes with status=\"answered\"".into());
+        }
+        let mut fields = Vec::new();
+        if a.title.is_some() {
+            fields.push("title");
+        }
+        if asked.is_some() {
+            fields.push("asked_to");
+        }
+        // Answering without an answer keeps the one already written (a
+        // reopened question keeps its text).
+        let answer = a.answer.clone().or(cur.answer.clone());
+        let answering = status == Some(QuestionStatus::Answered)
+            || (a.answer.is_some() && cur.status == QuestionStatus::Answered);
+        let author = self.author();
+        let title = a.title.clone();
+        let entry = self
+            .store
+            .atomically(|store| {
+                if title.is_some() || asked.is_some() {
+                    store.edit_question(id, title.as_deref(), asked, author)?;
+                }
+                if let Some(d) = due {
+                    store.set_expected(id, d, author)?;
+                }
+                let mut entry = None;
+                match status {
+                    _ if answering => {
+                        entry = store.answer(id, answer.as_deref(), log, author)?;
+                    }
+                    Some(QuestionStatus::Dropped) => store.drop_question(id, author)?,
+                    Some(QuestionStatus::Open) => store.reopen_question(id, author)?,
+                    _ => {}
+                }
+                Ok(entry)
+            })
+            .map_err(err)?;
+        let mut parts = vec![format!("ok {id}")];
+        match status {
+            Some(QuestionStatus::Answered) if cur.status != QuestionStatus::Answered => {
+                parts[0].push_str(" answered")
+            }
+            Some(QuestionStatus::Dropped) if cur.status != QuestionStatus::Dropped => {
+                parts[0].push_str(" dropped")
+            }
+            Some(QuestionStatus::Open) if cur.status != QuestionStatus::Open => {
+                parts[0].push_str(" reopened")
+            }
+            Some(s) if s == cur.status && a.answer.is_none() && !log => {
+                parts[0].push_str(&format!(" already {}", s.as_str()))
+            }
+            _ => {}
+        }
+        if a.answer.is_some() && cur.status == QuestionStatus::Answered {
+            fields.push("answer");
+        }
+        if !fields.is_empty() {
+            parts.push(format!("updated: {}", fields.join(", ")));
+        }
+        if let Some(e) = &entry {
+            parts.push(format!(
+                "logged {}#{} decision",
+                e.topic,
+                e.seq.unwrap_or(0)
+            ));
+        }
+        if let Some(d) = due {
+            parts.push(q::by_ack(d, self.session.today()));
+        }
+        if parts.len() == 1 && status.is_none() {
+            return Err("nothing to change: pass title, asked_to, due, status or answer".into());
+        }
+        Ok(render::finish(parts.join(" · "), budget::ACK))
     }
 
     /// `acta update --json`: what a script needs after an update, the id,
@@ -847,9 +1206,48 @@ impl Agent<'_> {
     pub fn record_json(&self, id: &str) -> Reply {
         let today = self.session.today();
         let id = id.trim();
+        // Stored text (a question, an answer, a person) only for the human:
+        // in Claude Code, stored text is read fenced, from the text forms.
+        let text_ok = self.author() == Author::Human;
+        let upper = id.to_ascii_uppercase();
+        if let Some(qid) = QuestionId::parse(id).filter(|_| upper.starts_with("Q-")) {
+            let x = self.store.question(qid).map_err(err)?;
+            let mut o = serde_json::json!({
+                "id": qid.to_string(),
+                "owner": x.owner.to_string(),
+                "status": x.status.as_str(),
+                "due": x.expected_on.map(|d| d.to_string()),
+                "overdue": due::is_overdue(x.expected_on, today, x.is_open()),
+                "resolved_at": x.resolved_at,
+                "decision": x.decision_entry.and_then(|e| self.store.entry(e).ok())
+                    .map(|e| format!("{}#{}", e.topic, e.seq.unwrap_or(0))),
+            });
+            if text_ok {
+                o["text"] = x.text.into();
+                o["asked_to"] = x.asked_to.as_ref().map(|c| c.name.clone()).into();
+                o["asked_contact"] = x.asked_to.map(|c| c.id.to_string()).into();
+                o["answer"] = x.answer.into();
+            }
+            return Ok(o.to_string());
+        }
+        if let Some(n) = NoteId::parse(id).filter(|_| upper.starts_with("N-")) {
+            let mut o = serde_json::json!({ "id": n.to_string() });
+            if text_ok {
+                o["report_to"] = self
+                    .store
+                    .note(n)
+                    .map_err(err)?
+                    .report_to
+                    .map(|c| c.name)
+                    .into();
+            }
+            return Ok(o.to_string());
+        }
+        let mut report = None;
         let (due, open) = match parse_owner(id) {
             Some(Owner::Topic(t)) => {
                 let t = self.store.topic(t).map_err(err)?;
+                report = Some(t.report.clone());
                 (t.due_on, t.status.is_open())
             }
             Some(Owner::Epic(e)) => {
@@ -861,6 +1259,7 @@ impl Agent<'_> {
                     .iter()
                     .find(|s| s.id == e)
                     .is_none_or(|s| s.progress.is_open());
+                report = Some(epic.report.clone());
                 (epic.due_on, open)
             }
             Some(Owner::Project(p)) => {
@@ -876,25 +1275,42 @@ impl Agent<'_> {
             }
             None => return Ok(serde_json::json!({ "id": id.to_ascii_uppercase() }).to_string()),
         };
-        Ok(serde_json::json!({
+        let mut o = serde_json::json!({
             "id": id.to_ascii_uppercase(),
             "due": due.map(|d| d.to_string()),
             "overdue": due::is_overdue(due, today, open),
-        })
-        .to_string())
+        });
+        if let Some(r) = report {
+            o["reported_at"] = r.at.into();
+            if text_ok {
+                o["report_to"] = r.to.as_ref().map(|c| c.name.clone()).into();
+                o["report_contact"] = r.to.map(|c| c.id.to_string()).into();
+            }
+        }
+        Ok(o.to_string())
     }
 
     // ---- find ----
 
     pub fn find(&mut self, a: FindArgs) -> Reply {
         let page = self.find_page(a)?;
-        if page.hits.is_empty() {
+        if let Some(note) = &page.note {
+            // Names are stored text: inside the fence.
+            return Ok(fenced_reply(None, note, None, budget::FIND));
+        }
+        if page.hits.is_empty() && page.head.is_empty() {
             return Ok("0 hits".into());
         }
-        let lines: Vec<String> = page.hits.iter().map(|h| h.line.clone()).collect();
+        // The person header (details, address) first, then the hits.
+        let lines: Vec<String> = page
+            .head
+            .iter()
+            .cloned()
+            .chain(page.hits.iter().map(|h| h.line.clone()))
+            .collect();
         // Titles, notes and excerpts are stored text: all inside the fence.
         let n = render::fitting(&lines, budget::FIND - 60 - render::FENCE_COST);
-        let shown_end = page.offset + n as i64;
+        let shown_end = page.offset + n.saturating_sub(page.head.len()) as i64;
         let foot = if shown_end < page.total {
             format!(
                 "{}-{shown_end} of {} · more: cursor={shown_end}",
@@ -918,12 +1334,18 @@ impl Agent<'_> {
         let page = self.find_page(a)?;
         let end = page.offset + page.hits.len() as i64;
         let hits: Vec<serde_json::Value> = page.hits.iter().map(FindHit::json).collect();
-        Ok(serde_json::json!({
+        let mut o = serde_json::json!({
             "hits": hits,
             "total": page.total,
             "next_cursor": (end < page.total).then_some(end),
-        })
-        .to_string())
+        });
+        if let Some(n) = page.note {
+            o["note"] = n.into();
+        }
+        if !page.head.is_empty() {
+            o["person"] = page.head.join("\n").into();
+        }
+        Ok(o.to_string())
     }
 
     /// One page of `find`: the hits and their lines, before any budget.
@@ -933,13 +1355,53 @@ impl Agent<'_> {
         let offset = a.cursor.unwrap_or(0).max(0);
         let today = self.session.today();
         let kind = a.kind.as_deref().map(|k| k.trim().to_ascii_lowercase());
-        if kind
-            .as_deref()
-            .is_some_and(|k| !matches!(k, "topic" | "epic" | "note" | "entry"))
-        {
-            return Err("kind must be topic, epic, note or entry".into());
+        if kind.as_deref().is_some_and(|k| {
+            !matches!(
+                k,
+                "topic" | "epic" | "note" | "entry" | "question" | "contact"
+            )
+        }) {
+            return Err("kind must be topic, epic, note, entry, question or contact".into());
         }
         let status_word = a.status.as_deref().map(|s| s.trim().to_ascii_lowercase());
+        if let Some(p) = a.person.as_deref() {
+            check_len("person", p, crate::person::MAX_CHARS)?;
+            if a.query.is_some() || a.due.is_some() || a.epic.is_some() || a.status.is_some() {
+                return Err("person lists everything open naming them; it takes only kind".into());
+            }
+            if matches!(kind.as_deref(), Some("entry" | "contact")) {
+                return Err("person applies to questions, topics, epics and notes".into());
+            }
+            return self.find_person(project, p, kind.as_deref(), PageReq { offset, limit });
+        }
+        if kind.as_deref() == Some("contact") {
+            if a.due.is_some() || a.epic.is_some() || a.status.is_some() {
+                return Err("kind=contact takes only query".into());
+            }
+            let query = a.query.as_deref().map(str::trim).filter(|q| !q.is_empty());
+            return self.find_contacts(project, query, PageReq { offset, limit });
+        }
+        if kind.as_deref() == Some("question") {
+            let query = a.query.as_deref().map(str::trim).filter(|q| !q.is_empty());
+            if let Some(q) = query {
+                check_len("query", q, limit::QUERY)?;
+            }
+            let epic = a.epic.as_deref().map(|e| self.epic_arg(e)).transpose()?;
+            let cutoff = a
+                .due
+                .as_deref()
+                .map(|d| due::find_cutoff(d, today))
+                .transpose()?;
+            return self.find_questions(
+                project,
+                status_word.as_deref(),
+                query,
+                epic,
+                cutoff,
+                None,
+                PageReq { offset, limit },
+            );
+        }
         let statuses: Vec<Status> = match status_word.as_deref() {
             None | Some("open") => Status::ALL.into_iter().filter(|s| s.is_open()).collect(),
             Some("closed") => vec![Status::Done, Status::Dropped],
@@ -980,17 +1442,7 @@ impl Agent<'_> {
                     .store
                     .inbox(project, PageReq { offset, limit })
                     .map_err(err)?;
-                hits.extend(page.items.iter().map(|n| FindHit {
-                    id: n.id.to_string(),
-                    kind: "note",
-                    text: Some(n.text.clone()),
-                    line: format!(
-                        "{} note  {}",
-                        n.id,
-                        render::clip(&render::one_line(&n.text), 200)
-                    ),
-                    ..FindHit::default()
-                }));
+                hits.extend(page.items.iter().map(q::note_hit));
                 page_total = page.total;
             }
             (None, Some("epic")) => {
@@ -1112,6 +1564,7 @@ impl Agent<'_> {
                                         topic.status.as_str(),
                                         render::clip(&render::one_line(&topic.title), 60)
                                     ),
+                                    extra: report_extra(&topic.report),
                                 }
                             }
                             Record::Entry(id) => {
@@ -1146,6 +1599,8 @@ impl Agent<'_> {
             hits,
             offset,
             total: page_total,
+            note: None,
+            head: Vec::new(),
         })
     }
 
@@ -1230,6 +1685,8 @@ impl Agent<'_> {
             hits,
             offset: page.offset,
             total: topic_total + epics.len() as i64,
+            note: None,
+            head: Vec::new(),
         })
     }
 
@@ -1303,11 +1760,24 @@ impl Agent<'_> {
         for (i, it) in a.items.iter().enumerate() {
             let what = format!("item {}", i + 1);
             let allowed: &[&str] = match kinds[i].as_str() {
-                "topic" => &["title", "description", "epic", "from_notes", "due"],
-                "epic" => &["title", "description", "from_notes", "due"],
-                "note" => &["title", "description"],
+                "topic" => &[
+                    "title",
+                    "description",
+                    "epic",
+                    "from_notes",
+                    "due",
+                    "report_to",
+                ],
+                "epic" => &["title", "description", "from_notes", "due", "report_to"],
+                "note" => &["title", "description", "report_to"],
                 "entry" => &["topic", "from_notes"],
-                _ => return Err(format!("{what}: kind must be topic, epic, note or entry")),
+                "question" => &["title", "asked_to", "due", "owner"],
+                "contact" => &["title", "level"],
+                _ => {
+                    return Err(format!(
+                        "{what}: kind must be topic, epic, note, entry, question or contact"
+                    ));
+                }
             };
             let given = [
                 ("title", !it.title.trim().is_empty()),
@@ -1319,6 +1789,10 @@ impl Agent<'_> {
                     it.from_notes.as_ref().is_some_and(|n| !n.is_empty()),
                 ),
                 ("due", it.due.is_some()),
+                ("asked_to", it.asked_to.is_some()),
+                ("owner", it.owner.is_some()),
+                ("report_to", it.report_to.is_some()),
+                ("level", it.level.is_some()),
             ];
             if let Some((field, _)) = given.iter().find(|(f, g)| *g && !allowed.contains(f)) {
                 let article = if matches!(kinds[i].as_str(), "epic" | "entry") {
@@ -1339,6 +1813,43 @@ impl Agent<'_> {
             let ids: Vec<NoteId> = notes.iter().map(|n| n.id).collect();
             let title = it.title.trim().to_owned();
             let kind = kinds[i].as_str();
+            // A person: `@k` names a contact item of this call; otherwise
+            // a contact the new record sees (its project; a topic's
+            // existing epic too), by id or by a name naming exactly one.
+            let person = |text: &str, place: Place| -> Result<Option<PersonRef>, String> {
+                let t = text.trim();
+                if let Some(k) = t.strip_prefix('@') {
+                    let k = k
+                        .parse::<usize>()
+                        .ok()
+                        .filter(|k| *k >= 1 && kinds.get(k - 1).is_some_and(|x| x == "contact"))
+                        .ok_or(format!(
+                            "{what}: {} must name a contact item of this call (@1 is item 1)",
+                            render::clip(t, 20)
+                        ))?;
+                    return Ok(Some(PersonRef::Item(k - 1)));
+                }
+                self.person_ref(t, place, &what)
+                    .map(|c| c.map(PersonRef::Existing))
+                    .map_err(|e| format!("{what}: {e}"))
+            };
+            let base = Place {
+                project,
+                epic: None,
+            };
+            let report_to = match it.report_to.as_deref() {
+                Some(p) => {
+                    let place = match (kind, it.epic.as_deref().map(str::trim)) {
+                        ("topic", Some(e)) if !e.starts_with('@') => Place {
+                            project,
+                            epic: EpicId::parse(e),
+                        },
+                        _ => base,
+                    };
+                    person(p, place)?
+                }
+                None => None,
+            };
             let due = match it.due.as_deref() {
                 None => None,
                 Some(d) => due::parse_arg(d).map_err(|e| format!("{what}: {e}"))?,
@@ -1392,6 +1903,7 @@ impl Agent<'_> {
                         status,
                         notes: ids,
                         due,
+                        report_to,
                     });
                 }
                 "epic" => plans.push(Plan::Epic {
@@ -1399,7 +1911,64 @@ impl Agent<'_> {
                     description,
                     notes: ids,
                     due,
+                    report_to,
                 }),
+                "question" => {
+                    if title.is_empty() {
+                        return Err(format!("{what}: a question needs its text in title"));
+                    }
+                    check_len(&format!("{what} title"), &title, QUESTION_MAX)?;
+                    let owner = match it.owner.as_deref() {
+                        Some(o) => {
+                            let o = parse_owner(o)
+                                .ok_or(format!("{what}: owner must be T-n, E-n or P-n"))?;
+                            self.owner_project(o)?;
+                            o
+                        }
+                        None => self
+                            .session
+                            .focus
+                            .ok_or(format!("{what}: pass owner (no focus)"))?,
+                    };
+                    let place = self
+                        .store
+                        .place(match owner {
+                            Owner::Project(p) => Record::Project(p),
+                            Owner::Epic(e) => Record::Epic(e),
+                            Owner::Topic(t) => Record::Topic(t),
+                        })
+                        .map_err(err)?;
+                    let asked = match it.asked_to.as_deref() {
+                        Some(p) => person(p, place)?,
+                        None => None,
+                    };
+                    plans.push(Plan::Question(
+                        NewQuestion {
+                            owner,
+                            text: title,
+                            asked_to: None,
+                            expected_on: due,
+                        },
+                        asked,
+                    ));
+                }
+                "contact" => {
+                    // Name and level only: the details are the user's.
+                    let name = crate::person::clean(&title)
+                        .map_err(|e| format!("{what}: {e}"))?
+                        .ok_or(format!("{what}: a contact needs its name in title"))?;
+                    let level = match it.level.as_deref() {
+                        Some(l) => {
+                            let l = level_arg(self.store, l).map_err(|e| format!("{what}: {e}"))?;
+                            if let Some(p) = l.project() {
+                                self.check_project(p, &l.to_string())?;
+                            }
+                            l
+                        }
+                        None => ContactLevel::Project(project),
+                    };
+                    plans.push(Plan::Contact(name, level));
+                }
                 "note" => {
                     if !ids.is_empty() {
                         return Err(format!("{what}: a note cannot come from notes"));
@@ -1414,7 +1983,7 @@ impl Agent<'_> {
                         return Err(format!("{what}: a note needs its text in title"));
                     }
                     check_len(&format!("{what} note"), &text, limit::NOTE)?;
-                    plans.push(Plan::Note(text));
+                    plans.push(Plan::Note(text, report_to));
                 }
                 "entry" => {
                     let topic = it
@@ -1429,7 +1998,11 @@ impl Agent<'_> {
                     }
                     plans.push(Plan::Entries { topic, notes });
                 }
-                _ => return Err(format!("{what}: kind must be topic, epic, note or entry")),
+                _ => {
+                    return Err(format!(
+                        "{what}: kind must be topic, epic, note, entry or question"
+                    ));
+                }
             }
         }
         let mut dismissed = Vec::new();
@@ -1438,9 +2011,10 @@ impl Agent<'_> {
         }
 
         let author = self.author();
-        let acks = self
+        let today = self.session.today();
+        let (acks, carried) = self
             .store
-            .atomically(|store| apply_plans(store, project, plans, &dismissed, author))
+            .atomically(|store| apply_plans(store, project, plans, &dismissed, author, today))
             .map_err(err)?;
         let render_acks = |notes_shown: bool| {
             let mut parts: Vec<String> = acks
@@ -1471,7 +2045,17 @@ impl Agent<'_> {
         } else {
             render_acks(false)
         };
-        Ok(render::finish(text, budget::CREATE))
+        if carried.is_empty() {
+            return Ok(render::finish(text, budget::CREATE));
+        }
+        // Who filing carried and who it did not: names read from the
+        // notes are stored text, inside the fence.
+        Ok(fenced_reply(
+            Some(&text),
+            &carried.join("\n"),
+            None,
+            budget::CREATE + render::FENCE_COST + 160,
+        ))
     }
 
     // ---- kb ----
@@ -1971,7 +2555,17 @@ impl Agent<'_> {
             self.session.in_acta,
         );
         let line_len = |l: &Option<String>| l.as_deref().map_or(0, |l| render::chars(l) + 1);
-        let folders_len = line_len(&lines.folders) + line_len(&lines.commit);
+        // The profile (request 23): who Claude Code works for, fenced (a
+        // name is stored text), never dropped; memory titles give way.
+        let user = self.store.profile().ok().and_then(|p| {
+            let name = p.name?;
+            let mut s = format!("User: {}", render::one_line(&name));
+            if let Some(j) = p.job_title.filter(|j| !j.trim().is_empty()) {
+                s.push_str(&format!(", {}", render::one_line(&j)));
+            }
+            Some(render::clip(&s, 170))
+        });
+        let folders_len = line_len(&lines.folders) + line_len(&lines.commit) + line_len(&user);
         let brief = self
             .render_brief(
                 scope,
@@ -1990,6 +2584,9 @@ impl Agent<'_> {
         out.lines_of(&brief);
         if let Some(f) = &lines.folders {
             out.line(f);
+        }
+        if let Some(u) = &user {
+            out.line(u);
         }
         // Memory titles: topic, then epic, then project; newest first.
         let memories = self
@@ -2129,31 +2726,97 @@ pub(super) enum Plan {
         status: Status,
         notes: Vec<NoteId>,
         due: Option<Date>,
+        report_to: Option<PersonRef>,
     },
     Epic {
         title: String,
         description: String,
         notes: Vec<NoteId>,
         due: Option<Date>,
+        report_to: Option<PersonRef>,
     },
-    Note(String),
+    /// A note's text and its contact.
+    Note(String, Option<PersonRef>),
+    /// A question and the contact asked.
+    Question(NewQuestion, Option<PersonRef>),
+    /// A contact's name and level (data.md request 22).
+    Contact(String, ContactLevel),
     /// Notes filed into an existing topic, each as a discussion entry.
-    Entries {
-        topic: TopicId,
-        notes: Vec<Note>,
-    },
+    Entries { topic: TopicId, notes: Vec<Note> },
+}
+
+/// What filing did with the notes' contacts (request 19), for the ack, by
+/// id only: `T-51 report to C-3; N-5 named C-7, not carried`, or for an
+/// existing topic with its own, `T-12 keeps C-3; N-4 named C-7, not
+/// carried`. `None` when no note named anyone.
+fn carry_line(
+    store: &Store,
+    target: Record,
+    before: Option<ContactId>,
+    explicit: bool,
+    notes: &[NoteId],
+) -> crate::Result<Option<String>> {
+    let named: Vec<(NoteId, ContactId)> = notes
+        .iter()
+        .filter_map(|n| {
+            store
+                .note(*n)
+                .ok()
+                .and_then(|x| x.report_to)
+                .map(|c| (*n, c.id))
+        })
+        .collect();
+    if named.is_empty() {
+        return Ok(None);
+    }
+    let now = match target {
+        Record::Topic(t) => store.topic(t)?.report.to.map(|c| c.id),
+        Record::Epic(e) => store.epic(e)?.report.to.map(|c| c.id),
+        _ => None,
+    };
+    let mut line = match (now, before.is_some() || explicit) {
+        (Some(c), true) => format!("{target} keeps {c}"),
+        (Some(c), false) => format!("{target} report to {c}"),
+        (None, _) => target.to_string(),
+    };
+    let left: Vec<String> = named
+        .iter()
+        .filter(|(_, c)| Some(*c) != now)
+        .map(|(n, c)| format!("{n} named {c}"))
+        .collect();
+    if !left.is_empty() {
+        line.push_str(&format!("; {}, not carried", left.join(", ")));
+    }
+    Ok(Some(line))
 }
 
 /// Writes validated plans (inside one transaction, see `Agent::create`);
-/// returns one ack and the notes it filed per item.
+/// returns one ack and the notes it filed per item, and what filing did
+/// with the notes' people.
+type Applied = (Vec<(String, Vec<NoteId>)>, Vec<String>);
+
 pub(super) fn apply_plans(
     store: &mut Store,
     project: ProjectId,
     plans: Vec<Plan>,
     dismissed: &[NoteId],
     author: Author,
-) -> crate::Result<Vec<(String, Vec<NoteId>)>> {
-    // Epics first, so topics can name them by item number.
+    today: Date,
+) -> crate::Result<Applied> {
+    // Contacts first, so any item can name them by item number.
+    let mut contacts: Vec<Option<ContactId>> = vec![None; plans.len()];
+    for (i, plan) in plans.iter().enumerate() {
+        if let Plan::Contact(name, level) = plan {
+            contacts[i] = Some(store.create_contact(name, *level, author)?);
+        }
+    }
+    let who = |r: Option<PersonRef>| -> Option<ContactId> {
+        match r? {
+            PersonRef::Existing(c) => Some(c),
+            PersonRef::Item(k) => contacts[k],
+        }
+    };
+    // Epics next, so topics can name them by item number.
     let mut epics: Vec<Option<EpicId>> = vec![None; plans.len()];
     for (i, plan) in plans.iter().enumerate() {
         if let Plan::Epic {
@@ -2164,14 +2827,25 @@ pub(super) fn apply_plans(
         }
     }
     let mut acks = Vec::new();
+    let mut carried = Vec::new();
     for (i, plan) in plans.into_iter().enumerate() {
         let (ack, notes) = match plan {
-            Plan::Epic { notes, due, .. } => {
+            Plan::Epic {
+                notes,
+                due,
+                report_to,
+                ..
+            } => {
                 let id = epics[i].expect("created above");
                 if due.is_some() {
                     store.set_due(Owner::Epic(id), due, author)?;
                 }
+                let explicit = report_to.is_some();
+                if explicit {
+                    store.set_report_to(Record::Epic(id), who(report_to), author)?;
+                }
                 store.file_notes_in_epic(&notes, id, author)?;
+                carried.extend(carry_line(store, Record::Epic(id), None, explicit, &notes)?);
                 (id.to_string(), notes)
             }
             Plan::Topic {
@@ -2181,6 +2855,7 @@ pub(super) fn apply_plans(
                 status,
                 notes,
                 due,
+                report_to,
             } => {
                 let epic = match epic {
                     None => None,
@@ -2200,7 +2875,18 @@ pub(super) fn apply_plans(
                 if due.is_some() {
                     store.set_due(Owner::Topic(id), due, author)?;
                 }
+                let explicit = report_to.is_some();
+                if explicit {
+                    store.set_report_to(Record::Topic(id), who(report_to), author)?;
+                }
                 store.file_notes(&notes, id, author)?;
+                carried.extend(carry_line(
+                    store,
+                    Record::Topic(id),
+                    None,
+                    explicit,
+                    &notes,
+                )?);
                 let mut ack = id.to_string();
                 if status == Status::Draft {
                     ack.push_str(" draft");
@@ -2210,11 +2896,48 @@ pub(super) fn apply_plans(
                 }
                 (ack, notes)
             }
-            Plan::Note(text) => (
-                store.add_note(project, &text, author)?.to_string(),
-                Vec::new(),
-            ),
+            Plan::Note(text, report_to) => {
+                let id = store.add_note(project, &text, author)?;
+                if report_to.is_some() {
+                    store.set_report_to(Record::Note(id), who(report_to), author)?;
+                }
+                (id.to_string(), Vec::new())
+            }
+            Plan::Contact(name, level) => {
+                let id = contacts[i].expect("created above");
+                (
+                    // "created": the one word that says a contact is new.
+                    format!(
+                        "created {id} {} ({})",
+                        render::clip(&render::one_line(&name), 40),
+                        q::level_short(level)
+                    ),
+                    Vec::new(),
+                )
+            }
+            Plan::Question(mut new, asked_ref) => {
+                new.asked_to = who(asked_ref);
+                let owner = new.owner;
+                let asked = new.asked_to;
+                let by = new.expected_on;
+                let id = store.ask(new, author)?;
+                let mut ack = format!("{id} ({owner})");
+                // Whether the contact existed or this call created it, so
+                // the agent never says it created someone Acta knew.
+                if let Some(c) = asked {
+                    let how = match asked_ref {
+                        Some(PersonRef::Item(_)) => "created in this call",
+                        _ => "existing contact",
+                    };
+                    ack.push_str(&format!(" · asked {c} ({how})"));
+                }
+                if by.is_some() {
+                    ack.push_str(&format!(" · {}", q::by_ack(by, today)));
+                }
+                (ack, Vec::new())
+            }
             Plan::Entries { topic, notes } => {
+                let before = store.topic(topic)?.report.to.map(|c| c.id);
                 // The entry keeps the note's words and its author.
                 for n in &notes {
                     store.log(
@@ -2230,6 +2953,13 @@ pub(super) fn apply_plans(
                 }
                 let ids: Vec<NoteId> = notes.iter().map(|n| n.id).collect();
                 store.file_notes(&ids, topic, author)?;
+                carried.extend(carry_line(
+                    store,
+                    Record::Topic(topic),
+                    before,
+                    false,
+                    &ids,
+                )?);
                 (
                     format!("{topic} +{}", plural(ids.len() as i64, "entry", "entries")),
                     ids,
@@ -2239,22 +2969,32 @@ pub(super) fn apply_plans(
         acks.push((ack, notes));
     }
     store.dismiss_notes(dismissed, author)?;
-    Ok(acks)
+    Ok((acks, carried))
 }
 
 /// One `find` hit: its line for the agent and its fields for `--json`.
 #[derive(Default)]
-struct FindHit {
-    id: String,
-    kind: &'static str,
-    status: Option<&'static str>,
-    title: Option<String>,
+pub(super) struct FindHit {
+    pub(super) id: String,
+    pub(super) kind: &'static str,
+    pub(super) status: Option<&'static str>,
+    pub(super) title: Option<String>,
     /// A note's text or a search excerpt.
-    text: Option<String>,
-    /// Topics and epics only: `Some(None)` is "no date".
-    due: Option<Option<Date>>,
-    overdue: Option<bool>,
-    line: String,
+    pub(super) text: Option<String>,
+    /// Topics, epics and questions: `Some(None)` is "no date".
+    pub(super) due: Option<Option<Date>>,
+    pub(super) overdue: Option<bool>,
+    pub(super) line: String,
+    /// More fields for `--json` (a question's answer, a person).
+    pub(super) extra: Vec<(&'static str, serde_json::Value)>,
+}
+
+/// `report_to` and `reported_at` for `--json`.
+fn report_extra(r: &crate::model::Report) -> Vec<(&'static str, serde_json::Value)> {
+    vec![
+        ("report_to", r.to.as_ref().map(|c| c.name.clone()).into()),
+        ("reported_at", r.at.into()),
+    ]
 }
 
 impl FindHit {
@@ -2275,19 +3015,27 @@ impl FindHit {
             o.insert("due".into(), d.map(|d| d.to_string()).into());
             o.insert("overdue".into(), self.overdue.unwrap_or(false).into());
         }
+        for (k, v) in &self.extra {
+            o.insert((*k).into(), v.clone());
+        }
         o.into()
     }
 }
 
-struct FindPage {
-    hits: Vec<FindHit>,
-    offset: i64,
-    total: i64,
+pub(super) struct FindPage {
+    pub(super) hits: Vec<FindHit>,
+    pub(super) offset: i64,
+    pub(super) total: i64,
+    /// One line said instead of hits (`no contact ...`): stored names.
+    pub(super) note: Option<String>,
+    /// Lines before the hits (`find(person=...)`: the contact's details
+    /// and address note): stored text.
+    pub(super) head: Vec<String>,
 }
 
 /// A topic line of `find`: the shortened due segment in lists, the full one
 /// when the list is by date.
-fn topic_hit(t: &TopicSummary, today: Date, full_due: bool) -> FindHit {
+pub(super) fn topic_hit(t: &TopicSummary, today: Date, full_due: bool) -> FindHit {
     let open = t.status.is_open();
     let epic = t.epic.map_or(String::new(), |e| format!(" · {e}"));
     let seg = if full_due {
@@ -2304,15 +3052,23 @@ fn topic_hit(t: &TopicSummary, today: Date, full_due: bool) -> FindHit {
         due: Some(t.due_on),
         overdue: Some(due::is_overdue(t.due_on, today, open)),
         line: format!(
-            "{} {}  {}{epic}{seg}",
+            "{} {}  {}{epic}{seg}{}",
             t.id,
             t.status.as_str(),
-            render::clip(&render::one_line(&t.title), 80)
+            render::clip(&render::one_line(&t.title), 80),
+            q::topic_segment(t)
         ),
+        extra: vec![
+            (
+                "report_to",
+                t.report_to.as_ref().map(|c| c.name.clone()).into(),
+            ),
+            ("reported", t.reported.into()),
+        ],
     }
 }
 
-fn epic_hit(e: &EpicSummary, today: Date, full_due: bool) -> FindHit {
+pub(super) fn epic_hit(e: &EpicSummary, today: Date, full_due: bool) -> FindHit {
     let open = e.progress.is_open();
     let seg = if full_due {
         due::segment(e.due_on, today, open)
@@ -2328,12 +3084,20 @@ fn epic_hit(e: &EpicSummary, today: Date, full_due: bool) -> FindHit {
         due: Some(e.due_on),
         overdue: Some(due::is_overdue(e.due_on, today, open)),
         line: format!(
-            "{} epic  {} ({}/{} done){seg}",
+            "{} epic  {} ({}/{} done){seg}{}",
             e.id,
             render::clip(&render::one_line(&e.title), 80),
             e.progress.done,
-            e.progress.total
+            e.progress.total,
+            q::report_segment(e.report_to.as_ref(), q::epic_report_state(e))
         ),
+        extra: vec![
+            (
+                "report_to",
+                e.report_to.as_ref().map(|c| c.name.clone()).into(),
+            ),
+            ("reported", e.reported.into()),
+        ],
     }
 }
 
