@@ -28,6 +28,8 @@ use std::time::Duration;
 
 /// Git reads for flags (ADR 0015, Consequences).
 const GIT_LIMIT: Duration = Duration::from_secs(2);
+/// Paths per `git ls-tree` call.
+const LS_TREE_BATCH: usize = 64;
 /// "Also open" looks this far back (ADR 0015, 6).
 const ALSO_OPEN_MS: i64 = 10 * 60_000;
 /// Most sources one write may name.
@@ -428,8 +430,10 @@ Also: the script must run from the repository root.",
             .filter(|p| !entry.1.contains_key(*p))
             .cloned()
             .collect();
-        if !missing.is_empty() {
-            let found = ls_tree(root, &missing)?;
+        // One `git ls-tree` per batch, so a page of many file sources
+        // never makes a command line too long.
+        for batch in missing.chunks(LS_TREE_BATCH) {
+            let found = ls_tree(root, batch)?;
             entry.1.extend(found);
         }
         Some(
@@ -731,14 +735,20 @@ Also: the script must run from the repository root.",
             ),
             None => format!("replace it (supersedes=\"{}\")", first.id),
         };
-        let out = format!(
-            "not saved: {}\n{}\nReconcile: {replace}, fix it (kb_write id=\"{}\" rev={} op=\"replace_body\"), or, if both hold, say in this summary when it applies and repeat the call.",
+        // Acta's words first, so the size cut can only shorten the
+        // candidates' stored text, never the way out.
+        let lead = format!(
+            "not saved: {}\nReconcile: {replace}, fix it (kb_write id=\"{}\" rev={} op=\"replace_body\"), or, if both hold, say in this summary when it applies and repeat the call.",
             head.join("; "),
-            fence.wrap(&body.join("\n")),
             first.id,
             first.rev
         );
-        render::finish(out, 600)
+        let room = REFUSAL_MAX
+            .saturating_sub(render::chars(&lead) + render::FENCE_COST + 1 + body.len())
+            / body.len().max(1);
+        let body: Vec<String> = body.iter().map(|l| render::clip(l, room)).collect();
+        let out = format!("{lead}\n{}", fence.wrap(&body.join("\n")));
+        render::finish(out, REFUSAL_MAX)
     }
 
     /// The stale revision reply (ADR 0015, 6): who changed what and when,
@@ -1097,6 +1107,9 @@ pub struct Checked {
     pub keep_apart: Vec<(KbId, KbPairKind)>,
     pub related: Option<KbId>,
 }
+
+/// A duplicate or conflict refusal, at most (ADR 0015, 7).
+pub const REFUSAL_MAX: usize = 600;
 
 /// The one local slot of the last refusal (ADR 0015, 3: the key is the
 /// target owner, the normalised title and the candidates).

@@ -450,3 +450,49 @@ fn level_branch_needs_a_feature_branch() {
         .unwrap();
     assert!(read.contains("from T-1 · claude · "), "{read}");
 }
+
+/// Review: with two candidates at the longest title and summary, the
+/// refusal keeps its Reconcile line (it comes before the fenced list).
+#[test]
+fn a_refusal_with_two_longest_candidates_keeps_its_way_out() {
+    let mut ts = test_support::open();
+    let (_, _, mut sess) = bound(&mut ts.store);
+    let mut a = agent(&mut ts.store, &mut sess);
+    let title = |n: usize| {
+        format!("Keychain entry name for the database key {n} ")
+            .repeat(4)
+            .chars()
+            .take(120)
+            .collect::<String>()
+    };
+    let summary: String = "The SQLCipher key is stored in the OS keychain under acta.db "
+        .repeat(3)
+        .chars()
+        .take(120)
+        .collect();
+    let body = "On first run the key goes to the keychain, entry acta.db.";
+    for n in [1, 2] {
+        a.store
+            .kb_create(
+                NewKb {
+                    owner: Owner::Topic(TopicId(1)),
+                    kind: KbKind::Memory,
+                    title: title(n),
+                    summary: summary.clone(),
+                    body: body.into(),
+                    from_file: false,
+                },
+                Author::Claude,
+            )
+            .unwrap();
+    }
+    let refused = mem(&mut a, "topic", &title(3), &summary, body).unwrap_err();
+    assert!(
+        refused.contains("K-1") && refused.contains("K-2"),
+        "{refused}"
+    );
+    assert!(refused.contains("\nReconcile: replace it"), "{refused}");
+    assert!(refused.contains("repeat the call."), "{refused}");
+    assert!(!refused.contains("[cut at the size budget]"), "{refused}");
+    assert!(chars(&refused) <= 600, "{}", chars(&refused));
+}
