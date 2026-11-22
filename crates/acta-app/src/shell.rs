@@ -49,6 +49,7 @@ use crate::inbox_page::InboxPage;
 use crate::kb_model::Filters;
 use crate::kb_page::{DocPage, Draft, KnowledgePage};
 use crate::layout::{Direction, Layout, Place, Side, Tab, TabId, ViewAction, ViewId};
+use crate::menu::Align;
 use crate::palette::{CreateKind, Palette, PaletteEvent, Setup};
 use crate::palette_model::{Group, Target};
 use crate::record_page::{EditTitle, OpenDuePicker, OpenStatusMenu, PageEvent, RecordPage};
@@ -913,7 +914,16 @@ impl Shell {
             self.navigate(route, true, window, cx);
         }
         match std::env::var("ACTA_DEV_OVERLAY").as_deref() {
-            Ok("palette") => self.open_palette(None, None, window, cx),
+            Ok("palette") => {
+                self.open_palette(None, None, window, cx);
+                // `ACTA_DEV_QUERY`: typed into it (the ranking of 8.3).
+                if let Ok(query) = std::env::var("ACTA_DEV_QUERY")
+                    && let Some(bench) = self.bench()
+                    && let Some(Overlay::Palette(palette)) = &bench.overlay
+                {
+                    palette.update(cx, |p, cx| p.dev_type(&query, window, cx));
+                }
+            }
             // Due dates and the Overview (components-records.md 5), once
             // the page has loaded: the picker, with `ACTA_DEV_DUE_INPUT`
             // typed into it (`due-picker-enter` also presses Enter); the
@@ -1004,7 +1014,37 @@ impl Shell {
                 });
                 self.open_palette(None, None, window, cx);
             }
-            Ok("layout-menu") => self.open_menu(LayoutMenu::Layout, 1000., 40., cx),
+            Ok("layout-menu") => {
+                self.open_menu_under(LayoutMenu::Layout, "titlebar-layout", Align::End, cx)
+            }
+            // Menus hung from their buttons (components.md 5), once the
+            // page has loaded: the status menu, the first entry's menu,
+            // the Settings language menu.
+            #[cfg(debug_assertions)]
+            Ok(which @ ("status-menu" | "entry-menu" | "settings-language")) => {
+                let which = which.to_owned();
+                cx.spawn_in(window, async move |shell, cx| {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(1500))
+                        .await;
+                    let _ = shell.update_in(cx, |shell, window, cx| {
+                        if which == "settings-language" {
+                            if let Some(bench) = shell.bench()
+                                && let PageView::Settings(page) = &bench.page
+                            {
+                                page.update(cx, |page, cx| page.dev_open_language(cx));
+                            }
+                        } else {
+                            shell.with_record(
+                                cx,
+                                |page, window, cx| page.dev_menu(&which, window, cx),
+                                window,
+                            )
+                        }
+                    });
+                })
+                .detach();
+            }
             // "File with Claude Code" against a live Claude Code: the
             // terminal starts, then after 30 s the triage runs (typed into
             // an idle session), then after 60 s more `/exit`, if idle. The

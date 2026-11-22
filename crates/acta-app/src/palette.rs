@@ -173,6 +173,14 @@ impl Palette {
         palette
     }
 
+    /// Debug builds: `text` typed into the input, for captures.
+    #[cfg(debug_assertions)]
+    pub fn dev_type(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.input
+            .update(cx, |state, cx| state.set_value(text.to_owned(), window, cx));
+        self.refresh(cx);
+    }
+
     fn query(&self, cx: &Context<Self>) -> String {
         self.input.read(cx).value().trim().to_owned()
     }

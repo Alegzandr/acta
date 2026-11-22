@@ -967,9 +967,6 @@ New with attachments (2026-11-21; components-attachments.md 5, ADR 0012, data.md
 | `attach.view` | View | Afficher |
 | `attach.save_as` | Save as... | Enregistrer sous... |
 | `attach.save_failed` | Could not save {name}. {reason} | Impossible d'enregistrer {name}. {reason} |
-| `attach.open_external` | Open in another app | Ouvrir dans une autre application |
-| `attach.open_title` | Open in another app? | Ouvrir dans une autre application ? |
-| `attach.open_notice` | Acta writes a decrypted copy for the other app and deletes it when Acta quits. | Acta écrit une copie déchiffrée pour l'autre application et la supprime à la fermeture d'Acta. |
 | `attach.remove` | Remove | Retirer |
 | `attach.removed` | File removed. | Fichier retiré. |
 | `attach.restored` | File restored. | Fichier restauré. |
@@ -986,7 +983,7 @@ New with attachments (2026-11-21; components-attachments.md 5, ADR 0012, data.md
 | `cmd.attach` | Attach files... | Joindre des fichiers... |
 | `cmd.attachment_save` | Save file as... | Enregistrer le fichier sous... |
 
-`{date}` and `{time}` in `attach.pasted_name` are `2026-11-21` and `14.05` in both languages: a file name is not localised (10.2). The units B / KB / MB and o / Ko / Mo are formats, not keys. `attach.moved_to` is plural in French because it heads a list of files. The Open dialog's buttons reuse `common.cancel` and `common.open`. Agent-facing text (`· files: A-4 plan.pdf 2.1M`) is protocol, English only, and not in this catalogue (10).
+`{date}` and `{time}` in `attach.pasted_name` are `2026-11-21` and `14.05` in both languages: a file name is not localised (10.2). The units B / KB / MB and o / Ko / Mo are formats, not keys. `attach.moved_to` is plural in French because it heads a list of files. ("Open in another app" was rejected by the user, ADR 0012, 8: its three keys are gone.) Agent-facing text (`· files: A-4 plan.pdf 2.1M`) is protocol, English only, and not in this catalogue (10).
 
 ### 10.4.8 Keys of Ready for Claude Code (ADR 0013), pending
 
@@ -1152,9 +1149,9 @@ New with dictation (2026-11-22; components-voice.md 5, screens.md 8.27). They st
 
 The macOS `Info.plist` usage strings (ADR 0014, 8) live with the bundle (`InfoPlist.strings`), not in this catalogue: `NSMicrophoneUsageDescription` "Acta turns what you say into text, on this Mac." / "Acta transforme ce que vous dites en texte, sur ce Mac."; `NSSpeechRecognitionUsageDescription` "Lets the macOS recogniser turn what you say into text, on this Mac." / "Permet à la reconnaissance de macOS de transformer ce que vous dites en texte, sur ce Mac." The delete dialog's buttons and "Show in Explorer" (Finder, file manager) reuse their existing keys.
 
-### 10.4.10 Clarity pass and the timeline without a composer, pending
+### 10.4.10 Clarity pass and the timeline without a composer
 
-From the clarity review of 2026-11-22 ([reviews/2026-11-22-clarity.md](reviews/2026-11-22-clarity.md)) and the user's decision of the same day that only Claude Code adds timeline entries (components-records.md 5). 10.4 is read by the tests against `catalogue.rs`, so these changes wait here; the implementing change applies the three lists to 10.4 and to `catalogue.rs` in one commit. The rule of the pass: one idea per line; what a person needs once (how a setting works, what setup writes, memory use) goes in a tooltip or behind "Details", never on screen at rest.
+From the clarity review of 2026-11-22 ([reviews/2026-11-22-clarity.md](reviews/2026-11-22-clarity.md)) and the user's decision of the same day that only Claude Code adds timeline entries (components-records.md 5). **Applied to 10.4 and `catalogue.rs`** (branch `gpui-engineer/polish-2`), with these differences from the lists below, all from the user's ruling of copy.md 7 (one plain line or none, never mechanics) and the QA of the same day: `composer.hint` stays (every multi-line editor's footer uses it); `settings.reading_width.hint`, `settings.resume.hint`, `settings.usage.hint` and `browser.idle.memory` are removed rather than shortened (each restated its label or explained mechanics); `settings.setup.hint` reads "Lets Claude Code read and update your projects in Acta." and is the Set up row's label, not a description under a label repeated on the button; `settings.flash_waiting.hint` keeps its first sentence; `topic.empty_project` drops "No topics yet.", which its heading already says; `prop.id` and `prop.updated` are removed (the meta line replaced both rows, on documents too); `meta.updated` ("Updated {when} by {author}", the meta line of a project, which shows no id), `meta.copy_id` ("Copy id", the id's tooltip) and `palette.epics` ("Epics", the palette's group of epics) are new; `prop.add_report_to` stays pending with Report to (10.4.6). The French colon takes U+00A0 (copy.md 10.1). The rule of the pass: one idea per line; what a person needs once (how a setting works, what setup writes, memory use) goes in a tooltip or behind "Details", never on screen at rest.
 
 **Removed** from 10.4: `composer.placeholder`, `composer.hint`, `composer.add`, `cmd.add_entry` (no hand-written entries); `settings.theme.hint` (the segment "System" says it); `usage.no_data` (the status bar shows nothing until there is a number; `usage.no_data.tip` becomes the tooltip of the Settings row "Show plan usage in the status bar" while no report has arrived); `kb.empty.epic` and `kb.empty.project` (one text for every level, `kb.empty`).
 

@@ -2337,32 +2337,6 @@ impl RecordPage {
     }
 }
 
-/// Whether "Move up" and "Move down" apply to the own folder `id` among
-/// `own`, in stored order: never for an only folder, never past an end.
-fn move_options(own: &[FolderId], id: FolderId) -> (bool, bool) {
-    match own.iter().position(|f| *f == id) {
-        Some(at) => (at > 0, at + 1 < own.len()),
-        None => (false, false),
-    }
-}
-
-#[cfg(test)]
-mod move_tests {
-    use super::*;
-
-    #[test]
-    fn an_only_folder_moves_nowhere_and_the_ends_move_one_way() {
-        let a = FolderId(1);
-        let b = FolderId(2);
-        let c = FolderId(3);
-        assert_eq!(move_options(&[a], a), (false, false));
-        assert_eq!(move_options(&[a, b, c], a), (false, true));
-        assert_eq!(move_options(&[a, b, c], b), (true, true));
-        assert_eq!(move_options(&[a, b, c], c), (true, false));
-        assert_eq!(move_options(&[a, b], c), (false, false));
-    }
-}
-
 /// The icon toggles of the folder form: 28 wide, 2 apart.
 const ICON_SIZE: f32 = 28.;
 const ICON_GAP: f32 = 2.;
@@ -2381,9 +2355,30 @@ fn balanced_width(count: usize, room: f32) -> Option<f32> {
     Some(per_row as f32 * step - ICON_GAP)
 }
 
+/// Whether "Move up" and "Move down" apply to the own folder `id` among
+/// `own`, in stored order: never for an only folder, never past an end.
+fn move_options(own: &[FolderId], id: FolderId) -> (bool, bool) {
+    match own.iter().position(|f| *f == id) {
+        Some(at) => (at > 0, at + 1 < own.len()),
+        None => (false, false),
+    }
+}
+
 #[cfg(test)]
-mod icon_tests {
+mod form_tests {
     use super::*;
+
+    #[test]
+    fn an_only_folder_moves_nowhere_and_the_ends_move_one_way() {
+        let a = FolderId(1);
+        let b = FolderId(2);
+        let c = FolderId(3);
+        assert_eq!(move_options(&[a], a), (false, false));
+        assert_eq!(move_options(&[a, b, c], a), (false, true));
+        assert_eq!(move_options(&[a, b, c], b), (true, true));
+        assert_eq!(move_options(&[a, b, c], c), (true, false));
+        assert_eq!(move_options(&[a, b], c), (false, false));
+    }
 
     #[test]
     fn icons_that_wrap_go_in_rows_of_equal_length() {

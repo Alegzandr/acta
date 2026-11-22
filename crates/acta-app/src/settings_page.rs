@@ -221,6 +221,13 @@ impl SettingsPage {
         }
     }
 
+    /// Debug builds: the language menu open, for captures.
+    #[cfg(debug_assertions)]
+    pub fn dev_open_language(&mut self, cx: &mut Context<Self>) {
+        self.language_menu_open = true;
+        cx.notify();
+    }
+
     fn choose_language(&mut self, index: usize, cx: &mut Context<Self>) {
         self.language_menu_open = false;
         if let Some(locale) = Locale::ALL.get(index) {
@@ -1214,10 +1221,12 @@ impl SettingsPage {
         } else {
             (Key::SettingsSetup, ui::Variant::Primary)
         };
+        // The row says what setup does for the person; the button names the
+        // action (a label never repeats on its own button, copy.md 7).
         out.push(
             setting_row(
-                text(locale, setup_key),
                 text(locale, Key::SettingsSetupHint),
+                String::new(),
                 ui::button(
                     "settings-setup",
                     text(locale, setup_key),

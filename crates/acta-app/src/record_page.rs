@@ -766,6 +766,27 @@ impl RecordPage {
         cx.notify();
     }
 
+    /// Debug builds: a menu open for captures (`status-menu`, or the
+    /// `entry-menu` of the newest entry that is not a system event).
+    #[cfg(debug_assertions)]
+    pub fn dev_menu(&mut self, which: &str, window: &mut Window, cx: &mut Context<Self>) {
+        match which {
+            "status-menu" => self.status_menu = Some(0),
+            "entry-menu" => {
+                let entry = self.data.as_ref().and_then(|d| {
+                    record::timeline_entries(&d.entries)
+                        .into_iter()
+                        .find(|e| e.kind != EntryKind::System)
+                });
+                if let Some(entry) = entry {
+                    self.open_entry_menu(entry, window, cx);
+                }
+            }
+            _ => {}
+        }
+        cx.notify();
+    }
+
     // ---- the entry menu ----
 
     fn open_entry_menu(&mut self, entry: Entry, window: &mut Window, cx: &mut Context<Self>) {
@@ -1028,8 +1049,10 @@ impl RecordPage {
                 let topic = data.topic.as_ref();
                 let status = topic.map(|t| t.status).unwrap_or(Status::Planned);
                 let status_button = ui::ghost_value("prop-status", t)
+                    .relative()
                     .child(ui::status_glyph(status, 16., t))
                     .child(text(locale, ui::status_key(status)))
+                    .child(self.status_anchor.measure())
                     .on_click(cx.listener(move |page, _, window, cx| {
                         page.status_menu =
                             Some(Status::ALL.iter().position(|s| *s == status).unwrap_or(0));
@@ -1041,12 +1064,7 @@ impl RecordPage {
                     .map(|highlight| self.render_status_menu(status, highlight, t, cx));
                 rows.push((
                     text(locale, Key::PropStatus),
-                    div()
-                        .relative()
-                        .child(status_button)
-                        .child(self.status_anchor.measure())
-                        .children(menu)
-                        .into_any_element(),
+                    div().child(status_button).children(menu).into_any_element(),
                 ));
                 if due_row {
                     rows.push((

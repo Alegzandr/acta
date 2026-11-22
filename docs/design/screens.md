@@ -105,7 +105,7 @@ Annotations: the capture editor is focused when the inbox opens. Newest note fir
                       bg.overlay, border.default, radius.xl, shadow.overlay, no scrim
 ```
 
-Annotations: empty query shows "Recent" (the last 5 topics) then the 5 most relevant commands for the current page. Group order is fixed (Topics, Knowledge, Commands, Projects) so results do not jump between keystrokes; within a group, ranking is match quality then recency. `Up` / `Down` wrap; `Tab` narrows to the group of the selected row (adds the scope chip); `Backspace` on an empty input removes the chip.
+Annotations: empty query shows "Recent" (the last 5 topics) then the 5 most relevant commands for the current page. Group order is fixed (Topics, Epics, Knowledge, Commands, Projects) so results do not jump between keystrokes, except that a title equal to the query leads with its group (components.md 5); within a group, ranking is match quality then recency. `Up` / `Down` wrap; `Tab` narrows to the group of the selected row (adds the scope chip); `Backspace` on an empty input removes the chip.
 
 ### 8.4 Terminal tool window beside a topic
 

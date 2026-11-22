@@ -957,6 +957,23 @@ pub fn ghost_value(id: impl Into<ElementId>, tokens: &Tokens) -> Stateful<Div> {
         .hover(move |s| s.bg(hover))
 }
 
+/// A bare single-line input set in `role` (no box, no side padding): the
+/// component's own text size is overridden, so editing a title or a
+/// summary never changes its size.
+pub fn role_input(
+    input: gpui_kit::component::input::Input,
+    role: type_scale::TypeRole,
+) -> gpui_kit::component::input::Input {
+    input
+        .appearance(false)
+        .px(px(0.))
+        .py(px(0.))
+        .h(px(role.line()))
+        .text_size(px(role.size()))
+        .line_height(px(role.line()))
+        .font_weight(role.weight)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1016,21 +1033,4 @@ mod tests {
         assert_eq!(column_width_in(440., true, 720.), 408.);
         assert!(!two_line(f32::MAX), "unknown width: one line");
     }
-}
-
-/// A bare single-line input set in `role` (no box, no side padding): the
-/// component's own text size is overridden, so editing a title or a
-/// summary never changes its size.
-pub fn role_input(
-    input: gpui_kit::component::input::Input,
-    role: type_scale::TypeRole,
-) -> gpui_kit::component::input::Input {
-    input
-        .appearance(false)
-        .px(px(0.))
-        .py(px(0.))
-        .h(px(role.line()))
-        .text_size(px(role.size()))
-        .line_height(px(role.line()))
-        .font_weight(role.weight)
 }

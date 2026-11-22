@@ -151,12 +151,16 @@ pub fn layer_bounds(
 /// entry): each measures under its own key, and a layer only hangs from
 /// the bounds of the key it asks for, never from another trigger's.
 #[derive(Clone, Default)]
-pub struct AnchorBounds(Rc<Cell<Option<(u64, Bounds<Pixels>)>>>);
+pub struct AnchorBounds(Rc<Cell<Measured>>);
+
+/// The key of the trigger last measured, and its bounds.
+type Measured = Option<(u64, Bounds<Pixels>)>;
 
 impl AnchorBounds {
     /// An element over the trigger that records its bounds; a change
-    /// redraws, so a layer opened before the trigger was laid out appears
-    /// on the next frame. The trigger is its parent.
+    /// redraws on the next frame, so a layer opened before the trigger was
+    /// laid out, or after the window was resized, lands at its place. The
+    /// trigger is its parent.
     pub fn measure(&self) -> AnyElement {
         self.measure_keyed(0)
     }
@@ -167,7 +171,11 @@ impl AnchorBounds {
         crate::ui::measure(move |bounds, window| {
             if cell.get() != Some((key, bounds)) {
                 cell.set(Some((key, bounds)));
-                window.refresh();
+                // A refresh asked for while the frame is being drawn is
+                // dropped (GPUI), so the layer would keep the old place
+                // after a resize until something else redraws: ask for
+                // it on the next frame instead.
+                window.on_next_frame(|window, _| window.refresh());
             }
         })
     }

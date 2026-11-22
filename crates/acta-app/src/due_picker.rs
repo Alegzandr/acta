@@ -183,8 +183,9 @@ impl DuePicker {
 
     fn render_preview(&self, locale: Locale, t: &Tokens) -> AnyElement {
         // A fixed two lines of 16, so the month under it never moves while
-        // typing (QA 2026-11-22): a date and its phrase on one line, the
-        // date giving way first; a sentence about the input on up to two.
+        // typing (QA 2026-11-22): a date and its phrase, the phrase under
+        // the date when they do not share a line; a sentence about the
+        // input on up to two.
         let line = type_scale::SMALL
             .el()
             .h(px(PREVIEW_HEIGHT))
@@ -199,23 +200,22 @@ impl DuePicker {
             Tone::Secondary => t.text_secondary,
             Tone::Tertiary => t.text_tertiary,
         };
-        let day = |line: gpui_kit::Div, day: Date| {
-            let state = acta_core::date::due_state(Some(day), self.model.today, true);
-            line.child(
-                div()
-                    .min_w_0()
-                    .truncate()
-                    .text_color(t.text_primary)
-                    .child(due::full(locale, day)),
-            )
-            .children(due::phrase(locale, state).map(|(words, tn)| {
-                div()
-                    .flex_shrink_0()
-                    .whitespace_nowrap()
-                    .text_color(tone(tn))
-                    .child(words)
-            }))
-        };
+        let day =
+            |line: gpui_kit::Div, day: Date| {
+                let state = acta_core::date::due_state(Some(day), self.model.today, true);
+                // The phrase goes under the date when both do not fit; the
+                // height is reserved either way, so nothing moves.
+                line.flex_wrap()
+                    .child(
+                        div()
+                            .whitespace_nowrap()
+                            .text_color(t.text_primary)
+                            .child(due::full(locale, day)),
+                    )
+                    .children(due::phrase(locale, state).map(|(words, tn)| {
+                        div().whitespace_nowrap().text_color(tone(tn)).child(words)
+                    }))
+            };
         let problem = |line: gpui_kit::Div, key: Key| {
             if self.model.error {
                 line.text_color(t.danger)
