@@ -17,46 +17,47 @@
   <a href="LICENSE">MIT licence</a>
 </p>
 
-> **Pre-alpha.** Today Acta is an empty window that installs per user, is designed to
-> update itself, and carries the design foundations. Self-update has so far been proven
-> only on Windows, against a local feed. What is listed under "What it will do" is not
-> built yet; see [Status](#status).
+> **Alpha.** Acta is usable day to day and tracks its own development. Expect rough
+> edges; your data stays in one encrypted file on your machine. Progress is in
+> [PLAN.md](PLAN.md).
 
-<picture>
-  <source media="(prefers-color-scheme: light)" srcset="docs/images/screenshot-light.png">
-  <img src="docs/images/screenshot-dark.png" alt="The Acta window as of v0.1.3: titlebar with search, an empty sidebar, the first-run page and the status bar">
-</picture>
+## What it does
 
-## What it will do
-
-- **Track the work.** Projects, epics and topics in a tree, each topic a page with a
-  status, a current state and a timeline of what happened and why.
-- **Give Claude Code a scoped memory.** An MCP server, a CLI and hooks let a session read
-  and write the topic or epic it is working on, in compact answers that do not flood its
-  context.
+- **Track the work.** Projects, epics and topics in a tree. Each page has a status, an
+  optional due date, a current state, open questions and a timeline written by Claude
+  Code. A calm Overview shows only what needs you: blocked, overdue, idle, unanswered.
+- **Give Claude Code a scoped memory.** An MCP server, a CLI and hooks brief each session
+  on the topic it works on and let it read and write that topic, its epic and project, in
+  compact answers that do not flood its context.
 - **Keep a knowledge base you can read.** Documents and the agent's durable memories,
   filed on projects, epics and topics, visible and editable by you.
-- **Run Claude Code beside the page.** An integrated terminal that opens in the working
-  folder of the topic it was launched from.
+- **Know who is who.** Contacts (with levels: all projects, a project or an epic) for the
+  people you ask questions or report back to; your own profile.
+- **Run Claude Code beside the page.** An integrated terminal opens Claude Code in the
+  page's active folder, resumes that page's conversation, and shows which session works
+  where. Your plan usage stays visible in the status bar.
+- **Work in your repositories.** Several named folders per page, inherited from above,
+  with branch state, Pull and branch switching, and per-folder commit modes (manual,
+  commit, commit and push), guarded so Claude Code never skips hooks or force-pushes.
+- **Notes, files and voice.** A notes inbox Claude Code can triage; files attached to notes
+  and entries, encrypted in the database; dictation with a local Whisper model you choose
+  to download.
+- **Ready for Claude Code.** Acta checks Claude Code, your sign-in, Git and the GitHub CLI,
+  and installs what is missing with one confirmed click.
+- **Embedded tools.** A claude.ai chat panel and a browser Claude Code can drive, both with
+  their own profile (Windows).
 - **Stay on your machine.** One encrypted local database, its key in the system keychain.
-  No Acta account, no Acta server.
-- **Work from the keyboard.** One command palette reaches everything; every action has a
-  key path.
+  No Acta account, no Acta server, no telemetry.
+- **Work from the keyboard.** One command palette reaches everything; every view can be
+  moved, hidden and restored, VS Code style.
 
 ## Status
 
-| Milestone | What | Release | State |
-|---|---|---|---|
-| M1 | Silent install, self-update, design foundations, app icon | v0.1.x | in progress |
-| M2 | Encrypted data model, tree, topic pages, command palette, knowledge base | v0.2 | planned |
-| M3 | MCP server, CLI, Claude Code hooks and one-step setup | v0.3 | planned |
-| M4 | Integrated terminal running Claude Code | v0.4 | planned |
-| M5-M7 | Chat panel, notes inbox, polish | v0.5-v1.0 | planned |
-
-The 0.1.x releases exist to prove the pipeline: that Acta installs per user without a
-wizard and updates itself on Windows, macOS and Linux. So far that has been seen
-working only on Windows; see [what has been verified](docs/install.md#what-has-been-verified). They store no data yet. Details
-and progress are in [PLAN.md](PLAN.md).
+Released versions are on the [releases page](https://github.com/Alegzandr/acta/releases).
+Milestones M0 to M8 are done or in hands-on QA; the features added since (folder sets,
+due dates, questions and contacts, attachments, dictation, Ready for Claude Code, memory
+quality) are tracked in [PLAN.md](PLAN.md). Self-update is proven end to end on Windows,
+macOS and Linux for every release.
 
 ## Install
 
@@ -95,19 +96,19 @@ window opens, without asking and without administrator rights. The check is limi
 few seconds; if it is slow or fails, Acta opens normally and updates at a later start.
 Updating uses [Velopack](https://velopack.io).
 
-Self-update has so far been proven only on Windows, against a local feed; the end-to-end
-test on Windows, macOS and Linux runners against GitHub Releases has not run yet.
+Each release is checked by an end-to-end update test on Windows, macOS and Linux.
 
 ## Build from source
 
 Install Rust with [rustup](https://rustup.rs); the toolchain is pinned in
 `rust-toolchain.toml` and installed on first use.
 
-- **Windows:** Visual Studio Build Tools with the Windows SDK. The encrypted storage
-  (from M2) builds a vendored OpenSSL, which needs a native Perl such as
+- **Windows:** Visual Studio Build Tools with the Windows SDK, and LLVM (libclang, for
+  the Whisper bindings; set `LIBCLANG_PATH` if it is not in `C:\Program Files\LLVM\bin`).
+  The encrypted storage builds a vendored OpenSSL, which needs a native Perl such as
   [Strawberry Perl](https://strawberryperl.com); Git's Perl does not work. Point
   `OPENSSL_SRC_PERL` at its `perl.exe` if it is not first on your PATH.
-- **macOS:** Xcode command line tools.
+- **macOS:** Xcode command line tools and CMake.
 - **Linux:** the packages listed in `scripts/ci/linux-deps.sh` (Ubuntu names).
 
 ```sh
