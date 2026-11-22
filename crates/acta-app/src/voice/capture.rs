@@ -380,6 +380,23 @@ fn run(consumer: Consumer, mut pipeline: Pipeline, control: &Control, events: &S
         }
         over
     };
+    // Level and phrases of the 16 kHz samples in `mono`, which is wiped;
+    // `true` when the segmenter stopped the take.
+    let feed = |mono: &mut AudioBuf,
+                segmenter: &mut Segmenter,
+                meter: &mut LevelMeter,
+                cut: &mut Vec<SegmentEvent>|
+     -> bool {
+        if mono.is_empty() {
+            return false;
+        }
+        if let Some(level) = meter.push(mono.as_slice()) {
+            let _ = events.send(Event::Level(level));
+        }
+        segmenter.push(mono.as_slice(), cut);
+        mono.wipe();
+        send_cut(cut)
+    };
     loop {
         let mode = control.mode.load(Ordering::SeqCst);
         if mode == DISCARD {
@@ -387,26 +404,23 @@ fn run(consumer: Consumer, mut pipeline: Pipeline, control: &Control, events: &S
             break;
         }
         let lost = control.lost.load(Ordering::SeqCst);
-        // Everything the device delivered, in whole frames.
-        while consumer.pop_into(&mut raw, 8_192, channels) > 0 {
+        // Everything the device delivered, in whole frames, a chunk at a
+        // time (one level per chunk at most, as the bar follows the data).
+        let mut over = false;
+        while !over && consumer.pop_into(&mut raw, 8_192, channels) > 0 {
             pipeline.push(raw.as_slice(), &mut mono);
             raw.wipe();
+            over = feed(&mut mono, &mut segmenter, &mut meter, &mut cut);
+        }
+        if over {
+            break;
         }
         let ending = mode == STOP || lost;
         if ending {
             pipeline.flush(&mut mono);
-        }
-        if !mono.is_empty() {
-            if let Some(level) = meter.push(mono.as_slice()) {
-                let _ = events.send(Event::Level(level));
-            }
-            segmenter.push(mono.as_slice(), &mut cut);
-            mono.wipe();
-            if send_cut(&mut cut) {
+            if feed(&mut mono, &mut segmenter, &mut meter, &mut cut) {
                 break;
             }
-        }
-        if ending {
             segmenter.finish(&mut cut);
             send_cut(&mut cut);
             if lost {
@@ -781,40 +795,45 @@ mod tests {
         signal
     }
 
-    fn collect(rx: &mpsc::Receiver<Event>) -> Vec<Event> {
-        let mut out = Vec::new();
-        while let Ok(e) = rx.recv_timeout(Duration::from_secs(10)) {
-            let end = matches!(e, Event::Ended);
-            out.push(e);
-            if end {
-                break;
-            }
+    /// The capture loop over a whole signal already in the ring, with the
+    /// take's end decided before it runs: no clock, no thread, so the
+    /// result does not depend on how fast the machine is.
+    fn run_whole(rate: u32, signal: &AudioBuf, end: &str) -> Vec<Event> {
+        let (producer, consumer) = ring(signal.len());
+        producer.push_slice(signal.as_slice());
+        let control = Control::default();
+        match end {
+            "stop" => control.mode.store(STOP, Ordering::SeqCst),
+            "discard" => control.mode.store(DISCARD, Ordering::SeqCst),
+            _ => control.lost.store(true, Ordering::SeqCst),
         }
-        out
+        let (tx, rx) = mpsc::channel();
+        run(consumer, Pipeline::new(rate, 2).unwrap(), &control, &tx);
+        drop(tx);
+        rx.iter().collect()
+    }
+
+    fn kinds(events: &[Event]) -> Vec<&'static str> {
+        events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Phrase(_) => Some("phrase"),
+                Event::Error(CaptureError::DeviceLost) => Some("lost"),
+                Event::SilenceStop => Some("silence"),
+                Event::LimitStop => Some("limit"),
+                _ => None,
+            })
+            .collect()
     }
 
     #[test]
-    fn a_fake_source_gives_started_levels_and_one_phrase_per_burst() {
-        let (tx, rx) = mpsc::channel();
+    fn the_capture_loop_gives_levels_and_one_phrase_per_burst() {
         let signal = bursts(
             48_000,
             &[(0.3, 0.0), (0.6, 0.3), (0.9, 0.0), (0.6, 0.3), (0.9, 0.0)],
         );
-        let handle = start_synthetic(48_000, 2, signal, tx);
-        // The signal is 3.3 s long; stop once it has played.
-        std::thread::sleep(Duration::from_millis(3_600));
-        handle.stop();
-        let events = collect(&rx);
-        assert!(matches!(events.first(), Some(Event::Started)));
-        assert!(matches!(events.last(), Some(Event::Ended)));
-        let phrases: Vec<usize> = events
-            .iter()
-            .filter_map(|e| match e {
-                Event::Phrase(p) => Some(p.len()),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(phrases.len(), 2, "{phrases:?}");
+        let events = run_whole(48_000, &signal, "stop");
+        assert_eq!(kinds(&events), ["phrase", "phrase"]);
         let loud = events
             .iter()
             .filter_map(|e| match e {
@@ -827,43 +846,42 @@ mod tests {
 
     #[test]
     fn stopping_mid_phrase_still_gives_the_phrase_and_discard_gives_nothing() {
-        for discard in [false, true] {
-            let (tx, rx) = mpsc::channel();
-            let signal = bursts(44_100, &[(0.3, 0.0), (3.0, 0.3)]);
-            let handle = start_synthetic(44_100, 2, signal, tx);
-            std::thread::sleep(Duration::from_millis(1_500));
-            if discard {
-                handle.discard();
-            } else {
-                handle.stop();
-            }
-            let events = collect(&rx);
-            let phrases = events
-                .iter()
-                .filter(|e| matches!(e, Event::Phrase(_)))
-                .count();
-            assert_eq!(phrases, usize::from(!discard), "discard: {discard}");
-            assert!(matches!(events.last(), Some(Event::Ended)));
-        }
+        // The input ends inside a 3 s tone: the phrase is still open.
+        let signal = bursts(44_100, &[(0.3, 0.0), (3.0, 0.3)]);
+        assert_eq!(kinds(&run_whole(44_100, &signal, "stop")), ["phrase"]);
+        assert!(kinds(&run_whole(44_100, &signal, "discard")).is_empty());
     }
 
     #[test]
     fn a_lost_device_ends_the_take_with_what_was_heard() {
+        let signal = bursts(48_000, &[(0.3, 0.0), (3.0, 0.3)]);
+        assert_eq!(
+            kinds(&run_whole(48_000, &signal, "lost")),
+            ["phrase", "lost"]
+        );
+    }
+
+    /// The thread around the loop: `Started` first and `Ended` last,
+    /// however slowly the generated signal is fed (only the order is
+    /// checked, and the wait is generous).
+    #[test]
+    fn a_synthetic_take_starts_and_ends_in_order() {
         let (tx, rx) = mpsc::channel();
         let signal = bursts(48_000, &[(0.3, 0.0), (3.0, 0.3)]);
         let handle = start_synthetic(48_000, 2, signal, tx);
-        std::thread::sleep(Duration::from_millis(1_500));
-        handle.control.lost.store(true, Ordering::SeqCst);
-        let events = collect(&rx);
-        let kinds: Vec<&str> = events
-            .iter()
-            .filter_map(|e| match e {
-                Event::Phrase(_) => Some("phrase"),
-                Event::Error(CaptureError::DeviceLost) => Some("lost"),
-                Event::Ended => Some("ended"),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(kinds, ["phrase", "lost", "ended"]);
+        assert!(matches!(
+            rx.recv_timeout(Duration::from_secs(60)),
+            Ok(Event::Started)
+        ));
+        handle.discard();
+        let mut last = None;
+        while let Ok(e) = rx.recv_timeout(Duration::from_secs(60)) {
+            let end = matches!(e, Event::Ended);
+            last = Some(e);
+            if end {
+                break;
+            }
+        }
+        assert!(matches!(last, Some(Event::Ended)));
     }
 }
