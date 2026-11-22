@@ -1491,3 +1491,53 @@ From the user's decisions of 2026-11-22 (layout.md 4.5.1, data.md 11 request 27)
 | `chat.clear_all_body` | This deletes the cookies and site data of every chat from this computer. Your conversations stay in your Claude account. | Cela supprime de cet ordinateur les cookies et données de site de tous les chats. Vos conversations restent dans votre compte Claude. |
 
 `{level_lower}` is the level word in lower case ("topic", « sujet »); the French form picks "cet" before "epic" (« cet epic »). The commands "Start Claude Code here", "New chat here" and "New browser here" use the `tool.*` labels above as their palette text.
+
+### 10.4.21 Keys of Markdown rendering and the editor
+
+From the user's request of 2026-11-22 (components-editor.md 5). Pending until implemented; numbered high so that sections added meanwhile by other work keep their numbers. The heading and list commands reuse `slash.h1` to `slash.h3`, `slash.bullets`, `slash.numbers`, `slash.tasks` and `slash.quote` as their palette, bubble and context-menu labels; "Copied" is `common.copied`. `{mod}` is the `Ctrl` / `Cmd` key name of 6.1 (`KeyName::Mod`), `{host}` a host name, `{slug}` a heading anchor and `{item}` a task's text as written (at most 60 characters, then "…"), none of them translated. The alert words name GitHub's alert kinds and are translated like any label; what follows them is content and is not.
+
+| Key | English | French |
+|---|---|---|
+| `md.alert.note` | Note | Remarque |
+| `md.alert.tip` | Tip | Conseil |
+| `md.alert.important` | Important | Important |
+| `md.alert.warning` | Warning | Attention |
+| `md.alert.caution` | Caution | Prudence |
+| `md.copy_code` | Copy code | Copier le code |
+| `md.copy_plain` | Copy as plain text | Copier en texte brut |
+| `md.anchor_missing` | No heading “{slug}” on this page | Aucun titre « {slug} » sur cette page |
+| `md.open_link` | Open link | Ouvrir le lien |
+| `md.copy_link` | Copy link address | Copier l'adresse du lien |
+| `md.mod_click` | {mod}+click to open | {mod}+clic pour ouvrir |
+| `md.link_blocked` | Not opened: Acta opens only web and e-mail links. | Non ouvert : Acta n'ouvre que les liens web et e-mail. |
+| `md.link_mismatch` | This link goes to {host}, not to the address it shows. | Ce lien mène à {host}, pas à l'adresse qu'il affiche. |
+| `md.link_open_host` | Open {host} | Ouvrir {host} |
+| `md.image` | Image | Image |
+| `md.image_blocked` | Not shown: only files attached in Acta are displayed. | Non affichée : seuls les fichiers joints dans Acta sont affichés. |
+| `md.image_missing` | File {id} is not in this project. | Le fichier {id} n'est pas dans ce projet. |
+| `md.image_undecodable` | This file cannot be shown as an image. | Ce fichier ne peut pas être affiché comme image. |
+| `md.footnote_back` | Back to the text | Retour au texte |
+| `md.toggle_stale` | Not changed: Claude Code rewrote this list a moment ago. | Non modifié : Claude Code vient de réécrire cette liste. |
+| `md.link_placeholder` | Paste or type a link | Collez ou saisissez un lien |
+| `md.link_text` | Text | Texte |
+| `md.link_open` | Open | Ouvrir |
+| `md.link_remove` | Remove link | Retirer le lien |
+| `md.link_invalid` | Only web and e-mail links open from Acta. | Seuls les liens web et e-mail s'ouvrent depuis Acta. |
+| `md.paste_images_dropped` | Images in the pasted text were left out. Paste or drop them as files. | Les images du texte collé ont été laissées de côté. Collez-les ou déposez-les comme fichiers. |
+| `md.turn_into` | Turn into | Transformer en |
+| `md.cut` | Cut | Couper |
+| `md.copy` | Copy | Copier |
+| `md.paste` | Paste | Coller |
+| `slash.text` | Text | Texte |
+| `cmd.md_bold` | Bold | Gras |
+| `cmd.md_italic` | Italic | Italique |
+| `cmd.md_code` | Inline code | Code en ligne |
+| `cmd.md_strike` | Strikethrough | Barré |
+| `cmd.md_link` | Link... | Lien... |
+| `cmd.md_paste_plain` | Paste as plain text | Coller en texte brut |
+| `cmd.md_source_show` | Show Markdown source | Afficher la source Markdown |
+| `cmd.md_source_hide` | Show formatted text | Afficher le texte mis en forme |
+| `kb.rev_checked` | Checked “{item}” | « {item} » coché |
+| `kb.rev_unchecked` | Unchecked “{item}” | « {item} » décoché |
+
+The palette lists the `cmd.md_*` commands, the heading and list commands and Quote only while a Markdown editor has focus, each with its key from components-editor.md 5. In French the alert word Attention is the usual rendering of GitHub's "Warning" and Prudence of "Caution"; `md.image_blocked` agrees with *image* (feminine).
