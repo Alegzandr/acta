@@ -93,6 +93,7 @@ text_enum!(KbLogEvent {
     Abandoned => "abandoned",
     StaleRefused => "stale_refused",
     AutoMerged => "auto_merged",
+    FlaggedRead => "flagged_read",
 });
 text_enum!(KbLinkKind {
     Topic => "topic",

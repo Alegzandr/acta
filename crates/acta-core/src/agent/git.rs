@@ -124,6 +124,49 @@ fn upstream(common: &Path, branch: &str) -> Option<String> {
     found
 }
 
+/// The commit a local branch points at, loose or packed (ADR 0015, 4:
+/// the flags of branch memories, read from the files).
+pub fn branch_oid(common: &Path, name: &str) -> Option<String> {
+    let mut loose = common.join("refs").join("heads");
+    for part in name.split('/') {
+        loose.push(part);
+    }
+    if let Ok(t) = fs::read_to_string(&loose) {
+        return Some(t.trim().to_owned()).filter(|t| !t.is_empty());
+    }
+    let wanted = format!("refs/heads/{name}");
+    fs::read_to_string(common.join("packed-refs"))
+        .ok()?
+        .lines()
+        .filter(|l| !l.starts_with('#') && !l.starts_with('^'))
+        .find_map(|l| {
+            let (oid, r) = l.split_once(' ')?;
+            (r.trim() == wanted).then(|| oid.to_owned())
+        })
+}
+
+/// The commit `HEAD` of the worktree containing `dir` names (ADR 0015, 1:
+/// file flags are cached per folder and `HEAD`), read from the files.
+pub fn head_oid(dir: &Path) -> Option<String> {
+    let info = inspect(dir)?;
+    let dot = info.root.join(".git");
+    let git_dir = if dot.is_dir() {
+        dot
+    } else {
+        let text = fs::read_to_string(&dot).ok()?;
+        resolve(
+            &info.root,
+            text.lines().next()?.strip_prefix("gitdir:")?.trim(),
+        )
+    };
+    let head = fs::read_to_string(git_dir.join("HEAD")).ok()?;
+    let head = head.trim();
+    match head.strip_prefix("ref: refs/heads/") {
+        Some(b) => branch_oid(&info.common_dir, b),
+        None => Some(head.to_owned()).filter(|h| h.len() >= 40),
+    }
+}
+
 /// A local branch, loose or packed.
 fn branch_exists(common: &Path, name: &str) -> bool {
     let mut loose = common.join("refs").join("heads");

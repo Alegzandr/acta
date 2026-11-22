@@ -246,6 +246,8 @@ impl ActaServer {
             let session = state.open.as_ref().map(|(_, s)| s.clone());
             if let (Some(session), Some(tracker)) = (session, state.tracker()) {
                 after(tracker, &session);
+                // ADR 0015, 6: the entries it read or wrote, for "also open".
+                let _ = tracker.kb_recent(&session);
             }
         }
         result(reply)
@@ -317,7 +319,7 @@ impl ActaServer {
 impl ActaServer {
     #[tool(
         name = "brief",
-        description = "When unsure where things stand: the focus topic's state, last entries and counts; an epic's topics; or the project overview. focus=true makes id the session's focus.",
+        description = "When unsure where things stand: the focus topic's state and last entries, an epic's topics, or the project overview. focus=true moves the focus to id.",
         annotations(read_only_hint = true),
         meta = always_load()
     )]
@@ -332,7 +334,7 @@ impl ActaServer {
 
     #[tool(
         name = "entries",
-        description = "To answer a question about a topic's history: its timeline, newest first, by page; id: one entry in full.",
+        description = "To answer a question about a topic's history: its timeline, newest first; id: one entry in full.",
         annotations(read_only_hint = true)
     )]
     fn entries(&self, Parameters(a): Parameters<EntriesArgs>) -> CallToolResult {
@@ -341,7 +343,7 @@ impl ActaServer {
 
     #[tool(
         name = "log",
-        description = "After a decision, a finished step or a dead end worth not repeating (never per file edit): appends to the topic's timeline; can refresh its state and status too.",
+        description = "After a decision, a finished step or a dead end (never per file edit): appends to the topic's timeline; can set its state and status.",
         meta = always_load()
     )]
     fn log(&self, Parameters(a): Parameters<LogArgs>) -> CallToolResult {
@@ -356,7 +358,7 @@ impl ActaServer {
 
     #[tool(
         name = "update",
-        description = "Changes a topic, epic, note, question (its answer) or contact (its level). A replaced state stays in history; a note's status open puts it back in the inbox."
+        description = "Changes a topic, epic, note, question (its answer) or contact (its level)."
     )]
     fn update(&self, Parameters(a): Parameters<UpdateArgs>) -> CallToolResult {
         self.run(|ag| ag.update(a))
@@ -364,7 +366,7 @@ impl ActaServer {
 
     #[tool(
         name = "find",
-        description = "Locates topics, epics, notes, entries, questions or contacts by query or filters. kind=note without query: the inbox; due: deadlines; person: what is open with someone.",
+        description = "Finds records by query or filters. kind=note alone: the inbox; due: deadlines; person: what is open with someone.",
         annotations(read_only_hint = true)
     )]
     fn find(&self, Parameters(a): Parameters<FindArgs>) -> CallToolResult {
@@ -373,7 +375,7 @@ impl ActaServer {
 
     #[tool(
         name = "create",
-        description = "Creates topics, epics, notes, questions or contacts (up to 10), or applies an agreed inbox triage all-or-nothing: from_notes files notes into an item, kind=entry into a topic, dismiss closes the rest."
+        description = "Creates up to 10 items of any kind, or applies an agreed inbox triage: from_notes, kind=entry, dismiss."
     )]
     fn create(&self, Parameters(a): Parameters<CreateArgs>) -> CallToolResult {
         self.run(|ag| ag.create(a))
@@ -381,7 +383,7 @@ impl ActaServer {
 
     #[tool(
         name = "kb",
-        description = "Before working on an unfamiliar area: knowledge in scope (topic, epic, project) with one-line summaries; query searches it.",
+        description = "Before an unfamiliar area: knowledge in scope (topic, epic, project), one line each; query searches it.",
         annotations(read_only_hint = true)
     )]
     fn kb(&self, Parameters(a): Parameters<KbArgs>) -> CallToolResult {
@@ -390,7 +392,7 @@ impl ActaServer {
 
     #[tool(
         name = "kb_read",
-        description = "Reads a knowledge entry whose summary matches the task: whole when small, else its outline, then a section or lines.",
+        description = "Reads a knowledge entry whose summary fits the task: whole if small, else its outline, then a section or lines.",
         annotations(read_only_hint = true)
     )]
     fn kb_read(&self, Parameters(a): Parameters<KbReadArgs>) -> CallToolResult {
@@ -399,7 +401,7 @@ impl ActaServer {
 
     #[tool(
         name = "kb_write",
-        description = "Saves a durable fact (memory) or long reference (document), or edits one by section, instead of your own memory files; search with kb first."
+        description = "Saves a durable fact (memory) or reference (document), or edits, verifies, retires or supersedes one. Search kb first."
     )]
     fn kb_write(&self, Parameters(a): Parameters<KbWriteArgs>) -> CallToolResult {
         self.run(|ag| ag.kb_write(a))
@@ -407,7 +409,7 @@ impl ActaServer {
 
     #[tool(
         name = "attachment",
-        description = "Reads a file (A-n) from a files: segment when the task needs its content: text, PDF text or the image.",
+        description = "Reads a file (A-n) of a files: segment when the task needs it: text, PDF text or the image.",
         annotations(read_only_hint = true)
     )]
     fn attachment(&self, Parameters(a): Parameters<AttachmentArgs>) -> CallToolResult {

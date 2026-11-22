@@ -59,6 +59,15 @@ Acta holds the project's topics (T-n) in epics (E-n). Each topic has a current s
 - One fact per memory. Search first with `kb(query=...)`; update the existing entry (`kb_write(id, rev, op="replace_body")`) rather than add a near-duplicate.
 - The summary is one sentence saying what the entry answers and when to read it; never the title again. Max 120 chars. A memory body is max 800 chars.
 
+## Memory quality
+- A `?` after an id or a `?old 140d`, `?file changed`, `?conflict K-9` marker means: a lead, not a fact. Check it against the code before relying on it.
+- Then vouch, fix or retire: `kb_write(id, rev, op="verify")` when it still holds; an edit when it changed; `op="retire"` with the reason as `text` when it no longer holds.
+- A refused write names a possible duplicate or conflict. Replace the old entry (`supersedes="K-9"` on your write), fix it, or, when both hold, say in the summary when yours applies and repeat the identical call.
+- When two memories say the same thing, merge them: rewrite the survivor with `supersedes` naming the other.
+- Name sources with `refs` (up to 3: `T-12#14`, `Q-3`, `commit:9e92ba4`, a repository path), so a changed file flags the memory.
+- A fact true only on this feature branch: `level="branch"`.
+- "not saved: K-4 changed since rev 7" shows who changed it and the current text: reconcile with it, never overwrite blindly.
+
 ## Reading knowledge
 - Before touching an unfamiliar area, call `kb`. Open an entry only when its summary matches the task.
 - `kb_read` returns a long document's outline; read one section with `section=<n>`.

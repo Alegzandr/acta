@@ -7,21 +7,24 @@
 
 use super::args::*;
 use super::due;
+use super::kbq::{Flag, PROMOTE_HINT, matching_section};
 use super::questions as q;
 use super::render::{self, Fence, Text, budget, limit};
 use super::session::{Session, parse_owner};
 use crate::date::{Date, DueState, due_state};
 use crate::error::Error;
+use crate::kb_quality::Text as Draft;
 use crate::markdown;
 use crate::model::{
     AttachOwner, Author, ContactId, ContactLevel, Entry, EntryKind, EpicId, EpicSummary, KbId,
     KbKind, KbSummary, Level, Note, NoteFate, NoteId, Owner, PageReq, Place, ProjectId, QuestionId,
     QuestionStatus, Record, Status, TopicId, TopicSummary,
 };
+use crate::model::{KbLinkKind, KbLogEvent, KbState};
 use crate::store::{
-    ANSWER_MAX, EntryFilter, EpicPatch, INBOX_DAYS, KbEdit, KbFilter, KbUpdate, NewEntry, NewKb,
-    NewQuestion, NewTopic, OverviewFilter, OverviewItem, QUESTION_MAX, SNIPPET_CLOSE, SNIPPET_OPEN,
-    Scope, SearchKind, SearchQuery, Store, TopicFilter, TopicPatch,
+    ANSWER_MAX, EntryFilter, EpicPatch, INBOX_DAYS, KbEdit, KbFilter, KbLinkTarget, KbSuccessor,
+    KbUpdate, NewEntry, NewKb, NewQuestion, NewTopic, OverviewFilter, OverviewItem, QUESTION_MAX,
+    SNIPPET_CLOSE, SNIPPET_OPEN, Scope, SearchKind, SearchQuery, Store, TopicFilter, TopicPatch,
 };
 
 /// The server `instructions` (ADR 0005, section 2). Under 800 characters.
@@ -32,7 +35,7 @@ pub const NOT_LINKED: &str = "This folder is not linked to an Acta project, so A
 /// What a tool returns: the text for the agent, or a refusal.
 pub type Reply = Result<String, String>;
 
-pub(super) fn err(e: Error) -> String {
+pub(crate) fn err(e: Error) -> String {
     match e {
         Error::NotFound(what) => format!("{what} not found (or in the trash)"),
         other => other.to_string(),
@@ -106,7 +109,7 @@ fn kind_word(k: KbKind) -> &'static str {
     }
 }
 
-fn level_word(o: Owner) -> &'static str {
+pub(super) fn level_word(o: Owner) -> &'static str {
     match o {
         Owner::Project(_) => "project",
         Owner::Epic(_) => "epic",
@@ -154,8 +157,6 @@ pub fn near_duplicate(title: &str, summary: &str, other: &KbSummary) -> bool {
     }
     jaccard(&ta, &tb) >= 0.6 || jaccard(&words(summary), &words(&other.summary)) >= 0.6
 }
-
-const REFUSED_KEY: &str = "kb.refused";
 
 impl Agent<'_> {
     fn author(&self) -> Author {
@@ -770,6 +771,7 @@ impl Agent<'_> {
         let status = a.status.as_deref().map(status_of).transpose()?;
         let topic = self.topic_arg(a.topic.as_deref())?;
         let state_set = a.state.is_some();
+        let before = self.store.topic(topic).map(|t| t.status).ok();
         let e = self
             .store
             .log(
@@ -790,7 +792,8 @@ impl Agent<'_> {
         if let Some(s) = status {
             ack.push_str(&format!(" · status {}", s.as_str()));
         }
-        Ok(render::finish(ack, budget::ACK))
+        let hint = self.promote_hint(topic, before, status);
+        Ok(render::finish(ack + &hint, budget::ACK + PROMOTE_HINT))
     }
 
     // ---- update ----
@@ -872,11 +875,13 @@ impl Agent<'_> {
             fields.push("state");
         }
         let author = self.author();
+        let mut hint = String::new();
         let label = if let Some(t) =
             TopicId::parse(id).filter(|_| id.to_ascii_uppercase().starts_with("T-"))
         {
             self.owner_project(Owner::Topic(t))?;
             let status = a.status.as_deref().map(status_of).transpose()?;
+            let before = self.store.topic(t).map(|x| x.status).ok();
             if status.is_some() {
                 fields.push("status");
             }
@@ -915,6 +920,7 @@ impl Agent<'_> {
                     Ok(())
                 })
                 .map_err(err)?;
+            hint = self.promote_hint(t, before, status);
             t.to_string()
         } else if let Some(e) =
             EpicId::parse(id).filter(|_| id.to_ascii_uppercase().starts_with("E-"))
@@ -1071,7 +1077,7 @@ impl Agent<'_> {
             ),
             (false, true) => format!("ok {label} updated: {}", fields.join(", ")),
         };
-        Ok(render::finish(text, budget::ACK))
+        Ok(render::finish(text + &hint, budget::ACK + PROMOTE_HINT))
     }
 
     /// `update` on a contact: its level only (data.md request 22). A move
@@ -2149,17 +2155,38 @@ impl Agent<'_> {
                 return Ok(format!("No knowledge in scope of {scope} matches."));
             }
             let mut lines = Vec::new();
-            for h in &page.items {
-                let Record::Kb(id) = h.record else { continue };
-                let section = self
-                    .store
-                    .kb_entry(id)
-                    .ok()
+            let ids: Vec<KbId> = page
+                .items
+                .iter()
+                .filter_map(|h| match h.record {
+                    Record::Kb(id) => Some(id),
+                    _ => None,
+                })
+                .collect();
+            let flags = self.flags(&ids);
+            let place = self.kb_place();
+            for (id, f) in &flags {
+                let Some(h) = page.items.iter().find(|h| h.record == Record::Kb(*id)) else {
+                    continue;
+                };
+                let e = self.store.kb_entry(*id).ok();
+                let section = e
+                    .as_ref()
                     .and_then(|e| section_of_match(&e.body, &h.snippet))
                     .map_or(String::new(), |s| format!(" §{s}"));
+                // A branch memory of another place is found too, marked.
+                let mut marker = f
+                    .first()
+                    .map_or(String::new(), |f| format!(" {}", f.marker()));
+                if let Some(e) = &e
+                    && let Some(b) = &e.context_branch
+                    && (place.branch.as_ref() != Some(b) || place.folder != e.context_folder)
+                {
+                    marker = format!(" ?branch {}", render::clip(&render::one_line(b), 40));
+                }
                 let excerpt = render::clip(&render::one_line(&strip_marks(&h.snippet)), 160);
                 lines.push(format!(
-                    "{id}{section} {}: {excerpt}",
+                    "{id}{section}{marker} {}: {excerpt}",
                     render::clip(&render::one_line(&h.title), 60)
                 ));
             }
@@ -2174,19 +2201,30 @@ impl Agent<'_> {
             ));
         }
         let counts = self.store.kb_counts(scope).map_err(err)?;
+        let place = self.kb_place();
         let page = self
             .store
             .kb_scope(
                 scope,
                 &KbFilter {
                     kind,
+                    place: Some(place.clone()),
                     ..KbFilter::default()
                 },
                 PageReq { offset, limit: 10 },
             )
             .map_err(err)?;
-        let lines: Vec<String> = page.items.iter().map(kb_line).collect();
-        let n = render::fitting(&lines, budget::KB - 130 - render::FENCE_COST);
+        let ids: Vec<KbId> = page.items.iter().map(|k| k.id).collect();
+        let flags = self.flags(&ids);
+        let lines: Vec<String> = page
+            .items
+            .iter()
+            .zip(&flags)
+            .map(|(k, (_, f))| kb_line(self.store, k, f.first()))
+            .collect();
+        let (superseded, retired) = self.store.kb_inactive_counts(scope).map_err(err)?;
+        let elsewhere = self.store.kb_other_branches(scope, &place).map_err(err)?;
+        let n = render::fitting(&lines, budget::KB - 190 - render::FENCE_COST);
         let end = offset + n as i64;
         let mut head = format!(
             "Knowledge in scope of {scope}: {}, {}",
@@ -2200,6 +2238,18 @@ impl Agent<'_> {
             if end < page.total {
                 head.push_str(&format!(" · more: cursor={end}"));
             }
+        }
+        for (n, word) in [
+            (superseded, "superseded"),
+            (retired, "retired"),
+            (elsewhere, "on other branches"),
+        ] {
+            if n > 0 {
+                head.push_str(&format!(" · {n} {word}"));
+            }
+        }
+        if flags.iter().take(n).any(|(_, f)| !f.is_empty()) {
+            head.push_str(" · ? = check before relying on it");
         }
         if page.total == 0 {
             return Ok(head);
@@ -2228,15 +2278,61 @@ impl Agent<'_> {
         let id = self.kb_owned(&a.id)?;
         let e = self.store.kb_entry(id).map_err(err)?;
         let size = render::chars(&e.body);
-        // Ids and sizes outside the fence; the title, outline and body are
-        // stored text and go inside it.
-        let head = format!(
-            "{id} {} · rev {} · {}",
+        self.touch(id, e.rev);
+        let flags = self
+            .flags(&[id])
+            .into_iter()
+            .next()
+            .map(|(_, f)| f)
+            .unwrap_or_default();
+        if !flags.is_empty() {
+            let _ = self.store.kb_log(
+                KbLogEvent::FlaggedRead,
+                Some(id),
+                None,
+                self.session.session_id.as_deref(),
+                self.author(),
+            );
+        }
+        // Ids, sizes, dates and flags outside the fence; the title,
+        // outline, body, paths and branch are stored text and go inside it.
+        let mut head = format!(
+            "{id} {} · rev {} · {} · verified {} by {}",
             kind_word(e.kind),
             e.rev,
-            render::token_label(size)
+            render::token_label(size),
+            render::short_date(e.verified_at),
+            render::author_word(e.verified_by)
         );
-        let title = format!("Title: {}", render::clip(&render::one_line(&e.title), 100));
+        let markers: Vec<String> = flags.iter().map(Flag::marker).collect();
+        if !markers.is_empty() {
+            head.push_str(&format!(" · {}", markers.join(" ")));
+        }
+        match e.state {
+            KbState::Live => {}
+            state => {
+                let when = self
+                    .store
+                    .kb_history(id, PageReq::first(1))
+                    .ok()
+                    .and_then(|p| p.items.first().map(|r| render::short_date(r.created_at)))
+                    .unwrap_or_default();
+                head = match (state, e.superseded_by) {
+                    (KbState::Superseded, Some(by)) => {
+                        format!("{id} superseded by {by} on {when}. {head}")
+                    }
+                    _ => format!("{id} retired on {when}: not to rely on. {head}"),
+                };
+            }
+        }
+        if let Some(also) = self.also_open(id) {
+            head.push_str(&format!("\n{also}"));
+        }
+        let mut title = format!("Title: {}", render::clip(&render::one_line(&e.title), 100));
+        if let Some(p) = self.provenance(&e, &flags) {
+            title.push('\n');
+            title.push_str(&p);
+        }
         let max = budget::KB_READ;
         // Lines are counted after wrapping long ones, so a body made of one
         // huge line is still readable part by part.
@@ -2373,6 +2469,9 @@ impl Agent<'_> {
     }
 
     fn kb_create(&mut self, a: KbWriteArgs) -> Reply {
+        if a.op.is_some() {
+            return Err("op is for an edit: pass id".into());
+        }
         let kind = kb_kind(
             a.kind
                 .as_deref()
@@ -2401,64 +2500,196 @@ impl Agent<'_> {
             &a.text,
             max,
         )?;
-        let owner = self.write_owner(a.owner.as_deref(), a.level.as_deref())?;
-        if kind == KbKind::Memory {
-            let refusal_key = format!("{owner}|{}", words(&title).join(" "));
-            let page = self
-                .store
-                .kb_scope(
-                    owner,
-                    &KbFilter {
-                        kind: Some(KbKind::Memory),
-                        ..KbFilter::default()
-                    },
-                    PageReq::first(PageReq::MAX_LIMIT),
-                )
-                .map_err(err)?;
-            let previous = self.store.local_value(REFUSED_KEY).map_err(err)?;
-            if previous.as_deref() == Some(refusal_key.as_str()) {
-                self.store.set_local_value(REFUSED_KEY, None).map_err(err)?;
-            } else if let Some(dup) = page
-                .items
-                .iter()
-                .find(|m| near_duplicate(&title, &summary, m))
-            {
-                self.store
-                    .set_local_value(REFUSED_KEY, Some(&refusal_key))
-                    .map_err(err)?;
-                return Err(render::finish(
-                    format!(
-                        "not saved: {} \"{}\" (rev {}) looks like the same memory. Update it with kb_write(id=\"{}\", rev={}, op=\"replace_body\", ...), or repeat this call to save a new one anyway.",
-                        dup.id,
-                        quoted(&dup.title, 60),
-                        dup.rev,
-                        dup.id,
-                        dup.rev
-                    ),
-                    600,
-                ));
+        let mut ctx = self.write_ctx();
+        let branch_level = a
+            .level
+            .as_deref()
+            .is_some_and(|l| l.trim().eq_ignore_ascii_case("branch"));
+        let owner = if branch_level {
+            if a.owner.is_some() {
+                return Err("level=branch files on the focus topic: drop owner".into());
             }
+            let Some(Owner::Topic(t)) = self.session.focus else {
+                return Err("level=branch needs a focus topic".into());
+            };
+            let place = self.place().filter(|p| p.git.is_some());
+            let (Some(place), true) = (
+                place.clone(),
+                place.as_ref().is_some_and(|p| {
+                    p.branch().is_some() && !p.git.as_ref().is_some_and(|g| g.on_default_branch())
+                }),
+            ) else {
+                return Err("level=branch needs a feature branch; use topic".into());
+            };
+            ctx.context_folder = Some(place.folder);
+            ctx.context_branch = place.branch().map(str::to_owned);
+            Owner::Topic(t)
+        } else {
+            self.write_owner(a.owner.as_deref(), a.level.as_deref())?
+        };
+        if let Some(r) = a.refs.as_deref() {
+            ctx.links = self.parse_refs(r)?;
         }
-        let id = self
-            .store
-            .kb_create(
-                NewKb {
-                    owner,
-                    kind,
-                    title,
-                    summary,
-                    body: a.text,
-                    from_file: false,
+        let olds = match a.supersedes.as_deref() {
+            Some(t) => self.parse_supersedes(t)?,
+            None => Vec::new(),
+        };
+        let checked = if kind == KbKind::Memory {
+            self.check_memory(
+                owner,
+                &Draft {
+                    title: &title,
+                    summary: &summary,
+                    body: &a.text,
                 },
-                self.author(),
-            )
-            .map_err(err)?;
-        Ok(render::finish(
-            format!(
-                "ok {id} {} · {} {owner} · rev 1",
-                kind.as_str(),
+                None,
+                &olds,
+            )?
+        } else {
+            Default::default()
+        };
+        let new = NewKb {
+            owner,
+            kind,
+            title,
+            summary,
+            body: a.text,
+            from_file: false,
+        };
+        let author = self.author();
+        let id = if olds.is_empty() {
+            self.store.kb_create_with(new, &ctx, author).map_err(err)?
+        } else {
+            self.store
+                .kb_supersede(KbSuccessor::Create(new), &olds, &ctx, author)
+                .map_err(err)?
+                .0
+        };
+        self.after_write(id, 1, &olds, &checked.keep_apart);
+        let mut ack = format!(
+            "ok {id} {} · {} {owner} · rev 1",
+            kind.as_str(),
+            if branch_level {
+                "branch on"
+            } else {
                 level_word(owner)
-            ),
+            }
+        );
+        if !olds.is_empty() {
+            ack.push_str(&format!(" · supersedes {}", id_list_kb(&olds)));
+        }
+        if let Some(r) = checked.related {
+            ack.push_str(&format!(" · related: {r}"));
+        }
+        if !checked.keep_apart.is_empty() {
+            ack.push_str(" · kept both");
+        }
+        Ok(render::finish(ack, budget::ACK))
+    }
+
+    /// What follows every agent write: superseded and kept-apart pairs
+    /// logged, a warned entry fixed, the touch recorded.
+    fn after_write(
+        &mut self,
+        id: KbId,
+        rev: i64,
+        olds: &[KbId],
+        keep: &[(KbId, crate::model::KbPairKind)],
+    ) {
+        let session = self.session.session_id.clone();
+        for old in olds {
+            let _ = self.store.kb_log(
+                KbLogEvent::Superseded,
+                Some(id),
+                Some(*old),
+                session.as_deref(),
+                Author::Claude,
+            );
+        }
+        self.keep_apart(id, keep);
+        if self.session.kb.warned.contains(&id) {
+            let _ = self.store.kb_log(
+                KbLogEvent::Fixed,
+                Some(id),
+                None,
+                session.as_deref(),
+                Author::Claude,
+            );
+            self.session.kb.warned.retain(|w| *w != id);
+        }
+        self.touch(id, rev);
+    }
+
+    /// Verify and retire (ADR 0015, 1 and 2): no new text, a revision.
+    fn kb_state_op(&mut self, id: KbId, op: &str, a: &KbWriteArgs) -> Reply {
+        let Some(rev) = a.rev else {
+            return Err(format!(
+                "pass rev: the revision you read. You cannot {op} a text you did not read."
+            ));
+        };
+        if a.title.is_some() || a.summary.is_some() || a.supersedes.is_some() || a.refs.is_some() {
+            return Err(format!(
+                "op={op} takes id, rev and (retire) the reason as text"
+            ));
+        }
+        let ctx = self.write_ctx();
+        let author = self.author();
+        let done = if op == "verify" {
+            if !a.text.is_empty() {
+                return Err("op=verify takes no text".into());
+            }
+            // The file sources' blob ids at HEAD, recorded again.
+            let mut blobs = Vec::new();
+            if let Some(place) = self.place().filter(|p| p.git.is_some()) {
+                let files: Vec<(i64, String)> = self
+                    .store
+                    .kb_links(id)
+                    .map_err(err)?
+                    .into_iter()
+                    .filter(|l| l.kind == KbLinkKind::File && l.folder == Some(place.folder))
+                    .filter_map(|l| match l.target {
+                        KbLinkTarget::Text(p) => Some((l.id, p)),
+                        _ => None,
+                    })
+                    .collect();
+                let paths: Vec<String> = files.iter().map(|(_, p)| p.clone()).collect();
+                if !paths.is_empty()
+                    && let Some(now) = self.blobs(&place.root, &paths)
+                {
+                    blobs = files
+                        .into_iter()
+                        .map(|(l, p)| (l, now.get(&p).cloned().flatten()))
+                        .collect();
+                }
+            }
+            self.store.kb_verify(id, Some(rev), &blobs, &ctx, author)
+        } else {
+            check_len("reason", &a.text, crate::store::RETIRE_REASON_MAX)?;
+            self.store.kb_retire(id, Some(rev), &a.text, &ctx, author)
+        };
+        let new_rev = match done {
+            Ok(r) => r,
+            Err(Error::StaleRevision { .. }) => {
+                let cur = self.store.kb_entry(id).map_err(err)?;
+                let _ = self.store.kb_log(
+                    KbLogEvent::StaleRefused,
+                    Some(id),
+                    None,
+                    self.session.session_id.as_deref(),
+                    author,
+                );
+                return Err(self.stale_reply(&cur, rev));
+            }
+            Err(e) => return Err(err(e)),
+        };
+        self.touch(id, new_rev);
+        let word = if op == "verify" {
+            "verified"
+        } else {
+            "retired"
+        };
+        Ok(render::finish(
+            format!("ok {id} {word} (rev {new_rev})"),
             budget::ACK,
         ))
     }
@@ -2467,6 +2698,15 @@ impl Agent<'_> {
         let id = self.kb_owned(id_text)?;
         let cur = self.store.kb_entry(id).map_err(err)?;
         let op = a.op.as_deref().map(|o| o.trim().to_ascii_lowercase());
+        if let Some(o @ ("verify" | "retire")) = op.as_deref() {
+            return self.kb_state_op(id, o, &a);
+        }
+        if a.level
+            .as_deref()
+            .is_some_and(|l| l.trim().eq_ignore_ascii_case("branch"))
+        {
+            return Err("level=branch is for a new memory".into());
+        }
         let edit = match op.as_deref() {
             None => {
                 if !a.text.is_empty() {
@@ -2492,7 +2732,10 @@ impl Agent<'_> {
                 text: a.text.clone(),
             },
             Some(_) => {
-                return Err("op must be replace_body, replace_section or append_section".into());
+                return Err(
+                    "op must be replace_body, replace_section, append_section, verify or retire"
+                        .into(),
+                );
             }
         };
         if !matches!(edit, KbEdit::Keep) && a.rev.is_none() {
@@ -2550,28 +2793,127 @@ impl Agent<'_> {
         } else {
             None
         };
+        let mut ctx = self.write_ctx();
+        if let Some(r) = a.refs.as_deref() {
+            ctx.links = self.parse_refs(r)?;
+        }
+        let olds = match a.supersedes.as_deref() {
+            Some(t) => self.parse_supersedes(t)?,
+            None => Vec::new(),
+        };
+        if olds.contains(&id) {
+            return Err(format!("{id} cannot supersede itself"));
+        }
+        let new_title = a.title.clone().unwrap_or_else(|| cur.title.clone());
+        let new_summary = a.summary.clone().unwrap_or_else(|| cur.summary.clone());
+        let changed = new_title != cur.title
+            || new_summary != cur.summary
+            || new_body != cur.body
+            || target.is_some_and(|t| t != cur.owner);
+        // Only a stale-free edit is checked: a stale one is answered below.
+        let checked = if cur.kind == KbKind::Memory && changed && a.rev.is_none_or(|r| r == cur.rev)
+        {
+            self.check_memory(
+                target.unwrap_or(cur.owner),
+                &Draft {
+                    title: &new_title,
+                    summary: &new_summary,
+                    body: &new_body,
+                },
+                Some(id),
+                &olds,
+            )?
+        } else {
+            Default::default()
+        };
         let author = self.author();
-        let mut rev = match self.store.kb_update(
-            id,
-            KbUpdate {
-                expected_rev: a.rev,
-                title: a.title.clone(),
-                summary: a.summary.clone(),
-                edit,
-            },
-            author,
-        ) {
+        let update = KbUpdate {
+            expected_rev: a.rev,
+            title: a.title.clone(),
+            summary: a.summary.clone(),
+            edit: edit.clone(),
+        };
+        let written = if olds.is_empty() {
+            self.store.kb_update_with(id, update, &ctx, author)
+        } else {
+            self.store
+                .kb_supersede(KbSuccessor::Update(id, update), &olds, &ctx, author)
+                .map(|(_, r)| r)
+        };
+        let mut merged_over = String::new();
+        let mut rev = match written {
             Ok(r) => r,
             Err(Error::StaleRevision { current }) => {
+                let read = a.rev.unwrap_or(0);
                 let fresh = self.store.kb_entry(id).map_err(err)?;
-                return Err(render::finish(
-                    format!(
-                        "not saved: {id} changed since rev {}; it is rev {current} now. Outline:\n{}\nRe-read what you change, then retry with rev={current}.",
-                        a.rev.unwrap_or(0),
-                        outline_fenced(&fresh.body, 1_200)
-                    ),
-                    1_600,
-                ));
+                // Section-level merge (ADR 0015, 6): an append, or a
+                // replace of a section that is still there unchanged.
+                let retried = match &edit {
+                    KbEdit::AppendSection { .. }
+                        if olds.is_empty() && a.title.is_none() && a.summary.is_none() =>
+                    {
+                        Some(edit.clone())
+                    }
+                    KbEdit::ReplaceSection {
+                        number,
+                        heading,
+                        text,
+                    } if olds.is_empty() && a.title.is_none() && a.summary.is_none() => {
+                        let old = self.store.kb_revision(id, read).ok();
+                        old.and_then(|o| matching_section(&o.body, number, &fresh.body))
+                            .map(|n| KbEdit::ReplaceSection {
+                                number: n,
+                                heading: heading.clone(),
+                                text: text.clone(),
+                            })
+                    }
+                    _ => None,
+                };
+                let merged = match retried {
+                    Some(e)
+                        if fresh.kind == KbKind::Document
+                            || matches!(e, KbEdit::AppendSection { .. }) =>
+                    {
+                        self.store
+                            .kb_update_with(
+                                id,
+                                KbUpdate {
+                                    expected_rev: Some(current),
+                                    title: None,
+                                    summary: None,
+                                    edit: e,
+                                },
+                                &ctx,
+                                author,
+                            )
+                            .ok()
+                    }
+                    _ => None,
+                };
+                match merged {
+                    Some(r) => {
+                        let _ = self.store.kb_log(
+                            KbLogEvent::AutoMerged,
+                            Some(id),
+                            None,
+                            self.session.session_id.as_deref(),
+                            author,
+                        );
+                        merged_over = format!(" · merged over rev {current}");
+                        r
+                    }
+                    None => {
+                        let _ = self.store.kb_log(
+                            KbLogEvent::StaleRefused,
+                            Some(id),
+                            None,
+                            self.session.session_id.as_deref(),
+                            author,
+                        );
+                        self.touch(id, fresh.rev);
+                        return Err(self.stale_reply(&fresh, read));
+                    }
+                }
             }
             Err(e) => return Err(err(e)),
         };
@@ -2582,10 +2924,77 @@ impl Agent<'_> {
             rev = self.store.kb_move(id, owner, author).map_err(err)?;
             moved = format!(" · moved to {owner}");
         }
-        Ok(render::finish(
-            format!("ok {id} rev {rev} · {what}{moved}"),
-            budget::ACK,
-        ))
+        self.after_write(id, rev, &olds, &checked.keep_apart);
+        let what = if merged_over.is_empty() {
+            what
+        } else {
+            match &edit {
+                KbEdit::AppendSection { .. } => "section appended".to_owned(),
+                _ => "section replaced".to_owned(),
+            }
+        };
+        let mut ack = format!("ok {id} rev {rev} · {what}{merged_over}{moved}");
+        if !olds.is_empty() {
+            ack.push_str(&format!(" · supersedes {}", id_list_kb(&olds)));
+        }
+        if let Some(r) = checked.related {
+            ack.push_str(&format!(" · related: {r}"));
+        }
+        Ok(render::finish(ack, budget::ACK))
+    }
+
+    /// The provenance line of `kb_read` (ADR 0015, 5), stored text inside
+    /// the fence: sources, author, date, branch, files and flag details.
+    fn provenance(&self, e: &crate::model::KbEntry, flags: &[Flag]) -> Option<String> {
+        let mut from: Vec<String> = Vec::new();
+        let mut files: Vec<String> = Vec::new();
+        let mut commits: Vec<String> = Vec::new();
+        if let Some(t) = e.created_topic {
+            from.push(t.to_string());
+        }
+        for l in self.store.kb_links(e.id).ok().unwrap_or_default() {
+            match (l.kind, l.target) {
+                (KbLinkKind::File, KbLinkTarget::Text(p)) => files.push(render::clip(&p, 120)),
+                (KbLinkKind::Commit, KbLinkTarget::Text(c)) => {
+                    commits.push(format!("commit {}", &c[..c.len().min(12)]))
+                }
+                (_, KbLinkTarget::Record(Record::Entry(en))) => {
+                    if let Ok(x) = self.store.entry(en) {
+                        from.push(format!("{}#{}", x.topic, x.seq.unwrap_or(0)));
+                    }
+                }
+                (_, KbLinkTarget::Record(r)) => from.push(r.to_string()),
+                _ => {}
+            }
+        }
+        from.dedup();
+        let mut parts = Vec::new();
+        if !from.is_empty() {
+            parts.push(format!("from {}", from.join(", ")));
+        }
+        parts.extend(commits);
+        parts.push(format!(
+            "{} · {}",
+            render::author_word(e.created_by),
+            render::short_date(e.stamp.created_at)
+        ));
+        if let Some(b) = &e.context_branch {
+            parts.push(format!("branch {}", render::clip(&render::one_line(b), 60)));
+        }
+        if !files.is_empty() {
+            parts.push(format!("files: {}", files.join(", ")));
+        }
+        let details: Vec<String> = flags
+            .iter()
+            .filter_map(|f| {
+                f.detail()
+                    .map(|d| format!("{} {}", f.marker(), render::clip(d, 120)))
+            })
+            .collect();
+        if !details.is_empty() {
+            parts.push(details.join(", "));
+        }
+        Some(parts.join(" · "))
     }
 
     // ---- hooks ----
@@ -2662,23 +3071,47 @@ impl Agent<'_> {
         if let Some(u) = &user {
             out.line(u);
         }
-        // Memory titles: topic, then epic, then project; newest first.
-        let memories = self
+        // Memory titles (ADR 0015, 4): this branch, then this folder, then
+        // topic, epic, project; newest verified first. Other branches'
+        // memories, superseded and retired ones are left out. Flags here
+        // are the store's: the hook never runs git.
+        let place = self.kb_place();
+        let in_scope = self
             .store
             .kb_scope(
                 scope,
                 &KbFilter {
                     kind: Some(KbKind::Memory),
+                    place: Some(place),
                     ..KbFilter::default()
                 },
-                PageReq::first(5),
+                PageReq::first(100),
             )
             .map(|p| p.items)
             .unwrap_or_default();
-        let room = out.left();
+        let ids: Vec<KbId> = in_scope.iter().map(|m| m.id).collect();
+        let flagged: Vec<KbId> = self
+            .store
+            .kb_store_flags(&ids, self.session.zone, self.session.today())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|(_, f)| !f.is_empty())
+            .map(|(id, _)| id)
+            .collect();
+        let memories = &in_scope[..in_scope.len().min(5)];
+        let check_line = (!flagged.is_empty()).then(|| {
+            format!(
+                "{} to check (kb shows why).",
+                plural(flagged.len() as i64, "memory", "memories")
+            )
+        });
+        let room = out
+            .left()
+            .saturating_sub(check_line.as_ref().map_or(0, |l| render::chars(l) + 1));
         let mut titles = String::new();
-        for m in &memories {
-            let item = format!("{} {}", m.id, quoted(&m.title, 60));
+        for m in memories {
+            let mark = if flagged.contains(&m.id) { "?" } else { "" };
+            let item = format!("{}{mark} {}", m.id, quoted(&m.title, 60));
             let sep = if titles.is_empty() {
                 "Recent memories: "
             } else {
@@ -2694,6 +3127,10 @@ impl Agent<'_> {
             out.line(titles);
         }
         let mut text = out.finish();
+        if let Some(l) = check_line {
+            text.push('\n');
+            text.push_str(&l);
+        }
         for t in tail {
             text.push('\n');
             text.push_str(&t);
@@ -3239,24 +3676,51 @@ fn entry_line(e: &Entry, max: usize) -> String {
     )
 }
 
-fn kb_line(k: &KbSummary) -> String {
+/// `K-19 mem topic  Title · 08-14 from T-12 3d ?old 140d - summary`: a
+/// memory shows its verified date, the provenance, and its most telling
+/// flag (ADR 0015, 1 and 5).
+fn kb_line(store: &Store, k: &KbSummary, flag: Option<&Flag>) -> String {
     let size = match k.kind {
         KbKind::Document => format!(" · {}", render::token_label(k.size as usize)),
         KbKind::Memory => String::new(),
     };
+    let date = match k.kind {
+        KbKind::Memory => k.verified_at,
+        KbKind::Document => k.updated_at,
+    };
+    let from = store
+        .kb_entry(k.id)
+        .ok()
+        .and_then(|e| {
+            e.created_topic.map(|t| {
+                let days =
+                    (crate::time::now_ms() - e.stamp.created_at).max(0) / crate::time::MS_PER_DAY;
+                format!(" from {t} {days}d")
+            })
+        })
+        .unwrap_or_default();
+    let marker = flag.map_or(String::new(), |f| format!(" {}", f.marker()));
     format!(
-        "{:<5} {} {:<7} {}{size} · {} - {}",
+        "{:<5} {} {:<7} {}{size} · {}{from}{marker} - {}",
         k.id.to_string(),
         kind_word(k.kind),
         level_word(k.owner),
         render::clip(&render::one_line(&k.title), 60),
-        render::short_date(k.updated_at),
+        render::short_date(date),
         render::clip(&render::one_line(&k.summary), 120)
     )
 }
 
+/// `K-9, K-12`.
+fn id_list_kb(ids: &[KbId]) -> String {
+    ids.iter()
+        .map(|k| k.to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// `1 Overview 210 · 2 Crates 640 · 2.1 acta-core 300` (sizes in tokens).
-fn outline_text(body: &str, max: usize) -> String {
+pub(super) fn outline_text(body: &str, max: usize) -> String {
     let items: Vec<String> = markdown::outline(body)
         .iter()
         .map(|s| {

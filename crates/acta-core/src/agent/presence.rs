@@ -65,6 +65,8 @@ pub struct Tracker {
     id: String,
     state: SessionState,
     written_at: i64,
+    /// The knowledge touches last written (ADR 0015, 6).
+    kb_written: Vec<crate::presence::KbTouch>,
 }
 
 impl Tracker {
@@ -94,6 +96,7 @@ impl Tracker {
             id,
             state: SessionState::Idle,
             written_at: now,
+            kb_written: Vec::new(),
         }))
     }
 
@@ -142,6 +145,16 @@ impl Tracker {
         }
         self.presence.set_activity(&self.id, text, now)?;
         self.written_at = now;
+        Ok(())
+    }
+
+    /// Writes the session's knowledge touches when they changed.
+    pub fn kb_recent(&mut self, session: &Session) -> crate::Result<()> {
+        if session.kb.touched == self.kb_written || self.state == SessionState::Ended {
+            return Ok(());
+        }
+        self.presence.set_kb_recent(&self.id, &session.kb.touched)?;
+        self.kb_written = session.kb.touched.clone();
         Ok(())
     }
 

@@ -492,6 +492,19 @@ impl Store {
         Ok(())
     }
 
+    /// The Claude Code session that wrote a revision, if one did.
+    pub fn kb_revision_session(&self, id: KbId, rev: i64) -> Result<Option<String>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT session FROM kb_revisions WHERE entry_id = ?1 AND rev = ?2",
+                params![id.0, rev],
+                |r| r.get(0),
+            )
+            .optional()?
+            .flatten())
+    }
+
     /// Every pair an entry is in.
     pub fn kb_pairs_of(&self, id: KbId) -> Result<Vec<KbPair>> {
         let mut stmt = self.conn.prepare(&format!(
@@ -711,6 +724,124 @@ impl Store {
                 |r| r.get(0),
             )
             .optional()?)
+    }
+}
+
+/// The figures behind `acta kb quality` (ADR 0015, 8) for one project
+/// since an instant.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct KbQualityReport {
+    pub live_memories: i64,
+    pub unflagged: i64,
+    /// Store flags: old, topic closed, conflict, duplicate, folder removed.
+    pub flags: [i64; 5],
+    pub claude_writes: i64,
+    pub human_corrections: i64,
+    /// Supersedes and merges by the human, and those of pairs the checker
+    /// never found.
+    pub human_merges: i64,
+    pub missed: i64,
+    pub warnings: i64,
+    pub kept_both: i64,
+    pub verifies: i64,
+    pub sessions: i64,
+    pub flagged_reads: i64,
+    pub flagged_acted: i64,
+    pub stale_refused: i64,
+    pub auto_merged: i64,
+    pub stale_recovered: i64,
+}
+
+impl Store {
+    /// Computes [`KbQualityReport`] from the entries, their revisions and
+    /// the local log. Nothing leaves the machine.
+    pub fn kb_quality_report(
+        &self,
+        project: crate::model::ProjectId,
+        since: i64,
+        zone: Zone,
+        today: Date,
+    ) -> Result<KbQualityReport> {
+        let p = project.0;
+        let mut r = KbQualityReport::default();
+        let ids: Vec<KbId> = {
+            let mut stmt = self.conn.prepare(
+                "SELECT id FROM kb_entries WHERE project_id = ?1 AND kind = 'memory'
+                 AND deleted_at IS NULL AND state = 'live'",
+            )?;
+            stmt.query_map([p], |r| Ok(KbId(r.get(0)?)))?
+                .collect::<rusqlite::Result<_>>()?
+        };
+        r.live_memories = ids.len() as i64;
+        for (_, flags) in self.kb_store_flags(&ids, zone, today)? {
+            if flags.is_empty() {
+                r.unflagged += 1;
+            }
+            for f in flags {
+                let i = match f {
+                    KbFlag::Old { .. } => 0,
+                    KbFlag::TopicClosed(_) => 1,
+                    KbFlag::Conflict(_) => 2,
+                    KbFlag::Duplicate(_) => 3,
+                    KbFlag::FolderRemoved => 4,
+                };
+                r.flags[i] += 1;
+            }
+        }
+        let count = |sql: &str| -> Result<i64> {
+            Ok(self.conn.query_row(sql, params![p, since], |x| x.get(0))?)
+        };
+        const MEM: &str = "JOIN kb_entries k ON k.id = r.entry_id WHERE k.project_id = ?1 AND k.kind = 'memory' AND r.created_at >= ?2";
+        r.claude_writes = count(&format!(
+            "SELECT count(*) FROM kb_revisions r {MEM} AND r.author = 'claude'
+             AND r.change IN ('created', 'created_from_file', 'edited', 'replaced_section', 'appended_section')"
+        ))?;
+        r.human_corrections = count(&format!(
+            "SELECT count(*) FROM kb_revisions r {MEM} AND r.author = 'human' AND k.created_by = 'claude'
+             AND r.change IN ('edited', 'replaced_section', 'appended_section', 'retired', 'superseded', 'moved')"
+        ))? + count(
+            "SELECT count(*) FROM kb_entries WHERE project_id = ?1 AND kind = 'memory'
+             AND created_by = 'claude' AND deleted_by = 'human' AND deleted_at >= ?2",
+        )?;
+        r.human_merges = count(&format!(
+            "SELECT count(*) FROM kb_revisions r {MEM} AND r.author = 'human' AND r.change = 'superseded'"
+        ))?;
+        r.missed = count(&format!(
+            "SELECT count(*) FROM kb_revisions r {MEM} AND r.author = 'human' AND r.change = 'superseded'
+             AND k.superseded_by IS NOT NULL AND NOT EXISTS (SELECT 1 FROM kb_pairs x
+                 WHERE x.a = min(k.id, k.superseded_by) AND x.b = max(k.id, k.superseded_by))"
+        ))?;
+        let in_project = "(l.entry_id IN (SELECT id FROM kb_entries WHERE project_id = ?1)
+             OR l.other_id IN (SELECT id FROM kb_entries WHERE project_id = ?1)) AND l.at >= ?2";
+        let event = |e: &str| -> Result<i64> {
+            count(&format!(
+                "SELECT count(*) FROM kb_quality_log l WHERE l.event = '{e}' AND {in_project}"
+            ))
+        };
+        r.warnings = event("duplicate_warning")? + event("conflict_warning")?;
+        r.kept_both = event("kept_both")?;
+        r.flagged_reads = event("flagged_read")?;
+        r.stale_refused = event("stale_refused")?;
+        r.auto_merged = event("auto_merged")?;
+        r.verifies = count(&format!(
+            "SELECT count(*) FROM kb_revisions r {MEM} AND r.author = 'claude' AND r.change = 'verified'"
+        ))?;
+        r.sessions = count(&format!(
+            "SELECT count(DISTINCT r.session) FROM kb_revisions r {MEM} AND r.author = 'claude'
+             AND r.session IS NOT NULL"
+        ))?;
+        r.flagged_acted = count(&format!(
+            "SELECT count(*) FROM kb_quality_log l WHERE l.event = 'flagged_read' AND {in_project}
+             AND EXISTS (SELECT 1 FROM kb_revisions v WHERE v.entry_id = l.entry_id
+                 AND v.session = l.session AND v.created_at >= l.at
+                 AND v.change IN ('verified', 'edited', 'replaced_section', 'appended_section', 'retired', 'superseded'))"
+        ))?;
+        r.stale_recovered = count(&format!(
+            "SELECT count(*) FROM kb_quality_log l WHERE l.event = 'stale_refused' AND {in_project}
+             AND EXISTS (SELECT 1 FROM kb_revisions v WHERE v.entry_id = l.entry_id
+                 AND v.session = l.session AND v.created_at >= l.at AND v.created_at < l.at + 600000)"
+        ))?;
+        Ok(r)
     }
 }
 

@@ -339,6 +339,8 @@ pub enum KbLogEvent {
     Abandoned,
     StaleRefused,
     AutoMerged,
+    /// An agent read an entry that had a flag (metric 5).
+    FlaggedRead,
 }
 
 /// What a knowledge entry names as its source (ADR 0015, 5).

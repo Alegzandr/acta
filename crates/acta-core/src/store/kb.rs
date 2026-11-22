@@ -59,6 +59,32 @@ pub struct KbFilter {
     pub level: Option<Level>,
     /// Live entries by default (ADR 0015, 2).
     pub states: KbStates,
+    /// An agent's place (ADR 0015, 4): branch memories of other branches
+    /// are left out, and entries rank matching branch first, then this
+    /// folder, then by level and verified date. `None`: every entry, by
+    /// level and update.
+    pub place: Option<KbPlace>,
+}
+
+/// Where an agent session works: its attached folder and branch.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct KbPlace {
+    pub folder: Option<FolderId>,
+    pub branch: Option<String>,
+}
+
+impl KbPlace {
+    /// SQL (alias `k`): the entry is not a branch memory of another place.
+    fn visible(&self) -> String {
+        match (self.folder, &self.branch) {
+            (Some(f), Some(b)) => format!(
+                "(k.context_branch IS NULL OR (k.context_folder_id = {} AND k.context_branch = '{}'))",
+                f.0,
+                b.replace('\'', "''")
+            ),
+            _ => "k.context_branch IS NULL".into(),
+        }
+    }
 }
 
 /// Which states a list shows.
@@ -342,6 +368,21 @@ impl Store {
         )?)
     }
 
+    /// Live branch memories in an agent's scope that `place` does not see
+    /// (the `kb` header's `· 2 on other branches`).
+    pub fn kb_other_branches(&self, owner: Owner, place: &KbPlace) -> Result<i64> {
+        let cond = self.scope_condition(owner)?;
+        Ok(self.conn.query_row(
+            &format!(
+                "SELECT count(*) FROM kb_entries k WHERE k.deleted_at IS NULL AND k.state = 'live'
+                 AND {cond} AND NOT {}",
+                place.visible()
+            ),
+            [],
+            |r| r.get(0),
+        )?)
+    }
+
     /// SQL condition (alias `k`) selecting the knowledge an agent at `owner`
     /// sees, looking up.
     pub(crate) fn scope_condition(&self, owner: Owner) -> Result<String> {
@@ -386,6 +427,9 @@ impl Store {
         if let Some(author) = filter.created_by {
             conds.push(format!("k.created_by = '{}'", author.as_str()));
         }
+        if let Some(place) = &filter.place {
+            conds.push(place.visible());
+        }
         if let Some(level) = filter.level {
             conds.push(
                 match level {
@@ -402,9 +446,17 @@ impl Store {
             [],
             |r| r.get(0),
         )?;
+        let order = match &filter.place {
+            None => format!("{LEVEL_RANK}, k.updated_at DESC, k.id DESC"),
+            Some(p) => format!(
+                "CASE WHEN k.context_branch IS NOT NULL THEN 0 WHEN k.context_folder_id = {} THEN 1 ELSE 2 END,
+                 {LEVEL_RANK}, coalesce(k.verified_at, k.updated_at) DESC, k.id DESC",
+                p.folder.map_or(-1, |f| f.0)
+            ),
+        };
         let mut stmt = self.conn.prepare(&format!(
             "SELECT {SUMMARY_COLS} FROM kb_entries k WHERE {where_}
-             ORDER BY {LEVEL_RANK}, k.updated_at DESC, k.id DESC LIMIT {limit} OFFSET {offset}"
+             ORDER BY {order} LIMIT {limit} OFFSET {offset}"
         ))?;
         let items = stmt
             .query_map([], summary_row)?
