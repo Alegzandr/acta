@@ -582,3 +582,143 @@ pub fn questions(store: &mut Store, folder: &Path) -> acta_core::Result<()> {
     store.set_report_to(Record::Note(note), Some(marie), me)?;
     Ok(())
 }
+
+/// A PNG drawn in memory: a whiteboard (light, with coloured marks) or a
+/// photo-like gradient, for the attachments captures.
+#[cfg(debug_assertions)]
+pub fn sample_png(w: u32, h: u32, whiteboard: bool) -> Vec<u8> {
+    let img = image::RgbImage::from_fn(w, h, |x, y| {
+        if whiteboard {
+            let mark = (x / 40 + y / 60) % 7 == 0 && (y % 60) < 8;
+            let frame = x < 12 || y < 12 || x > w - 13 || y > h - 13;
+            match (frame, mark) {
+                (true, _) => image::Rgb([90, 96, 110]),
+                (_, true) => image::Rgb([40, 110, 200]),
+                _ => image::Rgb([244, 244, 238]),
+            }
+        } else {
+            let r = (x * 255 / w.max(1)) as u8;
+            let g = (y * 255 / h.max(1)) as u8;
+            image::Rgb([r, g, 160])
+        }
+    });
+    let mut out = Vec::new();
+    image::DynamicImage::ImageRgb8(img)
+        .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+        .expect("a PNG encodes in memory");
+    out
+}
+
+/// Notes, entries and descriptions with files (components-attachments.md
+/// 5, screens.md 8.25): images, a PDF, text files (one over 1 MB), a
+/// filed note whose files moved, and a removed file in the trash.
+#[cfg(debug_assertions)]
+pub fn attachments(store: &mut Store, folder: &Path) -> acta_core::Result<()> {
+    use acta_core::model::AttachOwner;
+    use acta_core::store::AttachSource;
+    if !store.projects()?.is_empty() {
+        return Ok(());
+    }
+    let me = Author::Human;
+    let acta = store.create_project("Acta", "", me)?;
+    store.add_folder(Owner::Project(acta), folder, me)?;
+    let add = |store: &mut Store, owner, name: &str, bytes: Vec<u8>| {
+        store.attach(owner, name, AttachSource::Bytes(bytes), me, &mut |_, _| {})
+    };
+    let pdf = b"%PDF-1.4\n% Quote for Alexandre\n".repeat(70_000);
+    let notes_md = "# Review notes\n\n- Alexandre: keep the export dialog short\n".repeat(60);
+    // An older note filed into a topic: its files moved there.
+    let filed = store.add_note(acta, "Export: the dialog should say what files add.", me)?;
+    add(
+        store,
+        AttachOwner::Note(filed),
+        "export-dialog.png",
+        sample_png(900, 600, true),
+    )?;
+    add(
+        store,
+        AttachOwner::Note(filed),
+        "export-log.txt",
+        "export started\n".repeat(400).into_bytes(),
+    )?;
+    let topic = store.note_to_topic(
+        filed,
+        NewTopic {
+            project: acta,
+            epic: None,
+            title: "Export dialog".into(),
+            description: "Export: the dialog should say what files add.".into(),
+            status: Status::Active,
+        },
+        me,
+    )?;
+    let log = "2026-11-21 14:05:09 INFO export started for Alexandre\n".repeat(22_000);
+    add(
+        store,
+        AttachOwner::Topic(topic),
+        "server.log",
+        log.into_bytes(),
+    )?;
+    let entry = store.log(
+        topic,
+        NewEntry {
+            kind: EntryKind::Decision,
+            text: "Export keeps files by default; the checkbox says what they add.".into(),
+            state: None,
+            status: None,
+        },
+        Author::Claude,
+    )?;
+    add(
+        store,
+        AttachOwner::Entry(entry.id),
+        "mockup-export.png",
+        sample_png(1200, 800, true),
+    )?;
+    add(
+        store,
+        AttachOwner::Entry(entry.id),
+        "decision.md",
+        notes_md.clone().into_bytes(),
+    )?;
+    // A removed file waits in the trash.
+    let gone = add(
+        store,
+        AttachOwner::Topic(topic),
+        "old-draft.txt",
+        b"draft".to_vec(),
+    )?;
+    store.delete(acta_core::model::Record::Attachment(gone.id), me)?;
+    // The open note of 8.25: two images, a PDF and a text file.
+    let note = store.add_note(
+        acta,
+        "Whiteboard from the review, and the vendor's quote.",
+        me,
+    )?;
+    add(
+        store,
+        AttachOwner::Note(note),
+        "whiteboard.png",
+        sample_png(1600, 1200, true),
+    )?;
+    add(
+        store,
+        AttachOwner::Note(note),
+        "IMG_2041.jpg.png",
+        sample_png(1512, 2016, false),
+    )?;
+    add(
+        store,
+        AttachOwner::Note(note),
+        "Quote-Q4-vendor-final-signed.pdf",
+        pdf,
+    )?;
+    add(
+        store,
+        AttachOwner::Note(note),
+        "notes.md",
+        notes_md.into_bytes(),
+    )?;
+    store.add_note(acta, "Ask Alexandre about the snapshot retention.", me)?;
+    Ok(())
+}

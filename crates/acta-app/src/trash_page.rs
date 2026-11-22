@@ -24,6 +24,8 @@ use crate::workspace::Workspace;
 enum ContactNote {
     MergedInto(String),
     KeptNamed(usize),
+    /// A removed file: the record it belonged to (its place).
+    Owner(String),
 }
 
 pub struct TrashPage {
@@ -69,8 +71,7 @@ fn kind_icon(record: Record) -> Icon {
         Record::Folder(_) => Icon::FolderOpen,
         Record::Question(_) => Icon::CircleQuestionMark,
         Record::Contact(_) => Icon::User,
-        // The `paperclip` icon arrives with the attachments UI.
-        Record::Attachment(_) => Icon::FileText,
+        Record::Attachment(_) => Icon::Paperclip,
     }
 }
 
@@ -101,6 +102,11 @@ impl TrashPage {
             let page = store.trash(PageReq::first(PageReq::MAX_LIMIT))?;
             let mut notes = std::collections::HashMap::new();
             for item in &page.items {
+                // A removed file's place is its owner (components-attachments.md 5).
+                if let Record::Attachment(id) = item.record {
+                    let owner = store.attachment_owner(id)?;
+                    notes.insert(item.record, ContactNote::Owner(owner.to_string()));
+                }
                 if let Record::Contact(id) = item.record {
                     let c = store.contact_any(id)?;
                     let note = match c.merged_into {
@@ -135,10 +141,10 @@ impl TrashPage {
 
     fn restore(&mut self, record: Record, project: ProjectId, cx: &mut Context<Self>) {
         let locale = settings::locale(cx);
-        let key = if matches!(record, Record::Topic(_)) {
-            Key::TopicRestored
-        } else {
-            Key::TrashRestoredItem
+        let key = match record {
+            Record::Topic(_) => Key::TopicRestored,
+            Record::Attachment(_) => Key::AttachRestored,
+            _ => Key::TrashRestoredItem,
         };
         let message = text(locale, key);
         self.items.retain(|item| item.record != record);
@@ -182,13 +188,18 @@ impl TrashPage {
             Some(ContactNote::KeptNamed(n)) => {
                 tr(locale, Key::TrashKeptNamed, &[("n", Arg::Count(*n as u64))])
             }
-            None => tr(
+            Some(ContactNote::Owner(_)) | None => tr(
                 locale,
                 Key::TrashDays,
                 &[("n", Arg::Count(days_left(item, now)))],
             ),
         };
-        let place = self.project_title(item.project, cx);
+        let place = match self.contacts.get(&record) {
+            Some(ContactNote::Owner(owner)) => {
+                format!("{} \u{b7} {owner}", self.project_title(item.project, cx))
+            }
+            _ => self.project_title(item.project, cx),
+        };
         ui::focusable(div().id(("trash-row", index)), t, false)
             .flex()
             .flex_row()

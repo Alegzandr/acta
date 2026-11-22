@@ -276,6 +276,16 @@ impl SettingsPage {
 
     /// Debug builds: the language menu open, for captures.
     #[cfg(debug_assertions)]
+    /// Debug builds: the page scrolled to its end (the Data section), for
+    /// captures.
+    #[cfg(debug_assertions)]
+    pub fn dev_scroll_end(&mut self, cx: &mut Context<Self>) {
+        let max = self.scroll.max_offset();
+        self.scroll
+            .set_offset(gpui_kit::point(gpui_kit::px(0.), -max.y));
+        cx.notify();
+    }
+
     pub fn dev_open_language(&mut self, cx: &mut Context<Self>) {
         self.language_menu_open = true;
         cx.notify();
@@ -633,6 +643,8 @@ pub struct DataFacts {
     pub newest_snapshot: Option<i64>,
     pub trash: i64,
     pub database: String,
+    /// Attached files, each content counted once (ADR 0012, 2).
+    pub files: acta_core::store::FileTotals,
     /// Folders not found: id, path, owner name.
     pub missing: Vec<(acta_core::model::FolderId, String, String)>,
     /// "Commit in my name" by default (Settings > Claude Code, ADR 0011).
@@ -663,6 +675,7 @@ pub fn load_facts(store: &acta_core::Store) -> acta_core::Result<DataFacts> {
         newest_snapshot: newest,
         trash,
         database: store.db_path().to_string_lossy().into_owned(),
+        files: store.attachment_totals(None)?,
         missing,
         as_user_default: acta_core::claude_settings::as_user_default(store)?,
     })
@@ -1106,7 +1119,23 @@ impl SettingsPage {
                                 .text_color(t.text_secondary)
                                 .tooltip(ui::tip(database))
                                 .child(shown),
-                        ),
+                        )
+                        // "Attached files: 312 MB in 48 files", so growth
+                        // is visible (ADR 0012, 2).
+                        .when(facts.files.files > 0, |this| {
+                            this.child(
+                                type_scale::SMALL
+                                    .el()
+                                    .mt(px(4.))
+                                    .font_features(type_scale::tabular())
+                                    .text_color(t.text_secondary)
+                                    .child(crate::attach::totals_line(
+                                        locale,
+                                        facts.files.bytes.max(0) as u64,
+                                        facts.files.files.max(0) as u64,
+                                    )),
+                            )
+                        }),
                 )
                 .child(
                     ui::button(

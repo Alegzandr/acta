@@ -93,6 +93,7 @@ dependencies = [
  "chrono",
  "gpui-kit",
  "gpui-webview",
+ "image",
  "lb-wry",
  "serde",
  "serde_json",

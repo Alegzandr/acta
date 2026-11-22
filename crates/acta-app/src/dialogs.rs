@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use acta_core::model::ProjectId;
 use acta_core::snapshots::{Snapshot, SnapshotKind};
-use acta_core::store::{ExportFile, ImportReport};
+use acta_core::store::{ExportFile, FileTotals, ImportReport};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
@@ -43,6 +43,10 @@ pub enum Kind {
     Export {
         project: Option<(ProjectId, String)>,
         this_project: bool,
+        /// "Include attached files", on by default (ADR 0012, 9).
+        include_files: bool,
+        /// The attached files of everything and of the project, once read.
+        files: Option<(FileTotals, Option<FileTotals>)>,
     },
     Import {
         file_name: String,
@@ -198,7 +202,32 @@ pub fn import_done(locale: Locale, report: &ImportReport, missing_folders: u64) 
             &[("n", Arg::Count(report.folders_refused as u64))],
         ));
     }
+    // Files exported without their content (ADR 0012, 9).
+    if !report.files_not_in_export.is_empty() {
+        message.push(' ');
+        message.push_str(&tr(
+            locale,
+            Key::ImportFilesMissing,
+            &[("n", Arg::Count(report.files_not_in_export.len() as u64))],
+        ));
+    }
     message
+}
+
+/// The export refused because, with its files, an import could not read
+/// it back (`export.too_large`).
+pub fn export_too_large(locale: Locale, size: u64, limit: u64) -> String {
+    tr(
+        locale,
+        Key::ExportTooLarge,
+        &[
+            ("size", Arg::Text(&crate::attach::size_label(locale, size))),
+            (
+                "limit",
+                Arg::Text(&crate::attach::size_label(locale, limit)),
+            ),
+        ],
+    )
 }
 
 /// The result line of a key-loss recovery: [`import_done`], and, when the
@@ -307,6 +336,29 @@ impl Dialog {
         // components.md 5, Dialog: focus starts on the safe button.
         let safe = cx.focus_handle().tab_index(0).tab_stop(true);
         window.focus(&safe, cx);
+        // The export's checkbox says what the files add.
+        if let (Kind::Export { project, .. }, Some(ws)) = (&kind, &ws) {
+            let project = project.as_ref().map(|p| p.0);
+            let task = ws.read(cx).db.run(cx, move |store| {
+                let all = store.attachment_totals(None)?;
+                let one = match project {
+                    Some(p) => Some(store.attachment_totals(Some(p))?),
+                    None => None,
+                };
+                Ok((all, one))
+            });
+            cx.spawn(async move |dialog, cx| {
+                if let Ok(totals) = task.await {
+                    let _ = dialog.update(cx, |d, cx| {
+                        if let Kind::Export { files, .. } = &mut d.kind {
+                            *files = Some(totals);
+                        }
+                        cx.notify();
+                    });
+                }
+            })
+            .detach();
+        }
         Self {
             ws,
             kind,
@@ -324,10 +376,13 @@ impl Dialog {
         let Kind::Export {
             project,
             this_project,
+            include_files,
+            ..
         } = &self.kind
         else {
             return;
         };
+        let include_files = *include_files;
         let Some(ws) = self.ws.clone() else { return };
         let scope = if *this_project {
             project.as_ref().map(|p| p.0)
@@ -351,13 +406,25 @@ impl Dialog {
             // Read under the store, write the file without it.
             let read = ws.update(cx, |ws, cx| {
                 ws.db.run(cx, move |store| {
-                    let file = store.export(scope)?;
+                    let file = store.export_with(scope, include_files)?;
                     Ok((file.projects.len() as u64, file.to_json()?))
                 })
             });
-            let Ok((count, json)) = read.await else {
-                ws.update(cx, |ws, cx| ws.toast_error(Key::ErrorSave, cx));
-                return;
+            let (count, json) = match read.await {
+                Ok(read) => read,
+                // Too large with its files to import back: export without
+                // them (ADR 0012, amendment).
+                Err(acta_core::Error::ExportTooLarge { size, limit }) => {
+                    ws.update(cx, |ws, cx| {
+                        let message = export_too_large(settings::locale(cx), size, limit);
+                        ws.toast(message, ToastKind::Error, cx);
+                    });
+                    return;
+                }
+                Err(_) => {
+                    ws.update(cx, |ws, cx| ws.toast_error(Key::ErrorSave, cx));
+                    return;
+                }
             };
             let written = cx
                 .background_executor()
@@ -452,8 +519,40 @@ impl Dialog {
             Kind::Export {
                 project,
                 this_project,
+                include_files,
+                files,
             } => {
                 let this_project = *this_project;
+                let include = *include_files;
+                // Hidden when the scope holds no file.
+                let totals = files.as_ref().and_then(
+                    |(all, one)| {
+                        if this_project { *one } else { Some(*all) }
+                    },
+                );
+                let checkbox = totals.filter(|f| f.files > 0).map(|f| {
+                    let size = crate::attach::size_label(locale, f.bytes.max(0) as u64);
+                    div()
+                        .id("export-files")
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(8.))
+                        .h(px(28.))
+                        .cursor_pointer()
+                        .child(ui::checkbox(include, t))
+                        .child(type_scale::UI.el().text_color(t.text_primary).child(tr(
+                            locale,
+                            Key::ExportIncludeFiles,
+                            &[("size", Arg::Text(&size))],
+                        )))
+                        .on_click(cx.listener(|d, _, _, cx| {
+                            if let Kind::Export { include_files, .. } = &mut d.kind {
+                                *include_files = !*include_files;
+                            }
+                            cx.notify();
+                        }))
+                });
                 let scope = project.as_ref().map(|_| {
                     ui::segmented(t)
                         .child(
@@ -490,6 +589,7 @@ impl Dialog {
                     .flex_col()
                     .gap(px(16.))
                     .children(scope)
+                    .children(checkbox.map(|c| ui::focusable(c, t, false)))
                     .child(ui::notice(
                         Some((Icon::TriangleAlert, t.warning)),
                         text(locale, Key::ExportWarning),

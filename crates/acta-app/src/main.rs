@@ -2,6 +2,8 @@
 //! installs, updates or uninstalls anything (ADR 0004).
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+mod attach;
+mod attach_ui;
 #[cfg(windows)]
 mod browser_host;
 #[cfg(windows)]

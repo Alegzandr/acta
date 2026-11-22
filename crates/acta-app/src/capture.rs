@@ -3,13 +3,14 @@
 //! note in that project's inbox and closes, with no toast; `Esc` closes and
 //! keeps the draft. It never navigates away from what was being read.
 
-use acta_core::model::{Place, ProjectId};
+use acta_core::model::{AttachOwner, Place, ProjectId};
 use gpui_kit::component::input::{Escape, IndentInline, InputEvent, Textarea, TextareaState};
 use gpui_kit::{
     AppContext, Context, Entity, EventEmitter, Focusable, InteractiveElement, IntoElement,
     ParentElement, Render, StatefulInteractiveElement, Styled, Subscription, Window, div, px,
 };
 
+use crate::attach_ui::{self, Tray};
 use crate::contact_picker::{ContactPicker, Mode, PickerEvent, Value};
 
 use crate::i18n::{Arg, Key, KeyName, text, tr};
@@ -20,8 +21,9 @@ use crate::ui;
 use crate::workspace::Workspace;
 
 pub enum CaptureEvent {
-    /// Closed; the draft (possibly empty) is kept by the shell.
-    Close(String),
+    /// Closed; the draft (possibly empty) and its files, if any, are kept
+    /// by the shell.
+    Close(String, Option<Entity<Tray>>),
 }
 
 pub struct Capture {
@@ -31,6 +33,8 @@ pub struct Capture {
     editor: Entity<TextareaState>,
     /// Report to (components-questions.md 5, Notes): empty each time.
     report: Entity<ContactPicker>,
+    /// The files pasted, dropped or chosen (components-attachments.md 5).
+    pub tray: Entity<Tray>,
     _subs: Vec<Subscription>,
 }
 
@@ -41,9 +45,14 @@ impl Capture {
         ws: Entity<Workspace>,
         project: ProjectId,
         draft: String,
+        tray: Option<Entity<Tray>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let tray = tray.unwrap_or_else(|| {
+            let ws = ws.clone();
+            cx.new(|cx| Tray::new(ws, None, cx))
+        });
         let locale = settings::locale(cx);
         let project_title = ws
             .read(cx)
@@ -73,6 +82,7 @@ impl Capture {
             cx.new(|cx| ContactPicker::new(ws, place, Value::None, Mode::Inline, window, cx))
         };
         let subs = vec![
+            cx.observe(&tray, |_, _, cx| cx.notify()),
             cx.subscribe_in(
                 &editor,
                 window,
@@ -104,6 +114,7 @@ impl Capture {
             project_title,
             editor,
             report,
+            tray,
             _subs: subs,
         }
     }
@@ -117,17 +128,48 @@ impl Capture {
             .update(cx, |state, cx| state.set_value("", window, cx));
         let project = self.project;
         let person = self.report.read(cx).value().clone();
-        self.ws.update(cx, |ws, cx| {
-            ws.write_detached(cx, Key::ErrorSave, move |store| {
+        let task = self.ws.update(cx, |ws, cx| {
+            ws.write(cx, Key::ErrorSave, move |store| {
                 crate::inbox_page::add_note_with(store, project, &body, person)
-            });
+            })
         });
-        cx.emit(CaptureEvent::Close(String::new()));
+        // The files get their rows once the note exists; saving does not
+        // wait for them (components-attachments.md 5, While adding).
+        let tray = self.tray.clone();
+        cx.spawn(async move |_, cx| {
+            if let Ok(note) = task.await {
+                tray.update(cx, |tray, cx| {
+                    tray.commit(AttachOwner::Note(note), project, cx)
+                });
+            }
+        })
+        .detach();
+        cx.emit(CaptureEvent::Close(String::new(), None));
+    }
+
+    /// Debug builds: a note typed and a screenshot pasted (the paste hook
+    /// with a clipboard holding an image and no text), for captures.
+    #[cfg(debug_assertions)]
+    pub fn dev_fill(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.editor.update(cx, |s, cx| {
+            s.set_value(
+                "Error on the export screen, and the log Alexandre sent.",
+                window,
+                cx,
+            )
+        });
+        let clip = attach_ui::Clip {
+            text: false,
+            files: Vec::new(),
+            image: Some(crate::dev_seed::sample_png(1280, 720, true)),
+        };
+        self.tray.update(cx, |tray, cx| tray.paste(clip, cx));
     }
 
     fn close(&mut self, cx: &mut Context<Self>) {
         let draft = self.editor.read(cx).value().to_string();
-        cx.emit(CaptureEvent::Close(draft));
+        let tray = (!self.tray.read(cx).is_empty()).then(|| self.tray.clone());
+        cx.emit(CaptureEvent::Close(draft, tray));
     }
 }
 
@@ -142,8 +184,8 @@ impl Render for Capture {
             KeyName::Enter.label(locale, macos)
         );
         let width = (window.viewport_size().width - px(48.)).min(px(640.));
-        div()
-            .id("capture")
+        let strip = self.tray.update(cx, |tray, cx| tray.render_strip(cx));
+        let body = div()
             .occlude()
             .w(width)
             .flex()
@@ -187,10 +229,12 @@ impl Render for Capture {
                 type_scale::READING.el().mx(px(-10.)).my(px(-8.)).child(
                     Textarea::new(&self.editor)
                         .appearance(false)
+                        .on_paste(attach_ui::on_paste(&self.tray))
                         .text_size(px(type_scale::READING.size()))
                         .line_height(px(type_scale::READING.line())),
                 ),
             )
+            .children(strip)
             .child(
                 // The editor's footer (components.md 5, Multi-line editor):
                 // the save hint and the primary button.
@@ -217,6 +261,7 @@ impl Render for Capture {
                             )
                             .child(div().w(px(240.)).child(self.report.clone())),
                     )
+                    .child(attach_ui::attach_button("capture", &self.tray, cx))
                     .child(type_scale::SMALL.el().text_color(t.text_tertiary).child(tr(
                         locale,
                         Key::ComposerHint,
@@ -233,6 +278,7 @@ impl Render for Capture {
                         )
                         .on_click(cx.listener(|capture, _, window, cx| capture.save(window, cx))),
                     ),
-            )
+            );
+        attach_ui::drop_zone("capture", &self.tray, RADIUS_XL, body, cx)
     }
 }

@@ -8,11 +8,13 @@
 //! inbox with one click.
 
 use acta_core::Store;
+use std::collections::HashMap;
+
 use acta_core::model::{
-    Author, EntryKind, EpicId, Note, NoteFate, NoteId, PageReq, ProjectId, ProjectTree, Record,
-    Status, TopicId,
+    AttachOwner, Attachment, Author, EpicId, Note, NoteFate, NoteId, PageReq, ProjectId,
+    ProjectTree, Record, Status, TopicId,
 };
-use acta_core::store::{NewEntry, NewTopic};
+use acta_core::store::NewTopic;
 use gpui_kit::component::input::{Escape, InputEvent, Textarea, TextareaState};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
@@ -21,6 +23,7 @@ use gpui_kit::{
     Subscription, Task, Window, div, px,
 };
 
+use crate::attach_ui::{self, StripStyle, Tray};
 use crate::i18n::{Arg, Key, KeyName, Locale, number, text, tr};
 use crate::icons::{Icon, icon};
 use crate::markdown_view;
@@ -165,18 +168,9 @@ pub fn file_note(
                 (Record::Epic(epic), Some(Route::Epic(epic)))
             }
             Destination::Entry(topic) => {
-                // As Claude Code's triage does: the note's words and author.
-                let entry = store.log(
-                    topic,
-                    NewEntry {
-                        kind: EntryKind::Discussion,
-                        text: current.text.clone(),
-                        state: None,
-                        status: None,
-                    },
-                    current.author,
-                )?;
-                store.file_notes(&[note], topic, me)?;
+                // As Claude Code's triage does: the note's words and author,
+                // and its files move to the entry (ADR 0012, 5).
+                let entry = store.note_to_entry(note, topic, me)?;
                 (Record::Entry(entry.id), None)
             }
         };
@@ -241,14 +235,22 @@ pub struct InboxPage {
     total_open: i64,
     show_filed: bool,
     capture: Entity<TextareaState>,
+    /// The capture's files (components-attachments.md 5).
+    capture_tray: Entity<Tray>,
+    /// The files of the listed notes, and those filing moved away from
+    /// filed notes ("Moved to T-51").
+    files: HashMap<NoteId, Vec<Attachment>>,
+    moved: HashMap<NoteId, Vec<Attachment>>,
+    /// The drop target of each open note card at rest.
+    card_trays: HashMap<NoteId, Entity<Tray>>,
     /// The capture's Report to (empty each time).
     report: Entity<crate::contact_picker::ContactPicker>,
     /// The Report to filter: `None` anyone; and its menu.
     report_filter: Option<acta_core::model::ContactId>,
     filter_menu: Option<usize>,
     filter_anchor: crate::menu::AnchorBounds,
-    /// A note being edited in place, with its editor.
-    editing: Option<(NoteId, Entity<TextareaState>)>,
+    /// A note being edited in place, with its editor and its files.
+    editing: Option<(NoteId, Entity<TextareaState>, Entity<Tray>)>,
     /// Shown as the Inbox view (workbench.md 4.8.3): no title, no meta
     /// line, the narrow form, following the active project.
     as_view: bool,
@@ -322,7 +324,12 @@ impl InboxPage {
                 cx,
             )
         });
+        let capture_tray = {
+            let ws = ws.clone();
+            cx.new(|cx| Tray::new(ws, None, cx))
+        };
         let subs = vec![
+            cx.observe(&capture_tray, |_, _, cx| cx.notify()),
             cx.observe(&ws, |page, ws, cx| {
                 let revision = ws.read(cx).revision;
                 if revision != page.seen_revision {
@@ -366,6 +373,10 @@ impl InboxPage {
             total_open: 0,
             show_filed: false,
             capture,
+            capture_tray,
+            files: HashMap::new(),
+            moved: HashMap::new(),
+            card_trays: HashMap::new(),
             report,
             report_filter: None,
             filter_menu: None,
@@ -398,19 +409,64 @@ impl InboxPage {
                     (n, title)
                 })
                 .collect::<Vec<_>>();
-            Ok((open, filed))
+            // A note's own files (open and dismissed notes keep theirs),
+            // and the files filing moved away from each filed note.
+            let owners: Vec<AttachOwner> = open
+                .items
+                .iter()
+                .chain(filed.iter().map(|(n, _)| n))
+                .map(|n| AttachOwner::Note(n.id))
+                .collect();
+            let files: HashMap<NoteId, Vec<Attachment>> = store
+                .attachments_of(&owners)?
+                .into_iter()
+                .filter_map(|(owner, list)| match owner {
+                    AttachOwner::Note(n) => Some((n, list)),
+                    _ => None,
+                })
+                .collect();
+            let mut moved = HashMap::new();
+            for (n, _) in &filed {
+                let list = store.attachments_moved_from(n.id)?;
+                if !list.is_empty() {
+                    moved.insert(n.id, list);
+                }
+            }
+            Ok((open, filed, files, moved))
         });
         self._load = cx.spawn(async move |page, cx| {
             let loaded = task.await;
             let _ = page.update(cx, |page, cx| {
-                if let Ok((open, filed)) = loaded {
+                if let Ok((open, filed, files, moved)) = loaded {
                     page.total_open = open.total;
                     page.notes = open.items;
                     page.filed = filed;
+                    page.files = files;
+                    page.moved = moved;
+                    let live: Vec<NoteId> = page.notes.iter().map(|n| n.id).collect();
+                    page.card_trays.retain(|id, _| live.contains(id));
+                    for (id, tray) in &page.card_trays {
+                        let held = page.files.get(id).cloned().unwrap_or_default();
+                        tray.update(cx, |tray, _| tray.set_held(held));
+                    }
                 }
                 cx.notify();
             });
         });
+    }
+
+    /// The drop target of an open note card, made the first time it is
+    /// drawn.
+    fn card_tray(&mut self, note: NoteId, cx: &mut Context<Self>) -> Entity<Tray> {
+        if let Some(tray) = self.card_trays.get(&note) {
+            return tray.clone();
+        }
+        let held = self.files.get(&note).cloned().unwrap_or_default();
+        let (ws, project) = (self.ws.clone(), self.project);
+        let tray = cx.new(|_| Tray::for_card(ws, AttachOwner::Note(note), project, held));
+        self._subs.push(cx.observe(&tray, |_, _, cx| cx.notify()));
+        self.card_trays.insert(note, tray.clone());
+        tray
     }
 
     fn add(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -432,8 +488,16 @@ impl InboxPage {
                 add_note_with(store, project, &body, person)
             })
         });
-        cx.spawn_in(window, async move |page, cx| {
-            if task.await.is_err() {
+        let tray = self.capture_tray.clone();
+        cx.spawn_in(window, async move |page, cx| match task.await {
+            // The files get their rows once the note exists; saving does
+            // not wait for them (components-attachments.md 5).
+            Ok(note) => {
+                tray.update(cx, |tray, cx| {
+                    tray.commit(AttachOwner::Note(note), project, cx)
+                });
+            }
+            Err(_) => {
                 let _ = page.update_in(cx, |page, window, cx| {
                     page.capture
                         .update(cx, |state, cx| state.set_value(restore, window, cx));
@@ -550,6 +614,11 @@ impl InboxPage {
                 .default_value(note.text.clone())
         });
         state.update(cx, |state, cx| state.focus(window, cx));
+        let tray = {
+            let ws = self.ws.clone();
+            cx.new(|cx| Tray::new(ws, Some(AttachOwner::Note(id)), cx))
+        };
+        self._subs.push(cx.observe(&tray, |_, _, cx| cx.notify()));
         let sub = cx.subscribe_in(
             &state,
             window,
@@ -562,7 +631,12 @@ impl InboxPage {
                     if text.is_empty() {
                         return;
                     }
-                    page.editing = None;
+                    if let Some((_, _, tray)) = page.editing.take() {
+                        let project = page.project;
+                        tray.update(cx, |tray, cx| {
+                            tray.commit(AttachOwner::Note(id), project, cx)
+                        });
+                    }
                     let project = Some(page.project);
                     // Undoable: the text before is put back (Undo::Note).
                     page.ws.update(cx, |ws, cx| {
@@ -578,7 +652,36 @@ impl InboxPage {
             },
         );
         self._subs.push(sub);
-        self.editing = Some((id, state));
+        self.editing = Some((id, state, tray));
+        cx.notify();
+    }
+
+    /// Debug builds: the first open note being edited, for captures.
+    #[cfg(debug_assertions)]
+    pub fn dev_edit_first(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let note = self
+            .notes
+            .iter()
+            .find(|n| self.files.contains_key(&n.id))
+            .or(self.notes.first())
+            .cloned();
+        if let Some(note) = note {
+            self.edit(&note, window, cx);
+        }
+    }
+
+    /// Debug builds: the Filed list, for captures.
+    #[cfg(debug_assertions)]
+    pub fn dev_show_filed(&mut self, cx: &mut Context<Self>) {
+        self.show_filed = true;
+        cx.notify();
+    }
+
+    /// `Esc` in a note's editor: it closes, the files it added go.
+    fn cancel_edit(&mut self, cx: &mut Context<Self>) {
+        if let Some((_, _, tray)) = self.editing.take() {
+            tray.update(cx, |tray, cx| tray.discard(cx));
+        }
         cx.notify();
     }
 
@@ -657,7 +760,7 @@ impl InboxPage {
     }
 
     fn card(
-        &self,
+        &mut self,
         note: &Note,
         target_title: Option<&str>,
         index: usize,
@@ -829,8 +932,103 @@ impl InboxPage {
                 )
                 .on_click(cx.listener(move |page, _, _, cx| page.delete(id, cx))),
             );
-        ui::focusable(div().id(("note", index)), t, false)
-            .group(group)
+        let macos = cfg!(target_os = "macos");
+        let keys = format!(
+            "{}+{}",
+            KeyName::Mod.label(locale, macos),
+            KeyName::Enter.label(locale, macos)
+        );
+        let editing = self
+            .editing
+            .as_ref()
+            .filter(|(e, _, _)| *e == id)
+            .map(|(_, editor, tray)| (editor.clone(), tray.clone()));
+        let own = self.files.get(&id).cloned().unwrap_or_default();
+        let prefix = format!("note-{}", id.0);
+        // The strip under the body; a filed note lists what filing moved,
+        // under "Moved to T-51" (components-attachments.md 5).
+        let strip = if editing.is_some() {
+            None
+        } else {
+            attach_ui::strip(&prefix, &own, StripStyle::Full, t, cx)
+        };
+        let moved = self.moved.get(&id).cloned().unwrap_or_default();
+        let moved_el = (!moved.is_empty())
+            .then(|| self.moved_to(note, &moved, index, locale, t, cx))
+            .flatten();
+        let mut body: Vec<AnyElement> = Vec::new();
+        match editing {
+            Some((editor, tray)) => {
+                let strip = tray.update(cx, |tray, cx| tray.render_strip(cx));
+                let editor_el = type_scale::READING
+                    .el()
+                    .mx(px(-10.))
+                    .my(px(-8.))
+                    .on_action(cx.listener(|page, _: &Escape, _, cx| page.cancel_edit(cx)))
+                    .child(
+                        Textarea::new(&editor)
+                            .appearance(false)
+                            .on_paste(attach_ui::on_paste(&tray))
+                            .text_size(px(type_scale::READING.size()))
+                            .line_height(px(type_scale::READING.line())),
+                    );
+                let zone = attach_ui::drop_zone(
+                    &format!("note-edit-{}", id.0),
+                    &tray,
+                    RADIUS_LG,
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(8.))
+                        .child(editor_el)
+                        .children(strip)
+                        .child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .justify_end()
+                                .gap(px(8.))
+                                .h(px(28.))
+                                .child(attach_ui::attach_button(
+                                    &format!("note-edit-{}", id.0),
+                                    &tray,
+                                    cx,
+                                ))
+                                .child(type_scale::SMALL.el().text_color(t.text_tertiary).child(
+                                    tr(locale, Key::ComposerHint, &[("keys", Arg::Text(&keys))]),
+                                )),
+                        ),
+                    cx,
+                );
+                body.push(zone.into_any_element());
+            }
+            None => {
+                body.push(
+                    div()
+                        .max_h(px(type_scale::READING.line() * 6.))
+                        .overflow_hidden()
+                        .text_color(if filed {
+                            t.text_secondary
+                        } else {
+                            t.text_primary
+                        })
+                        .child(markdown_view::short(
+                            ("note-body", index),
+                            note.text.clone(),
+                            t,
+                        ))
+                        .into_any_element(),
+                );
+                if let Some(strip) = strip {
+                    body.push(div().mt(px(4.)).child(strip).into_any_element());
+                }
+                if let Some(moved) = moved_el {
+                    body.push(moved);
+                }
+            }
+        }
+        let card = div()
             .flex()
             .flex_col()
             .gap(px(4.))
@@ -840,39 +1038,79 @@ impl InboxPage {
             .bg(t.bg_raised)
             .border_1()
             .border_color(t.border_subtle)
-            .child(match self.editing.as_ref().filter(|(e, _)| *e == id) {
-                Some((_, editor)) => type_scale::READING
-                    .el()
-                    .mx(px(-10.))
-                    .my(px(-8.))
-                    .on_action(cx.listener(|page, _: &Escape, _, cx| {
-                        page.editing = None;
-                        cx.notify();
-                    }))
-                    .child(
-                        Textarea::new(editor)
-                            .appearance(false)
-                            .text_size(px(type_scale::READING.size()))
-                            .line_height(px(type_scale::READING.line())),
-                    )
-                    .into_any_element(),
-                None => div()
-                    .max_h(px(type_scale::READING.line() * 6.))
-                    .overflow_hidden()
-                    .text_color(if filed {
-                        t.text_secondary
-                    } else {
-                        t.text_primary
-                    })
-                    .child(markdown_view::short(
-                        ("note-body", index),
-                        note.text.clone(),
-                        t,
-                    ))
-                    .into_any_element(),
-            })
+            .children(body);
+        // An open note card at rest takes dropped files.
+        let card = if !filed && !self.editing.as_ref().is_some_and(|(e, _, _)| *e == id) {
+            let tray = self.card_tray(id, cx);
+            let refusals = tray.read(cx).render_refusals(cx);
+            attach_ui::drop_zone(
+                &format!("note-card-{}", id.0),
+                &tray,
+                RADIUS_LG,
+                card.children(refusals),
+                cx,
+            )
+        } else {
+            card.id(("note", index))
+        };
+        ui::focusable(card, t, false)
+            .group(group)
             .child(meta.child(div().flex_1()).child(actions))
             .into_any_element()
+    }
+
+    /// "Moved to T-51" and the chips of the files filing moved, in
+    /// `text.secondary`, without thumbnails.
+    fn moved_to(
+        &self,
+        note: &Note,
+        moved: &[Attachment],
+        index: usize,
+        locale: Locale,
+        t: &Tokens,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let (label, route) = match note.fate() {
+            NoteFate::Topic(t) => (t.to_string(), Route::Topic(t)),
+            NoteFate::Epic(e) => (e.to_string(), Route::Epic(e)),
+            NoteFate::Open | NoteFate::Dismissed => return None,
+        };
+        let text = tr(locale, Key::AttachMovedTo, &[("id", Arg::Text(&label))]);
+        let (before, _) = text.split_once(&label).unwrap_or((&text, ""));
+        let chips = attach_ui::strip(
+            &format!("moved-{}", note.id.0),
+            moved,
+            StripStyle::Filed,
+            t,
+            cx,
+        );
+        Some(
+            div()
+                .mt(px(4.))
+                .flex()
+                .flex_col()
+                .gap(px(8.))
+                .child(
+                    type_scale::SMALL
+                        .el()
+                        .flex()
+                        .flex_row()
+                        .text_color(t.text_tertiary)
+                        .child(before.to_owned())
+                        .child(
+                            div()
+                                .id(("moved-to", index))
+                                .text_color(t.accent)
+                                .cursor_pointer()
+                                .on_click(
+                                    cx.listener(move |_, _, _, cx| cx.emit(PageEvent::Open(route))),
+                                )
+                                .child(label),
+                        ),
+                )
+                .children(chips)
+                .into_any_element(),
+        )
     }
 }
 
@@ -912,6 +1150,9 @@ impl Render for InboxPage {
                 }))
             })
             .collect::<Vec<_>>();
+        let capture_strip = self
+            .capture_tray
+            .update(cx, |tray, cx| tray.render_strip(cx));
         let capture = div()
             .flex()
             .flex_col()
@@ -935,10 +1176,12 @@ impl Render for InboxPage {
                 type_scale::READING.el().mx(px(-10.)).my(px(-8.)).child(
                     Textarea::new(&self.capture)
                         .appearance(false)
+                        .on_paste(attach_ui::on_paste(&self.capture_tray))
                         .text_size(px(type_scale::READING.size()))
                         .line_height(px(type_scale::READING.line())),
                 ),
             )
+            .children(capture_strip.map(|s| div().mt(px(16.)).child(s)))
             .child(
                 div()
                     .flex()
@@ -965,6 +1208,7 @@ impl Render for InboxPage {
                             )
                             .child(div().w(px(240.)).child(self.report.clone())),
                     )
+                    .child(attach_ui::attach_button("inbox", &self.capture_tray, cx))
                     .child(type_scale::SMALL.el().text_color(t.text_tertiary).child(tr(
                         locale,
                         Key::ComposerHint,
@@ -981,6 +1225,7 @@ impl Render for InboxPage {
                         .on_click(cx.listener(|page, _, window, cx| page.add(window, cx))),
                     ),
             );
+        let capture = attach_ui::drop_zone("inbox", &self.capture_tray, RADIUS_LG, capture, cx);
         let listed: Vec<(Note, Option<String>)> = if self.show_filed {
             self.filed.clone()
         } else {
@@ -1100,6 +1345,7 @@ impl Render for InboxPage {
 mod tests {
     use super::*;
     use crate::db::test_support::temp_store;
+    use acta_core::model::EntryKind;
 
     fn inbox() -> (
         crate::db::test_support::TempStore,
@@ -1153,16 +1399,37 @@ mod tests {
     fn filing_as_an_entry_keeps_the_words_and_undoes_as_one_step() {
         let (mut temp, p, _, t, n) = inbox();
         let s = &mut temp.store;
+        let file = s
+            .attach(
+                AttachOwner::Note(n),
+                "notes.md",
+                acta_core::store::AttachSource::Bytes(b"# Width\nAlexandre".to_vec()),
+                Author::Human,
+                &mut |_, _| {},
+            )
+            .unwrap();
         let (undo, route) = file_note(s, p, n, Destination::Entry(t)).unwrap();
         assert_eq!(route, None);
         assert_eq!(s.note(n).unwrap().fate(), NoteFate::Topic(t));
         let entries = s
             .entries(t, &Default::default(), PageReq::first(10))
             .unwrap();
-        assert!(entries.items.iter().any(|e| e.kind == EntryKind::Discussion
-            && e.text == "Alexandre: keep the width per project"));
+        let entry = entries
+            .items
+            .iter()
+            .find(|e| {
+                e.kind == EntryKind::Discussion && e.text == "Alexandre: keep the width per project"
+            })
+            .expect("the entry");
+        // The note's files land on the entry, not the topic's description.
+        assert_eq!(
+            s.attachment(file.id).unwrap().owner,
+            AttachOwner::Entry(entry.id)
+        );
+        assert!(s.attachments(AttachOwner::Topic(t)).unwrap().is_empty());
         assert!(undo.apply(s).unwrap().is_some());
         assert!(s.note(n).unwrap().is_open());
+        assert_eq!(s.attachment(file.id).unwrap().owner, AttachOwner::Note(n));
     }
 
     #[test]
