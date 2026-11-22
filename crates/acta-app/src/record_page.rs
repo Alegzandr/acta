@@ -373,6 +373,7 @@ impl RecordPage {
         cx.notify();
     }
 
+    #[cfg(debug_assertions)]
     /// Debug builds' captures: type into the open picker, and press Enter.
     pub fn dev_type_due(
         &mut self,
@@ -429,6 +430,7 @@ impl RecordPage {
         cx.notify();
     }
 
+    #[cfg(debug_assertions)]
     /// Debug builds' captures: `D` on the table's first row.
     pub fn dev_due_on_first_row(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(first) = self.row_focus.first() {
@@ -2235,22 +2237,7 @@ impl RecordPage {
         let composer = self.render_composer(locale, t, cx);
         let mut list = div().flex().flex_col().gap(px(32.)).mt(px(32.));
         let human = when::initial(&when::human_name(locale));
-        // System events other than status changes have no line in the
-        // catalogue yet (docs/design/data.md 11, request 10): not shown.
-        // Status changes in quick succession read as one line, and a
-        // change undone leaves none (components-records.md 5).
-        let shown: Vec<Entry> = record::collapse_status_events(
-            data.entries
-                .iter()
-                .filter(|e| {
-                    e.kind != EntryKind::System
-                        || e.event
-                            .as_ref()
-                            .is_some_and(|ev| ev.kind == acta_core::model::EventKind::Status)
-                })
-                .cloned()
-                .collect(),
-        );
+        let shown: Vec<Entry> = record::timeline_entries(&data.entries);
         // The empty state is about what is shown: a timeline of hidden
         // system events alone is empty too.
         if shown.iter().all(|e| e.kind == EntryKind::System) {

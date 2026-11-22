@@ -835,6 +835,7 @@ impl Shell {
         let _ = (window, cx);
     }
 
+    #[cfg(debug_assertions)]
     /// The due date and Overview surfaces of `dev_overlay`.
     fn dev_due(&mut self, which: &str, window: &mut Window, cx: &mut Context<Self>) {
         let input = std::env::var("ACTA_DEV_DUE_INPUT").unwrap_or_default();
@@ -898,6 +899,7 @@ impl Shell {
             // the page has loaded: the picker, with `ACTA_DEV_DUE_INPUT`
             // typed into it (`due-picker-enter` also presses Enter); the
             // picker on the tree's cursor row; the table with a chip.
+            #[cfg(debug_assertions)]
             Ok(
                 which @ ("due-picker" | "due-picker-enter" | "due-tree" | "chip-blocked"
                 | "chip-idle" | "chip-stale" | "due-row"),

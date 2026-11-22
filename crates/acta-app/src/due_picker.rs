@@ -133,6 +133,7 @@ impl DuePicker {
         }
     }
 
+    #[cfg(debug_assertions)]
     /// Debug builds' captures: `text` as if typed, then `Enter` if asked.
     pub fn dev_type(
         &mut self,

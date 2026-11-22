@@ -388,6 +388,26 @@ pub fn load(
     }
 }
 
+/// The entries the timeline shows, newest first: every entry but the
+/// system events that have no line in the catalogue yet (data.md 11,
+/// request 10); status and due date changes are shown, collapsed by
+/// [`collapse_status_events`].
+pub fn timeline_entries(entries: &[Entry]) -> Vec<Entry> {
+    use acta_core::model::EventKind;
+    collapse_status_events(
+        entries
+            .iter()
+            .filter(|e| {
+                e.kind != EntryKind::System
+                    || e.event
+                        .as_ref()
+                        .is_some_and(|ev| matches!(ev.kind, EventKind::Status | EventKind::Due))
+            })
+            .cloned()
+            .collect(),
+    )
+}
+
 /// components-records.md 5, System event: consecutive status changes, or
 /// due date changes, within 5 minutes of each other read as one line, from
 /// the first value to the last, by the same author. A run that ends where
@@ -474,6 +494,44 @@ mod tests {
             new: new.map(Into::into),
         });
         e
+    }
+
+    #[test]
+    fn due_date_events_reach_the_timeline() {
+        let mut temp = temp_store();
+        let s = &mut temp.store;
+        let me = Author::Human;
+        let project = s.create_project("Acta", "", me).unwrap();
+        let topic = s
+            .create_topic(
+                NewTopic {
+                    project,
+                    epic: None,
+                    title: "Embed the terminal".into(),
+                    description: String::new(),
+                    status: Status::Planned,
+                },
+                me,
+            )
+            .unwrap();
+        let day = acta_core::date::Date::parse_iso("2026-12-15");
+        s.set_due(Owner::Topic(topic), day, me).unwrap();
+        let page = load(s, Owner::Topic(topic), EntryFilterKind::All, today(), None).unwrap();
+        let shown = timeline_entries(&page.entries);
+        let due: Vec<_> = shown
+            .iter()
+            .filter_map(|e| e.event.as_ref())
+            .filter(|ev| ev.kind == acta_core::model::EventKind::Due)
+            .collect();
+        assert_eq!(due.len(), 1);
+        assert_eq!(due[0].new.as_deref(), Some("2026-12-15"));
+        // Other system events (creation) stay hidden.
+        assert!(shown.iter().all(|e| {
+            e.kind != EntryKind::System
+                || e.event
+                    .as_ref()
+                    .is_some_and(|ev| ev.kind == acta_core::model::EventKind::Due)
+        }));
     }
 
     #[test]
