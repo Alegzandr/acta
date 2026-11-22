@@ -95,6 +95,7 @@ Date: 2026-11-20
 - 2026-11-21: the draft is created by `gh release create --verify-tag --draft` with no target (v0.1.1).
 - 2026-11-21: `collect` no longer hashes the feeds; `publish` checks the served feeds and appends their hashes (v0.1.2).
 - 2026-11-21: update source switched from `GithubSource` to the `releases/latest/download/` feed (0.1.4), reversing the earlier rejection of `HttpSource`: no API rate limit, and the feeds `vpk upload` writes never point at another release. Full packages only; deltas are no longer used.
+- 2026-11-22: CI job `deny` runs `cargo deny check advisories sources` (cargo-deny 0.20.2, binary pinned by SHA-256 in `scripts/ci/install-cargo-deny.sh` and bumped by hand, not by Dependabot; config `deny.toml`) on every push; not part of `release.yml`. The zip 8.6 advisories reached through velopack 1.2.161 are ignored with their reasons until the move to velopack 1.3. Dependabot (`.github/dependabot.yml`) proposes weekly action and Cargo updates; velopack is excluded and moves with vpk by hand.
 
 ## Evidence
 Spike: `spikes/updater` (Windows 11 26300, rustc 1.97.1 MSVC, velopack 1.2.161, vpk 1.2.161, .NET SDK 10.0.302). `pack.ps1 <version>` builds and packages; the feed was the `releases/` folder served on `http://127.0.0.1:8765/` through `HttpSource`. Observed on Windows only:

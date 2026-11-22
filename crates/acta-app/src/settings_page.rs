@@ -568,6 +568,8 @@ pub struct DataFacts {
     pub database: String,
     /// Folders not found: id, path, owner name.
     pub missing: Vec<(acta_core::model::FolderId, String, String)>,
+    /// "Commit in my name" by default (Settings > Claude Code, ADR 0011).
+    pub as_user_default: bool,
 }
 
 /// Read the facts off the UI thread (existence checks touch the disk).
@@ -595,6 +597,7 @@ pub fn load_facts(store: &acta_core::Store) -> acta_core::Result<DataFacts> {
         trash,
         database: store.db_path().to_string_lossy().into_owned(),
         missing,
+        as_user_default: acta_core::claude_settings::as_user_default(store)?,
     })
 }
 
@@ -1133,6 +1136,45 @@ impl SettingsPage {
                     .into_any_element(),
             );
         }
+        // Automatic commits (ADR 0011): the default of "Commit in my name";
+        // changing it rewrites every automatic folder that follows it.
+        let as_user = self.facts.as_ref().is_some_and(|f| f.as_user_default);
+        let ws = self.ws.clone();
+        out.push(
+            setting_row(
+                text(locale, Key::SettingsAutoCommit),
+                text(locale, Key::SettingsAutoCommitHint),
+                div()
+                    .id("settings-auto-commit")
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(8.))
+                    .max_w(px(260.))
+                    .child(ui::checkbox(as_user, t))
+                    .child(
+                        type_scale::UI
+                            .el()
+                            .text_color(t.text_primary)
+                            .child(text(locale, Key::FoldersCommitAsUser)),
+                    )
+                    .on_click(move |_, _, cx| {
+                        if let Some(ws) = &ws {
+                            ws.update(cx, |ws, cx| {
+                                // Toggled from the value the store holds now,
+                                // not the one this frame showed.
+                                ws.write_detached(cx, Key::ErrorSave, |store| {
+                                    let on = acta_core::claude_settings::as_user_default(store)?;
+                                    acta_core::claude_settings::set_as_user_default(store, !on)
+                                })
+                            });
+                        }
+                    }),
+                t,
+            )
+            .mt(px(16.))
+            .into_any_element(),
+        );
         // How Acta starts and shows Claude Code (components-app.md 5,
         // Claude Code sessions and Plan usage).
         let prefs = crate::settings::current(cx).clone();

@@ -1,0 +1,46 @@
+# cargo-deny configuration. CI runs `cargo deny check advisories sources` on every push
+# (.github/workflows/ci.yml, job `deny`). Licences are checked by cargo-about
+# (about.toml), not here, so that one list decides what may ship.
+
+[graph]
+# Every target and feature: one lock file feeds the Windows, macOS and Linux builds.
+all-features = true
+
+[advisories]
+version = 2
+# Yanked versions fail the check too.
+yanked = "deny"
+# Unmaintained notices for the workspace's direct dependencies only (explicit: the
+# default is `all` before cargo-deny 0.22). A transitive
+# unmaintained crate is its parent's to replace (gpui, zbus, ...); vulnerabilities fire
+# for every crate in the graph regardless.
+unmaintained = "workspace"
+# Every ignore names who pulls the crate in and why it is not exploitable or not
+# fixable here. Remove it as soon as an update makes it unnecessary: cargo-deny reports
+# an ignore that no longer matches.
+ignore = [
+    # zip 8.6.0 comes only from velopack =1.2.161 (zip ^8.6, features `deflate` only);
+    # the fixes are in zip 9, which velopack 1.2 cannot take. velopack reads packages
+    # with ZipArchive::by_index and writes files itself: it never calls
+    # ZipArchive::extract or ZipStreamReader, and AES and the legacy methods are not
+    # compiled in. The only archives it opens are update packages checked against the
+    # feed's SHA-256 (ADR 0004). Goes with the move to velopack 1.3 (zip 9).
+    { id = "RUSTSEC-2026-0367", reason = "zip via velopack 1.2: ZipArchive::extract not used" },
+    { id = "RUSTSEC-2026-0368", reason = "zip via velopack 1.2: ZipArchive::extract not used" },
+    { id = "RUSTSEC-2026-0369", reason = "zip via velopack 1.2: extract and ZipStreamReader not used" },
+    { id = "RUSTSEC-2026-0429", reason = "zip via velopack 1.2: ZipArchive::extract not used" },
+    { id = "RUSTSEC-2026-0545", reason = "zip via velopack 1.2: aes-crypto feature not enabled" },
+    { id = "RUSTSEC-2026-0546", reason = "zip via velopack 1.2: ZipArchive::extract not used" },
+    { id = "RUSTSEC-2026-0547", reason = "zip via velopack 1.2: legacy-zip feature not enabled" },
+    { id = "RUSTSEC-2026-0548", reason = "zip via velopack 1.2: ZipStreamReader not used" },
+    # chrono is a direct dependency of acta-core and acta-app (clock and formatting);
+    # no vulnerability, no patched release. Replacing it (jiff or time) is a code change.
+    { id = "RUSTSEC-2026-0543", reason = "chrono unmaintained, no vulnerability; migration tracked separately" },
+]
+
+[sources]
+# crates.io only: a git or other registry dependency has to be added here on purpose.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

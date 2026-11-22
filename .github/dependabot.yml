@@ -1,0 +1,28 @@
+# Dependabot (free on GitHub). Pull requests run CI like any other branch.
+version: 2
+updates:
+  # Workflow actions are pinned by commit SHA with a version comment; Dependabot
+  # updates both.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ['*']
+
+  # Cargo.lock: one grouped pull request a week for semver-compatible updates.
+  # Security updates (when enabled in the repository settings) come as their own pull
+  # requests as soon as an advisory is published.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      cargo:
+        update-types: [minor, patch]
+    ignore:
+      # Pinned with `=` to the vpk tool of the release workflow (ADR 0004): the crate
+      # and the tool move together, by hand.
+      - dependency-name: velopack

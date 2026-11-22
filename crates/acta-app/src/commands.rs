@@ -77,6 +77,18 @@ pub enum Command {
     SetFolder,
     AddFolder,
     ShowFolders,
+    /// "Switch active folder..." (interaction.md 6.1): the palette lists
+    /// the folders the page sees.
+    FolderSwitch,
+    /// "Set commit mode..." for the page's active folder.
+    CommitMode,
+    /// "Folder settings..." of the page's active folder (its own).
+    FolderSettings,
+    /// The active folder's Pull, Fetch and branch selector (ADR 0011
+    /// addendum).
+    FolderPull,
+    FolderFetch,
+    FolderBranch,
     Export,
     Import,
     Trash,
@@ -144,6 +156,21 @@ pub struct Context {
     /// The page shows an Overview (a project or an epic), and whether its
     /// "More" (or "Needs attention") is open.
     pub overview: Option<bool>,
+    /// The working-folder commands the open page offers.
+    pub folders: FolderCommands,
+}
+
+/// What the open page's folders allow (interaction.md 6.1).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FolderCommands {
+    /// The page sees a folder that exists: "Switch active folder...".
+    pub switch: bool,
+    /// Its active folder is its own and in git: "Set commit mode...".
+    pub commit: bool,
+    /// Its active folder is its own: "Folder settings...".
+    pub settings: bool,
+    /// Its active folder is in git: Pull, Fetch, Switch branch.
+    pub git: bool,
 }
 
 /// The Overview's lists the palette opens, in the order of 6.1.
@@ -222,6 +249,19 @@ impl Command {
                 Command::ShowFolders,
                 Command::AddFolder,
             ]);
+            let f = ctx.folders;
+            out.extend(
+                [
+                    (f.switch, Command::FolderSwitch),
+                    (f.settings, Command::FolderSettings),
+                    (f.commit, Command::CommitMode),
+                    (f.git, Command::FolderPull),
+                    (f.git, Command::FolderFetch),
+                    (f.git, Command::FolderBranch),
+                ]
+                .into_iter()
+                .filter_map(|(on, c)| on.then_some(c)),
+            );
         }
         if ctx.has_project {
             out.extend([
@@ -395,6 +435,12 @@ impl Command {
             Command::SetFolder => Key::FoldersSet,
             Command::AddFolder => Key::CmdFoldersAdd,
             Command::ShowFolders => Key::CmdFoldersShow,
+            Command::FolderSwitch => Key::CmdFolderSwitch,
+            Command::CommitMode => Key::CmdCommitMode,
+            Command::FolderSettings => Key::CmdFolderSettings,
+            Command::FolderPull => Key::CmdFolderPull,
+            Command::FolderFetch => Key::CmdFolderFetch,
+            Command::FolderBranch => Key::CmdFolderBranch,
             Command::Export => Key::CmdExport,
             Command::Import => Key::CmdImport,
             Command::Trash => Key::CmdTrash,

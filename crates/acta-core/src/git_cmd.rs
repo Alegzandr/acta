@@ -194,6 +194,9 @@ pub struct StatusSummary {
     pub behind: u32,
     /// Changed files: staged, unstaged, unmerged and untracked.
     pub changed: u32,
+    /// The current commit, abbreviated to 7 characters ("detached at
+    /// a1b2c3d"); `None` before the first commit.
+    pub head: Option<String>,
 }
 
 /// `git status --porcelain=v2 --branch` within [`STATUS_LIMIT`]; `None`
@@ -207,7 +210,9 @@ pub fn status_summary(dir: &Path) -> Option<StatusSummary> {
 fn parse_status(out: &str) -> StatusSummary {
     let mut s = StatusSummary::default();
     for line in out.lines() {
-        if let Some(h) = line.strip_prefix("# branch.head ") {
+        if let Some(oid) = line.strip_prefix("# branch.oid ") {
+            s.head = (oid != "(initial)").then(|| oid.chars().take(7).collect());
+        } else if let Some(h) = line.strip_prefix("# branch.head ") {
             s.branch = (h != "(detached)").then(|| h.to_owned());
         } else if line.starts_with("# branch.upstream ") {
             s.upstream = true;
@@ -451,6 +456,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let (seed, clone) = remote_and_clone(tmp.path());
         let s = status_summary(&clone).unwrap();
+        let head = run_ok(&clone, &["rev-parse", "--short=7", "HEAD"], LOCAL_LIMIT).unwrap();
         assert_eq!(
             s,
             StatusSummary {
@@ -458,7 +464,8 @@ mod tests {
                 upstream: true,
                 ahead: 0,
                 behind: 0,
-                changed: 0
+                changed: 0,
+                head: Some(head.trim().to_owned()),
             }
         );
         fs::write(clone.join("a.txt"), "two\n").unwrap();

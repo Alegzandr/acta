@@ -91,6 +91,16 @@ icons! {
     Bot => "bot",
     Clock => "clock",
     ClockAlert => "clock-alert",
+    FolderGit2 => "folder-git-2",
+    GitBranch => "git-branch",
+    Code => "code",
+    BookOpen => "book-open",
+    Package => "package",
+    Server => "server",
+    Smartphone => "smartphone",
+    Database => "database",
+    FlaskConical => "flask-conical",
+    Palette => "palette",
 }
 
 /// The app mark, shown in the updater window only (docs/design/components-app.md 5).

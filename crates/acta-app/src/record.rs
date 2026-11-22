@@ -6,12 +6,13 @@ use std::collections::HashSet;
 
 use acta_core::date::{Date, Zone};
 use acta_core::model::{
-    Author, Entry, EntryKind, EpicId, Folder, Owner, PageReq, ProjectId, Record, Topic, TopicId,
+    Author, Entry, EntryKind, EpicId, FolderId, Owner, PageReq, ProjectId, Record, Topic, TopicId,
     TopicSummary,
 };
 use acta_core::store::{EntryFilter, KbFilter, Overview, OverviewFilter, Scope};
 use acta_core::{Result, Store};
 
+use crate::folders_model::FolderItem;
 use crate::kb_model::{self, Section};
 
 /// How many entries the timeline loads at first; "older" pages follow.
@@ -55,35 +56,27 @@ impl EntryFilterKind {
     }
 }
 
-/// One folder a launch from a page uses, and the level it belongs to.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct EffectiveFolder {
-    pub path: String,
-    pub from: Owner,
-}
-
 /// The working folders of a page (docs/design/components-folders.md 5;
 /// ADR 0011: always inherited, one active folder).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Folders {
-    /// The page's own list, in order.
-    pub own: Vec<Folder>,
-    /// Every folder the page sees, the active one first.
-    pub effective: Vec<EffectiveFolder>,
-    /// Where the active folder comes from when it is not the page's own.
-    pub inherited_from: Option<(Owner, String)>,
-    /// The folders the page inherits (its epic's, then its project's), in
-    /// list order.
-    pub above: Vec<EffectiveFolder>,
-    /// The level directly above.
-    pub above_from: Option<(Owner, String)>,
+    /// Every folder the page sees, in list order.
+    pub items: Vec<FolderItem>,
+    /// The name of the page and of each level above it.
+    pub levels: Vec<(Owner, String)>,
     /// Paths (as stored) that are not a folder on this computer.
     pub missing: HashSet<String>,
+    /// The Settings default of "Commit in my name" (Settings > Claude Code).
+    pub as_user_default: bool,
 }
 
 impl Folders {
-    pub fn primary(&self) -> Option<&EffectiveFolder> {
-        self.effective.first()
+    pub fn active(&self) -> Option<&FolderItem> {
+        self.items.iter().find(|f| f.active)
+    }
+
+    pub fn get(&self, id: FolderId) -> Option<&FolderItem> {
+        self.items.iter().find(|f| f.id == id)
     }
 
     pub fn is_missing(&self, path: &str) -> bool {
@@ -92,21 +85,15 @@ impl Folders {
 
     /// Every path the page shows, for the existence check.
     pub fn paths(&self) -> Vec<String> {
-        self.effective
-            .iter()
-            .chain(self.above.iter())
-            .map(|f| f.path.clone())
-            .chain(self.own.iter().map(|f| f.path.clone()))
-            .collect()
+        self.items.iter().map(|f| f.path.clone()).collect()
     }
 
-    /// Missing folders among the additional ones (not the primary).
-    pub fn missing_additional(&self) -> usize {
-        self.effective
+    /// The name of a level (the page, its epic, its project).
+    pub fn level_name(&self, owner: Owner) -> &str {
+        self.levels
             .iter()
-            .skip(1)
-            .filter(|f| self.is_missing(&f.path))
-            .count()
+            .find(|(o, _)| *o == owner)
+            .map_or("", |(_, n)| n.as_str())
     }
 }
 
@@ -225,44 +212,39 @@ fn parent_of(store: &Store, owner: Owner) -> Result<Option<Owner>> {
     })
 }
 
-/// The folders of `owner`, as stored. `missing` is left empty: the caller
-/// checks the disk with [`Folders::paths`] once the store is released.
+/// The folders `owner` sees, as stored. `missing` is left empty: the
+/// caller checks the disk with [`Folders::paths`] once the store is
+/// released.
 pub fn load_folders(store: &Store, owner: Owner) -> Result<Folders> {
-    let own = store.folders(owner)?;
     let visible = store.visible_folders(owner)?;
-    let as_effective = |f: &acta_core::store::VisibleFolder| EffectiveFolder {
-        path: f.folder.path.clone(),
-        from: f.origin,
-    };
-    let effective: Vec<EffectiveFolder> = visible
-        .active()
-        .into_iter()
-        .chain(visible.additional())
-        .map(as_effective)
-        .collect();
-    let inherited_from = match visible.active().map(|f| f.origin) {
-        Some(from) if from != owner => Some((from, owner_name(store, from)?)),
-        _ => None,
-    };
-    let above = visible
+    let items = visible
         .folders
         .iter()
-        .filter(|f| f.origin != owner)
-        .map(as_effective)
+        .map(|v| FolderItem {
+            id: v.folder.id,
+            path: v.folder.path.clone(),
+            name: v.folder.display_name().to_owned(),
+            own_name: v.folder.name.clone(),
+            icon: v.folder.icon.clone(),
+            origin: v.origin,
+            own: v.origin == owner,
+            active: v.active,
+            commit_mode: v.folder.commit_mode,
+            commit_as_user: v.folder.commit_as_user,
+            commit_on_default: v.folder.commit_on_default,
+        })
         .collect();
-    let above_from = match parent_of(store, owner)? {
-        Some(parent) => Some((parent, owner_name(store, parent)?)),
-        None => None,
-    };
-    // Existence is checked later, off the store (`Folders::paths`).
-    let missing = HashSet::new();
+    let mut levels = vec![(owner, owner_name(store, owner)?)];
+    let mut level = owner;
+    while let Some(parent) = parent_of(store, level)? {
+        levels.push((parent, owner_name(store, parent)?));
+        level = parent;
+    }
     Ok(Folders {
-        own,
-        effective,
-        inherited_from,
-        above,
-        above_from,
-        missing,
+        items,
+        levels,
+        missing: HashSet::new(),
+        as_user_default: acta_core::claude_settings::as_user_default(store)?,
     })
 }
 
@@ -663,9 +645,11 @@ mod tests {
         assert!(page.entries.iter().any(|e| e.kind == EntryKind::Decision));
         assert!(page.kb.own.is_empty());
         assert_eq!(page.kb.inherited_count(), 1);
-        assert_eq!(page.folders.effective.len(), 1);
+        assert_eq!(page.folders.items.len(), 1);
+        let active = page.folders.active().unwrap();
+        assert!(!active.own, "inherited");
         assert_eq!(
-            page.folders.inherited_from.as_ref().unwrap().1,
+            page.folders.level_name(active.origin),
             "Terminal",
             "the folder row names where it comes from"
         );
@@ -729,7 +713,7 @@ mod tests {
         page.folders.missing = crate::workspace::missing_paths(page.folders.paths());
         assert_eq!(page.topics.len(), 3);
         assert_eq!(page.progress(), (1, 2));
-        let missing = page.folders.primary().unwrap().path.clone();
+        let missing = page.folders.active().unwrap().path.clone();
         assert!(page.folders.is_missing(&missing));
 
         let page = load(
@@ -742,7 +726,7 @@ mod tests {
         .unwrap();
         assert_eq!(page.groups.len(), 1);
         assert_eq!(page.progress(), (1, 2));
-        assert!(page.folders.inherited_from.is_none());
+        assert!(page.folders.active().unwrap().own);
     }
 
     fn today() -> Date {

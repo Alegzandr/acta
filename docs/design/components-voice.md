@@ -19,7 +19,7 @@ Every multi-line editor (5) and nothing else: the places where a person writes p
 | Memory body (edited in place), document body (document editor) | memory: its editor's footer; document: the 44 bottom bar, after "Editing" and its draft state |
 | Question composer, answer editor | composer: the trailing slot of the question text field (compact, inside its right padding); answer editor: its button row, left of "Cancel" |
 
-Not on: titles, summaries, the person field, the palette and every search or filter input, the due date picker, the terminal (Claude Code reads the keyboard there) and the chat's web view (a page Acta does not touch). These are short or are someone else's input.
+Not on: titles, summaries, the contact picker, the palette and every search or filter input, the due date picker, the terminal (Claude Code reads the keyboard there) and the chat's web view (a page Acta does not touch). These are short or are someone else's input.
 
 ### Microphone button
 
