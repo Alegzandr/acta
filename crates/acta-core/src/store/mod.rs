@@ -545,4 +545,6 @@ mod kb_quality_tests;
 #[cfg(test)]
 mod questions_tests;
 #[cfg(test)]
+mod search_tests;
+#[cfg(test)]
 mod tests;

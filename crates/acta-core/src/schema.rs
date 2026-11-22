@@ -13,7 +13,7 @@
 //! `project_id` is always set so roll-up queries need no join.
 
 /// Step `i` takes `user_version` from `i` to `i + 1`.
-pub const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7];
+pub const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8];
 
 /// The version this build writes.
 pub const SCHEMA_VERSION: i64 = MIGRATIONS.len() as i64;
@@ -573,4 +573,124 @@ CREATE TABLE kb_quality_log (
     author TEXT NOT NULL
 ) STRICT;
 CREATE INDEX kb_quality_log_at ON kb_quality_log(at);
+"#;
+
+/// Search everywhere covers content (the user's report of 2026-11-22:
+/// "searches don't search in descriptions and contents"). Topics, entries,
+/// notes and knowledge were indexed since V1; this adds, the same way
+/// (external-content FTS5 kept in sync by triggers, accents folded by
+/// `unicode61 remove_diacritics 2`):
+/// - `projects_fts` (title, description), `epics_fts` (title, description,
+///   state), `questions_fts` (text, answer), `contacts_fts` (name, job
+///   title, company);
+/// - `attachments_fts` (name, body): an attachment's name, and the text of
+///   a text-like file of at most 256 KiB (its first chunk read as UTF-8);
+///   a plain FTS5 table, since the body is derived, not a column.
+///
+/// Each index is filled from the rows already there.
+const V8: &str = r#"
+CREATE VIRTUAL TABLE projects_fts USING fts5(
+    title, description,
+    content='projects', content_rowid='id',
+    tokenize='unicode61 remove_diacritics 2');
+CREATE TRIGGER projects_fts_ai AFTER INSERT ON projects BEGIN
+    INSERT INTO projects_fts(rowid, title, description) VALUES (new.id, new.title, new.description);
+END;
+CREATE TRIGGER projects_fts_ad AFTER DELETE ON projects BEGIN
+    INSERT INTO projects_fts(projects_fts, rowid, title, description)
+    VALUES ('delete', old.id, old.title, old.description);
+END;
+CREATE TRIGGER projects_fts_au AFTER UPDATE OF title, description ON projects BEGIN
+    INSERT INTO projects_fts(projects_fts, rowid, title, description)
+    VALUES ('delete', old.id, old.title, old.description);
+    INSERT INTO projects_fts(rowid, title, description) VALUES (new.id, new.title, new.description);
+END;
+INSERT INTO projects_fts(projects_fts) VALUES ('rebuild');
+
+CREATE VIRTUAL TABLE epics_fts USING fts5(
+    title, description, state,
+    content='epics', content_rowid='id',
+    tokenize='unicode61 remove_diacritics 2');
+CREATE TRIGGER epics_fts_ai AFTER INSERT ON epics BEGIN
+    INSERT INTO epics_fts(rowid, title, description, state)
+    VALUES (new.id, new.title, new.description, new.state);
+END;
+CREATE TRIGGER epics_fts_ad AFTER DELETE ON epics BEGIN
+    INSERT INTO epics_fts(epics_fts, rowid, title, description, state)
+    VALUES ('delete', old.id, old.title, old.description, old.state);
+END;
+CREATE TRIGGER epics_fts_au AFTER UPDATE OF title, description, state ON epics BEGIN
+    INSERT INTO epics_fts(epics_fts, rowid, title, description, state)
+    VALUES ('delete', old.id, old.title, old.description, old.state);
+    INSERT INTO epics_fts(rowid, title, description, state)
+    VALUES (new.id, new.title, new.description, new.state);
+END;
+INSERT INTO epics_fts(epics_fts) VALUES ('rebuild');
+
+CREATE VIRTUAL TABLE questions_fts USING fts5(
+    text, answer,
+    content='questions', content_rowid='id',
+    tokenize='unicode61 remove_diacritics 2');
+CREATE TRIGGER questions_fts_ai AFTER INSERT ON questions BEGIN
+    INSERT INTO questions_fts(rowid, text, answer) VALUES (new.id, new.text, new.answer);
+END;
+CREATE TRIGGER questions_fts_ad AFTER DELETE ON questions BEGIN
+    INSERT INTO questions_fts(questions_fts, rowid, text, answer)
+    VALUES ('delete', old.id, old.text, old.answer);
+END;
+CREATE TRIGGER questions_fts_au AFTER UPDATE OF text, answer ON questions BEGIN
+    INSERT INTO questions_fts(questions_fts, rowid, text, answer)
+    VALUES ('delete', old.id, old.text, old.answer);
+    INSERT INTO questions_fts(rowid, text, answer) VALUES (new.id, new.text, new.answer);
+END;
+INSERT INTO questions_fts(questions_fts) VALUES ('rebuild');
+
+CREATE VIRTUAL TABLE contacts_fts USING fts5(
+    name, job_title, company,
+    content='contacts', content_rowid='id',
+    tokenize='unicode61 remove_diacritics 2');
+CREATE TRIGGER contacts_fts_ai AFTER INSERT ON contacts BEGIN
+    INSERT INTO contacts_fts(rowid, name, job_title, company)
+    VALUES (new.id, new.name, new.job_title, new.company);
+END;
+CREATE TRIGGER contacts_fts_ad AFTER DELETE ON contacts BEGIN
+    INSERT INTO contacts_fts(contacts_fts, rowid, name, job_title, company)
+    VALUES ('delete', old.id, old.name, old.job_title, old.company);
+END;
+CREATE TRIGGER contacts_fts_au AFTER UPDATE OF name, job_title, company ON contacts BEGIN
+    INSERT INTO contacts_fts(contacts_fts, rowid, name, job_title, company)
+    VALUES ('delete', old.id, old.name, old.job_title, old.company);
+    INSERT INTO contacts_fts(rowid, name, job_title, company)
+    VALUES (new.id, new.name, new.job_title, new.company);
+END;
+INSERT INTO contacts_fts(contacts_fts) VALUES ('rebuild');
+
+CREATE VIRTUAL TABLE attachments_fts USING fts5(
+    name, body,
+    tokenize='unicode61 remove_diacritics 2');
+CREATE TRIGGER attachments_fts_ai AFTER INSERT ON attachments BEGIN
+    INSERT INTO attachments_fts(rowid, name, body)
+    SELECT new.id, new.name, coalesce((
+        SELECT CAST(c.data AS TEXT) FROM attachment_blobs b
+        JOIN attachment_chunks c ON c.blob_id = b.id AND c.seq = 0
+        WHERE b.id = new.blob_id AND b.complete = 1 AND b.size <= 262144
+          AND (b.media_type LIKE 'text/%' OR b.media_type IN
+               ('application/json', 'application/xml', 'application/toml', 'application/x-yaml'))
+    ), '');
+END;
+CREATE TRIGGER attachments_fts_ad AFTER DELETE ON attachments BEGIN
+    DELETE FROM attachments_fts WHERE rowid = old.id;
+END;
+CREATE TRIGGER attachments_fts_au AFTER UPDATE OF name ON attachments BEGIN
+    UPDATE attachments_fts SET name = new.name WHERE rowid = new.id;
+END;
+INSERT INTO attachments_fts(rowid, name, body)
+    SELECT a.id, a.name, coalesce((
+        SELECT CAST(c.data AS TEXT) FROM attachment_blobs b
+        JOIN attachment_chunks c ON c.blob_id = b.id AND c.seq = 0
+        WHERE b.id = a.blob_id AND b.complete = 1 AND b.size <= 262144
+          AND (b.media_type LIKE 'text/%' OR b.media_type IN
+               ('application/json', 'application/xml', 'application/toml', 'application/x-yaml'))
+    ), '')
+    FROM attachments a;
 "#;

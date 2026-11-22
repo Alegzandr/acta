@@ -2562,6 +2562,7 @@ impl Shell {
                     Target::Kb(id, _) => Route::Kb(id),
                     Target::Command(command) => return self.run_command(command, window, cx),
                     Target::Choice(_) => return,
+                    Target::Found(route, _) => route,
                 };
                 if new_tab {
                     self.open_in_tab(route, window, cx);

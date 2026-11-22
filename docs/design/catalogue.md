@@ -682,6 +682,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `palette.commands` | Commands | Commandes |
 | `palette.projects` | Projects | Projets |
 | `palette.epics` | Epics | Epics |
+| `palette.content` | In content | Dans le contenu |
 | `palette.hint.open` | {keys} open | {keys} ouvrir |
 | `palette.hint.tab` | {keys} open in new tab | {keys} ouvrir dans un nouvel onglet |
 | `palette.hint.create` | {keys} create | {keys} créer |
