@@ -151,7 +151,7 @@ mod windows_link {
         let key = store.derive_secret(acta_browser::auth::KEY_LABEL);
         let sid = acta_browser::pipe::user_sid()
             .map_err(|e| format!("cannot read this user's id: {}", e.kind()))?;
-        let name = acta_browser::pipe::pipe_name(&sid, store.data_dir());
+        let name = acta_browser::pipe::pipe_name(&sid, &key, store.data_dir());
         let mutex = acta_browser::pipe::mutex_name(&sid, store.data_dir());
         let session = Session::resolve(&store, &Launch::from_env(), Author::Claude);
         let hello = Hello {

@@ -283,8 +283,11 @@ Crate `acta-browser` (operations over a `Host` trait, policy, fence and budgets,
 server with the lease, Windows pipe and client); the app's Browser view (`browser_panel.rs`,
 `browser_host.rs`); `acta mcp browser` (`crates/acta-cli/src/browser.rs`); setup and skill. Deviations
 from the text above, all small:
-- The pipe name ends with a tag of the data directory, `\\.\pipe\acta-<user SID>-browser-<8 hex
-  of SHA-256 of the data dir path>`, so a development or test instance never meets the installed app.
+- The pipe name ends with a tag of the data directory, `\\.\pipe\acta-<user SID>-browser-<16 hex
+  of HMAC-SHA256(pipe key, "pipe name v1" + data dir path)>`, so a development or test instance
+  never meets the installed app, and another local user, who lacks the key, cannot predict the name
+  and create it first (security audit; it was a plain SHA-256 of the path). The app's mutex keeps
+  the SHA-256 tag: it is taken before the database key is read, and `Local\` is the session's own.
 - `open` takes `url` or `go` (`back`, `forward`, `reload`) instead of three booleans.
 - The lease is taken over by another session after 5 minutes without a call, so a session that went
   away never holds the browser for good.

@@ -85,6 +85,18 @@ struct State {
     notices: Vec<Notice>,
 }
 
+impl State {
+    /// A notice, unless [`MAX_NOTICES`] already wait.
+    fn push_notice(&mut self, n: Notice) {
+        if self.notices.len() < MAX_NOTICES {
+            self.notices.push(n);
+        }
+    }
+}
+
+/// The most notices kept between two drains.
+const MAX_NOTICES: usize = 50;
+
 #[derive(Default)]
 pub struct Events {
     state: Mutex<State>,
@@ -135,7 +147,7 @@ impl Events {
                     s.stops += 1;
                 }
             }
-            "Page.fileChooserOpened" => s.notices.push(Notice::FileChooser),
+            "Page.fileChooserOpened" => s.push_notice(Notice::FileChooser),
             "Runtime.consoleAPICalled" => {
                 let kind = p["type"].as_str().unwrap_or("log").to_string();
                 let severity = match kind.as_str() {
@@ -219,10 +231,7 @@ impl Events {
     }
 
     pub fn notice(&self, n: Notice) {
-        let mut s = self.lock();
-        if s.notices.len() < 50 {
-            s.notices.push(n);
-        }
+        self.lock().push_notice(n);
     }
 
     pub fn loads(&self) -> u64 {
@@ -391,6 +400,17 @@ mod tests {
         let started = Instant::now();
         assert!(!e.wait_load(1, Duration::from_secs(5), &|| true));
         assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    /// Security audit: a page opening file choosers in a loop must not
+    /// grow the notices without bound.
+    #[test]
+    fn file_chooser_notices_are_capped() {
+        let e = Events::default();
+        for _ in 0..(MAX_NOTICES + 20) {
+            e.on("Page.fileChooserOpened", &serde_json::json!({}));
+        }
+        assert_eq!(e.drain_notices().len(), MAX_NOTICES);
     }
 
     #[test]
