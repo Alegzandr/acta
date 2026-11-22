@@ -851,6 +851,8 @@ Moved into 10.4 when the Overview was implemented: `overview.*` after `section.k
 
 ### 10.4.6 Keys of questions and people, pending
 
+Amended 2026-11-22: people are contacts (components-contacts.md 5); the `person.*` keys that 10.4.11 lists as replaced are not moved into 10.4.
+
 New with questions and Report to (2026-11-21; components-questions.md 5, data.md 11 requests 18 and 19). They stay here, outside the table the tests read, until the feature is implemented; the implementing change moves them into 10.4 and adds them to `catalogue.rs` in the same commit: `section.questions` after `section.description`, `prop.report_to` after `prop.due`, `event.report_*` after `event.due_*`, `table.questions*` and `table.report_to` after `table.due`, the `cmd.*` keys after `cmd.due_*`, the other families together after `kb.*`. In French, *question* is feminine ("répondue", "abandonnée", "close"); the person is user text and always follows a colon in French ("Posée à : Marie", "À rapporter à : le service RH"), so no article or preposition ever meets it (10.3). `{name}` is a person or a record name, never translated; `{date}` is the absolute date of 10.2.
 
 | Key | English | French |
@@ -1217,3 +1219,86 @@ From the clarity review of 2026-11-22 ([reviews/2026-11-22-clarity.md](reviews/2
 | `meta.record` | {id} · Updated {when} by {author} | {id} · Modifié {when} par {author} |
 
 `{level}` in `folders.also.tip` is a `level.*` string ("Epic Terminal", « Epic Terminal »), which is why the French follows a colon. `prop.add_due` and `prop.add_report_to` label the hover-revealed add chips of an unset optional property (components-records.md 5, Properties block). `meta.record` is the one meta line under the properties block that replaces the Id and Updated rows; `{id}` is in `type.code`. `settings.setup.details` (the former text of `settings.setup.hint`) is the body behind "What setup changes", followed by `settings.plugin.hint`. The Settings rows Snapshots, Trash and Keyboard shortcuts take `settings.restore`, `common.open` and `common.open` as their buttons, so a label is never repeated on its own button.
+
+### 10.4.11 Keys of contacts and the profile, pending
+
+New with contacts (2026-11-22; components-contacts.md 5, data.md 11 requests 22 and 23). They stay here, outside the table the tests read, until the feature is implemented; the implementing change moves them into 10.4 with the keys of 10.4.6 and adds them to `catalogue.rs` in the same commit: `settings.profile*` before `settings.theme`, `cmd.contact*` and `cmd.profile_*` after the `cmd.*` keys of questions, `trash.*` after the trash keys, the `contact.*` and `contacts.*` families together after `person.*`.
+
+**Replaced** in 10.4.6 (not to be moved into 10.4): `person.placeholder` by `contact.placeholder`; `person.open_count` by `contact.open_count`; `person.counter` (no counter: the picker stops at 80); `person.scope` by `contact.scope` and `contact.scope_projects`; `person.go` by `contact.go`; `cmd.person_go` by `cmd.contact_go`. Kept: `person.none`, `person.section.asked`, `person.section.report`, `person.empty`, `count.person_asked`, `count.person_report`.
+
+In French, *contact* is masculine ("ajouté", "supprimé", "fusionné"); a contact's name is user text and in French always follows a colon (10.3), so sentences put it last. `{level}` is `contact.level.all` or a `level.project` / `level.epic` string; `{record}` is a record title as written; `{places}` is a list of `contact.move.place`, joined by ", " as 10.3 licenses, at most three, then `contact.move.more`.
+
+| Key | English | French |
+|---|---|---|
+| `contact.placeholder` | Search contacts | Rechercher un contact |
+| `contact.new_named` | New contact "{name}" | Nouveau contact : {name} |
+| `contact.new_in` | in {level} | dans : {level} |
+| `contact.new_tag` | new | nouveau |
+| `contact.out_of_scope` | {name} is no longer visible here. Choose again. | Ce contact n'est plus visible ici : {name}. Choisissez à nouveau. |
+| `contact.level.all` | All projects | Tous les projets |
+| `contact.level.current` | Current | Actuel |
+| `contact.move.blocked` | Used outside | Utilisé ailleurs |
+| `contact.move.refused` | Named outside {level}: {places}. Change those first. | Cité hors de ce niveau ({level}) : {places}. Modifiez-les d'abord. |
+| `contact.move.place` | {id} {title} ({field}) | {id} {title} ({field}) |
+| `contact.move.more` | +{n} more | +{n} autre · +{n} autres |
+| `contact.lifted` | {name} is now a contact of all projects, so {record} still sees them. | Contact étendu à tous les projets pour rester visible depuis {record} : {name}. |
+| `contact.lifted.project` | {name} is now a contact of project {project}, so {record} still sees them. | Contact étendu au projet {project} pour rester visible depuis {record} : {name}. |
+| `contacts.title` | Contacts | Contacts |
+| `contacts.count` | {n} contact · {n} contacts | {n} contact · {n} contacts |
+| `contacts.filter.project` | This project | Ce projet |
+| `contacts.filter.all` | All | Tous |
+| `contacts.new` | New contact | Nouveau contact |
+| `contacts.new_here` | New contact here | Nouveau contact ici |
+| `contacts.empty` | No contacts yet. A contact is added when you choose who a question is asked of or who to report to. | Aucun contact pour l'instant. Un contact s'ajoute quand vous choisissez à qui poser une question ou à qui rapporter. |
+| `contacts.no_match` | No contact matches "{query}". | Aucun contact ne correspond à « {query} ». |
+| `contacts.none_here` | No contacts in {project}. | Aucun contact dans {project}. |
+| `contact.name_placeholder` | Name | Nom |
+| `contact.name_required` | A contact needs a name. | Un contact doit avoir un nom. |
+| `contact.open_count` | {n} open | {n} en cours |
+| `contact.prop.job_title` | Job title | Fonction |
+| `contact.prop.company` | Company | Entreprise |
+| `contact.prop.level` | Level | Niveau |
+| `contact.add.job_title` | Job title | Fonction |
+| `contact.add.company` | Company | Entreprise |
+| `contact.add.address` | How to address them | Comment s'adresser à ce contact |
+| `contact.section.address` | How to address them | Comment s'adresser à ce contact |
+| `contact.address_placeholder` | Formal or first name, tone, what to avoid | Vouvoiement ou tutoiement, prénom ou nom, ton, ce qu'il faut éviter |
+| `contact.address_counter` | {n} / 500 | {n} / 500 |
+| `contact.meta` | {id} · Added {date} by {author} | {id} · Ajouté le {date} par {author} |
+| `contact.meta_updated` | {id} · Added {date} by {author} · Updated {when} | {id} · Ajouté le {date} par {author} · Modifié {when} |
+| `contact.scope` | {asked}, {report} | {asked}, {report} |
+| `contact.scope_projects` | {asked}, {report} in {n} projects | {asked}, {report} dans {n} projets |
+| `contact.duplicate` | Another contact is also named {name}, in {level}. | Un autre contact porte aussi ce nom, dans {level} : {name}. |
+| `contact.merge_into_it` | Merge into it... | Fusionner avec lui... |
+| `contact.keep_both` | Keep both | Garder les deux |
+| `contact.go` | Go to {name} | Ouvrir : {name} |
+| `contact.rename` | Rename | Renommer |
+| `contact.move` | Move to... | Déplacer vers... |
+| `contact.merge` | Merge into... | Fusionner avec... |
+| `contact.delete` | Delete contact | Supprimer le contact |
+| `contact.merged` | Merged into {name}. | Fusionné avec : {name}. |
+| `contact.restored_merged` | Contact restored. Its uses stayed with {name}. | Contact restauré. Ses usages restent à : {name}. |
+| `contact.deleted` | Contact deleted. | Contact supprimé. |
+| `contact.restored` | Contact restored. | Contact restauré. |
+| `contact.in_trash` | In the trash | Dans la corbeille |
+| `trash.merged_into` | Merged into {name} | Fusionné avec : {name} |
+| `trash.kept_named` | Kept: still named in {n} place · Kept: still named in {n} places | Conservé : encore cité à {n} endroit · Conservé : encore cité à {n} endroits |
+| `cmd.contacts_open` | Go to contacts | Aller aux contacts |
+| `cmd.contact_go` | Go to contact... | Aller à un contact... |
+| `cmd.contact_new` | New contact | Nouveau contact |
+| `cmd.contact_rename` | Rename contact | Renommer le contact |
+| `cmd.contact_job_title` | Set job title... | Définir la fonction... |
+| `cmd.contact_company` | Set company... | Définir l'entreprise... |
+| `cmd.contact_address` | Edit how to address them | Modifier comment s'adresser à ce contact |
+| `cmd.contact_move` | Move contact to... | Déplacer le contact vers... |
+| `cmd.contact_merge` | Merge contact into... | Fusionner le contact avec... |
+| `cmd.contact_delete` | Delete contact | Supprimer le contact |
+| `cmd.profile_name` | Set your name | Définir votre nom |
+| `cmd.profile_job_title` | Set your job title | Définir votre fonction |
+| `settings.profile` | Profile | Profil |
+| `settings.profile.hint` | Claude Code sees your name and job title. | Claude Code voit votre nom et votre fonction. |
+| `settings.profile.name` | Name | Nom |
+| `settings.profile.name_hint` | Shown on what you write. | Affiché sur ce que vous écrivez. |
+| `settings.profile.job_title` | Job title | Fonction |
+
+`contact.lifted.project` replaces `contact.lifted` when the contact is lifted to a project rather than to all projects. `contact.meta_updated` replaces `contact.meta` once the contact changed after it was added. The `{field}` of `contact.move.place` is `prop.report_to` or `question.field.asked`. Agent-facing text (`ok C-12 Paul (P-1)`, `refused: no contact "Mari" here`, `User: Alexandre, Product designer`) is protocol, English only, and not in this catalogue (10).
