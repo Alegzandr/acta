@@ -26,6 +26,17 @@ use crate::workspace::{ToastKind, Workspace};
 
 gpui_kit::actions!(acta_dialog, [CancelDialog]);
 
+/// A confirmation asked by a page (interaction.md 6.4): the title names
+/// the object, the body the consequence, the button repeats the verb.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Confirm {
+    pub title: String,
+    pub body: String,
+    pub confirm: String,
+    /// Run once confirmed (the index is unused).
+    pub on_confirm: crate::palette::OnPick,
+}
+
 pub enum Kind {
     Export {
         project: Option<(ProjectId, String)>,
@@ -51,6 +62,8 @@ pub enum Kind {
         selected: Option<usize>,
     },
     RestartTerminal,
+    /// A page's own confirmation (a git action where a session works).
+    Confirm(Confirm),
     /// "Remove Acta from Claude Code?" (Settings, Claude Code).
     RemoveSetup,
     /// "Set up Claude Code?" (Settings, Claude Code): the open project
@@ -73,6 +86,8 @@ pub enum DialogEvent {
     Recover(Arc<ExportFile>),
     /// The terminal restart was confirmed.
     RestartTerminal,
+    /// A page's confirmation was confirmed: run its action.
+    Confirmed(crate::palette::OnPick),
     /// Removing Acta from Claude Code was confirmed.
     RemoveSetup,
     /// Setup was confirmed, linking that project's folders.
@@ -712,6 +727,38 @@ impl Dialog {
                     .into_any_element(),
                 ];
                 (text(locale, Key::TerminalRestartTitle), body, buttons, 440.)
+            }
+            Kind::Confirm(c) => {
+                let body = type_scale::UI
+                    .el()
+                    .text_color(t.text_secondary)
+                    .child(c.body.clone())
+                    .into_any_element();
+                let on_confirm = c.on_confirm.clone();
+                let buttons = vec![
+                    ui::button(
+                        "dialog-cancel",
+                        text(locale, Key::CommonCancel),
+                        Variant::Secondary,
+                        false,
+                        t,
+                    )
+                    .track_focus(&self.safe)
+                    .on_click(cx.listener(|d, _, _, cx| d.close(cx)))
+                    .into_any_element(),
+                    ui::button(
+                        "confirm-confirm",
+                        c.confirm.clone(),
+                        Variant::Primary,
+                        false,
+                        t,
+                    )
+                    .on_click(cx.listener(move |_, _, _, cx| {
+                        cx.emit(DialogEvent::Confirmed(on_confirm.clone()))
+                    }))
+                    .into_any_element(),
+                ];
+                (c.title.clone(), body, buttons, 440.)
             }
             Kind::Setup { project, folders } => {
                 let mut sentence = text(locale, Key::SettingsSetupBody);

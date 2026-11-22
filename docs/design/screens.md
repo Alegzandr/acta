@@ -687,7 +687,7 @@ Content column only (560); the drawing is made on Saturday 21 Nov 2026.
         Embed the terminal bound to the project                     <- type.title
     12  Status     [(.) Active v]
         Due        15 Dec 2026  In 24 days
-        Report to  Marie                                            <- link: person page
+        Report to  Marie                                            <- link: contact page
         Epic       Terminal
         Folders    > [f] ~\dev\acta-wt\embed-terminal  +1
         Id         T-42
@@ -722,7 +722,7 @@ Answering the first question (`A`):
          8  [x] Also log it as a decision       [Cancel] [Save answer]
 ```
 
-The "3 closed" row unfolded, and the composer open (`Q`), with the person field's suggestions:
+The "3 closed" row unfolded, and the composer open (`Q`), with the contact picker (8.29):
 
 ```
         v 3 closed
@@ -767,27 +767,35 @@ Annotations: `(?)` is `circle-question-mark` (open, `text.secondary`), `(v)` `ci
 
 Annotations: groups are owners, widest first, as on the knowledge base page; rows are the question rows of 8.21, and `Enter` opens the owner's page with the question focused. With Overdue selected the list is ungrouped, earliest answer date first, each meta line starting "in Topic Embed the terminal". Scoped to an epic (from its roll-up row) the scope line reads "Epic Terminal · 3 open, 5 closed" followed by the ghost link "Whole project".
 
-### 8.23 Person page
+### 8.23 Contact page (was the person page)
+
+Content column (560); Marie is a contact of Project Acta, created by Claude Code from triage, with details the human added.
 
 ```
-        Marie                                                       <- type.title, as written
-     8  In Acta · 2 questions to ask, 3 things to report
-    32  Questions asked                                             28 header
+        Marie                                                 [...]  <- type.title, as written
+    12  Job title  Head of legal
+        Company    Acme
+        Level      Project Acta                                      <- link; M moves
+        C-3 · Added 21 Nov 2026 by Claude Code · Updated 2 h ago      <- meta line
+     8  2 questions to ask, 3 things to report                       <- type.small tertiary
+    24  [i] Another contact is also named Marie, in All projects.
+            Merge into it...  Keep both                              <- notice, only for a same key
+    32  How to address them                                          28 section header
+        Vouvoiement. Madame Dubois in writing, Marie in person.      <- type.reading, as typed
+        Short messages, no attachments.
+    32  Questions asked
         (?) Can we keep the v1 export format until March,     (A)
             or must both formats ship together?
             in Topic Embed the terminal · Answer by 18 Nov 2026  Overdue by 3 days
-        (?) Is the 4 Dec review still on?                      (A)
-            in Project Acta · Answer by 4 Dec 2026  In 13 days
         > 1 closed
     32  To report
-        (v) Encrypted backups                      Not reported yet   32, text.secondary
-        [l] Terminal                                   3 of 7 done   epic: its progress
-        (.) Embed the terminal bound to the project         Active   open topic: status word
-        [n] Ask about the review room for Thursday             Tue   open note: capture time
+        (v) Encrypted backups                      Not reported yet
+        [l] Terminal                                   3 of 7 done
+        [n] Ask about the review room for Thursday             Tue
         > 2 reported
 ```
 
-Annotations: `[l]` is `layers` (an epic), `[n]` `sticky-note` (a note). Questions are ordered by lateness here, not by their owner's order: the reader is about to talk to Marie. `Space` on "Encrypted backups" marks it reported; it moves into "2 reported" on the next frame and the change is one `Mod+Z` step, with no toast. Reached from any "Marie" link and from "Go to person...". The tab is not restored after a restart (4.7).
+Annotations: the properties rows exist because they are set; with nothing set the block shows Level and the meta line only, and hovering or focusing it reveals the chips "Job title", "Company", "How to address them". The notice appears only because a contact with the same key is visible from this one (here a global "Marie"); "Keep both" removes it for good. Sections, rows and keys below are the old person page's (`Space` marks reported, `Enter` opens). The tab is restored after a restart: its key is the contact's id.
 
 ### 8.24 Quick capture with Report to, and the note card
 
@@ -989,3 +997,77 @@ Settings > Voice:
 ```
 
 Annotations: no accent and no red anywhere in dictation; the stop square, the pressed fill and the word "Listening" carry the state in greyscale. "Use the graphics card" is absent here (a Windows build without the Vulkan step, ADR 0014, 5); on Apple Silicon it sits under the model list and the recommendation is Large turbo with `voice.settings.model_hint_gpu`. On macOS the Dictation dropdown also offers "macOS recogniser, on this computer" when it works on the device.
+
+### 8.28 Contacts page
+
+```
++----------------------+-------------------------------------------------------------------------+
+| v Acta               |                               32                                        |
+|     [i] Inbox      4 |        Contacts                                    <- type.title        |
+|     ...              |     8  9 contacts                                  <- small, tertiary   |
+|                      |    24  [Search contacts              ]  [This project|All] [New contact]|
+|                      |    16  All projects                                          2          |
+|                      |        Alexandre's accountant                                1 open     |
+|                      |        Marie  Head of legal · City hall                                 |
+|                      |        Project Acta                                          5          |
+|                      |        Legal team                                            1 open     |
+|                      |        Marie  Head of legal · Acme                           3 open     |
+|                      |        Paul                                                     *       |
+|                      |        ...                                                              |
+|                      |        Epic Terminal                                         2          |
+|                      |        Design review group                                   1 open     |
+|                      |        Sami  Windows packaging                                          |
+|----------------------|                                                                         |
+| [u] Contacts         |                                                                         |
+| [t] Trash            |                                                                         |
+| [s] Settings         |                                                                         |
++----------------------+-------------------------------------------------------------------------+
+```
+
+Annotations: "This project" lists what the active project sees: all projects, the project, its epics. Rows are 32: name `type.ui` `text.primary`, details `type.small` `text.tertiary` (truncated first), the open count at the right, absent at 0. Paul was created by Claude Code and not yet shown here: the unread dot. Group headers are links to the level's page; a `plus` on hover adds a contact in that group. `M` on a row moves it (the palette lists levels; a narrower level where it is named outside reads "Used outside" and refuses with the list of places). `[u]` is `users`, the pinned row that exists only once a contact does.
+
+### 8.29 Contact picker (Asked, in the question composer of a topic in epic Terminal)
+
+Typing "mar":
+
+```
+        (?) [Who signs the export policy?                       ]
+         8  Asked [mar|                     ]   Answer by [None]
+                  +--------------------------------------------+
+                  | Project Acta                               |   24 group header
+                  |[Marie          Head of legal · Acme       ]|   highlighted: Enter takes it
+                  | Marius         Accounting                  |
+                  | All projects                               |
+                  | Marie          Head of legal · City hall   |
+                  |                                            |   4 of space
+                  | +  New contact "mar"       in Project Acta |   Up from the first row
+                  +--------------------------------------------+
+```
+
+Typing "Paul", who is not a contact:
+
+```
+         8  Asked [Paul|                    ]   Answer by [None]
+                  +--------------------------------------------+
+                  |[+  New contact "Paul"      in Project Acta]|   the only row, highlighted
+                  +--------------------------------------------+
+
+         8  Asked [Paul  new              ]   Answer by [None]   after Enter: created on save
+```
+
+Annotations: no Epic Terminal group because no contact of that epic matches. The details turn `text.secondary` on the highlighted row (`text.tertiary` is not allowed on `fill.selected`). The field never keeps "mar" as text: `Esc` or leaving with the pointer restores the previous value. "Paul" becomes a contact of Project Acta, name only, when the question is saved, in the same `Mod+Z` step.
+
+### 8.30 Settings > Profile
+
+```
+        Settings                                                    <- type.title
+    32  Profile                                                     <- type.subtitle
+     4  Claude Code sees your name and job title.                   <- small, tertiary
+     8  Name                                     [Alexandre          ]   240
+        Shown on what you write.
+        Job title                                [Product designer   ]
+    32  Appearance
+        ...
+```
+
+Annotations: the Name placeholder is the system user name; until a name is typed Acta keeps using it for authors and sends no `User:` line to Claude Code. Values apply on `Enter` or when the input loses focus; `Esc` restores. Both are stored in the encrypted database.

@@ -288,3 +288,99 @@ pub fn long(store: &mut Store, folder: &Path) -> acta_core::Result<()> {
     }
     Ok(())
 }
+
+/// [`seed`] with the folders of screens.md 8.11, built under `root` (a
+/// scratch directory: it creates git repositories there): the project's
+/// checkout `acta` (a clone one commit behind its remote, after a fetch)
+/// and `acta-docs` (not found); the epic Terminal's `alacritty-fork` on
+/// `acta-patches`; the topic "Embed the terminal" in its own worktree
+/// `embed-terminal` on `topic/embed`, three files changed, Commit and
+/// push, and a notes folder named "Design notes".
+#[cfg(debug_assertions)]
+pub fn folders(store: &mut Store, root: &Path) -> acta_core::Result<()> {
+    use acta_core::model::CommitMode;
+    if !store.projects()?.is_empty() {
+        return Ok(());
+    }
+    let git = |dir: &Path, args: &[&str]| {
+        let _ = acta_core::git_cmd::command(dir).args(args).output();
+    };
+    let identity = |dir: &Path| {
+        git(dir, &["config", "user.name", "Alexandre"]);
+        git(dir, &["config", "user.email", "alexandre@example.com"]);
+        git(dir, &["config", "commit.gpgsign", "false"]);
+    };
+    let remote = root.join("remote.git");
+    let seed_dir = root.join("seed");
+    let acta = root.join("acta");
+    for dir in [&remote, &seed_dir] {
+        std::fs::create_dir_all(dir)?;
+    }
+    git(&remote, &["init", "--bare", "-q", "-b", "main"]);
+    git(&seed_dir, &["init", "-q", "-b", "main"]);
+    identity(&seed_dir);
+    std::fs::write(seed_dir.join("README.md"), "Acta\n")?;
+    git(&seed_dir, &["add", "README.md"]);
+    git(&seed_dir, &["commit", "-q", "-m", "First"]);
+    git(
+        &seed_dir,
+        &["remote", "add", "origin", &remote.to_string_lossy()],
+    );
+    git(&seed_dir, &["push", "-q", "-u", "origin", "main"]);
+    git(root, &["clone", "-q", &remote.to_string_lossy(), "acta"]);
+    identity(&acta);
+    std::fs::write(seed_dir.join("NOTES.md"), "Later\n")?;
+    git(&seed_dir, &["add", "NOTES.md"]);
+    git(&seed_dir, &["commit", "-q", "-m", "Second"]);
+    git(&seed_dir, &["push", "-q"]);
+    git(&acta, &["fetch", "-q"]);
+    let embed_dir = root.join("embed-terminal");
+    git(
+        &acta,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "topic/embed",
+            &embed_dir.to_string_lossy(),
+        ],
+    );
+    for (file, text) in [("a.rs", "a\n"), ("b.rs", "b\n"), ("README.md", "Acta!\n")] {
+        std::fs::write(embed_dir.join(file), text)?;
+    }
+    let fork = root.join("alacritty-fork");
+    std::fs::create_dir_all(&fork)?;
+    git(&fork, &["init", "-q", "-b", "acta-patches"]);
+    identity(&fork);
+    git(&fork, &["commit", "-q", "--allow-empty", "-m", "Fork"]);
+    let notes = root.join("notes").join("terminal");
+    let docs = root.join("acta-docs");
+    std::fs::create_dir_all(&notes)?;
+    std::fs::create_dir_all(&docs)?;
+
+    seed(store, &acta)?;
+    let me = Author::Human;
+    let tree = store.tree(store.projects()?[0].id)?;
+    let project = Owner::Project(tree.project.id);
+    store.add_folder(project, &docs, me)?;
+    std::fs::remove_dir(&docs)?;
+    let (terminal, topics) = tree
+        .epics
+        .iter()
+        .find(|(e, _)| e.title == "Terminal")
+        .expect("the seed's epic");
+    store.add_folder(Owner::Epic(terminal.id), &fork, me)?;
+    let embed = topics
+        .iter()
+        .find(|t| t.title.starts_with("Embed"))
+        .expect("the seed's topic")
+        .id;
+    let wt = store.add_folder(Owner::Topic(embed), &embed_dir, me)?;
+    let n = store.add_folder(Owner::Topic(embed), &notes, me)?;
+    store.set_folder_name(n, "Design notes", me)?;
+    store.set_folder_icon(n, "book-open", me)?;
+    let _ =
+        acta_core::claude_settings::set_commit(store, wt, CommitMode::Push, Some(true), false, me);
+    Ok(())
+}

@@ -263,13 +263,8 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `folders.title` | Working folders | Dossiers de travail |
 | `folders.from_epic` | from epic {name} | de l'epic {name} |
 | `folders.from_project` | from project {name} | du projet {name} |
-| `folders.primary` | Primary | Principal |
-| `folders.include` | Also include inherited folders | Inclure aussi les dossiers hérités |
-| `folders.not_used` | Not used here: {n} folder from epic {name}. · Not used here: {n} folders from epic {name}. | Non utilisé ici : {n} dossier de l'epic {name}. · Non utilisés ici : {n} dossiers de l'epic {name}. |
 | `folders.add` | Add folder... | Ajouter un dossier... |
-| `folders.hint` | Claude Code starts in the primary folder and may also read and edit the others. | Claude Code démarre dans le dossier principal et peut aussi lire et modifier les autres. |
-| `folders.set_here` | Set folder for this topic... | Définir un dossier pour ce sujet... |
-| `folders.uses` | This topic uses the folders of epic {name}. A folder set here replaces them for this topic only. | Ce sujet utilise les dossiers de l'epic {name}. Un dossier défini ici les remplace pour ce sujet seulement. |
+| `folders.hint` | Claude Code starts in the active folder and can also use the others. | Claude Code démarre dans le dossier actif et peut aussi utiliser les autres. |
 | `folders.none` | No working folder. The terminal will ask where to start. | Aucun dossier de travail. Le terminal demandera où démarrer. |
 | `folders.set` | Set working folder... | Définir le dossier de travail... |
 | `folders.not_found` | Not found on this computer | Introuvable sur cet ordinateur |
@@ -282,7 +277,6 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `folders.show.m` | Reveal in Finder (M) | Afficher dans le Finder |
 | `folders.show.l` | Show in file manager (L) | Afficher dans le gestionnaire de fichiers |
 | `folders.copy_path` | Copy path | Copier le chemin |
-| `folders.make_primary` | Make primary | Définir comme principal |
 | `folders.move_up` | Move up | Monter |
 | `folders.move_down` | Move down | Descendre |
 | `folders.choose_other` | Choose another folder... | Choisir un autre dossier... |
@@ -298,6 +292,83 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `folders.bulk_apply` | Apply to {n} folder · Apply to {n} folders | Appliquer à {n} dossier · Appliquer à {n} dossiers |
 | `folders.bulk_done` | {n} folder located. · {n} folders located. | {n} dossier localisé. · {n} dossiers localisés. |
 | `folders.picker` | Choose a working folder | Choisir un dossier de travail |
+| `folders.active` | Active | Actif |
+| `folders.set_active` | Set as active here | Définir comme actif ici |
+| `folders.edit` | Edit folders... | Modifier les dossiers... |
+| `folders.settings` | Folder settings... | Réglages du dossier... |
+| `folders.group.topic` | This topic | Ce sujet |
+| `folders.group.epic` | This epic | Cet epic |
+| `folders.group.project` | This project | Ce projet |
+| `folders.group.from_epic` | From epic {name} | De l'epic {name} |
+| `folders.group.from_project` | From project {name} | Du projet {name} |
+| `folders.no_own` | No folders of its own. | Aucun dossier propre. |
+| `folders.not_found_short` | Not found | Introuvable |
+| `folders.other_checkout` | Another checkout of {name}'s repository. Not passed to Claude Code here. | Autre copie du dépôt de {name}. Non transmise à Claude Code ici. |
+| `folders.git.detached` | detached at {commit} | détaché sur {commit} |
+| `folders.git.changed` | {n} changed | {n} modifié · {n} modifiés |
+| `folders.git.auto_commit` | Claude Code commits automatically here | Claude Code commite automatiquement ici |
+| `folders.git.auto_push` | Claude Code commits and pushes automatically here | Claude Code commite et pousse automatiquement ici |
+| `folders.name` | Name | Nom |
+| `folders.icon` | Icon | Icône |
+| `folders.icon.auto` | Automatic | Automatique |
+| `folders.icon.auto_hint` | Chosen from the folder: worktree, repository or plain folder | Choisie d'après le dossier : worktree, dépôt ou dossier simple |
+| `folders.icon.folder` | Folder | Dossier |
+| `folders.icon.repo` | Git repository | Dépôt git |
+| `folders.icon.worktree` | Git worktree | Worktree git |
+| `folders.icon.code` | Code | Code |
+| `folders.icon.docs` | Documentation | Documentation |
+| `folders.icon.package` | Package | Paquet |
+| `folders.icon.server` | Server | Serveur |
+| `folders.icon.web` | Web | Web |
+| `folders.icon.mobile` | Mobile | Mobile |
+| `folders.icon.data` | Data | Données |
+| `folders.icon.lab` | Experiments | Expériences |
+| `folders.icon.design` | Design | Design |
+| `folders.commits` | Commits by Claude Code | Commits par Claude Code |
+| `folders.commit.manual` | Manual | Manuel |
+| `folders.commit.commit` | Commit | Commit |
+| `folders.commit.push` | Commit and push | Commit et push |
+| `folders.commit.manual_hint` | Claude Code commits only when asked. | Claude Code ne commite que sur demande. |
+| `folders.commit.commit_hint` | Claude Code commits each finished, tested change. | Claude Code commite chaque modification terminée et testée. |
+| `folders.commit.push_hint` | Then pushes to the upstream branch, never forced. It stops if a push fails. | Puis pousse vers la branche amont, jamais en force. Il s'arrête si un push échoue. |
+| `folders.commit.as_user` | Commit in my name, without Co-Authored-By Claude | Commiter en mon nom, sans Co-Authored-By Claude |
+| `folders.commit.on_default` | Also on {branch} | Aussi sur {branch} |
+| `folders.commit.identity` | Commits as {name}. | Commits au nom de : {name}. |
+| `folders.commit.no_identity` | Git has no user name here, so commits will fail. | Git n'a pas de nom d'utilisateur ici : les commits échoueront. |
+| `folders.commit.file` | Saved in .claude/settings.local.json, kept out of git. | Enregistré dans .claude/settings.local.json, exclu de git. |
+| `folders.commit.tracked` | .claude/settings.local.json is tracked by git here, so Acta leaves it alone. Claude Code will ask before each commit. | .claude/settings.local.json est suivi par git ici, Acta n'y touche donc pas. Claude Code demandera avant chaque commit. |
+| `folders.commit.user_key` | Your own {key} setting is kept. | Votre propre réglage {key} est conservé. |
+| `folders.commit.root_wins` | The repository's own attribution setting wins. | Le réglage attribution du dépôt l'emporte. |
+| `folders.git.behind` | behind {n} | {n} en retard |
+| `folders.git.pull` | Pull | Pull |
+| `folders.git.fetch` | Fetch | Fetch |
+| `folders.git.branch_tip` | Switch branch | Changer de branche |
+| `folders.git.local` | Branches | Branches |
+| `folders.git.remote` | Remote branches | Branches distantes |
+| `folders.git.track` | track | suivre |
+| `folders.git.new_branch` | New branch... | Nouvelle branche... |
+| `folders.git.new_branch_hint` | Name of the new branch, from the current commit | Nom de la nouvelle branche, depuis le commit actuel |
+| `folders.git.create` | Create | Créer |
+| `folders.git.pulled` | Pulled {n} commit into {branch}. · Pulled {n} commits into {branch}. | {n} commit récupéré dans {branch}. · {n} commits récupérés dans {branch}. |
+| `folders.git.up_to_date` | {branch} is up to date. | {branch} est à jour. |
+| `folders.git.err.no_git` | Git is not installed on this computer. | Git n'est pas installé sur cet ordinateur. |
+| `folders.git.err.timed_out` | Git took too long, so Acta stopped it. Nothing was changed. | Git a mis trop de temps : Acta l'a arrêté. Rien n'a été modifié. |
+| `folders.git.err.no_upstream` | {branch} has no upstream branch to pull from. Nothing was changed. | {branch} n'a pas de branche amont d'où récupérer. Rien n'a été modifié. |
+| `folders.git.err.detached` | There is no current branch (detached HEAD). Nothing was changed. | Il n'y a pas de branche courante (HEAD détachée). Rien n'a été modifié. |
+| `folders.git.err.diverged` | {branch} and its upstream have diverged, so it cannot be fast-forwarded. Nothing was changed. | {branch} et sa branche amont ont divergé : l'avance rapide est impossible. Rien n'a été modifié. |
+| `folders.git.err.local_changes` | Local changes in {folder} would be overwritten. Nothing was changed: commit them or set them aside first. | Des modifications locales de {folder} seraient écrasées. Rien n'a été modifié : commitez-les ou mettez-les de côté d'abord. |
+| `folders.git.err.sign_in` | The remote asks for a sign-in, and Acta never asks for one. Nothing was changed. | Le dépôt distant demande une connexion, et Acta n'en demande jamais. Rien n'a été modifié. |
+| `folders.git.err.network` | The remote could not be reached. Nothing was changed. | Le dépôt distant est injoignable. Rien n'a été modifié. |
+| `folders.git.err.exists` | A branch named {branch} already exists. Nothing was changed. | Une branche nommée {branch} existe déjà. Rien n'a été modifié. |
+| `folders.git.err.invalid_name` | {branch} is not a valid branch name. Nothing was changed. | {branch} n'est pas un nom de branche valide. Rien n'a été modifié. |
+| `folders.git.err.no_branch` | There is no branch {branch}. Nothing was changed. | Il n'y a pas de branche {branch}. Rien n'a été modifié. |
+| `folders.git.err.elsewhere` | {branch} is checked out in another worktree. Nothing was changed. | {branch} est extraite dans un autre worktree. Rien n'a été modifié. |
+| `folders.git.err.other` | Git refused, and nothing was changed: {message} | Git a refusé, rien n'a été modifié : {message} |
+| `folders.git.busy.title` | Claude Code is working in {folder} | Claude Code travaille dans {folder} |
+| `folders.git.busy.switch` | Switching to {branch} changes the files under it while it works. It is not told. | Passer sur {branch} change ses fichiers pendant qu'il travaille. Il n'en est pas informé. |
+| `folders.git.busy.pull` | Pulling changes the files under it while it works. It is not told. | Le pull change ses fichiers pendant qu'il travaille. Il n'en est pas informé. |
+| `folders.git.busy.confirm_switch` | Switch anyway | Changer quand même |
+| `folders.git.busy.confirm_pull` | Pull anyway | Pull quand même |
 | `terminal.title` | Terminal | Terminal |
 | `terminal.on_topic` | {id} {name} | {id} {name} |
 | `terminal.on_epic` | {id} {name} | {id} {name} |
@@ -312,13 +383,18 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `terminal.ask.unsaved` | If not saved, it is used until Acta quits. | S'il n'est pas enregistré, il est utilisé jusqu'à la fermeture d'Acta. |
 | `terminal.ask.choose` | Choose a folder... | Choisir un dossier... |
 | `terminal.missing.title` | The working folder was not found | Le dossier de travail est introuvable |
-| `terminal.missing.body` | Claude Code was not started. This is the primary folder of epic {name}, and it is not on this computer: | Claude Code n'a pas été lancé. C'est le dossier principal de l'epic {name}, et il n'est pas sur cet ordinateur : |
 | `terminal.missing.locate` | Locate folder... | Localiser le dossier... |
 | `terminal.left_out` | {folder} was not found and was left out of this session. | {folder} est introuvable et n'a pas été inclus dans cette session. |
 | `terminal.located` | {folder} located. Restart the terminal to include it. | {folder} localisé. Redémarrez le terminal pour l'inclure. |
 | `terminal.restart.title` | Restart the terminal? | Redémarrer le terminal ? |
 | `terminal.restart.body` | Claude Code is still running in it. | Claude Code y est encore en cours d'exécution. |
 | `terminal.restart.confirm` | Restart | Redémarrer |
+| `terminal.missing.body.topic` | Claude Code was not started: the active folder of topic {name} is not on this computer. | Claude Code n'a pas été lancé : le dossier actif du sujet {name} n'est pas sur cet ordinateur. |
+| `terminal.missing.body.epic` | Claude Code was not started: the active folder of epic {name} is not on this computer. | Claude Code n'a pas été lancé : le dossier actif de l'epic {name} n'est pas sur cet ordinateur. |
+| `terminal.missing.body.project` | Claude Code was not started: the active folder of project {name} is not on this computer. | Claude Code n'a pas été lancé : le dossier actif du projet {name} n'est pas sur cet ordinateur. |
+| `terminal.missing.other` | Or start in another folder: | Ou démarrer dans un autre dossier : |
+| `terminal.running_in` | (running in {name}) | (lancé dans {name}) |
+| `terminal.restart_in` | Restart in {name} | Redémarrer dans {name} |
 | `terminal.close.title` | Close the terminal? | Fermer le terminal ? |
 | `terminal.close.body` | Claude Code is still running in it. | Claude Code y est encore en cours d'exécution. |
 | `terminal.close.confirm` | Close terminal | Fermer le terminal |
@@ -468,7 +544,6 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `cmd.snapshot` | Restore from snapshot... | Restaurer depuis un instantané... |
 | `cmd.folders_add` | Add working folder... | Ajouter un dossier de travail... |
 | `cmd.folders_show` | Show working folders | Afficher les dossiers de travail |
-| `cmd.folder_primary` | Make primary folder | Définir comme dossier principal |
 | `cmd.folder_up` | Move folder up | Monter le dossier |
 | `cmd.folder_down` | Move folder down | Descendre le dossier |
 | `cmd.folder_locate` | Locate folder... | Localiser le dossier... |
@@ -479,9 +554,17 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `cmd.folder_remove.topic` | Remove folder from this topic | Retirer le dossier de ce sujet |
 | `cmd.folder_remove.epic` | Remove folder from this epic | Retirer le dossier de cet epic |
 | `cmd.folder_remove.project` | Remove folder from this project | Retirer le dossier de ce projet |
-| `cmd.folders_include` | Include inherited folders | Inclure les dossiers hérités |
-| `cmd.folders_exclude` | Stop including inherited folders | Ne plus inclure les dossiers hérités |
 | `cmd.folders_bulk` | Apply the same change to {n} folder · Apply the same change to {n} folders | Appliquer le même changement à {n} dossier · Appliquer le même changement à {n} dossiers |
+| `cmd.folder_switch` | Switch active folder... | Changer de dossier actif... |
+| `cmd.folder_active` | Make folder active | Rendre le dossier actif |
+| `cmd.folder_settings` | Folder settings... | Réglages du dossier... |
+| `cmd.commit_mode` | Set commit mode... | Définir le mode de commit... |
+| `cmd.commit_mode.manual` | Manual | Manuel |
+| `cmd.commit_mode.commit` | Commit automatically | Commiter automatiquement |
+| `cmd.commit_mode.push` | Commit and push automatically | Commiter et pousser automatiquement |
+| `cmd.folder_pull` | Pull active folder | Pull du dossier actif |
+| `cmd.folder_fetch` | Fetch active folder | Fetch du dossier actif |
+| `cmd.folder_branch` | Switch branch of active folder... | Changer de branche du dossier actif... |
 | `slash.h1` | Heading 1 | Titre 1 |
 | `slash.h2` | Heading 2 | Titre 2 |
 | `slash.h3` | Heading 3 | Titre 3 |
@@ -517,6 +600,8 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `settings.auto_memory` | Turn off Claude Code's own memory in attached folders | Désactiver la mémoire propre à Claude Code dans les dossiers rattachés |
 | `settings.auto_memory.hint` | When a folder is attached, Acta writes autoMemoryEnabled: false to its .claude/settings.local.json, so that what Claude Code learns is kept in Acta, where you can read it. | Quand un dossier est rattaché, Acta écrit autoMemoryEnabled: false dans son .claude/settings.local.json, afin que ce que Claude Code apprend soit conservé dans Acta, où vous pouvez le lire. |
 | `settings.not_found` | Folders not found | Dossiers introuvables |
+| `settings.auto_commit` | Automatic commits | Commits automatiques |
+| `settings.auto_commit.hint` | Default for folders that commit automatically. | Par défaut pour les dossiers qui commitent automatiquement. |
 | `settings.claude` | Claude Code | Claude Code |
 | `settings.check.cli` | Claude Code found | Claude Code trouvé |
 | `settings.check.files` | Plugin files written | Fichiers du plugin écrits |
@@ -591,6 +676,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `import.newer` | This file was made by a newer Acta (format {n}). Update Acta, then import it. | Ce fichier a été créé par une version plus récente d'Acta (format {n}). Mettez Acta à jour, puis importez-le. |
 | `import.not_acta` | This is not an Acta export. | Ce n'est pas un export Acta. |
 | `import.wrong_passphrase` | Wrong passphrase. | Phrase secrète incorrecte. |
+| `import.auto_commit` | {n} working folder will commit automatically once found on this computer. · {n} working folders will commit automatically once found on this computer. | {n} dossier de travail commitera automatiquement une fois trouvé sur cet ordinateur. · {n} dossiers de travail commiteront automatiquement une fois trouvés sur cet ordinateur. |
 | `trash.hint` | Deleted things stay here for 30 days. | Les éléments supprimés restent ici 30 jours. |
 | `trash.by` | by {author} | par {author} |
 | `trash.project_content` | {topics}, {notes} (`count.topics`, `count.notes`) | {topics}, {notes} |
@@ -751,87 +837,9 @@ Moved into 10.4 when 4.8 was implemented (M8), with the texts that replaced "Tog
 
 Moved into 10.4 when 4.2.1 was implemented: `tree.unread`, `tree.empty` and `tree.collapse_all` right after `tree.move_epic`, `cmd.tree_collapse_all` after `cmd.new_project`. The ghost row reuses `topic.new` and the empty tree's button `cmd.new_project`. The Knowledge row's count is gone from the tree, so no key changes for it.
 
-### 10.4.3 Keys of folder sets and commit modes (ADR 0011), pending
+### 10.4.3 Keys of folder sets and commit modes (ADR 0011)
 
-New with ADR 0011 (2026-11-21). They stay here, outside the table the tests read, until the folders UI of ADR 0011 is implemented; the implementing change applies the three lists below to 10.4 and to `catalogue.rs` in the same commit.
-
-**Removed** from 10.4 (the concepts are gone): `folders.primary`, `folders.include`, `folders.not_used`, `folders.set_here`, `folders.uses`, `folders.make_primary`, `cmd.folder_primary`, `cmd.folders_include`, `cmd.folders_exclude`, `terminal.missing.body` (replaced by the three level keys below).
-
-**Changed** text in 10.4:
-
-| Key | English | French |
-|---|---|---|
-| `folders.hint` | Claude Code starts in the active folder and can also use the others. | Claude Code démarre dans le dossier actif et peut aussi utiliser les autres. |
-
-**New**, placed after `folders.picker` (folders), after `terminal.restart.title` (terminal), after `cmd.folders_bulk` (commands) after `settings.not_found` (settings) and after the last `import.` key (import):
-
-| Key | English | French |
-|---|---|---|
-| `folders.active` | Active | Actif |
-| `folders.set_active` | Set as active here | Définir comme actif ici |
-| `folders.edit` | Edit folders... | Modifier les dossiers... |
-| `folders.settings` | Folder settings... | Réglages du dossier... |
-| `folders.group.topic` | This topic | Ce sujet |
-| `folders.group.epic` | This epic | Cet epic |
-| `folders.group.project` | This project | Ce projet |
-| `folders.group.from_epic` | From epic {name} | De l'epic {name} |
-| `folders.group.from_project` | From project {name} | Du projet {name} |
-| `folders.no_own` | No folders of its own. | Aucun dossier propre. |
-| `folders.not_found_short` | Not found | Introuvable |
-| `folders.other_checkout` | Another checkout of {name}'s repository. Not passed to Claude Code here. | Autre copie du dépôt de {name}. Non transmise à Claude Code ici. |
-| `folders.git.detached` | detached at {commit} | détaché sur {commit} |
-| `folders.git.changed` | {n} changed | {n} modifié · {n} modifiés |
-| `folders.git.auto_commit` | Claude Code commits automatically here | Claude Code commite automatiquement ici |
-| `folders.git.auto_push` | Claude Code commits and pushes automatically here | Claude Code commite et pousse automatiquement ici |
-| `folders.name` | Name | Nom |
-| `folders.icon` | Icon | Icône |
-| `folders.icon.auto` | Automatic | Automatique |
-| `folders.icon.auto_hint` | Chosen from the folder: worktree, repository or plain folder | Choisie d'après le dossier : worktree, dépôt ou dossier simple |
-| `folders.icon.folder` | Folder | Dossier |
-| `folders.icon.repo` | Git repository | Dépôt git |
-| `folders.icon.worktree` | Git worktree | Worktree git |
-| `folders.icon.code` | Code | Code |
-| `folders.icon.docs` | Documentation | Documentation |
-| `folders.icon.package` | Package | Paquet |
-| `folders.icon.server` | Server | Serveur |
-| `folders.icon.web` | Web | Web |
-| `folders.icon.mobile` | Mobile | Mobile |
-| `folders.icon.data` | Data | Données |
-| `folders.icon.lab` | Experiments | Expériences |
-| `folders.icon.design` | Design | Design |
-| `folders.commits` | Commits by Claude Code | Commits par Claude Code |
-| `folders.commit.manual` | Manual | Manuel |
-| `folders.commit.commit` | Commit | Commit |
-| `folders.commit.push` | Commit and push | Commit et push |
-| `folders.commit.manual_hint` | Claude Code commits only when asked. | Claude Code ne commite que sur demande. |
-| `folders.commit.commit_hint` | Claude Code commits each finished, tested change. | Claude Code commite chaque modification terminée et testée. |
-| `folders.commit.push_hint` | Then pushes to the upstream branch, never forced. It stops if a push fails. | Puis pousse vers la branche amont, jamais en force. Il s'arrête si un push échoue. |
-| `folders.commit.as_user` | Commit in my name, without Co-Authored-By Claude | Commiter en mon nom, sans Co-Authored-By Claude |
-| `folders.commit.on_default` | Also on {branch} | Aussi sur {branch} |
-| `folders.commit.identity` | Commits as {name}. | Commits au nom de : {name}. |
-| `folders.commit.no_identity` | Git has no user name here, so commits will fail. | Git n'a pas de nom d'utilisateur ici : les commits échoueront. |
-| `folders.commit.file` | Saved in .claude/settings.local.json, kept out of git. | Enregistré dans .claude/settings.local.json, exclu de git. |
-| `folders.commit.tracked` | .claude/settings.local.json is tracked by git here, so Acta leaves it alone. Claude Code will ask before each commit. | .claude/settings.local.json est suivi par git ici, Acta n'y touche donc pas. Claude Code demandera avant chaque commit. |
-| `folders.commit.user_key` | Your own {key} setting is kept. | Votre propre réglage {key} est conservé. |
-| `folders.commit.root_wins` | The repository's own attribution setting wins. | Le réglage attribution du dépôt l'emporte. |
-| `terminal.missing.body.topic` | Claude Code was not started: the active folder of topic {name} is not on this computer. | Claude Code n'a pas été lancé : le dossier actif du sujet {name} n'est pas sur cet ordinateur. |
-| `terminal.missing.body.epic` | Claude Code was not started: the active folder of epic {name} is not on this computer. | Claude Code n'a pas été lancé : le dossier actif de l'epic {name} n'est pas sur cet ordinateur. |
-| `terminal.missing.body.project` | Claude Code was not started: the active folder of project {name} is not on this computer. | Claude Code n'a pas été lancé : le dossier actif du projet {name} n'est pas sur cet ordinateur. |
-| `terminal.missing.other` | Or start in another folder: | Ou démarrer dans un autre dossier : |
-| `terminal.running_in` | (running in {name}) | (lancé dans {name}) |
-| `terminal.restart_in` | Restart in {name} | Redémarrer dans {name} |
-| `cmd.folder_switch` | Switch active folder... | Changer de dossier actif... |
-| `cmd.folder_active` | Make folder active | Rendre le dossier actif |
-| `cmd.folder_settings` | Folder settings... | Réglages du dossier... |
-| `cmd.commit_mode` | Set commit mode... | Définir le mode de commit... |
-| `cmd.commit_mode.manual` | Manual | Manuel |
-| `cmd.commit_mode.commit` | Commit automatically | Commiter automatiquement |
-| `cmd.commit_mode.push` | Commit and push automatically | Commiter et pousser automatiquement |
-| `settings.auto_commit` | Automatic commits | Commits automatiques |
-| `settings.auto_commit.hint` | Default for folders that commit automatically. | Par défaut pour les dossiers qui commitent automatiquement. |
-| `import.auto_commit` | {n} working folder will commit automatically once found on this computer. · {n} working folders will commit automatically once found on this computer. | {n} dossier de travail commitera automatiquement une fois trouvé sur cet ordinateur. · {n} dossiers de travail commiteront automatiquement une fois trouvés sur cet ordinateur. |
-
-The checkbox of `settings.auto_commit` reuses `folders.commit.as_user`. `{branch}` is the default branch's name as git has it, never translated; `{key}` is a settings key (`attribution`, `env`), never translated.
+Moved into 10.4 when the folders UI of ADR 0011 was implemented: removed `folders.primary`, `folders.include`, `folders.not_used`, `folders.set_here`, `folders.uses`, `folders.make_primary`, `cmd.folder_primary`, `cmd.folders_include`, `cmd.folders_exclude` and `terminal.missing.body` (replaced by its three level keys); `folders.hint` changed; the new `folders.*` keys after `folders.picker`, `terminal.missing.body.*`, `terminal.missing.other`, `terminal.running_in` and `terminal.restart_in` after `terminal.restart.confirm`, `cmd.folder_*` and `cmd.commit_mode*` after `cmd.folders_bulk`, `settings.auto_commit*` after `settings.not_found`, `import.auto_commit` after `import.wrong_passphrase`. The checkbox of `settings.auto_commit` reuses `folders.commit.as_user`. `{branch}` is the branch's name as git has it, never translated; `{key}` is a settings key (`attribution`, `env`), never translated. The `folders.git.*` keys of the pull and branch actions (ADR 0011 addendum, components-folders.md 5, Pull and branch) and `cmd.folder_pull`, `cmd.folder_fetch`, `cmd.folder_branch` were added with them. *Pull* and *Fetch* stay in English in French, as git's own verbs; `{message}` is git's last line, untranslated.
 
 ### 10.4.4 Keys of due dates (10.2.1)
 
@@ -842,6 +850,8 @@ Moved into 10.4 when due dates were implemented: `prop.due` after `prop.level`, 
 Moved into 10.4 when the Overview was implemented: `overview.*` after `section.knowledge`, `filter.*` after `table.filter.week`, `cmd.show_*` and `cmd.overview_*` after `cmd.go_inbox`. Reused, not duplicated: "No epic" is `tree.no_epic`, the Knowledge block label is `section.knowledge`. Every `{n}` and `{days}` takes `tnum`; `{days}` is always 7 or more, so its sentences are written in the plural; `{when}` is the long form of 10.2 and the French brings its own preposition ("Dernière activité mardi à 14:05", "Dernière activité le 12 nov. 2026"). Memories are feminine in French (*mémoire*), topics masculine (*sujet*), epics masculine (*epic*). `overview.inbox` is chosen by `{n}`; with one note, "the oldest" would be wrong, so the singular form names that note's age directly. `filter.decided_week` lists topics, so "Décidés" agrees with *sujets*. Agent-facing text (`Attention: blocked T-12 ...`, `· no activity 12d`) is protocol, English only, and not in this catalogue (10).
 
 ### 10.4.6 Keys of questions and people, pending
+
+Amended 2026-11-22: people are contacts (components-contacts.md 5); the `person.*` keys that 10.4.11 lists as replaced are not moved into 10.4.
 
 New with questions and Report to (2026-11-21; components-questions.md 5, data.md 11 requests 18 and 19). They stay here, outside the table the tests read, until the feature is implemented; the implementing change moves them into 10.4 and adds them to `catalogue.rs` in the same commit: `section.questions` after `section.description`, `prop.report_to` after `prop.due`, `event.report_*` after `event.due_*`, `table.questions*` and `table.report_to` after `table.due`, the `cmd.*` keys after `cmd.due_*`, the other families together after `kb.*`. In French, *question* is feminine ("répondue", "abandonnée", "close"); the person is user text and always follows a colon in French ("Posée à : Marie", "À rapporter à : le service RH"), so no article or preposition ever meets it (10.3). `{name}` is a person or a record name, never translated; `{date}` is the absolute date of 10.2.
 
@@ -1209,3 +1219,86 @@ From the clarity review of 2026-11-22 ([reviews/2026-11-22-clarity.md](reviews/2
 | `meta.record` | {id} · Updated {when} by {author} | {id} · Modifié {when} par {author} |
 
 `{level}` in `folders.also.tip` is a `level.*` string ("Epic Terminal", « Epic Terminal »), which is why the French follows a colon. `prop.add_due` and `prop.add_report_to` label the hover-revealed add chips of an unset optional property (components-records.md 5, Properties block). `meta.record` is the one meta line under the properties block that replaces the Id and Updated rows; `{id}` is in `type.code`. `settings.setup.details` (the former text of `settings.setup.hint`) is the body behind "What setup changes", followed by `settings.plugin.hint`. The Settings rows Snapshots, Trash and Keyboard shortcuts take `settings.restore`, `common.open` and `common.open` as their buttons, so a label is never repeated on its own button.
+
+### 10.4.11 Keys of contacts and the profile, pending
+
+New with contacts (2026-11-22; components-contacts.md 5, data.md 11 requests 22 and 23). They stay here, outside the table the tests read, until the feature is implemented; the implementing change moves them into 10.4 with the keys of 10.4.6 and adds them to `catalogue.rs` in the same commit: `settings.profile*` before `settings.theme`, `cmd.contact*` and `cmd.profile_*` after the `cmd.*` keys of questions, `trash.*` after the trash keys, the `contact.*` and `contacts.*` families together after `person.*`.
+
+**Replaced** in 10.4.6 (not to be moved into 10.4): `person.placeholder` by `contact.placeholder`; `person.open_count` by `contact.open_count`; `person.counter` (no counter: the picker stops at 80); `person.scope` by `contact.scope` and `contact.scope_projects`; `person.go` by `contact.go`; `cmd.person_go` by `cmd.contact_go`. Kept: `person.none`, `person.section.asked`, `person.section.report`, `person.empty`, `count.person_asked`, `count.person_report`.
+
+In French, *contact* is masculine ("ajouté", "supprimé", "fusionné"); a contact's name is user text and in French always follows a colon (10.3), so sentences put it last. `{level}` is `contact.level.all` or a `level.project` / `level.epic` string; `{record}` is a record title as written; `{places}` is a list of `contact.move.place`, joined by ", " as 10.3 licenses, at most three, then `contact.move.more`.
+
+| Key | English | French |
+|---|---|---|
+| `contact.placeholder` | Search contacts | Rechercher un contact |
+| `contact.new_named` | New contact "{name}" | Nouveau contact : {name} |
+| `contact.new_in` | in {level} | dans : {level} |
+| `contact.new_tag` | new | nouveau |
+| `contact.out_of_scope` | {name} is no longer visible here. Choose again. | Ce contact n'est plus visible ici : {name}. Choisissez à nouveau. |
+| `contact.level.all` | All projects | Tous les projets |
+| `contact.level.current` | Current | Actuel |
+| `contact.move.blocked` | Used outside | Utilisé ailleurs |
+| `contact.move.refused` | Named outside {level}: {places}. Change those first. | Cité hors de ce niveau ({level}) : {places}. Modifiez-les d'abord. |
+| `contact.move.place` | {id} {title} ({field}) | {id} {title} ({field}) |
+| `contact.move.more` | +{n} more | +{n} autre · +{n} autres |
+| `contact.lifted` | {name} is now a contact of all projects, so {record} still sees them. | Contact étendu à tous les projets pour rester visible depuis {record} : {name}. |
+| `contact.lifted.project` | {name} is now a contact of project {project}, so {record} still sees them. | Contact étendu au projet {project} pour rester visible depuis {record} : {name}. |
+| `contacts.title` | Contacts | Contacts |
+| `contacts.count` | {n} contact · {n} contacts | {n} contact · {n} contacts |
+| `contacts.filter.project` | This project | Ce projet |
+| `contacts.filter.all` | All | Tous |
+| `contacts.new` | New contact | Nouveau contact |
+| `contacts.new_here` | New contact here | Nouveau contact ici |
+| `contacts.empty` | No contacts yet. A contact is added when you choose who a question is asked of or who to report to. | Aucun contact pour l'instant. Un contact s'ajoute quand vous choisissez à qui poser une question ou à qui rapporter. |
+| `contacts.no_match` | No contact matches "{query}". | Aucun contact ne correspond à « {query} ». |
+| `contacts.none_here` | No contacts in {project}. | Aucun contact dans {project}. |
+| `contact.name_placeholder` | Name | Nom |
+| `contact.name_required` | A contact needs a name. | Un contact doit avoir un nom. |
+| `contact.open_count` | {n} open | {n} en cours |
+| `contact.prop.job_title` | Job title | Fonction |
+| `contact.prop.company` | Company | Entreprise |
+| `contact.prop.level` | Level | Niveau |
+| `contact.add.job_title` | Job title | Fonction |
+| `contact.add.company` | Company | Entreprise |
+| `contact.add.address` | How to address them | Comment s'adresser à ce contact |
+| `contact.section.address` | How to address them | Comment s'adresser à ce contact |
+| `contact.address_placeholder` | Formal or first name, tone, what to avoid | Vouvoiement ou tutoiement, prénom ou nom, ton, ce qu'il faut éviter |
+| `contact.address_counter` | {n} / 500 | {n} / 500 |
+| `contact.meta` | {id} · Added {date} by {author} | {id} · Ajouté le {date} par {author} |
+| `contact.meta_updated` | {id} · Added {date} by {author} · Updated {when} | {id} · Ajouté le {date} par {author} · Modifié {when} |
+| `contact.scope` | {asked}, {report} | {asked}, {report} |
+| `contact.scope_projects` | {asked}, {report} in {n} projects | {asked}, {report} dans {n} projets |
+| `contact.duplicate` | Another contact is also named {name}, in {level}. | Un autre contact porte aussi ce nom, dans {level} : {name}. |
+| `contact.merge_into_it` | Merge into it... | Fusionner avec lui... |
+| `contact.keep_both` | Keep both | Garder les deux |
+| `contact.go` | Go to {name} | Ouvrir : {name} |
+| `contact.rename` | Rename | Renommer |
+| `contact.move` | Move to... | Déplacer vers... |
+| `contact.merge` | Merge into... | Fusionner avec... |
+| `contact.delete` | Delete contact | Supprimer le contact |
+| `contact.merged` | Merged into {name}. | Fusionné avec : {name}. |
+| `contact.restored_merged` | Contact restored. Its uses stayed with {name}. | Contact restauré. Ses usages restent à : {name}. |
+| `contact.deleted` | Contact deleted. | Contact supprimé. |
+| `contact.restored` | Contact restored. | Contact restauré. |
+| `contact.in_trash` | In the trash | Dans la corbeille |
+| `trash.merged_into` | Merged into {name} | Fusionné avec : {name} |
+| `trash.kept_named` | Kept: still named in {n} place · Kept: still named in {n} places | Conservé : encore cité à {n} endroit · Conservé : encore cité à {n} endroits |
+| `cmd.contacts_open` | Go to contacts | Aller aux contacts |
+| `cmd.contact_go` | Go to contact... | Aller à un contact... |
+| `cmd.contact_new` | New contact | Nouveau contact |
+| `cmd.contact_rename` | Rename contact | Renommer le contact |
+| `cmd.contact_job_title` | Set job title... | Définir la fonction... |
+| `cmd.contact_company` | Set company... | Définir l'entreprise... |
+| `cmd.contact_address` | Edit how to address them | Modifier comment s'adresser à ce contact |
+| `cmd.contact_move` | Move contact to... | Déplacer le contact vers... |
+| `cmd.contact_merge` | Merge contact into... | Fusionner le contact avec... |
+| `cmd.contact_delete` | Delete contact | Supprimer le contact |
+| `cmd.profile_name` | Set your name | Définir votre nom |
+| `cmd.profile_job_title` | Set your job title | Définir votre fonction |
+| `settings.profile` | Profile | Profil |
+| `settings.profile.hint` | Claude Code sees your name and job title. | Claude Code voit votre nom et votre fonction. |
+| `settings.profile.name` | Name | Nom |
+| `settings.profile.name_hint` | Shown on what you write. | Affiché sur ce que vous écrivez. |
+| `settings.profile.job_title` | Job title | Fonction |
+
+`contact.lifted.project` replaces `contact.lifted` when the contact is lifted to a project rather than to all projects. `contact.meta_updated` replaces `contact.meta` once the contact changed after it was added. The `{field}` of `contact.move.place` is `prop.report_to` or `question.field.asked`. Agent-facing text (`ok C-12 Paul (P-1)`, `refused: no contact "Mari" here`, `User: Alexandre, Product designer`) is protocol, English only, and not in this catalogue (10).
