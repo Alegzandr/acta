@@ -117,6 +117,15 @@ pub fn owner_route(owner: Owner) -> Route {
     }
 }
 
+/// "Logged as a decision": the topic with that entry focused; without an
+/// entry (or off a topic), the owner's page.
+pub fn logged_event(owner: Owner, entry: Option<acta_core::model::EntryId>) -> PageEvent {
+    match (owner, entry) {
+        (Owner::Topic(t), Some(e)) => PageEvent::OpenEntry(t, e),
+        _ => PageEvent::Open(owner_route(owner)),
+    }
+}
+
 impl QuestionsPage {
     pub fn new(
         ws: Entity<Workspace>,
@@ -208,6 +217,7 @@ impl QuestionsPage {
         };
         let page = cx.entity().downgrade();
         let page2 = page.clone();
+        let logged = q.decision_entry;
         let mut row = question_view::row(
             q,
             &look,
@@ -216,7 +226,7 @@ impl QuestionsPage {
                 let _ = page.update(cx, |_, cx| cx.emit(PageEvent::Open(Route::Contact(c))));
             },
             move |_, _, cx| {
-                let _ = page2.update(cx, |_, cx| cx.emit(PageEvent::Open(owner_route(owner))));
+                let _ = page2.update(cx, |_, cx| cx.emit(logged_event(owner, logged)));
             },
             locale,
             t,
@@ -432,5 +442,27 @@ impl Render for QuestionsPage {
         ui::page_scroll("questions-page")
             .track_focus(&self.focus)
             .child(column)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use acta_core::model::{EntryId, EpicId, TopicId};
+
+    #[test]
+    fn the_logged_link_focuses_the_entry_on_its_topic() {
+        assert!(matches!(
+            logged_event(Owner::Topic(TopicId(4)), Some(EntryId(9))),
+            PageEvent::OpenEntry(TopicId(4), EntryId(9))
+        ));
+        assert!(matches!(
+            logged_event(Owner::Topic(TopicId(4)), None),
+            PageEvent::Open(Route::Topic(TopicId(4)))
+        ));
+        assert!(matches!(
+            logged_event(Owner::Epic(EpicId(2)), Some(EntryId(9))),
+            PageEvent::Open(Route::Epic(EpicId(2)))
+        ));
     }
 }

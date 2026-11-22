@@ -138,6 +138,9 @@ pub struct Files {
     /// The last folder Save as wrote to in this session.
     save_dir: Option<PathBuf>,
     focus: HashMap<AttachmentId, FocusHandle>,
+    /// Each file as last drawn: the palette's "Save file as..." acts on
+    /// the one with the keyboard.
+    drawn: HashMap<AttachmentId, Attachment>,
     /// Where each file was last drawn (the menu opened from the keyboard).
     bounds: BoundsMap,
 }
@@ -150,8 +153,15 @@ impl Files {
             ws,
             save_dir: None,
             focus: HashMap::new(),
+            drawn: HashMap::new(),
             bounds: Default::default(),
         }
+    }
+
+    /// The file of a strip that has the keyboard.
+    pub fn focused(&self, window: &Window) -> Option<Attachment> {
+        let (id, _) = self.focus.iter().find(|(_, h)| h.is_focused(window))?;
+        self.drawn.get(id).cloned()
     }
 
     fn focus_for(&mut self, id: AttachmentId, cx: &mut App) -> FocusHandle {
@@ -406,6 +416,67 @@ fn hub(cx: &App) -> Option<Entity<Files>> {
     cx.try_global::<FilesHub>().map(|h| h.0.clone())
 }
 
+/// "Save file as..." from the palette: the file of a strip that has the
+/// keyboard, if any.
+pub fn focused_file(window: &Window, cx: &App) -> Option<Attachment> {
+    hub(cx)?.read(cx).focused(window)
+}
+
+/// The palette's "Save file as..." on the focused file.
+pub fn save_focused(window: &Window, cx: &mut App) {
+    let Some(hub) = hub(cx) else { return };
+    let Some(file) = hub.read(cx).focused(window) else {
+        return;
+    };
+    hub.update(cx, |h, cx| h.save_as(&file, cx));
+}
+
+/// The editors that take files, each with its tray, so the palette's
+/// "Attach files..." finds the tray of the editor that has (or last had)
+/// the focus.
+#[derive(Default)]
+struct Trays(HashMap<gpui_kit::EntityId, WeakEntity<Tray>>);
+
+impl Global for Trays {}
+
+/// Pair an editor with its tray (each frame it is drawn).
+pub fn pair(
+    editor: &Entity<gpui_kit::component::input::TextareaState>,
+    tray: &Entity<Tray>,
+    cx: &mut App,
+) {
+    let trays = cx.default_global::<Trays>();
+    trays.0.retain(|_, t| t.upgrade().is_some());
+    trays.0.insert(editor.entity_id(), tray.downgrade());
+}
+
+/// The editor that has, or last had, the focus (the one dictation acts
+/// on), when it takes files, with its tray.
+pub fn target_tray(
+    cx: &App,
+) -> Option<(
+    Entity<gpui_kit::component::input::TextareaState>,
+    Entity<Tray>,
+)> {
+    let editor = crate::voice::get(cx)?.read(cx).target_editor()?;
+    let tray = cx
+        .try_global::<Trays>()?
+        .0
+        .get(&editor.entity_id())?
+        .upgrade()?;
+    Some((editor, tray))
+}
+
+/// The palette's "Attach files...": the open dialog of that editor's
+/// tray, the editor focused again.
+pub fn attach_to_target(window: &mut Window, cx: &mut App) {
+    let Some((editor, tray)) = target_tray(cx) else {
+        return;
+    };
+    editor.update(cx, |s, cx| s.focus(window, cx));
+    tray.update(cx, |tray, cx| tray.pick(cx));
+}
+
 // ---- the strip ----
 
 /// How a strip is drawn.
@@ -438,7 +509,10 @@ pub fn strip(
     let mut tiles = Vec::new();
     let mut chips = Vec::new();
     for (i, file) in ordered.iter().enumerate() {
-        let handle = hub.update(cx, |h, cx| h.focus_for(file.id, cx));
+        let handle = hub.update(cx, |h, cx| {
+            h.drawn.insert(file.id, (*file).clone());
+            h.focus_for(file.id, cx)
+        });
         // One stop: the first file; arrows move inside the strip.
         let handle = handle.tab_stop(i == 0);
         let el = file_element(

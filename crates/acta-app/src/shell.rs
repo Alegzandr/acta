@@ -1825,7 +1825,10 @@ impl Shell {
         // A page in another group: that group takes focus first.
         let current = self.bench().map(|b| b.current);
         if current != Some(tab)
-            && matches!(event, PageEvent::Open(_) | PageEvent::NewKb(_))
+            && matches!(
+                event,
+                PageEvent::Open(_) | PageEvent::NewKb(_) | PageEvent::OpenEntry(..)
+            )
             && let Some(bench) = self.bench()
             && let Some(spot) = bench.layout.locate(Tab::Page(tab))
         {
@@ -1871,6 +1874,7 @@ impl Shell {
             }
             PageEvent::StaleMemories(project) => self.open_stale_memories(*project, window, cx),
             PageEvent::LateAnswers(scope) => self.open_late_answers(*scope, window, cx),
+            PageEvent::OpenEntry(topic, entry) => self.open_entry(*topic, *entry, window, cx),
         }
     }
 
@@ -1938,6 +1942,24 @@ impl Shell {
     }
 
     /// The Overview's late answers: the Questions page with Overdue.
+    /// "Logged as a decision": the topic, with that entry focused.
+    pub(super) fn open_entry(
+        &mut self,
+        topic: TopicId,
+        entry: acta_core::model::EntryId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.navigate(Route::Topic(topic), true, window, cx);
+        if let Some(bench) = self.bench()
+            && let PageView::Record(page) = &bench.page
+            && page.read(cx).topic() == Some(topic)
+        {
+            let page = page.clone();
+            page.update(cx, |page, cx| page.focus_entry(entry, window, cx));
+        }
+    }
+
     pub(super) fn open_late_answers(
         &mut self,
         scope: Owner,
@@ -2503,6 +2525,12 @@ impl Shell {
                 PageView::Record(page) => page.read(cx).question_context(window),
                 _ => None,
             },
+            folder: match &bench.page {
+                PageView::Record(page) => page.read(cx).focused_folder_commands(window),
+                _ => None,
+            },
+            attach: crate::attach_ui::target_tray(cx).is_some(),
+            attachment: crate::attach_ui::focused_file(window, cx).is_some(),
             on_contact: matches!(bench.page, PageView::Contact(_)),
             dictate: crate::voice::get(cx).is_some_and(|d| {
                 let d = d.read(cx);
@@ -2783,6 +2811,13 @@ impl Shell {
                 |page, window, cx| page.run_question(q, window, cx),
                 window,
             ),
+            Command::Folder(f) => self.with_record(
+                cx,
+                |page, window, cx| page.run_folder_command(f, window, cx),
+                window,
+            ),
+            Command::Attach => crate::attach_ui::attach_to_target(window, cx),
+            Command::AttachmentSave => crate::attach_ui::save_focused(window, cx),
             Command::ContactsOpen => self.navigate(Route::Contacts, true, window, cx),
             Command::ContactGo => self.pick_contact(window, cx),
             Command::ContactNew => self.open_palette(None, Some(CreateKind::Contact), window, cx),
@@ -5878,6 +5913,14 @@ impl Render for Shell {
             // Dictation (components-voice.md 5): push-to-talk ends on the
             // key's release, wherever the focus is.
             .capture_key_up(crate::voice::key_up)
+            // One take, one undo step: the window sees an editor's undo
+            // and redo first (voice/group.rs).
+            .capture_action(|_: &gpui_kit::component::input::Undo, window, cx| {
+                crate::voice::undo_key(true, window, cx)
+            })
+            .capture_action(|_: &gpui_kit::component::input::Redo, window, cx| {
+                crate::voice::undo_key(false, window, cx)
+            })
             .on_action(
                 cx.listener(|s, _: &crate::voice::OpenVoiceSettings, w, cx| {
                     s.open_voice_settings(w, cx)

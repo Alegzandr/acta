@@ -16,7 +16,7 @@ use super::*;
 use crate::contact_picker::{ContactPicker, Mode, PickerEvent, Value};
 use crate::question_view::{self, RowLook};
 use crate::questions_model::{self as qm, Section};
-use crate::workspace::{ReportState, put_report, report_state, with_lifts};
+use crate::workspace::{ReportState, WriteError, put_report, report_state, with_lifts};
 
 gpui_kit::actions!(
     acta_questions,
@@ -310,8 +310,9 @@ impl RecordPage {
         let owner = self.owner;
         let project = self.q_project();
         let Some(place) = self.q_place() else { return };
-        self.ws.update(cx, |ws, cx| {
-            ws.undoable(cx, project, None, move |store| {
+        let refused = (text.clone(), value.name().to_owned());
+        let task = self.ws.update(cx, |ws, cx| {
+            ws.write_undoable_picked(cx, project, move |store| {
                 let me = Author::Human;
                 let mut steps = Vec::new();
                 let asked = match value {
@@ -361,8 +362,18 @@ impl RecordPage {
                     Undo::Many(steps)
                 };
                 Ok((undo, ()))
-            });
+            })
         });
+        // A contact that moved out of sight meanwhile: the composer comes
+        // back with the text and the date, the picker says so.
+        cx.spawn_in(window, async move |page, cx| {
+            if let Err(WriteError::OutOfScope) = task.await {
+                let _ = page.update_in(cx, |page, window, cx| {
+                    page.composer_refused(editing, below, refused, date, place, window, cx)
+                });
+            }
+        })
+        .detach();
         match editing {
             Some(_) => self.close_composer(window, cx),
             None => {
@@ -379,6 +390,45 @@ impl RecordPage {
                 cx.notify();
             }
         }
+    }
+
+    /// The store refused the composer's contact (components-contacts.md 5,
+    /// Errors): the composer is open again on the same question with the
+    /// text and the date the human wrote, and the inline error under the
+    /// picker. A new question's composer that already holds a next draft
+    /// keeps it and only shows the error.
+    #[allow(clippy::too_many_arguments)]
+    fn composer_refused(
+        &mut self,
+        editing: Option<QuestionId>,
+        below: Option<usize>,
+        (text, name): (String, String),
+        date: Option<Date>,
+        place: acta_core::model::Place,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let reusable = self
+            .q
+            .composer
+            .as_ref()
+            .is_some_and(|c| c.editing == editing && c.text.read(cx).value().trim().is_empty());
+        if !reusable {
+            let question = editing.and_then(|id| self.question(id, cx));
+            if editing.is_some() && question.is_none() {
+                return;
+            }
+            self.open_composer(question.as_ref(), below, window, cx);
+        }
+        let Some(c) = &mut self.q.composer else {
+            return;
+        };
+        c.text.update(cx, |s, cx| s.set_value(text, window, cx));
+        c.date = date;
+        c.picker
+            .update(cx, |p, cx| p.refuse(&name, place, window, cx));
+        c.picker.update(cx, |p, cx| p.focus(window, cx));
+        cx.notify();
     }
 
     fn open_composer_date(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -835,8 +885,21 @@ impl RecordPage {
                 } else {
                     (at + 1 < rows.len()).then_some(at + 1)
                 };
-                if let Some(h) = to.and_then(|i| self.q.row_focus.get(i)) {
-                    window.focus(h, cx);
+                match to.and_then(|i| self.q.row_focus.get(i)) {
+                    Some(h) => window.focus(h, cx),
+                    // Past the first row, the section's header; past the
+                    // last, the page's next block.
+                    None if k.key == "up" => self.focus_block(record::Block::Questions, window, cx),
+                    None => {
+                        let next = record::step_block(
+                            &self.block_order,
+                            Some(record::Block::Questions),
+                            false,
+                        );
+                        if let Some(next) = next {
+                            self.focus_block(next, window, cx);
+                        }
+                    }
                 }
             }
             "f10" if k.modifiers.shift => {
@@ -859,11 +922,21 @@ impl RecordPage {
                     .unwrap_or(0);
                 self.q.menu = Some((id, row, 0));
             }
-            "escape" => window.focus(&self.focus, cx),
+            "escape" => self.focus_block(record::Block::Questions, window, cx),
             _ => return,
         }
         cx.stop_propagation();
         cx.notify();
+    }
+
+    /// `Enter` on the section's header: the first row, or the composer
+    /// when there is none.
+    pub(super) fn enter_questions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let first = !self.q.row_ids.borrow().is_empty();
+        match self.q.row_focus.first() {
+            Some(h) if first => window.focus(h, cx),
+            _ => self.open_composer(None, None, window, cx),
+        }
     }
 
     /// The palette's question commands: the focused row's state.
@@ -937,8 +1010,25 @@ impl RecordPage {
             |page, _, event: &PickerEvent, window, cx| match event {
                 PickerEvent::Taken(value, _) => {
                     let value = value.clone();
+                    let name = value.name().to_owned();
                     page.close_report(window, cx);
-                    page.set_report(value, cx);
+                    let Some(task) = page.write_report(value, cx) else {
+                        return;
+                    };
+                    // A contact that moved out of sight meanwhile: the
+                    // popover opens again with the inline error.
+                    cx.spawn_in(window, async move |page, cx| {
+                        if let Err(WriteError::OutOfScope) = task.await {
+                            let _ = page.update_in(cx, |page, window, cx| {
+                                page.open_report_to(window, cx);
+                                let place = page.q_place();
+                                if let (Some((picker, _)), Some(place)) = (&page.q.report, place) {
+                                    picker.update(cx, |p, cx| p.refuse(&name, place, window, cx));
+                                }
+                            });
+                        }
+                    })
+                    .detach();
                 }
                 PickerEvent::Cancel => page.close_report(window, cx),
                 _ => {}
@@ -972,10 +1062,20 @@ impl RecordPage {
     /// Set, change or clear the person: one undo step; a new contact is
     /// created in the same step.
     pub fn set_report(&mut self, value: Value, cx: &mut Context<Self>) {
-        let Some(record) = self.report_record() else {
-            return;
-        };
-        let Some(place) = self.q_place() else { return };
+        if let Some(task) = self.write_report(value, cx) {
+            task.detach();
+        }
+    }
+
+    /// [`Self::set_report`], with the write to wait for (`None`: nothing
+    /// to write).
+    fn write_report(
+        &mut self,
+        value: Value,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<(), WriteError>>> {
+        let record = self.report_record()?;
+        let place = self.q_place()?;
         let current = self
             .data
             .as_ref()
@@ -984,14 +1084,14 @@ impl RecordPage {
         if let Value::Contact(id, _) = &value
             && Some(*id) == current
         {
-            return;
+            return None;
         }
         if value == Value::None && current.is_none() {
-            return;
+            return None;
         }
         let project = self.q_project();
-        self.ws.update(cx, |ws, cx| {
-            ws.undoable(cx, project, None, move |store| {
+        Some(self.ws.update(cx, |ws, cx| {
+            ws.write_undoable_picked(cx, project, move |store| {
                 let me = Author::Human;
                 let back = report_state(store, record)?;
                 let mut extra = Vec::new();
@@ -1021,8 +1121,8 @@ impl RecordPage {
                     Undo::Many(steps)
                 };
                 Ok((undo, ()))
-            });
-        });
+            })
+        }))
     }
 
     /// "Mark reported" / "Mark not reported".
@@ -1410,12 +1510,18 @@ impl RecordPage {
         self.q
             .seen_unread
             .extend(data.questions.unread.iter().copied());
+        // The header is the section's stop among the page's blocks: `Enter`
+        // goes inside, to the first row (interaction.md 6.1).
         let header = div()
+            .id("q-header")
             .flex()
             .flex_row()
             .items_center()
             .gap(px(8.))
             .h(px(28.))
+            .px(px(8.))
+            .mx(px(-8.))
+            .rounded(px(RADIUS_SM))
             .child(ui::section_header(text(locale, Key::SectionQuestions), t))
             .when(s.open_total > 0, |this| {
                 this.child(
@@ -1434,6 +1540,7 @@ impl RecordPage {
                         page.open_composer(None, None, window, cx)
                     })),
             );
+        let header = self.block_el(record::Block::Questions, header, t);
         let reveal = std::rc::Rc::clone(&self.q.reveal_section);
         let scroll = self.scroll.clone();
         let mut section = div()
@@ -1660,7 +1767,7 @@ impl RecordPage {
             .children(answer_btn)
             .child(div().relative().child(more))
             .into_any_element();
-        let topic = self.topic();
+        let logged = q.decision_entry;
         let mut row = question_view::row(
             q,
             &look,
@@ -1671,11 +1778,13 @@ impl RecordPage {
                     let _ = page.update(cx, |_, cx| cx.emit(PageEvent::Open(Route::Contact(c))));
                 }
             },
+            // The decision entry is on this page's own timeline: it is
+            // focused and brought into view.
             {
                 let page = cx.entity().downgrade();
-                move |_, _, cx| {
-                    if let Some(t) = topic {
-                        let _ = page.update(cx, |_, cx| cx.emit(PageEvent::Open(Route::Topic(t))));
+                move |_, window, cx| {
+                    if let Some(entry) = logged {
+                        let _ = page.update(cx, |page, cx| page.focus_entry(entry, window, cx));
                     }
                 }
             },

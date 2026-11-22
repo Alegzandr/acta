@@ -483,6 +483,59 @@ pub fn load(
     }
 }
 
+/// A block of a record page that `Up` / `Down` step through
+/// (interaction.md 6.1): the title, the folder row, the current state, the
+/// description, the Questions section and each entry of the timeline.
+/// `Enter` edits the focused block (or goes inside the folder row and the
+/// Questions section).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Block {
+    Title,
+    Folders,
+    State,
+    Description,
+    Questions,
+    Entry(acta_core::model::EntryId),
+}
+
+/// The blocks of a page, in reading order: a topic has a current state and
+/// a timeline (`entries`: the entries shown, system lines excluded, newest
+/// first); the folder row is a block while it is drawn.
+pub fn blocks(topic: bool, folders: bool, entries: &[Entry]) -> Vec<Block> {
+    let mut out = vec![Block::Title];
+    if folders {
+        out.push(Block::Folders);
+    }
+    if topic {
+        out.push(Block::State);
+    }
+    out.push(Block::Description);
+    out.push(Block::Questions);
+    if topic {
+        out.extend(
+            entries
+                .iter()
+                .filter(|e| e.kind != EntryKind::System)
+                .map(|e| Block::Entry(e.id)),
+        );
+    }
+    out
+}
+
+/// `Up` / `Down` from `at` (`None`: the page itself has the keyboard, and
+/// `Down` goes to the first block). The ends stay where they are.
+pub fn step_block(order: &[Block], at: Option<Block>, up: bool) -> Option<Block> {
+    let Some(at) = at else {
+        return if up { None } else { order.first().copied() };
+    };
+    let i = order.iter().position(|b| *b == at)?;
+    if up {
+        order.get(i.checked_sub(1)?).copied()
+    } else {
+        order.get(i + 1).copied()
+    }
+}
+
 /// The entries the timeline shows, newest first: every entry but the
 /// system events that have no line in the catalogue yet (data.md 11,
 /// request 10); status and due date changes are shown, collapsed by
@@ -558,6 +611,58 @@ pub fn collapse_status_events(entries: Vec<Entry>) -> Vec<Entry> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn entry_of(id: i64, kind: EntryKind) -> Entry {
+        let mut e = status_event(id, 0, Status::Draft, Status::Done, Author::Human);
+        e.kind = kind;
+        e
+    }
+
+    #[test]
+    fn a_topic_page_steps_title_folders_state_description_questions_entries() {
+        let entries = [
+            entry_of(3, EntryKind::Decision),
+            entry_of(2, EntryKind::System),
+            entry_of(1, EntryKind::Progress),
+        ];
+        let order = blocks(true, true, &entries);
+        assert_eq!(
+            order,
+            vec![
+                Block::Title,
+                Block::Folders,
+                Block::State,
+                Block::Description,
+                Block::Questions,
+                Block::Entry(acta_core::model::EntryId(3)),
+                Block::Entry(acta_core::model::EntryId(1)),
+            ]
+        );
+        // An epic has no state and no timeline; no folder row, no stop.
+        assert_eq!(
+            blocks(false, false, &entries),
+            vec![Block::Title, Block::Description, Block::Questions]
+        );
+        assert_eq!(step_block(&order, None, false), Some(Block::Title));
+        assert_eq!(step_block(&order, None, true), None);
+        assert_eq!(step_block(&order, Some(Block::Title), true), None);
+        assert_eq!(
+            step_block(&order, Some(Block::Questions), false),
+            Some(Block::Entry(acta_core::model::EntryId(3)))
+        );
+        assert_eq!(
+            step_block(
+                &order,
+                Some(Block::Entry(acta_core::model::EntryId(1))),
+                false
+            ),
+            None
+        );
+        assert_eq!(
+            step_block(&order, Some(Block::State), true),
+            Some(Block::Folders)
+        );
+    }
     use crate::db::test_support::temp_store;
     use acta_core::model::{KbKind, Status};
     use acta_core::store::{NewEntry, NewKb, NewTopic};
