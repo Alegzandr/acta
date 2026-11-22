@@ -1,6 +1,7 @@
 //! The engine trait (ADR 0014, 5): 16 kHz mono `f32` phrases in, text out.
 //! Implementations: the Whisper worker process (through
-//! [`super::worker::WorkerClient`]), the macOS recogniser later, and
+//! [`super::worker::WorkerClient`]), the macOS recogniser (in the app,
+//! macOS only), and
 //! [`FakeEngine`] for tests. Everything above the trait (segmentation,
 //! anchors, insertion, limits, states) is engine-independent.
 
@@ -47,6 +48,9 @@ pub enum EngineError {
     Exited,
     /// The engine is running but this phrase failed.
     Failed,
+    /// The system refused the engine (the macOS recogniser's speech
+    /// recognition permission) (`voice.error.speech_blocked`).
+    NotAllowed,
 }
 
 impl fmt::Display for EngineError {
@@ -55,6 +59,7 @@ impl fmt::Display for EngineError {
             EngineError::Model => "the model is missing or damaged",
             EngineError::Exited => "the engine stopped",
             EngineError::Failed => "the engine failed on a phrase",
+            EngineError::NotAllowed => "the system refused the engine",
         })
     }
 }

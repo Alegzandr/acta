@@ -77,6 +77,22 @@ New-Item -ItemType Directory -Force $stage, $OutputDir | Out-Null
 Copy-Item (Join-Path $BinDir 'Acta.exe'), (Join-Path $BinDir 'acta-cli.exe') $stage
 Copy-Item $licenses (Join-Path $stage 'licenses') -Recurse
 Copy-Item 'LICENSE' (Join-Path $stage 'licenses\Acta-LICENSE.txt')
+# Dictation's Silero VAD, next to Acta.exe, checked against its pin in models.rs
+# (ADR 0014, 4; scripts/vad.sh fetches it and does the same check on the other platforms).
+$models = Get-Content -Raw 'crates\acta-core\src\voice\models.rs'
+$pin = [regex]::Match($models,
+    'pub const SILERO_VAD: ModelFile = ModelFile \{\s*file: "([^"]+)",\s*size: ([0-9_]+),\s*sha256: "([0-9a-f]{64})",')
+if (-not $pin.Success) { throw 'could not read the SILERO_VAD pin in models.rs' }
+$vad = Join-Path 'assets\voice' $pin.Groups[1].Value
+if (-not (Test-Path $vad -PathType Leaf)) {
+    throw "$vad is missing; run sh scripts/vad.sh --fetch (Git Bash), then rebuild"
+}
+$vadSize = [long]($pin.Groups[2].Value -replace '_', '')
+$vadHash = (Get-FileHash -Algorithm SHA256 $vad).Hash.ToLowerInvariant()
+if ((Get-Item $vad).Length -ne $vadSize -or $vadHash -ne $pin.Groups[3].Value) {
+    throw "$vad is not the pinned Silero VAD (size or SHA-256 differs)"
+}
+Copy-Item $vad $stage
 
 if ($FetchPrevious) {
     # Fails when the channel has no published release yet: then there is simply no delta.

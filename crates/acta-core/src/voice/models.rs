@@ -105,6 +105,11 @@ pub const SILERO_VAD: ModelFile = ModelFile {
     repo: "ggml-org/whisper-vad",
 };
 
+/// The commit of `ggml-org/whisper-vad` the release build fetches
+/// [`SILERO_VAD`] from (`resolve/<commit>/<file>`, `scripts/vad.sh`), so a
+/// later push to the repository's `main` cannot change what is fetched.
+pub const SILERO_VAD_REVISION: &str = "9ffd54a1e1ee413ddf265af9913beaf518d1639b";
+
 /// The free space a download must leave on the models' disk.
 pub const FREE_SPACE_MARGIN: u64 = 1_000_000_000;
 
@@ -183,5 +188,15 @@ mod tests {
                     .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
             );
         }
+    }
+
+    #[test]
+    fn the_vad_revision_is_a_full_commit_id() {
+        assert_eq!(SILERO_VAD_REVISION.len(), 40);
+        assert!(
+            SILERO_VAD_REVISION
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        );
     }
 }

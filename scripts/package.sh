@@ -86,6 +86,9 @@ done
 # Every package carries the third-party notices; a package without them must not exist.
 licenses=dist/licenses
 [ -s "$licenses/THIRD-PARTY-RUST.txt" ] || die "$licenses is missing or incomplete; run scripts/licenses.sh first"
+# Dictation's Silero VAD ships in every package, checked against its pin (ADR 0014, 4).
+sh scripts/vad.sh || die "the Silero VAD is missing or not the pinned file; run scripts/vad.sh --fetch, then rebuild"
+vad=$(sh scripts/model-pins.sh | awk '$1 == "SILERO_VAD" { print "assets/voice/" $2 }')
 # Acta's own licence goes next to them, as Acta-LICENSE.txt.
 [ -s LICENSE ] || die "LICENSE is missing"
 command -v vpk >/dev/null 2>&1 || die "vpk not found; run: dotnet tool install -g vpk --version 1.2.161"
@@ -125,6 +128,14 @@ if [ "$want_os" = Darwin ]; then
     chmod 755 "$app/Contents/MacOS/Acta" "$app/Contents/MacOS/acta-cli"
     cp -R "$licenses" "$app/Contents/Resources/licenses"
     cp LICENSE "$app/Contents/Resources/licenses/Acta-LICENSE.txt"
+    # Data goes in Resources, never in Contents/MacOS (code only); the app looks there.
+    cp "$vad" "$app/Contents/Resources/"
+    # The permission prompts in English and French (ADR 0014, 8).
+    for lproj in assets/macos/*.lproj; do
+        plutil -lint "$lproj/InfoPlist.strings" >/dev/null || die "$lproj/InfoPlist.strings is invalid"
+        mkdir -p "$app/Contents/Resources/$(basename "$lproj")"
+        cp "$lproj/InfoPlist.strings" "$app/Contents/Resources/$(basename "$lproj")/"
+    done
 
     icns=$app/Contents/Resources/Acta.icns
     if [ -f assets/icons/acta.icns ]; then
@@ -188,6 +199,14 @@ if [ "$want_os" = Darwin ]; then
 </dict>
 </plist>
 EOF
+    # The usage descriptions: macOS ends the process that captures audio or asks for
+    # speech recognition without them. The base text is the English of en.lproj.
+    for key in NSMicrophoneUsageDescription NSSpeechRecognitionUsageDescription; do
+        text=$(plutil -extract "$key" raw -o - assets/macos/en.lproj/InfoPlist.strings) ||
+            die "assets/macos/en.lproj/InfoPlist.strings has no $key"
+        plutil -insert "$key" -string "$text" "$app/Contents/Info.plist"
+    done
+    plutil -insert CFBundleLocalizations -xml '<array><string>en</string><string>fr</string></array>' "$app/Contents/Info.plist"
     plutil -lint "$app/Contents/Info.plist" >/dev/null || die "generated Info.plist is invalid"
 
     # Ad-hoc signature (identity "-"): free, and mandatory on Apple silicon. vpk adds its
@@ -211,6 +230,19 @@ EOF
     codesign --verify --deep --strict --verbose=2 "$check/$PACK_ID.app" ||
         die "the packaged $PACK_ID.app has no valid signature"
     codesign --display --verbose=2 "$check/$PACK_ID.app" 2>&1 | grep -E '^(Identifier|Signature|CodeDirectory|TeamIdentifier)' || true
+    # What dictation needs in the bundle users get (ADR 0014, 4 and 8): both usage
+    # descriptions (macOS ends the process without them), their French and English
+    # translations, and the Silero VAD where the app looks for it.
+    shipped=$check/$PACK_ID.app/Contents
+    for key in NSMicrophoneUsageDescription NSSpeechRecognitionUsageDescription; do
+        plutil -extract "$key" raw -o - "$shipped/Info.plist" >/dev/null ||
+            die "the packaged Info.plist has no $key"
+        for lang in en fr; do
+            plutil -extract "$key" raw -o - "$shipped/Resources/$lang.lproj/InfoPlist.strings" >/dev/null ||
+                die "the packaged $lang.lproj/InfoPlist.strings has no $key"
+        done
+    done
+    [ -f "$shipped/Resources/$(basename "$vad")" ] || die "the packaged bundle has no $(basename "$vad")"
     rm -rf "$check"
 else
     command -v mksquashfs >/dev/null 2>&1 || die "mksquashfs not found; install squashfs-tools"
@@ -219,6 +251,7 @@ else
     chmod 755 "$stage/Acta" "$stage/acta-cli"
     cp -R "$licenses" "$stage/licenses"
     cp LICENSE "$stage/licenses/Acta-LICENSE.txt"
+    cp "$vad" "$stage/"
 
     vpk pack --packId "$PACK_ID" --packTitle Acta --packVersion "$version" \
         --packDir "$stage" --mainExe Acta --icon assets/icons/acta.png \

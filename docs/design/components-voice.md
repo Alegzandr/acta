@@ -63,6 +63,7 @@ One line under the editor's footer, 4 below, `type.small` `text.primary` with `t
 | The chosen microphone is gone (unplugged mid-take) | "The microphone stopped. What was heard is kept." (`voice.error.device_lost`); what was captured is still written | "Voice settings" |
 | The model file is missing or fails its check | "The dictation model is missing or damaged." (`voice.error.model`) | "Download again" |
 | The engine stopped (the worker process exited, ADR 0014, 5) | "Dictation stopped unexpectedly. Your text is safe." (`voice.error.engine`) | "Try again" |
+| macOS refused the macOS recogniser (its Speech Recognition permission, ADR 0014, 8) | "Acta is not allowed to use the macOS recogniser." (`voice.error.speech_blocked`) | "Open System Settings" (Privacy & Security > Speech Recognition) |
 | Too slow (CPU model taking over 3 times the audio length) | not an error: one line in `text.tertiary`, "Dictation is slow on this computer. A smaller model is faster." (`voice.slow`), once per session | "Voice settings" |
 
 ### First use

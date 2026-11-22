@@ -262,6 +262,9 @@ fn run_action(
                 cx.open_url("ms-settings:privacy-microphone");
             }
         }
+        view::Action::OpenSpeechPrivacy => cx.open_url(
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_SpeechRecognition",
+        ),
         view::Action::VoiceSettings => {
             window.dispatch_action(Box::new(super::OpenVoiceSettings), cx)
         }

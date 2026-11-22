@@ -166,6 +166,11 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: scripts/ci/windows-libclang.ps1
+      # The Silero VAD every package ships (ADR 0014, 4), before the build: build.rs
+      # checks it against its pin, and the packaging scripts copy it beside the app.
+      # Small (885 KB) and pinned by SHA-256, so it is fetched on every build, never cached.
+      - name: Silero VAD
+        run: scripts/vad.sh --fetch
       # whisper.cpp's Vulkan backend (ADR 0014, amendment "Vulkan in Acta.exe"): LunarG's
       # SDK headers and glslc, pinned and hash-checked by the scripts. A tag build
       # downloads and checks it afresh; dry runs use the cache.

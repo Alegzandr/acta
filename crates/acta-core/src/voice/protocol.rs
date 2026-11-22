@@ -130,6 +130,7 @@ fn error_code(e: EngineError) -> u8 {
         EngineError::Model => 1,
         EngineError::Exited => 2,
         EngineError::Failed => 3,
+        EngineError::NotAllowed => 4,
     }
 }
 
@@ -138,6 +139,7 @@ fn error_from(code: u8) -> Option<EngineError> {
         1 => Some(EngineError::Model),
         2 => Some(EngineError::Exited),
         3 => Some(EngineError::Failed),
+        4 => Some(EngineError::NotAllowed),
         _ => None,
     }
 }
@@ -337,6 +339,7 @@ mod tests {
             Reply::Error(EngineError::Model),
             Reply::Error(EngineError::Exited),
             Reply::Error(EngineError::Failed),
+            Reply::Error(EngineError::NotAllowed),
             Reply::Gpu(0),
             Reply::Gpu(16 << 30),
         ] {

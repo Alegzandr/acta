@@ -7,3 +7,5 @@ target/
 __pycache__/
 *.pyc
 .venv-icon/
+/assets/voice/*.bin
+/assets/voice/*.part

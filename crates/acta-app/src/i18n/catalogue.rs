@@ -997,6 +997,10 @@ catalogue! {
         en: t("Dictation stopped unexpectedly. Your text is safe."),
         fr: t("La dictée s\u{2019}est arrêtée de façon inattendue. Votre texte est intact."),
     }
+    VoiceErrorSpeechBlocked "voice.error.speech_blocked" {
+        en: t("Acta is not allowed to use the macOS recogniser."),
+        fr: t("Acta n\u{2019}est pas autorisé à utiliser la reconnaissance de macOS."),
+    }
     VoiceSetupTitle "voice.setup.title" {
         en: t("Dictate with your voice"),
         fr: t("Dicter avec votre voix"),

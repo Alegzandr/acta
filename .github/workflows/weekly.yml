@@ -1,0 +1,46 @@
+name: Weekly drift checks
+
+# Read-only checks of what Acta pins against what the outside world serves today.
+# Nothing is installed and no model is downloaded. A failure fails the run for the lead
+# to read; it opens no issue. Scheduled runs use the workflow on main; GitHub pauses
+# schedules after 60 days without activity in the repository.
+on:
+  schedule:
+    # Mondays, 06:17 UTC (off the hour, when GitHub's scheduler is least loaded).
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # ADR 0013: the winget ids and Claude Code's install one-liners in
+  # crates/acta-core/src/prereqs/commands.rs.
+  prereqs:
+    name: Claude Code prerequisites (winget, setup page)
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: winget show and the setup page
+        shell: pwsh
+        run: scripts/ci/check-prereqs.ps1
+
+  # ADR 0014: the Whisper models and the Silero VAD pinned in
+  # crates/acta-core/src/voice/models.rs, against the Hugging Face tree API.
+  models:
+    name: model pins (Hugging Face)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Size and SHA-256 of every pinned file
+        run: scripts/ci/check-model-pins.sh

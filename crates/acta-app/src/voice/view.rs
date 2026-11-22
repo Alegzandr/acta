@@ -168,6 +168,8 @@ pub enum Tone {
 pub enum Action {
     /// Windows: `ms-settings:privacy-microphone`; macOS: System Settings.
     OpenPrivacy,
+    /// macOS: System Settings, Privacy & Security > Speech Recognition.
+    OpenSpeechPrivacy,
     VoiceSettings,
     DownloadAgain,
     TryAgain,
@@ -178,6 +180,7 @@ impl Action {
         match self {
             Action::OpenPrivacy if macos => Key::VoiceErrorOpenSystemSettings,
             Action::OpenPrivacy => Key::VoiceErrorOpenPrivacy,
+            Action::OpenSpeechPrivacy => Key::VoiceErrorOpenSystemSettings,
             Action::VoiceSettings => Key::VoiceSettingsLink,
             Action::DownloadAgain => Key::VoiceErrorDownloadAgain,
             Action::TryAgain => Key::CommonTryAgain,
@@ -208,6 +211,11 @@ pub fn line(l: Line, linux: bool) -> (Key, Tone, Option<Action>) {
             Key::VoiceErrorModel,
             Tone::Error,
             Some(Action::DownloadAgain),
+        ),
+        Line::Engine(EngineError::NotAllowed) => (
+            Key::VoiceErrorSpeechBlocked,
+            Tone::Error,
+            Some(Action::OpenSpeechPrivacy),
         ),
         Line::Engine(_) => (Key::VoiceErrorEngine, Tone::Error, Some(Action::TryAgain)),
         Line::Notice(Notice::NothingHeard) => (
@@ -554,6 +562,12 @@ mod tests {
                 Key::VoiceErrorEngine,
                 Tone::Error,
                 Some(TryAgain),
+            ),
+            (
+                Line::Engine(EngineError::NotAllowed),
+                Key::VoiceErrorSpeechBlocked,
+                Tone::Error,
+                Some(OpenSpeechPrivacy),
             ),
             (
                 Line::Notice(Notice::NothingHeard),
