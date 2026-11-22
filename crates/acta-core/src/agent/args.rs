@@ -187,6 +187,17 @@ pub struct KbWriteArgs {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
+pub struct AttachmentArgs {
+    pub id: String,
+    /// Text: 40-80.
+    pub lines: Option<String>,
+    /// PDF: 3-5.
+    pub pages: Option<String>,
+    /// Image: full.
+    pub size: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
 pub struct HookArgs {
     /// clear, compact or subagent (briefings); prompt, tool, waiting, stop
     /// or end (session presence).

@@ -46,6 +46,7 @@ id_type!(KbId, "K");
 id_type!(FolderId, "F");
 id_type!(QuestionId, "Q");
 id_type!(ContactId, "C");
+id_type!(AttachmentId, "A");
 
 /// Who made a write. Over MCP, and when `CLAUDECODE=1`, it is Claude Code.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -172,6 +173,7 @@ pub enum Record {
     Folder(FolderId),
     Question(QuestionId),
     Contact(ContactId),
+    Attachment(AttachmentId),
 }
 
 impl fmt::Display for Record {
@@ -186,8 +188,74 @@ impl fmt::Display for Record {
             Record::Folder(id) => id.fmt(f),
             Record::Question(id) => id.fmt(f),
             Record::Contact(id) => id.fmt(f),
+            Record::Attachment(id) => id.fmt(f),
         }
     }
+}
+
+/// What a file can be attached to (ADR 0012, 1): a note, a timeline entry,
+/// or the description of a topic or an epic.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum AttachOwner {
+    Note(NoteId),
+    Entry(EntryId),
+    /// The topic's description.
+    Topic(TopicId),
+    /// The epic's description.
+    Epic(EpicId),
+}
+
+impl AttachOwner {
+    /// The record whose trash state the attachment follows.
+    pub fn record(self) -> Record {
+        match self {
+            AttachOwner::Note(id) => Record::Note(id),
+            AttachOwner::Entry(id) => Record::Entry(id),
+            AttachOwner::Topic(id) => Record::Topic(id),
+            AttachOwner::Epic(id) => Record::Epic(id),
+        }
+    }
+}
+
+impl fmt::Display for AttachOwner {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.record().fmt(f)
+    }
+}
+
+/// How a file can be shown (ADR 0012, 6 and 10).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FileKind {
+    /// PNG, JPEG, GIF, WebP or BMP: decoded in memory, thumbnail stored.
+    Image,
+    /// Valid UTF-8 with no NUL byte in the first 8 KB.
+    Text,
+    Pdf,
+    /// Anything else: Save as only.
+    Other,
+}
+
+/// A file attached to a note, an entry or a description, without its
+/// content (read with [`crate::Store::read_attachment`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Attachment {
+    pub id: AttachmentId,
+    pub owner: AttachOwner,
+    pub project: ProjectId,
+    /// The file name as given, at most 255 chars.
+    pub name: String,
+    /// Bytes.
+    pub size: i64,
+    pub media_type: String,
+    pub kind: FileKind,
+    /// Pixel size of an image.
+    pub pixels: Option<(u32, u32)>,
+    /// Order in its owner's strip (the order files were added).
+    pub position: i64,
+    /// The note it came from when filing moved it (ADR 0012, 5).
+    pub moved_from: Option<NoteId>,
+    pub created_by: Author,
+    pub stamp: Stamp,
 }
 
 /// Document or memory (ADR 0007): the same entity, different defaults.

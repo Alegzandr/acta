@@ -4,8 +4,8 @@ use super::records::{TopicPatch, apply_topic_patch};
 use super::{STAMP_COLS, Store, new_uuid, required, stamp};
 use crate::error::{Error, Result};
 use crate::model::{
-    Author, Entry, EntryId, EntryKind, EpicId, EventKind, Note, NoteId, Page, PageReq, ProjectId,
-    Record, Status, SystemEvent, TopicId,
+    AttachOwner, Author, Entry, EntryId, EntryKind, EpicId, EventKind, Note, NoteId, Page, PageReq,
+    ProjectId, Record, Status, SystemEvent, TopicId,
 };
 use crate::time::now_ms;
 use rusqlite::{OptionalExtension, params};
@@ -376,6 +376,7 @@ impl Store {
 
     /// Puts a filed or dismissed note back in the inbox (the undo of
     /// filing it). What filing created stays: the topic, epic or entries.
+    /// Its files come back from wherever filing moved them (ADR 0012, 5).
     pub fn unfile_note(&mut self, id: NoteId, author: Author) -> Result<()> {
         let tx = self.write()?;
         read_note(&tx, id)?;
@@ -384,13 +385,16 @@ impl Store {
                     filed_by = NULL, updated_at = ?2, updated_by = ?3 WHERE id = ?1",
             params![id.0, now_ms(), author],
         )?;
+        super::attachments::return_to_note(&tx, id, author)?;
         tx.commit()?;
         Ok(())
     }
 
     /// Marks open notes as turned into, or filed under, a topic of their
     /// project. The topic takes the first note's person when it has none
-    /// (request 19).
+    /// (request 19), and the notes' files move to its description (ADR
+    /// 0012, 5). A note filed as an entry goes through
+    /// [`Store::note_to_entry`], whose files go to the entry.
     pub fn file_notes(&mut self, notes: &[NoteId], topic: TopicId, author: Author) -> Result<()> {
         let tx = self.write()?;
         let project = super::records::read_topic(&tx, topic)?.project;
@@ -404,8 +408,54 @@ impl Store {
             author,
         )?;
         super::people::carry_person(&tx, notes, Record::Topic(topic), author, now_ms())?;
+        super::attachments::carry_from_notes(&tx, notes, AttachOwner::Topic(topic), author)?;
         tx.commit()?;
         Ok(())
+    }
+
+    /// Files an open note as a Discussion entry of a topic, in one
+    /// transaction: the entry keeps the note's words and author, the note
+    /// is filed under the topic, and its files move to the entry (ADR
+    /// 0012, 5). Undone by [`Store::unfile_note`] (files back to the note)
+    /// and the entry's deletion.
+    pub fn note_to_entry(&mut self, note: NoteId, topic: TopicId, author: Author) -> Result<Entry> {
+        self.atomically(|store| {
+            let n = read_note(&store.conn, note)?;
+            let entry = store.log(
+                topic,
+                NewEntry {
+                    kind: EntryKind::Discussion,
+                    text: n.text.clone(),
+                    state: None,
+                    status: None,
+                },
+                n.author,
+            )?;
+            let tx = store.write()?;
+            let project = super::records::read_topic(&tx, topic)?.project;
+            set_fate(
+                &tx,
+                &[note],
+                project,
+                &topic.to_string(),
+                Some(topic.0),
+                None,
+                author,
+            )?;
+            super::people::carry_person(&tx, &[note], Record::Topic(topic), author, now_ms())?;
+            tx.execute(
+                "UPDATE notes SET filed_entry_id = ?2 WHERE id = ?1",
+                params![note.0, entry.id.0],
+            )?;
+            super::attachments::carry_from_notes(
+                &tx,
+                &[note],
+                AttachOwner::Entry(entry.id),
+                author,
+            )?;
+            tx.commit()?;
+            Ok(entry)
+        })
     }
 
     /// Marks open notes as turned into an epic of their project.
@@ -427,6 +477,7 @@ impl Store {
             author,
         )?;
         super::people::carry_person(&tx, notes, Record::Epic(epic), author, now_ms())?;
+        super::attachments::carry_from_notes(&tx, notes, AttachOwner::Epic(epic), author)?;
         tx.commit()?;
         Ok(())
     }
@@ -462,6 +513,27 @@ impl Store {
                 author
             ],
         )?;
+        // The files follow the filing again: to the entry the note was
+        // filed as, else to the description of its topic or epic.
+        if before.filed_at.is_some() {
+            let entry: Option<i64> = tx
+                .query_row(
+                    "SELECT x.id FROM notes n JOIN entries x ON x.id = n.filed_entry_id
+                 WHERE n.id = ?1 AND x.deleted_at IS NULL AND x.topic_id IS ?2",
+                    params![id.0, before.filed_topic.map(|t| t.0)],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            let to = match (entry, before.filed_topic, before.filed_epic) {
+                (Some(e), _, _) => Some(AttachOwner::Entry(EntryId(e))),
+                (None, Some(t), _) => Some(AttachOwner::Topic(t)),
+                (None, None, Some(e)) => Some(AttachOwner::Epic(e)),
+                _ => None,
+            };
+            if let Some(to) = to {
+                super::attachments::carry_from_notes(&tx, &[id], to, author)?;
+            }
+        }
         tx.commit()?;
         Ok(())
     }
@@ -496,7 +568,7 @@ fn set_fate(
     for id in notes {
         tx.execute(
             "UPDATE notes SET filed_topic_id = ?2, filed_epic_id = ?3, filed_at = ?4, filed_by = ?5,
-                    updated_at = ?4, updated_by = ?5 WHERE id = ?1",
+                    filed_entry_id = NULL, updated_at = ?4, updated_by = ?5 WHERE id = ?1",
             params![id.0, topic, epic, now, author],
         )?;
     }

@@ -35,11 +35,18 @@ windows-sys = { version = "0.61", features = [
 libc = "0.2"
 
 [dependencies]
+# Attachments (ADR 0012): the export's blob content.
+base64 = "0.22"
 # The local time zone for "today" and local days (date.rs, Zone::system).
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 getrandom = "0.4"
 hmac = "0.12"
+# Attachments (ADR 0012): pixel size, thumbnails and the agent's re-encoded
+# image, decoded in memory only. The formats GPUI shows.
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
 keyring = "4.2.0"
+# Attachments (ADR 0012, 10): the text of a PDF for the agent. Pure Rust, MIT.
+pdf-extract = "0.12.1"
 schemars = "1"
 serde = { version = "1", features = ["derive"] }
 # preserve_order: the settings writer keeps the user's key order.

@@ -14,8 +14,8 @@ use crate::date::{Date, DueState, due_state};
 use crate::error::Error;
 use crate::markdown;
 use crate::model::{
-    Author, ContactId, ContactLevel, Entry, EntryKind, EpicId, EpicSummary, KbId, KbKind,
-    KbSummary, Level, Note, NoteFate, NoteId, Owner, PageReq, Place, ProjectId, QuestionId,
+    AttachOwner, Author, ContactId, ContactLevel, Entry, EntryKind, EpicId, EpicSummary, KbId,
+    KbKind, KbSummary, Level, Note, NoteFate, NoteId, Owner, PageReq, Place, ProjectId, QuestionId,
     QuestionStatus, Record, Status, TopicId, TopicSummary,
 };
 use crate::store::{
@@ -162,14 +162,14 @@ impl Agent<'_> {
         self.session.author
     }
 
-    fn project(&self) -> Result<ProjectId, String> {
+    pub(super) fn project(&self) -> Result<ProjectId, String> {
         self.session.project.ok_or_else(|| NOT_LINKED.to_owned())
     }
 
     /// An unbound session reaches nothing, not even by explicit id: the
     /// plugin runs in every repository, and a prompt there must not read or
     /// write the user's projects. A bound one never reaches another project.
-    fn check_project(&self, project: ProjectId, what: &str) -> Result<(), String> {
+    pub(super) fn check_project(&self, project: ProjectId, what: &str) -> Result<(), String> {
         match self.session.project {
             None => Err(NOT_LINKED.to_owned()),
             Some(p) if p != project => Err(format!(
@@ -393,8 +393,16 @@ impl Agent<'_> {
                     .topic_idle_days(id, today, self.session.zone)
                     .map_err(err)?
                     .map_or(String::new(), |d| format!(" · no activity {d}d"));
+                // Files on the description (ADR 0012, 10).
+                let desc_files = super::attach::files_segment(
+                    &self
+                        .store
+                        .attachments(AttachOwner::Topic(id))
+                        .map_err(err)?,
+                    1,
+                );
                 out.line_clipped(format!(
-                    "{id} {} · {}{due}{idle}{report}{epic}{}",
+                    "{id} {} · {}{due}{idle}{report}{epic}{desc_files}{}",
                     render::clip(&render::one_line(&t.title), 80),
                     t.status.as_str(),
                     self.focus_mark(o)
@@ -441,12 +449,15 @@ impl Agent<'_> {
                         out.line(l);
                     }
                 }
+                let files = self.entry_files(&page.items)?;
                 for e in &page.items {
                     let room = out.left().saturating_sub(reserve);
                     if room < 40 {
                         break;
                     }
-                    out.line(entry_line(e, room.min(130)));
+                    let seg = super::attach::segment_of(&files, AttachOwner::Entry(e.id), 1);
+                    let text_room = room.min(130).saturating_sub(render::chars(&seg)).max(40);
+                    out.line(format!("{}{seg}", entry_line(e, text_room)));
                 }
                 out.line_clipped(format!(
                     "{} · {counts}",
@@ -477,8 +488,12 @@ impl Agent<'_> {
                     }
                     _ => String::new(),
                 };
+                let desc_files = super::attach::files_segment(
+                    &self.store.attachments(AttachOwner::Epic(id)).map_err(err)?,
+                    1,
+                );
                 out.line_clipped(format!(
-                    "{id} {}{progress}{}{report}{}",
+                    "{id} {}{progress}{}{report}{desc_files}{}",
                     render::clip(&render::one_line(&e.title), 80),
                     due::segment(e.due_on, today, open),
                     self.focus_mark(o)
@@ -622,6 +637,12 @@ impl Agent<'_> {
         Ok(out.finish())
     }
 
+    /// The files of a page of entries, in one read.
+    fn entry_files(&self, entries: &[Entry]) -> Result<FilesByOwner, String> {
+        let owners: Vec<AttachOwner> = entries.iter().map(|e| AttachOwner::Entry(e.id)).collect();
+        self.store.attachments_of(&owners).map_err(err)
+    }
+
     // ---- entries ----
 
     pub fn entries(&mut self, a: EntriesArgs) -> Reply {
@@ -637,7 +658,22 @@ impl Agent<'_> {
                 e.kind.as_str(),
                 render::author_word(e.author)
             );
-            let room = budget::ENTRY_FULL - head.len() - 1 - render::FENCE_COST - 60;
+            // Its files after the text, inside the fence (names are stored
+            // text).
+            let files = super::attach::files_segment(
+                &self
+                    .store
+                    .attachments(AttachOwner::Entry(e.id))
+                    .map_err(err)?,
+                5,
+            );
+            let files = files.trim_start_matches(" · ").to_owned();
+            let room = budget::ENTRY_FULL
+                - head.len()
+                - 1
+                - render::FENCE_COST
+                - 60
+                - render::chars(&files);
             let total = render::chars(&e.text);
             let (body, cut) = if total > room {
                 (
@@ -646,6 +682,11 @@ impl Agent<'_> {
                 )
             } else {
                 (e.text.clone(), None)
+            };
+            let body = if files.is_empty() {
+                body
+            } else {
+                format!("{body}\n{files}")
             };
             return Ok(fenced_reply(
                 Some(&head),
@@ -689,7 +730,18 @@ impl Agent<'_> {
                 }
             ));
         }
-        let lines: Vec<String> = page.items.iter().map(|e| entry_line(e, 240)).collect();
+        let files = self.entry_files(&page.items)?;
+        let lines: Vec<String> = page
+            .items
+            .iter()
+            .map(|e| {
+                format!(
+                    "{}{}",
+                    entry_line(e, 240),
+                    super::attach::segment_of(&files, AttachOwner::Entry(e.id), 2)
+                )
+            })
+            .collect();
         let n = render::fitting(&lines, max - 120 - render::FENCE_COST);
         let shown = &page.items[..n];
         let newest = shown.first().and_then(|e| e.seq).unwrap_or(0);
@@ -1442,7 +1494,14 @@ impl Agent<'_> {
                     .store
                     .inbox(project, PageReq { offset, limit })
                     .map_err(err)?;
-                hits.extend(page.items.iter().map(q::note_hit));
+                let owners: Vec<AttachOwner> =
+                    page.items.iter().map(|n| AttachOwner::Note(n.id)).collect();
+                let files = self.store.attachments_of(&owners).map_err(err)?;
+                hits.extend(page.items.iter().map(|n| {
+                    let mut hit = q::note_hit(n);
+                    with_files(&mut hit, &files, AttachOwner::Note(n.id));
+                    hit
+                }));
                 page_total = page.total;
             }
             (None, Some("epic")) => {
@@ -1543,6 +1602,15 @@ impl Agent<'_> {
                     } else {
                         &[]
                     };
+                    let owners: Vec<AttachOwner> = items
+                        .iter()
+                        .filter_map(|h| match h.record {
+                            Record::Note(n) => Some(AttachOwner::Note(n)),
+                            Record::Entry(e) => Some(AttachOwner::Entry(e)),
+                            _ => None,
+                        })
+                        .collect();
+                    let files = self.store.attachments_of(&owners).map_err(err)?;
                     for h in items {
                         let snip = render::clip(&render::one_line(&strip_marks(&h.snippet)), 150);
                         let hit = match h.record {
@@ -1572,21 +1640,27 @@ impl Agent<'_> {
                                     continue;
                                 };
                                 let eid = format!("{}#{}", e.topic, e.seq.unwrap_or(0));
-                                FindHit {
+                                let mut hit = FindHit {
                                     line: format!("{eid} {}  {snip}", e.kind.as_str()),
                                     id: eid,
                                     kind: "entry",
                                     text: Some(snip),
                                     ..FindHit::default()
-                                }
+                                };
+                                with_files(&mut hit, &files, AttachOwner::Entry(id));
+                                hit
                             }
-                            Record::Note(n) => FindHit {
-                                id: n.to_string(),
-                                kind: "note",
-                                line: format!("{n} note  {snip}"),
-                                text: Some(snip),
-                                ..FindHit::default()
-                            },
+                            Record::Note(n) => {
+                                let mut hit = FindHit {
+                                    id: n.to_string(),
+                                    kind: "note",
+                                    line: format!("{n} note  {snip}"),
+                                    text: Some(snip),
+                                    ..FindHit::default()
+                                };
+                                with_files(&mut hit, &files, AttachOwner::Note(n));
+                                hit
+                            }
                             _ => continue,
                         };
                         hits.push(hit);
@@ -2844,9 +2918,10 @@ pub(super) fn apply_plans(
                 if explicit {
                     store.set_report_to(Record::Epic(id), who(report_to), author)?;
                 }
+                let moved = files_on(store, &notes)?;
                 store.file_notes_in_epic(&notes, id, author)?;
                 carried.extend(carry_line(store, Record::Epic(id), None, explicit, &notes)?);
-                (id.to_string(), notes)
+                (format!("{id}{}", moved_ack(moved)), notes)
             }
             Plan::Topic {
                 epic,
@@ -2879,6 +2954,7 @@ pub(super) fn apply_plans(
                 if explicit {
                     store.set_report_to(Record::Topic(id), who(report_to), author)?;
                 }
+                let moved = files_on(store, &notes)?;
                 store.file_notes(&notes, id, author)?;
                 carried.extend(carry_line(
                     store,
@@ -2894,6 +2970,7 @@ pub(super) fn apply_plans(
                 if let Some(e) = epic {
                     ack.push_str(&format!(" in {e}"));
                 }
+                ack.push_str(&moved_ack(moved));
                 (ack, notes)
             }
             Plan::Note(text, report_to) => {
@@ -2938,21 +3015,12 @@ pub(super) fn apply_plans(
             }
             Plan::Entries { topic, notes } => {
                 let before = store.topic(topic)?.report.to.map(|c| c.id);
-                // The entry keeps the note's words and its author.
-                for n in &notes {
-                    store.log(
-                        topic,
-                        NewEntry {
-                            kind: EntryKind::Discussion,
-                            text: n.text.clone(),
-                            state: None,
-                            status: None,
-                        },
-                        n.author,
-                    )?;
-                }
                 let ids: Vec<NoteId> = notes.iter().map(|n| n.id).collect();
-                store.file_notes(&ids, topic, author)?;
+                let moved = files_on(store, &ids)?;
+                // Each entry keeps its note's words, author and files.
+                for n in &ids {
+                    store.note_to_entry(*n, topic, author)?;
+                }
                 carried.extend(carry_line(
                     store,
                     Record::Topic(topic),
@@ -2961,7 +3029,11 @@ pub(super) fn apply_plans(
                     &ids,
                 )?);
                 (
-                    format!("{topic} +{}", plural(ids.len() as i64, "entry", "entries")),
+                    format!(
+                        "{topic} +{}{}",
+                        plural(ids.len() as i64, "entry", "entries"),
+                        moved_ack(moved)
+                    ),
                     ids,
                 )
             }
@@ -2970,6 +3042,24 @@ pub(super) fn apply_plans(
     }
     store.dismiss_notes(dismissed, author)?;
     Ok((acks, carried))
+}
+
+/// How many live files the notes hold (what filing them moves).
+fn files_on(store: &Store, notes: &[NoteId]) -> crate::Result<usize> {
+    let mut n = 0;
+    for id in notes {
+        n += store.attachments(AttachOwner::Note(*id))?.len();
+    }
+    Ok(n)
+}
+
+/// ` (2 files moved)`, or nothing.
+fn moved_ack(n: usize) -> String {
+    match n {
+        0 => String::new(),
+        1 => " (1 file moved)".into(),
+        n => format!(" ({n} files moved)"),
+    }
 }
 
 /// One `find` hit: its line for the agent and its fields for `--json`.
@@ -3101,6 +3191,22 @@ pub(super) fn epic_hit(e: &EpicSummary, today: Date, full_due: bool) -> FindHit 
     }
 }
 
+type FilesByOwner = std::collections::HashMap<AttachOwner, Vec<crate::model::Attachment>>;
+
+/// Adds a record's `· files:` segment to its find line, and the files to
+/// its `--json` fields.
+fn with_files(hit: &mut FindHit, files: &FilesByOwner, owner: AttachOwner) {
+    let Some(list) = files.get(&owner) else {
+        return;
+    };
+    hit.line.push_str(&super::attach::files_segment(list, 2));
+    let json: Vec<serde_json::Value> = list
+        .iter()
+        .map(|a| serde_json::json!({"id": a.id.to_string(), "name": a.name, "size": a.size}))
+        .collect();
+    hit.extra.push(("files", json.into()));
+}
+
 /// `N-3 N-5`.
 fn id_list(notes: &[NoteId]) -> String {
     notes
@@ -3203,7 +3309,7 @@ fn display_lines(text: &str) -> Vec<String> {
 
 /// A run of display lines (numbered from `first` in a body of `total`)
 /// under the budget, fenced, cut at a line with a pointer to the rest.
-fn cut_body(
+pub(super) fn cut_body(
     head: &str,
     what: &str,
     title: &str,

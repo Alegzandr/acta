@@ -267,6 +267,8 @@ pub fn report_into_empty(file: &ExportFile) -> ImportReport {
         questions: created(file.questions.len()),
         contacts: created(file.contacts.len()),
         lifted: 0,
+        attachments: created(file.attachments.len()),
+        files_not_in_export: Vec::new(),
     }
 }
 

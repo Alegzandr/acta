@@ -332,7 +332,7 @@ impl ActaServer {
 
     #[tool(
         name = "entries",
-        description = "To answer a question about a topic's history: its timeline, newest first, a page at a time; id: one entry in full.",
+        description = "To answer a question about a topic's history: its timeline, newest first, by page; id: one entry in full.",
         annotations(read_only_hint = true)
     )]
     fn entries(&self, Parameters(a): Parameters<EntriesArgs>) -> CallToolResult {
@@ -373,7 +373,7 @@ impl ActaServer {
 
     #[tool(
         name = "create",
-        description = "Creates topics, epics, notes, questions or contacts (up to 10), or applies an agreed inbox triage all-or-nothing: from_notes files notes into each item, kind=entry into an existing topic, dismiss closes the rest."
+        description = "Creates topics, epics, notes, questions or contacts (up to 10), or applies an agreed inbox triage all-or-nothing: from_notes files notes into an item, kind=entry into a topic, dismiss closes the rest."
     )]
     fn create(&self, Parameters(a): Parameters<CreateArgs>) -> CallToolResult {
         self.run(|ag| ag.create(a))
@@ -381,7 +381,7 @@ impl ActaServer {
 
     #[tool(
         name = "kb",
-        description = "Before working on an unfamiliar area: the documents and memories in scope (topic, epic, project) with one-line summaries; query searches them.",
+        description = "Before working on an unfamiliar area: knowledge in scope (topic, epic, project) with one-line summaries; query searches it.",
         annotations(read_only_hint = true)
     )]
     fn kb(&self, Parameters(a): Parameters<KbArgs>) -> CallToolResult {
@@ -390,7 +390,7 @@ impl ActaServer {
 
     #[tool(
         name = "kb_read",
-        description = "Reads a knowledge entry whose summary matches your task: whole when small, else its outline; then a section or line range.",
+        description = "Reads a knowledge entry whose summary matches the task: whole when small, else its outline, then a section or lines.",
         annotations(read_only_hint = true)
     )]
     fn kb_read(&self, Parameters(a): Parameters<KbReadArgs>) -> CallToolResult {
@@ -399,10 +399,47 @@ impl ActaServer {
 
     #[tool(
         name = "kb_write",
-        description = "Saves a durable fact (memory) or long reference (document), or edits one by section. Use it instead of your own memory files; search with kb first."
+        description = "Saves a durable fact (memory) or long reference (document), or edits one by section, instead of your own memory files; search with kb first."
     )]
     fn kb_write(&self, Parameters(a): Parameters<KbWriteArgs>) -> CallToolResult {
         self.run(|ag| ag.kb_write(a))
+    }
+
+    #[tool(
+        name = "attachment",
+        description = "Reads a file (A-n) from a files: segment when the task needs its content: text, PDF text or the image.",
+        annotations(read_only_hint = true)
+    )]
+    fn attachment(&self, Parameters(a): Parameters<AttachmentArgs>) -> CallToolResult {
+        // Checks and reads under the state lock; a PDF's parsing (a child
+        // process) and an image's decoding after it, so other calls never
+        // wait on them.
+        let step = {
+            let mut guard = self.lock();
+            let state = &mut *guard;
+            match state.ensure_open() {
+                Err(msg) => Err(msg),
+                Ok(()) => {
+                    let (store, session) = state.open.as_mut().expect("opened above");
+                    Agent { store, session }.attachment_step(a)
+                }
+            }
+        };
+        let answer = match step.and_then(|s| s.finish()) {
+            Ok(answer) => answer,
+            Err(msg) => return result(Err(msg)),
+        };
+        let mut content = vec![ContentBlock::text(answer.text)];
+        // The picture after its text line (ADR 0012, 10): base64 in an
+        // image block, never in text.
+        if let Some((bytes, media_type)) = answer.image {
+            use base64::Engine as _;
+            content.push(ContentBlock::image(
+                base64::engine::general_purpose::STANDARD.encode(bytes),
+                media_type,
+            ));
+        }
+        CallToolResult::success(content)
     }
 
     #[tool(

@@ -7,6 +7,7 @@ pub mod claude_settings;
 pub mod date;
 pub mod db;
 pub mod error;
+pub mod files;
 pub mod folder_identity;
 pub mod folder_path;
 pub mod fsutil;

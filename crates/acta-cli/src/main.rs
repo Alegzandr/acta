@@ -269,6 +269,39 @@ enum Command {
         path: PathBuf,
         #[arg(long, value_name = "P-n")]
         project: Option<String>,
+        /// Leave attached files' content out (names and sizes stay)
+        #[arg(long)]
+        no_files: bool,
+    },
+    /// Internal: the text of some pages of an attached PDF, as JSON. Run
+    /// by `acta mcp` and `acta attachment` as a child with a time, memory
+    /// and output limit, so a malformed file never reaches the server.
+    #[command(hide = true)]
+    PdfText {
+        id: String,
+        /// The project the file must belong to (P-n).
+        #[arg(long)]
+        project: String,
+        #[arg(long, default_value_t = 1)]
+        from: u32,
+        #[arg(long, default_value_t = 1)]
+        to: u32,
+        #[arg(long, default_value_t = 8_000)]
+        max_chars: usize,
+    },
+    /// Read one attached file (A-n): its text, a PDF's text, or what an
+    /// image is (the picture itself reaches Claude through the MCP tool)
+    Attachment {
+        id: String,
+        /// Text files: e.g. 40-80
+        #[arg(long)]
+        lines: Option<String>,
+        /// PDFs: e.g. 3-5
+        #[arg(long)]
+        pages: Option<String>,
+        /// Images: full for 1568 px
+        #[arg(long)]
+        size: Option<String>,
     },
     /// Merge an .acta.json export into the database
     Import {
@@ -448,6 +481,14 @@ fn finish(r: Result<String, String>) -> ExitCode {
 
 fn run(command: Command) -> ExitCode {
     let opener = Opener::from_env();
+    // PDFs are parsed by a child of this same executable (`pdf-text`).
+    if matches!(
+        command,
+        Command::Mcp { server: None } | Command::Attachment { .. }
+    ) && let Ok(exe) = std::env::current_exe()
+    {
+        acta_core::agent::set_pdf_worker(exe);
+    }
     match command {
         Command::Version => {
             println!("{}", version_line());
@@ -492,6 +533,13 @@ fn run(command: Command) -> ExitCode {
                 )
             }
         }
+        Command::PdfText {
+            id,
+            project,
+            from,
+            to,
+            max_chars,
+        } => finish(pdf_text(&opener, &id, &project, from, to, max_chars)),
         Command::Statusline => {
             let input = statusline::read_stdin();
             let data_dir = opener.data_dir();
@@ -502,6 +550,45 @@ fn run(command: Command) -> ExitCode {
             ExitCode::SUCCESS
         }
         other => finish(with_store(&opener, other)),
+    }
+}
+
+/// `acta pdf-text`: the child that parses one attached PDF. It reads the
+/// file from the store itself (only an id is on its command line) and
+/// prints the pages as JSON on stdout.
+fn pdf_text(
+    opener: &Opener,
+    id: &str,
+    project: &str,
+    from: u32,
+    to: u32,
+    max_chars: usize,
+) -> Result<String, String> {
+    // Only for a child an Acta process started (the marker in the
+    // environment and on stdin); refused before anything is opened.
+    let mut line = String::new();
+    let _ = std::io::stdin().read_line(&mut line);
+    let marker = std::env::var(acta_core::agent::attach::PDF_CHILD_ENV).ok();
+    if !acta_core::agent::attach::is_pdf_child(marker.as_deref(), &line) {
+        return Err("pdf-text is internal to Acta; read files with `acta attachment`".into());
+    }
+    let project = ProjectId::parse(project).ok_or("--project takes P-n")?;
+    let store = opener.open()?;
+    let id = acta_core::model::AttachmentId::parse(id).ok_or("not a file id")?;
+    let att = store.attachment(id).map_err(|e| e.to_string())?;
+    if att.project != project {
+        return Err(format!("{id} is not in {project}"));
+    }
+    if att.kind != acta_core::model::FileKind::Pdf {
+        return Err("not a PDF".into());
+    }
+    let bytes = store
+        .attachment_prefix(id, att.size.max(0) as usize)
+        .map_err(|e| e.to_string())?;
+    drop(store);
+    match acta_core::files::pdf_pages(&bytes, from, to, max_chars) {
+        acta_core::files::PdfText::Pages(p) => serde_json::to_string(&p).map_err(|e| e.to_string()),
+        acta_core::files::PdfText::Unreadable => Err("unreadable".into()),
     }
 }
 
@@ -616,7 +703,13 @@ fn run_setup(
     } else if remove {
         s.remove()
     } else {
-        s.install_with(!no_allow, !no_statusline)
+        let steps = s.install_with(!no_allow, !no_statusline);
+        // The one-time switch to incremental auto-vacuum (ADR 0012, 4), if
+        // the app has not done it yet; quiet, and skipped when busy.
+        if let Some(Ok(mut store)) = opener.open_existing() {
+            let _ = store.enable_incremental_vacuum();
+        }
+        steps
     };
     if check {
         steps.push(link_index_step(opener));
@@ -757,7 +850,11 @@ fn run_on(store: &mut acta_core::Store, command: Command) -> Result<String, Stri
             };
             return folders::commit(store, args, &cwd, author());
         }
-        Command::Export { path, project } => return export(store, &path, project),
+        Command::Export {
+            path,
+            project,
+            no_files,
+        } => return export(store, &path, project, !no_files),
         Command::Import { path, dry_run } => return import(store, &path, dry_run),
         Command::Snapshot { action } => return snapshot(store, action),
         Command::Sessions => {
@@ -1014,6 +1111,27 @@ fn run_on(store: &mut acta_core::Store, command: Command) -> Result<String, Stri
             }) => kb_import(&mut ag, &path, &kind, level, owner),
             Some(KbAction::Export { id, path }) => kb_export(&mut ag, &id, &path),
         },
+        Command::Attachment {
+            id,
+            lines,
+            pages,
+            size,
+        } => {
+            let answer = ag.attachment(AttachmentArgs {
+                id,
+                lines,
+                pages,
+                size,
+            })?;
+            Ok(match answer.image {
+                // A terminal cannot show it; the MCP tool sends it.
+                Some(_) => format!(
+                    "{}\nThe image itself reaches Claude through the attachment tool of Acta's MCP server.",
+                    answer.text
+                ),
+                None => answer.text,
+            })
+        }
         Command::Version
         | Command::Mcp { .. }
         | Command::Hook { .. }
@@ -1024,6 +1142,7 @@ fn run_on(store: &mut acta_core::Store, command: Command) -> Result<String, Stri
         | Command::Import { .. }
         | Command::Snapshot { .. }
         | Command::Sessions
+        | Command::PdfText { .. }
         | Command::Statusline => Err("handled elsewhere".into()),
     }
 }
@@ -1131,6 +1250,7 @@ fn export(
     store: &mut acta_core::Store,
     path: &Path,
     project: Option<String>,
+    include_files: bool,
 ) -> Result<String, String> {
     // An export writes every stored text to a plaintext file.
     if author() == Author::Claude {
@@ -1139,12 +1259,19 @@ fn export(
     let project = project
         .map(|p| ProjectId::parse(&p).ok_or("--project takes P-n"))
         .transpose()?;
-    let file = store.export(project).map_err(|e| e.to_string())?;
+    let file = store
+        .export_with(project, include_files)
+        .map_err(|e| e.to_string())?;
     let text = file.to_json().map_err(|e| e.to_string())?;
     write_new(path, &text)?;
     store.record_export().map_err(|e| e.to_string())?;
+    let files = match (file.attachments.len(), include_files) {
+        (0, _) => String::new(),
+        (n, true) => format!(", {n} files"),
+        (n, false) => format!(", {n} files (names only)"),
+    };
     Ok(format!(
-        "ok exported {} projects, {} topics, {} entries, {} knowledge entries. The file is plaintext: keep it somewhere private.",
+        "ok exported {} projects, {} topics, {} entries, {} knowledge entries{files}. The file is plaintext: keep it somewhere private.",
         file.projects.len(),
         file.topics.len(),
         file.entries.len(),
@@ -1184,7 +1311,11 @@ fn import(store: &mut acta_core::Store, path: &Path, dry_run: bool) -> Result<St
             1 => "; 1 folder on a network path left out".to_owned(),
             n => format!("; {n} folders on a network path left out"),
         }
-    ))
+    ) + &match report.files_not_in_export.len() {
+        0 => String::new(),
+        1 => "; 1 file not in the export".to_owned(),
+        n => format!("; {n} files not in the export"),
+    })
 }
 
 fn snapshot(store: &mut acta_core::Store, action: SnapshotAction) -> Result<String, String> {

@@ -180,7 +180,16 @@ fn tools_list_and_instructions_fit_their_budgets() {
             .copied()
             .collect::<std::collections::BTreeSet<_>>(),
         [
-            "brief", "create", "entries", "find", "kb", "kb_read", "kb_write", "log", "update"
+            "attachment",
+            "brief",
+            "create",
+            "entries",
+            "find",
+            "kb",
+            "kb_read",
+            "kb_write",
+            "log",
+            "update"
         ]
         .into_iter()
         .collect()
@@ -199,7 +208,7 @@ fn tools_list_and_instructions_fit_their_budgets() {
         let read_only = t["annotations"]["readOnlyHint"] == json!(true);
         let expect_ro = matches!(
             t["name"].as_str(),
-            Some("brief" | "entries" | "find" | "kb" | "kb_read")
+            Some("brief" | "entries" | "find" | "kb" | "kb_read" | "attachment")
         );
         assert_eq!(read_only, expect_ro, "{t}");
     }
@@ -1686,4 +1695,170 @@ fn questions_contacts_and_report_to_over_stdio() {
     let v: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(v["status"], "open");
     assert!(v.get("text").is_none(), "{v}");
+}
+
+/// Attachments over stdio (ADR 0012, 10): names and sizes in list lines,
+/// the `attachment` tool returning text, or one image block after its
+/// text line, and `acta attachment` on the CLI. Files reach Acta from the
+/// human (the app); here the test adds them through the store, with the
+/// key file the dev data directory uses.
+#[test]
+fn attachments_over_stdio() {
+    use acta_core::keys::{KEY_FILE, KeyFile, KeyStores};
+    use acta_core::model::{AttachOwner, Author, NoteId};
+    use acta_core::store::{AttachSource, Store, StoreConfig};
+    let tmp = tempfile::tempdir().unwrap();
+    let data = tmp.path().join("data");
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    let (ok, out, err) = cli(&data, &repo, &["link"], "");
+    assert!(ok, "{out}{err}");
+    let (ok, out, _) = cli(
+        &data,
+        &repo,
+        &["create", "note"],
+        "Screenshot from Alexandre",
+    );
+    assert!(ok && out.starts_with("ok N-1"), "{out}");
+    {
+        let config = StoreConfig {
+            data_dir: data.clone(),
+            keys: KeyStores(vec![std::sync::Arc::new(KeyFile::new(data.join(KEY_FILE)))]),
+        };
+        let mut store = Store::open(&config).unwrap();
+        let img = image::RgbImage::from_fn(2000, 1000, |x, y| image::Rgb([x as u8, y as u8, 40]));
+        let mut png = Vec::new();
+        image::DynamicImage::ImageRgb8(img)
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        for (name, bytes) in [
+            ("screenshot.png", png),
+            ("notes.md", b"# Plan\nShip attachments.\n".to_vec()),
+            ("spec.pdf", one_page_pdf("Storage spec for Alexandre")),
+            ("broken.pdf", b"%PDF-1.4 not really a PDF".to_vec()),
+        ] {
+            store
+                .attach(
+                    AttachOwner::Note(NoteId(1)),
+                    name,
+                    AttachSource::Bytes(bytes),
+                    Author::Human,
+                    &mut |_, _| {},
+                )
+                .unwrap();
+        }
+    }
+    let mut m = Mcp::start(&data, &repo, false);
+    let (err, text) = m.call("find", json!({"kind": "note"}));
+    assert!(!err, "{text}");
+    assert!(
+        text.contains(" · files: A-1 screenshot.png ") && text.contains(", A-2 notes.md 25B"),
+        "{text}"
+    );
+    let (err, text) = m.call("attachment", json!({"id": "A-2"}));
+    assert!(!err && text.contains("Ship attachments."), "{text}");
+    // The image: a text line, then one image block, nothing else.
+    let r = m.request(
+        "tools/call",
+        json!({"name": "attachment", "arguments": {"id": "A-1"}}),
+    );
+    let content = r["result"]["content"].as_array().unwrap();
+    assert_eq!(content.len(), 2, "{r}");
+    let line = content[0]["text"].as_str().unwrap();
+    assert!(line.starts_with("A-1 · image · 2000x1000 · "), "{line}");
+    assert!(line.contains("sent 1092x546"), "{line}");
+    assert_eq!(content[1]["type"], json!("image"));
+    assert_eq!(content[1]["mimeType"], json!("image/png"));
+    let b64 = content[1]["data"].as_str().unwrap();
+    assert!(b64.len() < 2_000_000, "{}", b64.len());
+    // PDFs are parsed in an `acta pdf-text` child.
+    let (err, text) = m.call("attachment", json!({"id": "A-3"}));
+    assert!(
+        !err && text.contains("Storage spec for Alexandre"),
+        "{text}"
+    );
+    let (err, text) = m.call("attachment", json!({"id": "A-4"}));
+    assert!(!err && text.contains("could not read this PDF"), "{text}");
+    let (err, text) = m.call("attachment", json!({"id": "A-1", "lines": "1-2"}));
+    assert!(
+        err && text.contains("lines applies to text files"),
+        "{text}"
+    );
+    m.close();
+    let (ok, out, _) = cli(&data, &repo, &["attachment", "A-2", "--lines", "2-2"], "");
+    assert!(
+        ok && out.contains("Ship attachments.") && !out.contains("# Plan"),
+        "{out}"
+    );
+    // The parser command is internal: refused without the parent's marker,
+    // and for a file of another project.
+    let (ok, out, err) = cli(&data, &repo, &["pdf-text", "A-3", "--project", "P-1"], "");
+    assert!(
+        !ok && out.is_empty() && err.contains("internal"),
+        "{out}{err}"
+    );
+    let marker = "0123456789abcdef0123456789abcdef";
+    let child = |project: &str| {
+        let mut c = base_cmd(&data);
+        let mut child = c
+            .args(["pdf-text", "A-3", "--project", project])
+            .env("ACTA_PDF_CHILD", marker)
+            .current_dir(&repo)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(format!("{marker}\n").as_bytes())
+            .unwrap();
+        child.wait_with_output().unwrap()
+    };
+    let out = child("P-1");
+    let json: Value = serde_json::from_slice(&out.stdout).expect("JSON only");
+    assert_eq!(json["count"], json!(1));
+    let out = child("P-2");
+    assert!(!out.status.success() && out.stdout.is_empty());
+    let (ok, out, _) = cli(&data, &repo, &["attachment", "A-3", "--pages", "1"], "");
+    assert!(ok && out.contains("Storage spec for Alexandre"), "{out}");
+    let (ok, out, _) = cli(&data, &repo, &["attachment", "A-1"], "");
+    assert!(
+        ok && out.contains("sent 1092x546") && out.contains("MCP"),
+        "{out}"
+    );
+}
+
+/// A one-page PDF with one line of Helvetica text and a correct xref.
+fn one_page_pdf(text: &str) -> Vec<u8> {
+    let stream = format!("BT /F1 12 Tf 72 720 Td ({text}) Tj ET");
+    let objs = [
+        "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
+        "<< /Type /Pages /Kids [4 0 R] /Count 1 >>".to_owned(),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"
+            .to_owned(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R >>".to_owned(),
+        format!("<< /Length {} >>\nstream\n{stream}\nendstream", stream.len()),
+    ];
+    let mut out = String::from("%PDF-1.4\n");
+    let mut offsets = Vec::new();
+    for (i, o) in objs.iter().enumerate() {
+        offsets.push(out.len());
+        out.push_str(&format!("{} 0 obj\n{o}\nendobj\n", i + 1));
+    }
+    let xref = out.len();
+    out.push_str(&format!(
+        "xref\n0 {}\n0000000000 65535 f \n",
+        objs.len() + 1
+    ));
+    for off in offsets {
+        out.push_str(&format!("{off:010} 00000 n \n"));
+    }
+    out.push_str(&format!(
+        "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+        objs.len() + 1
+    ));
+    out.into_bytes()
 }

@@ -5,13 +5,15 @@
 //! parent and position, so a restore puts them back where they were, with
 //! everything that was deleted together with them. The trash lists what was
 //! deleted on its own, not the descendants that went with it. Records stay
-//! restorable for 30 days; there is no purge and no "empty trash" in v1.
+//! restorable for 30 days; there is no purge and no "empty trash" in v1,
+//! except for attachments: their rows and content are purged when the 30
+//! days are over (ADR 0012, 4; [`Store::purge_attachments`]).
 
 use super::Store;
 use crate::error::{Error, Result};
 use crate::model::{
-    Author, ContactId, EntryId, EpicId, EventKind, FolderId, KbId, NoteId, Page, PageReq,
-    ProjectId, QuestionId, Record, TopicId,
+    AttachmentId, Author, ContactId, EntryId, EpicId, EventKind, FolderId, KbId, NoteId, Page,
+    PageReq, ProjectId, QuestionId, Record, TopicId,
 };
 use crate::time::{MS_PER_DAY, now_ms};
 use rusqlite::{OptionalExtension, params};
@@ -47,6 +49,7 @@ fn cascade(record: Record) -> Vec<(&'static str, String)> {
             "folders",
             "questions",
             "contacts",
+            "attachments",
         ]
         .iter()
         .map(|t| {
@@ -78,6 +81,13 @@ fn cascade(record: Record) -> Vec<(&'static str, String)> {
                 ),
                 // An epic's contacts go with it (data.md request 22).
                 ("contacts", format!("epic_id = {id}")),
+                (
+                    "attachments",
+                    format!(
+                        "epic_id = {id} OR topic_id IN ({topics})
+                         OR entry_id IN (SELECT id FROM entries WHERE topic_id IN ({topics}))"
+                    ),
+                ),
             ]
         }
         Record::Topic(TopicId(id)) => vec![
@@ -86,13 +96,26 @@ fn cascade(record: Record) -> Vec<(&'static str, String)> {
             ("kb_entries", format!("topic_id = {id}")),
             ("folders", format!("topic_id = {id}")),
             ("questions", format!("topic_id = {id}")),
+            (
+                "attachments",
+                format!(
+                    "topic_id = {id} OR entry_id IN (SELECT id FROM entries WHERE topic_id = {id})"
+                ),
+            ),
         ],
-        Record::Entry(EntryId(id)) => vec![("entries", format!("id = {id}"))],
-        Record::Note(NoteId(id)) => vec![("notes", format!("id = {id}"))],
+        Record::Entry(EntryId(id)) => vec![
+            ("entries", format!("id = {id}")),
+            ("attachments", format!("entry_id = {id}")),
+        ],
+        Record::Note(NoteId(id)) => vec![
+            ("notes", format!("id = {id}")),
+            ("attachments", format!("note_id = {id}")),
+        ],
         Record::Kb(KbId(id)) => vec![("kb_entries", format!("id = {id}"))],
         Record::Folder(FolderId(id)) => vec![("folders", format!("id = {id}"))],
         Record::Question(QuestionId(id)) => vec![("questions", format!("id = {id}"))],
         Record::Contact(ContactId(id)) => vec![("contacts", format!("id = {id}"))],
+        Record::Attachment(AttachmentId(id)) => vec![("attachments", format!("id = {id}"))],
     }
 }
 
@@ -107,6 +130,7 @@ fn table_of(record: Record) -> (&'static str, i64) {
         Record::Folder(id) => ("folders", id.0),
         Record::Question(id) => ("questions", id.0),
         Record::Contact(id) => ("contacts", id.0),
+        Record::Attachment(id) => ("attachments", id.0),
     }
 }
 
@@ -121,6 +145,23 @@ fn parent_of(
     };
     let (p, e, t) = match record {
         Record::Project(_) => return Ok(None),
+        // An attachment's parent is its owner: a note, an entry, or the
+        // topic or epic whose description holds it.
+        Record::Attachment(id) => {
+            let (n, en, t, e): (Option<i64>, Option<i64>, Option<i64>, Option<i64>) = tx
+                .query_row(
+                    "SELECT note_id, entry_id, topic_id, epic_id FROM attachments WHERE id = ?1",
+                    [id.0],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                )?;
+            return Ok(match (n, en, t, e) {
+                (Some(n), ..) => Some(("notes", n, NoteId(n).to_string())),
+                (_, Some(en), ..) => Some(("entries", en, EntryId(en).to_string())),
+                (_, _, Some(t), _) => Some(("topics", t, TopicId(t).to_string())),
+                (_, _, _, Some(e)) => Some(("epics", e, EpicId(e).to_string())),
+                _ => None,
+            });
+        }
         Record::Epic(id) => one(
             "SELECT project_id, NULL, NULL FROM epics WHERE id = ?1",
             id.0,
@@ -249,6 +290,18 @@ impl Store {
         if let Record::Topic(t) = record {
             super::timeline::system_event(&tx, t, EventKind::Restored, None, None, author, now)?;
         }
+        // A file restored on its own goes back at the end of its strip.
+        if let Record::Attachment(a) = record {
+            tx.execute(
+                "UPDATE attachments SET position = (
+                     SELECT coalesce(max(o.position), 0) + 1 FROM attachments o
+                     WHERE o.id <> attachments.id
+                       AND (o.note_id IS attachments.note_id AND o.entry_id IS attachments.entry_id
+                            AND o.topic_id IS attachments.topic_id AND o.epic_id IS attachments.epic_id))
+                 WHERE id = ?1",
+                [a.0],
+            )?;
+        }
         // A contact moved while these records were in the trash may no
         // longer be visible from them: widen it, as a move would.
         let lifts = super::people::lift_out_of_scope(&tx, author, now)?;
@@ -305,6 +358,15 @@ impl Store {
              WHERE x.deleted_at IS NOT NULL AND (CASE WHEN x.epic_id IS NOT NULL THEN coalesce(e.deleted_batch, CAST(e.deleted_at AS TEXT))
                    WHEN x.project_id IS NOT NULL THEN coalesce(p.deleted_batch, CAST(p.deleted_at AS TEXT)) END)
                    IS NOT coalesce(x.deleted_batch, CAST(x.deleted_at AS TEXT))
+            UNION ALL
+            SELECT 'attachment', x.id, x.project_id, x.name, x.deleted_at, x.deleted_by FROM attachments x
+             LEFT JOIN notes n ON n.id = x.note_id LEFT JOIN entries en ON en.id = x.entry_id
+             LEFT JOIN topics t ON t.id = x.topic_id LEFT JOIN epics e ON e.id = x.epic_id
+             WHERE x.deleted_at IS NOT NULL AND (CASE WHEN x.note_id IS NOT NULL THEN coalesce(n.deleted_batch, CAST(n.deleted_at AS TEXT))
+                   WHEN x.entry_id IS NOT NULL THEN coalesce(en.deleted_batch, CAST(en.deleted_at AS TEXT))
+                   WHEN x.topic_id IS NOT NULL THEN coalesce(t.deleted_batch, CAST(t.deleted_at AS TEXT))
+                   ELSE coalesce(e.deleted_batch, CAST(e.deleted_at AS TEXT)) END)
+                   IS NOT coalesce(x.deleted_batch, CAST(x.deleted_at AS TEXT))
             ORDER BY 5 DESC, 1, 2 DESC";
         let mut stmt = self.conn.prepare(sql)?;
         let all: Vec<TrashItem> = stmt
@@ -320,6 +382,7 @@ impl Store {
                     "kb" => Record::Kb(KbId(id)),
                     "question" => Record::Question(QuestionId(id)),
                     "contact" => Record::Contact(ContactId(id)),
+                    "attachment" => Record::Attachment(AttachmentId(id)),
                     _ => Record::Folder(FolderId(id)),
                 };
                 let deleted_at: i64 = r.get(4)?;
