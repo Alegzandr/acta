@@ -16,7 +16,7 @@ use crate::theme::{RADIUS_SM, Tokens};
 use crate::type_scale;
 use crate::ui;
 use crate::when;
-use crate::workspace::{Undo, Workspace};
+use crate::workspace::Workspace;
 
 pub struct TrashPage {
     ws: Entity<Workspace>,
@@ -111,10 +111,8 @@ impl TrashPage {
         self.items.retain(|item| item.record != record);
         cx.notify();
         self.ws.update(cx, |ws, cx| {
-            ws.undoable(cx, Some(project), Some(message), move |store| {
-                store.restore(record, acta_core::model::Author::Human)?;
-                Ok((Undo::Delete(record), ()))
-            });
+            ws.restore(record, Some(project), Some(message), cx)
+                .detach()
         });
     }
 

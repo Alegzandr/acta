@@ -91,8 +91,8 @@ fn session_working_in(path: &str, cx: &App) -> bool {
         return false;
     };
     let live = crate::sessions::live(cx);
-    running.0.iter().any(|(cwd, token)| {
-        folder_path::same(Os::CURRENT, &cwd.to_string_lossy(), path)
+    running.0.iter().any(|(dir, token)| {
+        fm::overlaps(&dir.to_string_lossy(), path)
             && crate::sessions::of_launch(live, token)
                 .is_some_and(|s| s.state == SessionState::Working)
     })

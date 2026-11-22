@@ -1161,8 +1161,11 @@ impl SettingsPage {
                     .on_click(move |_, _, cx| {
                         if let Some(ws) = &ws {
                             ws.update(cx, |ws, cx| {
-                                ws.write_detached(cx, Key::ErrorSave, move |store| {
-                                    acta_core::claude_settings::set_as_user_default(store, !as_user)
+                                // Toggled from the value the store holds now,
+                                // not the one this frame showed.
+                                ws.write_detached(cx, Key::ErrorSave, |store| {
+                                    let on = acta_core::claude_settings::as_user_default(store)?;
+                                    acta_core::claude_settings::set_as_user_default(store, !on)
                                 })
                             });
                         }

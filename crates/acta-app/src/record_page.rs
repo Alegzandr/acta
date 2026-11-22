@@ -955,12 +955,8 @@ impl RecordPage {
     fn restore_record(&mut self, cx: &mut Context<Self>) {
         let record = record_of(self.owner);
         let project = self.project_id();
-        self.ws.update(cx, |ws, cx| {
-            ws.undoable(cx, project, None, move |store| {
-                store.restore(record, Author::Human)?;
-                Ok((Undo::Delete(record), ()))
-            });
-        });
+        self.ws
+            .update(cx, |ws, cx| ws.restore(record, project, None, cx).detach());
     }
 
     /// New document or memory owned by this page's record: the editor

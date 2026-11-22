@@ -95,6 +95,9 @@ pub enum Send {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Start {
     pub cwd: PathBuf,
+    /// Every folder the session was launched with: the working directory
+    /// and its `--add-dir` folders.
+    pub dirs: Vec<PathBuf>,
     /// Folders the page sees that were not found and were left out of
     /// the session: marked in the header's switcher, never a toast.
     pub left_out: Vec<PathBuf>,
@@ -113,7 +116,8 @@ struct SessionPage {
     commit: Option<CommitColumns>,
 }
 
-/// The folders Acta's terminal sessions run in, with their launch tokens:
+/// The folders Acta's terminal sessions were launched with (working
+/// directory and `--add-dir` folders), each with its launch token:
 /// a git action in one of them asks first while the session works (ADR
 /// 0011 addendum).
 #[derive(Default)]
@@ -636,7 +640,11 @@ impl TerminalDock {
                         .filter(|(_, why)| *why == LeftOut::NotFound)
                         .map(|(p, _)| p);
                     launch.left_out = missing.chain(launch.left_out).collect();
-                    Ok(launch)
+                    let dirs = paths
+                        .into_iter()
+                        .filter(|p| !launch.left_out.contains(p))
+                        .collect::<Vec<_>>();
+                    Ok((launch, dirs))
                 })
                 .await;
             let _ = dock.update_in(cx, |dock, window, cx| {
@@ -644,9 +652,10 @@ impl TerminalDock {
                     return;
                 }
                 let pane = match result {
-                    Ok(launch) => {
+                    Ok((launch, dirs)) => {
                         let start = Start {
                             cwd: launch.spec.cwd.clone(),
+                            dirs,
                             left_out: launch.left_out.clone(),
                             folder: start_folder,
                             commit: start_commit,
@@ -757,9 +766,13 @@ impl TerminalDock {
         let running = self
             .panes
             .values()
-            .filter_map(|pane| match pane {
-                Pane::Running { start, token, .. } => Some((start.cwd.clone(), token.clone())),
-                _ => None,
+            .flat_map(|pane| match pane {
+                Pane::Running { start, token, .. } => start
+                    .dirs
+                    .iter()
+                    .map(|d| (d.clone(), token.clone()))
+                    .collect::<Vec<_>>(),
+                _ => Vec::new(),
             })
             .collect();
         cx.set_global(RunningIn(running));

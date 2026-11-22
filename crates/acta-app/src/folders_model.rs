@@ -276,6 +276,14 @@ pub fn git_error_text(locale: Locale, err: &GitError, branch: &str, folder: &str
     }
 }
 
+/// Whether a git action in `folder` touches files a session launched with
+/// `dir` (its working directory or an `--add-dir` folder) can see: the
+/// same folder, one inside the other.
+pub fn overlaps(dir: &str, folder: &str) -> bool {
+    folder_path::contains(Os::CURRENT, dir, folder).is_some()
+        || folder_path::contains(Os::CURRENT, folder, dir).is_some()
+}
+
 /// What the terminal header offers when the session is on something else
 /// (layout.md 4.5, Mismatch).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -599,6 +607,20 @@ mod tests {
             shown_icon("", disk[&a.path].git.as_ref(), false),
             Icon::GitBranch
         );
+    }
+
+    #[test]
+    fn a_session_sees_its_working_directory_its_add_dirs_and_what_is_inside() {
+        let sep = std::path::MAIN_SEPARATOR;
+        let root = if cfg!(windows) { "C:" } else { "" };
+        let p = |s: &str| format!("{root}{sep}{}", s.replace('/', &sep.to_string()));
+        let dirs = [p("dev/acta-wt/embed"), p("dev/alacritty-fork")];
+        let busy = |folder: &str| dirs.iter().any(|d| overlaps(d, folder));
+        assert!(busy(&p("dev/acta-wt/embed")), "the working directory");
+        assert!(busy(&p("dev/alacritty-fork")), "an --add-dir folder");
+        assert!(busy(&p("dev/alacritty-fork/crates")), "inside an --add-dir");
+        assert!(busy(&p("dev")), "containing one");
+        assert!(!busy(&p("dev/acta")), "a sibling is not seen");
     }
 
     #[test]
