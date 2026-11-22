@@ -13,10 +13,15 @@
 //! `project_id` is always set so roll-up queries need no join.
 
 /// Step `i` takes `user_version` from `i` to `i + 1`.
-pub const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5];
+pub const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6];
 
 /// The version this build writes.
 pub const SCHEMA_VERSION: i64 = MIGRATIONS.len() as i64;
+
+/// The first version with attachments: from it on the database runs with
+/// `auto_vacuum = INCREMENTAL`, set by one `VACUUM` after the step (it
+/// cannot run inside the step's transaction; see `db::migrate`).
+pub const INCREMENTAL_VACUUM_FROM: i64 = 6;
 
 const V1: &str = r#"
 CREATE TABLE meta (
@@ -416,4 +421,74 @@ ALTER TABLE epics ADD COLUMN reported_by TEXT;
 CREATE INDEX notes_report ON notes(project_id, report_contact_id) WHERE report_contact_id IS NOT NULL;
 CREATE INDEX topics_report ON topics(project_id, report_contact_id) WHERE report_contact_id IS NOT NULL;
 CREATE INDEX epics_report ON epics(project_id, report_contact_id) WHERE report_contact_id IS NOT NULL;
+"#;
+
+/// Attachments (ADR 0012, data.md request 20).
+///
+/// - `attachment_blobs`: one row per distinct content, keyed by the
+///   SHA-256 of the plaintext (hex; only ever inside the encrypted
+///   database). A blob being written carries `pending:<uuid>` and
+///   `complete = 0` until its last chunk is in; a crash leaves such a row,
+///   which the purge removes. Images keep their pixel size and a 256 px
+///   PNG thumbnail.
+/// - `attachment_chunks`: the content, 1 MiB per row, so writes, reads and
+///   exports stream with bounded memory and no transaction spans a file.
+/// - `attachments`: one owner (a note, an entry, or a topic's or an
+///   epic's description), the blob, the name as given, the order, the note
+///   a filing moved it from, and the usual stamp and trash columns.
+/// - `notes.filed_entry_id`: the entry a note was filed as, so its files
+///   follow it there again when an undone filing is redone.
+const V6: &str = r#"
+CREATE TABLE attachment_blobs (
+    id INTEGER PRIMARY KEY,
+    hash TEXT NOT NULL UNIQUE,
+    size INTEGER NOT NULL,
+    media_type TEXT NOT NULL,
+    width INTEGER,
+    height INTEGER,
+    thumbnail BLOB,
+    complete INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+) STRICT;
+
+CREATE TABLE attachment_chunks (
+    id INTEGER PRIMARY KEY,
+    blob_id INTEGER NOT NULL REFERENCES attachment_blobs(id),
+    seq INTEGER NOT NULL,
+    data BLOB NOT NULL,
+    UNIQUE (blob_id, seq)
+) STRICT;
+
+CREATE TABLE attachments (
+    id INTEGER PRIMARY KEY,
+    uuid TEXT NOT NULL UNIQUE,
+    project_id INTEGER NOT NULL REFERENCES projects(id),
+    note_id INTEGER REFERENCES notes(id),
+    entry_id INTEGER REFERENCES entries(id),
+    topic_id INTEGER REFERENCES topics(id),
+    epic_id INTEGER REFERENCES epics(id),
+    blob_id INTEGER NOT NULL REFERENCES attachment_blobs(id),
+    name TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    moved_from_note_id INTEGER REFERENCES notes(id),
+    created_by TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    updated_by TEXT NOT NULL,
+    deleted_at INTEGER,
+    deleted_by TEXT,
+    deleted_batch TEXT,
+    CHECK ((note_id IS NOT NULL) + (entry_id IS NOT NULL) + (topic_id IS NOT NULL)
+           + (epic_id IS NOT NULL) = 1)
+) STRICT;
+CREATE INDEX attachments_note ON attachments(note_id, position) WHERE note_id IS NOT NULL;
+CREATE INDEX attachments_entry ON attachments(entry_id, position) WHERE entry_id IS NOT NULL;
+CREATE INDEX attachments_topic ON attachments(topic_id, position) WHERE topic_id IS NOT NULL;
+CREATE INDEX attachments_epic ON attachments(epic_id, position) WHERE epic_id IS NOT NULL;
+CREATE INDEX attachments_project ON attachments(project_id);
+CREATE INDEX attachments_blob ON attachments(blob_id);
+CREATE INDEX attachments_moved ON attachments(moved_from_note_id)
+    WHERE moved_from_note_id IS NOT NULL;
+
+ALTER TABLE notes ADD COLUMN filed_entry_id INTEGER REFERENCES entries(id);
 "#;

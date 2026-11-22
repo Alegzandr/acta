@@ -168,6 +168,7 @@ fn is_live(store: &Store, record: Record) -> acta_core::Result<bool> {
         Record::Folder(id) => store.folder(id).map(|_| ()),
         Record::Question(id) => store.question(id).map(|_| ()),
         Record::Contact(id) => store.contact(id).map(|_| ()),
+        Record::Attachment(id) => store.attachment(id).map(|_| ()),
     };
     match found {
         Ok(()) => Ok(true),
@@ -1417,7 +1418,9 @@ pub fn deleted_key(record: Record) -> Option<Key> {
         Record::Entry(_) => Key::EntryDeleted,
         Record::Note(_) => Key::NoteDeleted,
         Record::Kb(_) => Key::KbDeleted,
-        Record::Folder(_) | Record::Question(_) | Record::Contact(_) => return None,
+        Record::Folder(_) | Record::Question(_) | Record::Contact(_) | Record::Attachment(_) => {
+            return None;
+        }
     })
 }
 

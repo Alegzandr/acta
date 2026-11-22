@@ -753,7 +753,7 @@ fn questions_contacts_and_the_profile_survive_an_export_and_an_import() {
     s.set_profile(Some("Alexandre"), Some("Product designer"))
         .unwrap();
     let file = s.export(None).unwrap();
-    assert_eq!(file.version, 3);
+    assert!(file.version >= 3);
     assert_eq!((file.questions.len(), file.contacts.len()), (2, 3));
     assert!(file.profile.is_some());
     let json = file.to_json().unwrap();

@@ -34,6 +34,15 @@ Records refer to each other by UUID. Short ids (`T-42`) are per-installation and
 - **knowledge**: `project`, `epic`, `topic` (at most one of the last two is set; neither means the project's own), `kind` (`document`, `memory`), `title`, `summary`, `body` (Markdown), `rev` (current revision number), `created_by`, `revisions`: every revision, oldest first, each with `uuid`, `rev`, `title`, `summary`, `body`, `author`, `change` (`created`, `created_from_file`, `edited`, `replaced_section`, `appended_section`, `moved`, `restored`), `section` (the heading concerned, or `rev N` for a restore), `created_at`.
 - **folders**: `project`, `epic`, `topic` (as for knowledge), `path` (absolute, canonical on the machine it came from), `position`, `local` (always true: a path means something only on its machine).
 
+## Version 4 (attachments, ADR 0012)
+
+Versions 2 and 3 are described in the header comment of `exchange.rs`. Version 4 adds:
+- **blobs**: one per distinct file content, sorted by `hash`: `hash` (SHA-256 of the content, lowercase hex), `size` (bytes), `media_type`, and `content` (standard base64), absent when the export was made without files.
+- **attachments**: the common fields, `project`, exactly one of `note`, `entry`, `topic` (its description) or `epic` (its description), `blob` (the hash), `name`, `size`, `position`, `moved_from_note` (the note a filing moved it from, optional), `created_by`.
+- **notes**: `filed_entry`, the entry a note was filed as (optional).
+
+On import each blob's content is checked against its hash (a mismatch refuses the file); content this database already holds is linked, not stored twice. An attachment whose content is neither in the file nor in this database is left out and reported as "not in the export". A file of version 3 or older imports with no attachments, and an update from it leaves attachments and `filed_entry` as they are.
+
 ## Import
 
 A merge keyed on UUID, in one transaction, after an automatic `import` snapshot. Unknown records are created. A known record is updated only when the file's `updated_at` is newer; otherwise it is skipped. Nothing is deleted: a newer version may bring a trashed record back, never trash a live one. A revision whose UUID is known is skipped; one whose number is already taken in that entry's local history is kept under the next free number. After the merge an entry's `rev` points at the newest revision holding its current title, summary and body; if none does, that version is saved as a new revision first. An imported timeline entry whose `seq` is already taken in its topic gets the next free number (its UUID is unchanged). Importing the same file twice changes nothing. A dry run reports what would be created, updated and skipped, per kind, and keeps nothing.

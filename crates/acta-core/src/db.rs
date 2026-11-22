@@ -262,6 +262,7 @@ pub(crate) fn migrate(
 ) -> Result<(), OpenError> {
     let start = user_version(conn)?;
     if start >= steps.len() as i64 {
+        ensure_incremental_vacuum(conn);
         return Ok(());
     }
     let snapshot = if start > 0 {
@@ -276,7 +277,11 @@ pub(crate) fn migrate(
         None
     };
     let failure = match run_steps(conn, steps) {
-        Ok(()) => return Ok(()),
+        Ok(()) => {
+            // After the steps and so after the migration snapshot.
+            ensure_incremental_vacuum(conn);
+            return Ok(());
+        }
         Err(f) => f,
     };
     let message = failure.error.to_string();
@@ -294,6 +299,27 @@ pub(crate) fn migrate(
             restored_from: None,
         }),
     }
+}
+
+/// From the attachments schema on, freed pages go back to the file system
+/// on a purge (`PRAGMA incremental_vacuum`, ADR 0012, 4). Switching an
+/// existing database to `auto_vacuum = INCREMENTAL` takes one `VACUUM`,
+/// which cannot run in a transaction, so it follows the steps here, under
+/// the init lock. SQLCipher builds keep temporary data in memory
+/// (`SQLITE_TEMP_STORE=2`), so the copy `VACUUM` makes never touches the
+/// disk in plaintext. Best effort: if another connection holds the
+/// database past the busy timeout, the next open tries again.
+fn ensure_incremental_vacuum(conn: &Connection) {
+    let due = user_version(conn).is_ok_and(|v| v >= crate::schema::INCREMENTAL_VACUUM_FROM)
+        && auto_vacuum_mode(conn).is_ok_and(|m| m != 2);
+    if due {
+        let _ = conn.execute_batch("PRAGMA auto_vacuum = INCREMENTAL; VACUUM;");
+    }
+}
+
+/// `PRAGMA auto_vacuum`: 0 none, 1 full, 2 incremental.
+pub(crate) fn auto_vacuum_mode(conn: &Connection) -> rusqlite::Result<i64> {
+    conn.pragma_query_value(None, "auto_vacuum", |r| r.get(0))
 }
 
 struct StepFailure {
