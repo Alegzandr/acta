@@ -1,13 +1,16 @@
 //! Dictation (ADR 0014): everything that is not audio capture, the UI or
 //! whisper.cpp itself. Engine-independent: the phrase segmenter, the
 //! anchor and insertion rules, the take state machine, the input level,
-//! and the model table and recommendation.
+//! the model table and recommendation and, behind the `voice-download`
+//! feature, the model downloader.
 //!
 //! Audio and the text it becomes are user content (ADR 0014, 7): nothing
 //! here writes either to disk or to a log, and every audio buffer is an
 //! [`buffer::AudioBuf`], zeroed when its phrase is done.
 
 pub mod buffer;
+#[cfg(feature = "voice-download")]
+pub mod download;
 pub mod engine;
 pub mod hardware;
 pub mod insert;
