@@ -514,6 +514,60 @@ impl Store {
         Ok(())
     }
 
+    /// Writes a question back exactly as `before` held it (the app's undo
+    /// and redo): text, contact asked, answer date, state, answer, who and
+    /// when it was resolved, its decision entry, owner and place. The
+    /// contact must still be visible from the owner.
+    pub fn put_question(&mut self, before: &Question, author: Author) -> Result<()> {
+        let tx = self.write()?;
+        let cur = read_question(&tx, before.id)?;
+        let (project, epic, topic) = owner_cols(&tx, before.owner)?;
+        if project != cur.project.0 {
+            return Err(Error::Invalid(format!(
+                "{} belongs to another project than {}",
+                before.owner, before.id
+            )));
+        }
+        let asked = before.asked_to.as_ref().map(|c| c.id);
+        if let Some(c) = asked.filter(|c| Some(*c) != cur.asked_to.as_ref().map(|r| r.id)) {
+            check_ref(
+                &tx,
+                c,
+                owner_place(&tx, before.owner)?,
+                &before.id.to_string(),
+            )?;
+        }
+        let now = now_ms();
+        tx.execute(
+            "UPDATE questions SET epic_id = ?2, topic_id = ?3, text = ?4, asked_contact_id = ?5, expected_on = ?6,
+                    status = ?7, answer = ?8, resolved_at = ?9, resolved_by = ?10, decision_entry_id = ?11,
+                    position = ?12, updated_at = ?13, updated_by = ?14
+             WHERE id = ?1",
+            params![
+                before.id.0,
+                epic,
+                topic,
+                before.text,
+                asked.map(|c| c.0),
+                before.expected_on,
+                before.status,
+                before.answer,
+                before.resolved_at,
+                before.resolved_by,
+                before.decision_entry.map(|e| e.0),
+                before.position,
+                now,
+                author
+            ],
+        )?;
+        touch_owner(&tx, cur.owner, author, now)?;
+        if cur.owner != before.owner {
+            touch_owner(&tx, before.owner, author, now)?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Moves an open question to `index` among its owner's open questions
     /// (clamped). Questions whose position changes get a new `updated_at`,
     /// so an import carries the order.

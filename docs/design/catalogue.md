@@ -71,6 +71,10 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `event.status` | {author} set status to {status} | {author} a passé le statut à « {status} » |
 | `event.due_set` | {author} set the due date to {date} | {author} a fixé l'échéance au {date} |
 | `event.due_cleared` | {author} cleared the due date | {author} a supprimé l'échéance |
+| `event.report_set` | {author} noted to report to {name} | {author} a noté de rapporter à : {name} |
+| `event.reported` | {author} marked it reported to {name} | {author} l'a marqué comme rapporté à : {name} |
+| `event.report_unmarked` | {author} marked it not reported | {author} l'a marqué comme non rapporté |
+| `event.report_cleared` | {author} removed Report to | {author} a retiré « À rapporter à » |
 | `prop.status` | Status | Statut |
 | `prop.epic` | Epic | Epic |
 | `prop.folders` | Folders | Dossiers |
@@ -78,7 +82,9 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `prop.kind` | Kind | Nature |
 | `prop.level` | Level | Niveau |
 | `prop.due` | Due | Échéance |
+| `prop.report_to` | Report to | À rapporter à |
 | `prop.add_due` | Due date | Échéance |
+| `prop.add_report_to` | Report to | À rapporter à |
 | `meta.record` | {id} · Updated {when} by {author} | {id} · Modifié {when} par {author} |
 | `meta.updated` | Updated {when} by {author} | Modifié {when} par {author} |
 | `meta.copy_id` | Copy id | Copier l'identifiant |
@@ -107,6 +113,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `level.topic` | Topic {name} | Sujet {name} |
 | `section.state` | Current state | État actuel |
 | `section.description` | Description | Description |
+| `section.questions` | Questions | Questions |
 | `section.knowledge` | Knowledge | Connaissances |
 | `overview.title` | Overview | Vue d'ensemble |
 | `overview.clear` | Nothing needs attention. | Rien ne demande votre attention. |
@@ -126,6 +133,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `overview.epics.more` | {n} more epic · {n} more epics | {n} autre epic · {n} autres epics |
 | `overview.epics.complete` | {n} complete epic · {n} complete epics | {n} epic terminé · {n} epics terminés |
 | `overview.memories` | {n} memory not updated for 90 days · {n} memories not updated for 90 days | {n} mémoire non mise à jour depuis 90 jours · {n} mémoires non mises à jour depuis 90 jours |
+| `overview.questions_late` | {n} question past its answer date · {n} questions past their answer date | {n} question dont la date de réponse est passée · {n} questions dont la date de réponse est passée |
 | `section.timeline` | Timeline | Journal |
 | `state.updated` | Updated {when} by {author} | Modifié {when} par {author} |
 | `state.placeholder` | Where does this stand? One or two sentences. | Où en est-on ? Une ou deux phrases. |
@@ -174,6 +182,10 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `table.updated` | Updated | Modifié |
 | `table.reset` | Reset order | Rétablir l'ordre |
 | `table.due` | Due | Échéance |
+| `table.questions` | Questions | Questions |
+| `table.questions_tip` | {n} open question · {n} open questions | {n} question en suspens · {n} questions en suspens |
+| `table.questions_tip_overdue` | 1 open question, overdue · {n} open questions, {late} overdue | 1 question en suspens, en retard · {n} questions en suspens, dont {late} en retard |
+| `table.report_to` | Report to | À rapporter à |
 | `table.filter.overdue` | Overdue | En retard |
 | `table.filter.week` | Next 7 days | 7 prochains jours |
 | `filter.blocked` | Blocked | Bloqués |
@@ -242,6 +254,112 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `kb.value.memories` | Memories | Mémoires |
 | `kb.results` | {n} result for "{query}" · {n} results for "{query}" | {n} résultat pour « {query} » · {n} résultats pour « {query} » |
 | `kb.no_results` | Nothing in this project mentions "{query}". | Rien dans ce projet ne mentionne « {query} ». |
+| `questions.new` | New question | Nouvelle question |
+| `questions.closed` | {n} closed | {n} close · {n} closes |
+| `questions.more_epic` | {n} more open in the topics of this epic | {n} autre en suspens dans les sujets de cet epic · {n} autres en suspens dans les sujets de cet epic |
+| `questions.more_epic_overdue` | {n} more open in the topics of this epic, {late} overdue | {n} autre en suspens dans les sujets de cet epic, en retard · {n} autres en suspens dans les sujets de cet epic, dont {late} en retard |
+| `questions.more_project` | {n} more open in this project's epics and topics | {n} autre en suspens dans les epics et sujets de ce projet · {n} autres en suspens dans les epics et sujets de ce projet |
+| `questions.more_project_overdue` | {n} more open in this project's epics and topics, {late} overdue | {n} autre en suspens dans les epics et sujets de ce projet, en retard · {n} autres en suspens dans les epics et sujets de ce projet, dont {late} en retard |
+| `questions.empty` | No questions yet. Note what you are waiting to hear. | Aucune question pour l'instant. Notez ce que vous attendez d'apprendre. |
+| `questions.scope` | {scope} · {counts} | {scope} · {counts} |
+| `count.questions_open` | {n} open | {n} en suspens |
+| `count.questions_closed` | {n} closed | {n} close · {n} closes |
+| `questions.whole_project` | Whole project | Tout le projet |
+| `questions.none_open` | No open questions in {name}. | Aucune question en suspens dans {name}. |
+| `questions.none_overdue` | No overdue questions. | Aucune question en retard. |
+| `questions.none_closed` | No closed questions yet. | Aucune question close pour l'instant. |
+| `question.state.open` | Open question | Question en suspens |
+| `question.state.answered` | Answered | Répondue |
+| `question.state.dropped` | Dropped | Abandonnée |
+| `question.asked` | Asked {name} | Posée à : {name} |
+| `question.by` | Answer by {date} | Réponse attendue le {date} |
+| `question.answered_by` | Answer recorded {date} by {author} | Réponse notée le {date} par {author} |
+| `question.dropped_by` | Dropped {date} by {author} | Abandonnée le {date} par {author} |
+| `question.logged` | Logged as a decision | Consignée comme décision |
+| `question.in` | in {level} | dans : {level} (`{level}` is a `level.*` string) |
+| `question.placeholder` | What do you need to know? | Que faut-il savoir ? |
+| `question.field.asked` | Asked | Posée à |
+| `question.field.by` | Answer by | Réponse attendue |
+| `question.mark_answered` | Mark answered | Marquer comme répondue |
+| `question.answer_placeholder` | What was the answer? | Quelle a été la réponse ? |
+| `question.log_decision` | Also log it as a decision | La consigner aussi comme décision |
+| `question.save_answer` | Save answer | Enregistrer la réponse |
+| `question.edit_answer` | Edit answer | Modifier la réponse |
+| `question.set_date` | Set answer date... | Définir la date de réponse... |
+| `question.clear_date` | Clear answer date | Effacer la date de réponse |
+| `question.drop` | Drop question | Abandonner la question |
+| `question.reopen` | Reopen | Rouvrir |
+| `question.move` | Move to... | Déplacer vers... |
+| `question.deleted` | Question deleted. | Question supprimée. |
+| `question.restored` | Question restored. | Question restaurée. |
+| `question.counter` | {n} / 300 | {n} / 300 |
+| `person.none` | None | Personne |
+| `count.person_asked` | {n} question to ask · {n} questions to ask | {n} question à poser · {n} questions à poser |
+| `count.person_report` | {n} thing to report · {n} things to report | {n} élément à rapporter · {n} éléments à rapporter |
+| `person.section.asked` | Questions asked | Questions posées |
+| `person.section.report` | To report | À rapporter |
+| `person.empty` | Nothing open with {name}. | Rien en cours avec : {name}. |
+| `report.to` | Report to {name} | À rapporter à : {name} |
+| `report.pending` | Not reported yet | Pas encore rapporté |
+| `report.done` | Reported {date} | Rapporté le {date} |
+| `report.mark` | Mark reported | Marquer comme rapporté |
+| `report.unmark` | Mark not reported | Marquer comme non rapporté |
+| `report.change` | Change person... | Changer de personne... |
+| `report.reported_count` | {n} reported | {n} rapporté · {n} rapportés |
+| `report.filter` | Report to: {name} | À rapporter à : {name} |
+| `report.filter.all` | Report to: anyone | À rapporter à : tout le monde |
+| `report.filter.anyone` | Anyone | Tout le monde |
+| `contact.placeholder` | Search contacts | Rechercher un contact |
+| `contact.new_named` | New contact "{name}" | Nouveau contact : {name} |
+| `contact.new_in` | in {level} | dans : {level} |
+| `contact.new_tag` | new | nouveau |
+| `contact.out_of_scope` | {name} is no longer visible here. Choose again. | Ce contact n'est plus visible ici : {name}. Choisissez à nouveau. |
+| `contact.level.all` | All projects | Tous les projets |
+| `contact.level.current` | Current | Actuel |
+| `contact.move.blocked` | Used outside | Utilisé ailleurs |
+| `contact.move.refused` | Named outside {level}: {places}. Change those first. | Cité hors de ce niveau ({level}) : {places}. Modifiez-les d'abord. |
+| `contact.move.place` | {id} {title} ({field}) | {id} {title} ({field}) |
+| `contact.move.more` | +{n} more | +{n} autre · +{n} autres |
+| `contact.lifted` | {name} is now a contact of all projects, so {record} still sees them. | Contact étendu à tous les projets pour rester visible depuis {record} : {name}. |
+| `contact.lifted.project` | {name} is now a contact of project {project}, so {record} still sees them. | Contact étendu au projet {project} pour rester visible depuis {record} : {name}. |
+| `contacts.title` | Contacts | Contacts |
+| `contacts.count` | {n} contact · {n} contacts | {n} contact · {n} contacts |
+| `contacts.filter.project` | This project | Ce projet |
+| `contacts.filter.all` | All | Tous |
+| `contacts.new` | New contact | Nouveau contact |
+| `contacts.new_here` | New contact here | Nouveau contact ici |
+| `contacts.empty` | No contacts yet. A contact is added when you choose who a question is asked of or who to report to. | Aucun contact pour l'instant. Un contact s'ajoute quand vous choisissez à qui poser une question ou à qui rapporter. |
+| `contacts.no_match` | No contact matches "{query}". | Aucun contact ne correspond à « {query} ». |
+| `contacts.none_here` | No contacts in {project}. | Aucun contact dans {project}. |
+| `contact.name_placeholder` | Name | Nom |
+| `contact.name_required` | A contact needs a name. | Un contact doit avoir un nom. |
+| `contact.open_count` | {n} open | {n} en cours |
+| `contact.prop.job_title` | Job title | Fonction |
+| `contact.prop.company` | Company | Entreprise |
+| `contact.prop.level` | Level | Niveau |
+| `contact.add.job_title` | Job title | Fonction |
+| `contact.add.company` | Company | Entreprise |
+| `contact.add.address` | How to address them | Comment s'adresser à ce contact |
+| `contact.section.address` | How to address them | Comment s'adresser à ce contact |
+| `contact.address_placeholder` | Formal or first name, tone, what to avoid | Vouvoiement ou tutoiement, prénom ou nom, ton, ce qu'il faut éviter |
+| `contact.address_counter` | {n} / 500 | {n} / 500 |
+| `contact.meta` | {id} · Added {date} by {author} | {id} · Ajouté le {date} par {author} |
+| `contact.meta_updated` | {id} · Added {date} by {author} · Updated {when} | {id} · Ajouté le {date} par {author} · Modifié {when} |
+| `contact.scope` | {asked}, {report} | {asked}, {report} |
+| `contact.scope_projects` | {asked}, {report} in {n} projects | {asked}, {report} dans {n} projets |
+| `contact.duplicate` | Another contact is also named {name}, in {level}. | Un autre contact porte aussi ce nom, dans {level} : {name}. |
+| `contact.merge_into_it` | Merge into it... | Fusionner avec lui... |
+| `contact.keep_both` | Keep both | Garder les deux |
+| `contact.go` | Go to {name} | Ouvrir : {name} |
+| `contact.rename` | Rename | Renommer |
+| `contact.move` | Move to... | Déplacer vers... |
+| `contact.merge` | Merge into... | Fusionner avec... |
+| `contact.delete` | Delete contact | Supprimer le contact |
+| `contact.merged` | Merged into {name}. | Fusionné avec : {name}. |
+| `contact.restored_merged` | Contact restored. Its uses stayed with {name}. | Contact restauré. Ses usages restent à : {name}. |
+| `contact.deleted` | Contact deleted. | Contact supprimé. |
+| `contact.restored` | Contact restored. | Contact restauré. |
+| `contact.in_trash` | In the trash | Dans la corbeille |
 | `doc.editing` | Editing | Modification en cours |
 | `doc.needs` | A document needs a title and a summary. | Un document doit avoir un titre et un résumé. |
 | `doc.go_heading` | Go to heading | Aller au titre |
@@ -480,6 +598,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `cmd.show_decided_week` | Show topics with a decision in the last 7 days | Afficher les sujets avec une décision ces 7 derniers jours |
 | `cmd.show_created_week` | Show topics created in the last 7 days | Afficher les sujets créés ces 7 derniers jours |
 | `cmd.show_stale_memories` | Show memories not updated for 90 days | Afficher les mémoires non mises à jour depuis 90 jours |
+| `cmd.show_questions_late` | Show questions past their answer date | Afficher les questions dont la date de réponse est passée |
 | `cmd.overview_more` | Overview: Show more | Vue d'ensemble : afficher plus |
 | `cmd.overview_less` | Overview: Show less | Vue d'ensemble : afficher moins |
 | `cmd.back` | Back | Précédent |
@@ -490,6 +609,32 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `cmd.set_status` | Set status: {status} | Définir le statut : {status} |
 | `cmd.due_set` | Set due date... | Définir l'échéance... |
 | `cmd.due_clear` | Clear due date | Effacer l'échéance |
+| `cmd.question_new` | New question | Nouvelle question |
+| `cmd.questions_open` | Go to questions | Aller aux questions |
+| `cmd.report_set` | Set Report to... | Définir « À rapporter à »... |
+| `cmd.report_clear` | Clear Report to | Effacer « À rapporter à » |
+| `cmd.reported` | Mark reported | Marquer comme rapporté |
+| `cmd.unreported` | Mark not reported | Marquer comme non rapporté |
+| `cmd.question_answer` | Mark question answered | Marquer la question comme répondue |
+| `cmd.question_edit` | Edit question | Modifier la question |
+| `cmd.question_date` | Set answer date... | Définir la date de réponse... |
+| `cmd.question_date_clear` | Clear answer date | Effacer la date de réponse |
+| `cmd.question_drop` | Drop question | Abandonner la question |
+| `cmd.question_reopen` | Reopen question | Rouvrir la question |
+| `cmd.question_move` | Move question to... | Déplacer la question vers... |
+| `cmd.question_delete` | Delete question | Supprimer la question |
+| `cmd.contacts_open` | Go to contacts | Aller aux contacts |
+| `cmd.contact_go` | Go to contact... | Aller à un contact... |
+| `cmd.contact_new` | New contact | Nouveau contact |
+| `cmd.contact_rename` | Rename contact | Renommer le contact |
+| `cmd.contact_job_title` | Set job title... | Définir la fonction... |
+| `cmd.contact_company` | Set company... | Définir l'entreprise... |
+| `cmd.contact_address` | Edit how to address them | Modifier comment s'adresser à ce contact |
+| `cmd.contact_move` | Move contact to... | Déplacer le contact vers... |
+| `cmd.contact_merge` | Merge contact into... | Fusionner le contact avec... |
+| `cmd.contact_delete` | Delete contact | Supprimer le contact |
+| `cmd.profile_name` | Set your name | Définir votre nom |
+| `cmd.profile_job_title` | Set your job title | Définir votre fonction |
 | `cmd.settings` | Open settings | Ouvrir les paramètres |
 | `cmd.theme` | Theme: {value} | Thème : {value} |
 | `cmd.text_size` | Text size: {value} | Taille du texte : {value} |
@@ -644,6 +789,11 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `ready.dialog.confirm_terminal` | Open in terminal | Ouvrir dans le terminal |
 | `ready.signin.hint` | A terminal opens with Claude Code. Follow its steps in your browser; Acta never sees your password or token. | Un terminal s'ouvre avec Claude Code. Suivez ses étapes dans votre navigateur ; Acta ne voit jamais votre mot de passe ni votre jeton. |
 | `settings.appearance` | Appearance | Apparence |
+| `settings.profile` | Profile | Profil |
+| `settings.profile.hint` | Claude Code sees your name and job title. | Claude Code voit votre nom et votre fonction. |
+| `settings.profile.name` | Name | Nom |
+| `settings.profile.name_hint` | Shown on what you write. | Affiché sur ce que vous écrivez. |
+| `settings.profile.job_title` | Job title | Fonction |
 | `settings.theme` | Theme | Thème |
 | `settings.theme.system` | System | Système |
 | `settings.theme.light` | Light | Clair |
@@ -760,6 +910,8 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `trash.restored` | Item restored. | Élément restauré. |
 | `trash.days` | {n} day left · {n} days left | {n} jour restant · {n} jours restants |
 | `trash.empty` | Trash is empty. | La corbeille est vide. |
+| `trash.merged_into` | Merged into {name} | Fusionné avec : {name} |
+| `trash.kept_named` | Kept: still named in {n} place · Kept: still named in {n} places | Conservé : encore cité à {n} endroit · Conservé : encore cité à {n} endroits |
 | `snapshot.daily` | Daily | Quotidien |
 | `snapshot.weekly` | Weekly | Hebdomadaire |
 | `snapshot.before_update` | Before update to {version} | Avant la mise à jour vers {version} |
@@ -921,101 +1073,11 @@ Moved into 10.4 when due dates were implemented: `prop.due` after `prop.level`, 
 
 Moved into 10.4 when the Overview was implemented: `overview.*` after `section.knowledge`, `filter.*` after `table.filter.week`, `cmd.show_*` and `cmd.overview_*` after `cmd.go_inbox`. Reused, not duplicated: "No epic" is `tree.no_epic`, the Knowledge block label is `section.knowledge`. Every `{n}` and `{days}` takes `tnum`; `{days}` is always 7 or more, so its sentences are written in the plural; `{when}` is the long form of 10.2 and the French brings its own preposition ("Dernière activité mardi à 14:05", "Dernière activité le 12 nov. 2026"). Memories are feminine in French (*mémoire*), topics masculine (*sujet*), epics masculine (*epic*). `overview.inbox` is chosen by `{n}`; with one note, "the oldest" would be wrong, so the singular form names that note's age directly. `filter.decided_week` lists topics, so "Décidés" agrees with *sujets*. Agent-facing text (`Attention: blocked T-12 ...`, `· no activity 12d`) is protocol, English only, and not in this catalogue (10).
 
-### 10.4.6 Keys of questions and people, pending
+### 10.4.6 Keys of questions and people
 
 Amended 2026-11-22: people are contacts (components-contacts.md 5); the `person.*` keys that 10.4.11 lists as replaced are not moved into 10.4.
 
-New with questions and Report to (2026-11-21; components-questions.md 5, data.md 11 requests 18 and 19). They stay here, outside the table the tests read, until the feature is implemented; the implementing change moves them into 10.4 and adds them to `catalogue.rs` in the same commit: `section.questions` after `section.description`, `prop.report_to` after `prop.due`, `event.report_*` after `event.due_*`, `table.questions*` and `table.report_to` after `table.due`, the `cmd.*` keys after `cmd.due_*`, the other families together after `kb.*`. In French, *question* is feminine ("répondue", "abandonnée", "close"); the person is user text and always follows a colon in French ("Posée à : Marie", "À rapporter à : le service RH"), so no article or preposition ever meets it (10.3). `{name}` is a person or a record name, never translated; `{date}` is the absolute date of 10.2.
-
-| Key | English | French |
-|---|---|---|
-| `section.questions` | Questions | Questions |
-| `questions.new` | New question | Nouvelle question |
-| `questions.closed` | {n} closed | {n} close · {n} closes |
-| `questions.more_epic` | {n} more open in the topics of this epic | {n} autre en suspens dans les sujets de cet epic · {n} autres en suspens dans les sujets de cet epic |
-| `questions.more_epic_overdue` | {n} more open in the topics of this epic, {late} overdue | {n} autre en suspens dans les sujets de cet epic, en retard · {n} autres en suspens dans les sujets de cet epic, dont {late} en retard |
-| `questions.more_project` | {n} more open in this project's epics and topics | {n} autre en suspens dans les epics et sujets de ce projet · {n} autres en suspens dans les epics et sujets de ce projet |
-| `questions.more_project_overdue` | {n} more open in this project's epics and topics, {late} overdue | {n} autre en suspens dans les epics et sujets de ce projet, en retard · {n} autres en suspens dans les epics et sujets de ce projet, dont {late} en retard |
-| `questions.empty` | No questions yet. Note what you are waiting to hear. | Aucune question pour l'instant. Notez ce que vous attendez d'apprendre. |
-| `questions.scope` | {scope} · {counts} | {scope} · {counts} |
-| `count.questions_open` | {n} open | {n} en suspens |
-| `count.questions_closed` | {n} closed | {n} close · {n} closes |
-| `questions.whole_project` | Whole project | Tout le projet |
-| `questions.none_open` | No open questions in {name}. | Aucune question en suspens dans {name}. |
-| `questions.none_overdue` | No overdue questions. | Aucune question en retard. |
-| `questions.none_closed` | No closed questions yet. | Aucune question close pour l'instant. |
-| `question.state.open` | Open question | Question en suspens |
-| `question.state.answered` | Answered | Répondue |
-| `question.state.dropped` | Dropped | Abandonnée |
-| `question.asked` | Asked {name} | Posée à : {name} |
-| `question.by` | Answer by {date} | Réponse attendue le {date} |
-| `question.answered_by` | Answer recorded {date} by {author} | Réponse notée le {date} par {author} |
-| `question.dropped_by` | Dropped {date} by {author} | Abandonnée le {date} par {author} |
-| `question.logged` | Logged as a decision | Consignée comme décision |
-| `question.in` | in {level} | dans : {level} (`{level}` is a `level.*` string) |
-| `question.placeholder` | What do you need to know? | Que faut-il savoir ? |
-| `question.field.asked` | Asked | Posée à |
-| `question.field.by` | Answer by | Réponse attendue |
-| `question.mark_answered` | Mark answered | Marquer comme répondue |
-| `question.answer_placeholder` | What was the answer? | Quelle a été la réponse ? |
-| `question.log_decision` | Also log it as a decision | La consigner aussi comme décision |
-| `question.save_answer` | Save answer | Enregistrer la réponse |
-| `question.edit_answer` | Edit answer | Modifier la réponse |
-| `question.set_date` | Set answer date... | Définir la date de réponse... |
-| `question.clear_date` | Clear answer date | Effacer la date de réponse |
-| `question.drop` | Drop question | Abandonner la question |
-| `question.reopen` | Reopen | Rouvrir |
-| `question.move` | Move to... | Déplacer vers... |
-| `question.deleted` | Question deleted. | Question supprimée. |
-| `question.restored` | Question restored. | Question restaurée. |
-| `question.counter` | {n} / 300 | {n} / 300 |
-| `table.questions` | Questions | Questions |
-| `table.questions_tip` | {n} open question · {n} open questions | {n} question en suspens · {n} questions en suspens |
-| `table.questions_tip_overdue` | 1 open question, overdue · {n} open questions, {late} overdue | 1 question en suspens, en retard · {n} questions en suspens, dont {late} en retard |
-| `table.report_to` | Report to | À rapporter à |
-| `prop.report_to` | Report to | À rapporter à |
-| `person.none` | None | Personne |
-| `person.placeholder` | Person, team or place | Personne, équipe ou lieu |
-| `person.open_count` | {n} open | {n} en cours |
-| `person.counter` | {n} / 80 | {n} / 80 |
-| `person.scope` | In {project} · {counts} | Dans {project} · {counts} |
-| `count.person_asked` | {n} question to ask · {n} questions to ask | {n} question à poser · {n} questions à poser |
-| `count.person_report` | {n} thing to report · {n} things to report | {n} élément à rapporter · {n} éléments à rapporter |
-| `person.section.asked` | Questions asked | Questions posées |
-| `person.section.report` | To report | À rapporter |
-| `person.empty` | Nothing open with {name}. | Rien en cours avec : {name}. |
-| `person.go` | Go to {name} | Ouvrir : {name} |
-| `report.to` | Report to {name} | À rapporter à : {name} |
-| `report.pending` | Not reported yet | Pas encore rapporté |
-| `report.done` | Reported {date} | Rapporté le {date} |
-| `report.mark` | Mark reported | Marquer comme rapporté |
-| `report.unmark` | Mark not reported | Marquer comme non rapporté |
-| `report.change` | Change person... | Changer de personne... |
-| `report.reported_count` | {n} reported | {n} rapporté · {n} rapportés |
-| `report.filter` | Report to: {name} | À rapporter à : {name} |
-| `report.filter.all` | Report to: anyone | À rapporter à : tout le monde |
-| `report.filter.anyone` | Anyone | Tout le monde |
-| `event.report_set` | {author} noted to report to {name} | {author} a noté de rapporter à : {name} |
-| `event.reported` | {author} marked it reported to {name} | {author} l'a marqué comme rapporté à : {name} |
-| `event.report_unmarked` | {author} marked it not reported | {author} l'a marqué comme non rapporté |
-| `event.report_cleared` | {author} removed Report to | {author} a retiré « À rapporter à » |
-| `cmd.question_new` | New question | Nouvelle question |
-| `cmd.questions_open` | Go to questions | Aller aux questions |
-| `cmd.person_go` | Go to person... | Aller à une personne... |
-| `cmd.report_set` | Set Report to... | Définir « À rapporter à »... |
-| `cmd.report_clear` | Clear Report to | Effacer « À rapporter à » |
-| `cmd.reported` | Mark reported | Marquer comme rapporté |
-| `cmd.unreported` | Mark not reported | Marquer comme non rapporté |
-| `cmd.question_answer` | Mark question answered | Marquer la question comme répondue |
-| `cmd.question_edit` | Edit question | Modifier la question |
-| `cmd.question_date` | Set answer date... | Définir la date de réponse... |
-| `cmd.question_date_clear` | Clear answer date | Effacer la date de réponse |
-| `cmd.question_drop` | Drop question | Abandonner la question |
-| `cmd.question_reopen` | Reopen question | Rouvrir la question |
-| `cmd.question_move` | Move question to... | Déplacer la question vers... |
-| `cmd.question_delete` | Delete question | Supprimer la question |
-| `overview.questions_late` | {n} question past its answer date · {n} questions past their answer date | {n} question dont la date de réponse est passée · {n} questions dont la date de réponse est passée |
-| `cmd.show_questions_late` | Show questions past their answer date | Afficher les questions dont la date de réponse est passée |
+New with questions and Report to (2026-11-21; components-questions.md 5, data.md 11 requests 18 and 19). Moved into 10.4 when questions and Report to were implemented (branch `gpui-engineer/questions-ui`): `section.questions` after `section.description`, `prop.report_to` after `prop.due`, `event.report_*` after `event.due_*`, `table.questions*` and `table.report_to` after `table.due`, the `cmd.*` keys after `cmd.due_*` (`cmd.show_questions_late` after `cmd.show_stale_memories`, `overview.questions_late` after `overview.memories`), the other families together after `kb.*`. In French, *question* is feminine ("répondue", "abandonnée", "close"); the person is user text and always follows a colon in French ("Posée à : Marie", "À rapporter à : le service RH"), so no article or preposition ever meets it (10.3). `{name}` is a person or a record name, never translated; `{date}` is the absolute date of 10.2.
 
 `questions.more_*_overdue` replace `questions.more_*` when `{late}` is above 0, and `table.questions_tip_overdue` replaces `table.questions_tip` the same way (its first form is for one question, which is then the overdue one). The overdue clause ("1 overdue", "dont 1 en retard") is drawn in `warning` as one run (components-questions.md 5): the implementation marks the span of that clause in the formatted string, it never builds the sentence from fragments. `report.pending`, `report.done` and the events agree with *sujet* and *epic*, both masculine. The relative phrases of an answer date reuse `due.*` (10.4.4); the empty Answer by value reuses `due.none` (« Aucune », agreeing with *date*), Clear in the popover `common.clear`, and the remaining menu items `common.edit` and `common.delete`. Agent-facing text (`Q-12 Marie · overdue 3d`, `report to Marie`) is protocol, English only, and not in this catalogue (10).
 
@@ -1149,7 +1211,7 @@ The macOS `Info.plist` usage strings (ADR 0014, 8) live with the bundle (`InfoPl
 
 ### 10.4.10 Clarity pass and the timeline without a composer
 
-From the clarity review of 2026-11-22 ([reviews/2026-11-22-clarity.md](reviews/2026-11-22-clarity.md)) and the user's decision of the same day that only Claude Code adds timeline entries (components-records.md 5). **Applied to 10.4 and `catalogue.rs`** (branch `gpui-engineer/polish-2`), with these differences from the lists below, all from the user's ruling of copy.md 7 (one plain line or none, never mechanics) and the QA of the same day: `composer.hint` stays (every multi-line editor's footer uses it); `settings.reading_width.hint`, `settings.resume.hint`, `settings.usage.hint` and `browser.idle.memory` are removed rather than shortened (each restated its label or explained mechanics); `settings.setup.hint` reads "Lets Claude Code read and update your projects in Acta." and is the Set up row's label, not a description under a label repeated on the button; `settings.flash_waiting.hint` keeps its first sentence; `topic.empty_project` drops "No topics yet.", which its heading already says; `prop.id` and `prop.updated` are removed (the meta line replaced both rows, on documents too); `meta.updated` ("Updated {when} by {author}", the meta line of a project, which shows no id), `meta.copy_id` ("Copy id", the id's tooltip) and `palette.epics` ("Epics", the palette's group of epics) are new; `prop.add_report_to` stays pending with Report to (10.4.6). The French colon takes U+00A0 (copy.md 10.1). The rule of the pass: one idea per line; what a person needs once (how a setting works, what setup writes, memory use) goes in a tooltip or behind "Details", never on screen at rest.
+From the clarity review of 2026-11-22 ([reviews/2026-11-22-clarity.md](reviews/2026-11-22-clarity.md)) and the user's decision of the same day that only Claude Code adds timeline entries (components-records.md 5). **Applied to 10.4 and `catalogue.rs`** (branch `gpui-engineer/polish-2`), with these differences from the lists below, all from the user's ruling of copy.md 7 (one plain line or none, never mechanics) and the QA of the same day: `composer.hint` stays (every multi-line editor's footer uses it); `settings.reading_width.hint`, `settings.resume.hint`, `settings.usage.hint` and `browser.idle.memory` are removed rather than shortened (each restated its label or explained mechanics); `settings.setup.hint` reads "Lets Claude Code read and update your projects in Acta." and is the Set up row's label, not a description under a label repeated on the button; `settings.flash_waiting.hint` keeps its first sentence; `topic.empty_project` drops "No topics yet.", which its heading already says; `prop.id` and `prop.updated` are removed (the meta line replaced both rows, on documents too); `meta.updated` ("Updated {when} by {author}", the meta line of a project, which shows no id), `meta.copy_id` ("Copy id", the id's tooltip) and `palette.epics` ("Epics", the palette's group of epics) are new; `prop.add_report_to` stayed pending with Report to and moved into 10.4 with 10.4.6. The French colon takes U+00A0 (copy.md 10.1). The rule of the pass: one idea per line; what a person needs once (how a setting works, what setup writes, memory use) goes in a tooltip or behind "Details", never on screen at rest.
 
 **Removed** from 10.4: `composer.placeholder`, `composer.hint`, `composer.add`, `cmd.add_entry` (no hand-written entries); `settings.theme.hint` (the segment "System" says it); `usage.no_data` (the status bar shows nothing until there is a number; `usage.no_data.tip` becomes the tooltip of the Settings row "Show plan usage in the status bar" while no report has arrived); `kb.empty.epic` and `kb.empty.project` (one text for every level, `kb.empty`).
 
@@ -1217,85 +1279,12 @@ From the clarity review of 2026-11-22 ([reviews/2026-11-22-clarity.md](reviews/2
 
 `{level}` in `folders.also.tip` is a `level.*` string ("Epic Terminal", « Epic Terminal »), which is why the French follows a colon. `prop.add_due` and `prop.add_report_to` label the hover-revealed add chips of an unset optional property (components-records.md 5, Properties block). `meta.record` is the one meta line under the properties block that replaces the Id and Updated rows; `{id}` is in `type.code`. `settings.setup.details` (the former text of `settings.setup.hint`) is the body behind "What setup changes", followed by `settings.plugin.hint`. The Settings rows Snapshots, Trash and Keyboard shortcuts take `settings.restore`, `common.open` and `common.open` as their buttons, so a label is never repeated on its own button.
 
-### 10.4.11 Keys of contacts and the profile, pending
+### 10.4.11 Keys of contacts and the profile
 
-New with contacts (2026-11-22; components-contacts.md 5, data.md 11 requests 22 and 23). They stay here, outside the table the tests read, until the feature is implemented; the implementing change moves them into 10.4 with the keys of 10.4.6 and adds them to `catalogue.rs` in the same commit: `settings.profile*` before `settings.theme`, `cmd.contact*` and `cmd.profile_*` after the `cmd.*` keys of questions, `trash.*` after the trash keys, the `contact.*` and `contacts.*` families together after `person.*`.
+New with contacts (2026-11-22; components-contacts.md 5, data.md 11 requests 22 and 23). Moved into 10.4 with the keys of 10.4.6 (branch `gpui-engineer/questions-ui`): `settings.profile*` before `settings.theme`, `cmd.contact*` and `cmd.profile_*` after the `cmd.*` keys of questions, `trash.*` after the trash keys, the `contact.*` and `contacts.*` families together after `person.*`.
 
 **Replaced** in 10.4.6 (not to be moved into 10.4): `person.placeholder` by `contact.placeholder`; `person.open_count` by `contact.open_count`; `person.counter` (no counter: the picker stops at 80); `person.scope` by `contact.scope` and `contact.scope_projects`; `person.go` by `contact.go`; `cmd.person_go` by `cmd.contact_go`. Kept: `person.none`, `person.section.asked`, `person.section.report`, `person.empty`, `count.person_asked`, `count.person_report`.
 
 In French, *contact* is masculine ("ajouté", "supprimé", "fusionné"); a contact's name is user text and in French always follows a colon (10.3), so sentences put it last. `{level}` is `contact.level.all` or a `level.project` / `level.epic` string; `{record}` is a record title as written; `{places}` is a list of `contact.move.place`, joined by ", " as 10.3 licenses, at most three, then `contact.move.more`.
-
-| Key | English | French |
-|---|---|---|
-| `contact.placeholder` | Search contacts | Rechercher un contact |
-| `contact.new_named` | New contact "{name}" | Nouveau contact : {name} |
-| `contact.new_in` | in {level} | dans : {level} |
-| `contact.new_tag` | new | nouveau |
-| `contact.out_of_scope` | {name} is no longer visible here. Choose again. | Ce contact n'est plus visible ici : {name}. Choisissez à nouveau. |
-| `contact.level.all` | All projects | Tous les projets |
-| `contact.level.current` | Current | Actuel |
-| `contact.move.blocked` | Used outside | Utilisé ailleurs |
-| `contact.move.refused` | Named outside {level}: {places}. Change those first. | Cité hors de ce niveau ({level}) : {places}. Modifiez-les d'abord. |
-| `contact.move.place` | {id} {title} ({field}) | {id} {title} ({field}) |
-| `contact.move.more` | +{n} more | +{n} autre · +{n} autres |
-| `contact.lifted` | {name} is now a contact of all projects, so {record} still sees them. | Contact étendu à tous les projets pour rester visible depuis {record} : {name}. |
-| `contact.lifted.project` | {name} is now a contact of project {project}, so {record} still sees them. | Contact étendu au projet {project} pour rester visible depuis {record} : {name}. |
-| `contacts.title` | Contacts | Contacts |
-| `contacts.count` | {n} contact · {n} contacts | {n} contact · {n} contacts |
-| `contacts.filter.project` | This project | Ce projet |
-| `contacts.filter.all` | All | Tous |
-| `contacts.new` | New contact | Nouveau contact |
-| `contacts.new_here` | New contact here | Nouveau contact ici |
-| `contacts.empty` | No contacts yet. A contact is added when you choose who a question is asked of or who to report to. | Aucun contact pour l'instant. Un contact s'ajoute quand vous choisissez à qui poser une question ou à qui rapporter. |
-| `contacts.no_match` | No contact matches "{query}". | Aucun contact ne correspond à « {query} ». |
-| `contacts.none_here` | No contacts in {project}. | Aucun contact dans {project}. |
-| `contact.name_placeholder` | Name | Nom |
-| `contact.name_required` | A contact needs a name. | Un contact doit avoir un nom. |
-| `contact.open_count` | {n} open | {n} en cours |
-| `contact.prop.job_title` | Job title | Fonction |
-| `contact.prop.company` | Company | Entreprise |
-| `contact.prop.level` | Level | Niveau |
-| `contact.add.job_title` | Job title | Fonction |
-| `contact.add.company` | Company | Entreprise |
-| `contact.add.address` | How to address them | Comment s'adresser à ce contact |
-| `contact.section.address` | How to address them | Comment s'adresser à ce contact |
-| `contact.address_placeholder` | Formal or first name, tone, what to avoid | Vouvoiement ou tutoiement, prénom ou nom, ton, ce qu'il faut éviter |
-| `contact.address_counter` | {n} / 500 | {n} / 500 |
-| `contact.meta` | {id} · Added {date} by {author} | {id} · Ajouté le {date} par {author} |
-| `contact.meta_updated` | {id} · Added {date} by {author} · Updated {when} | {id} · Ajouté le {date} par {author} · Modifié {when} |
-| `contact.scope` | {asked}, {report} | {asked}, {report} |
-| `contact.scope_projects` | {asked}, {report} in {n} projects | {asked}, {report} dans {n} projets |
-| `contact.duplicate` | Another contact is also named {name}, in {level}. | Un autre contact porte aussi ce nom, dans {level} : {name}. |
-| `contact.merge_into_it` | Merge into it... | Fusionner avec lui... |
-| `contact.keep_both` | Keep both | Garder les deux |
-| `contact.go` | Go to {name} | Ouvrir : {name} |
-| `contact.rename` | Rename | Renommer |
-| `contact.move` | Move to... | Déplacer vers... |
-| `contact.merge` | Merge into... | Fusionner avec... |
-| `contact.delete` | Delete contact | Supprimer le contact |
-| `contact.merged` | Merged into {name}. | Fusionné avec : {name}. |
-| `contact.restored_merged` | Contact restored. Its uses stayed with {name}. | Contact restauré. Ses usages restent à : {name}. |
-| `contact.deleted` | Contact deleted. | Contact supprimé. |
-| `contact.restored` | Contact restored. | Contact restauré. |
-| `contact.in_trash` | In the trash | Dans la corbeille |
-| `trash.merged_into` | Merged into {name} | Fusionné avec : {name} |
-| `trash.kept_named` | Kept: still named in {n} place · Kept: still named in {n} places | Conservé : encore cité à {n} endroit · Conservé : encore cité à {n} endroits |
-| `cmd.contacts_open` | Go to contacts | Aller aux contacts |
-| `cmd.contact_go` | Go to contact... | Aller à un contact... |
-| `cmd.contact_new` | New contact | Nouveau contact |
-| `cmd.contact_rename` | Rename contact | Renommer le contact |
-| `cmd.contact_job_title` | Set job title... | Définir la fonction... |
-| `cmd.contact_company` | Set company... | Définir l'entreprise... |
-| `cmd.contact_address` | Edit how to address them | Modifier comment s'adresser à ce contact |
-| `cmd.contact_move` | Move contact to... | Déplacer le contact vers... |
-| `cmd.contact_merge` | Merge contact into... | Fusionner le contact avec... |
-| `cmd.contact_delete` | Delete contact | Supprimer le contact |
-| `cmd.profile_name` | Set your name | Définir votre nom |
-| `cmd.profile_job_title` | Set your job title | Définir votre fonction |
-| `settings.profile` | Profile | Profil |
-| `settings.profile.hint` | Claude Code sees your name and job title. | Claude Code voit votre nom et votre fonction. |
-| `settings.profile.name` | Name | Nom |
-| `settings.profile.name_hint` | Shown on what you write. | Affiché sur ce que vous écrivez. |
-| `settings.profile.job_title` | Job title | Fonction |
 
 `contact.lifted.project` replaces `contact.lifted` when the contact is lifted to a project rather than to all projects. `contact.meta_updated` replaces `contact.meta` once the contact changed after it was added. The `{field}` of `contact.move.place` is `prop.report_to` or `question.field.asked`. Agent-facing text (`ok C-12 Paul (P-1)`, `refused: no contact "Mari" here`, `User: Alexandre, Product designer`) is protocol, English only, and not in this catalogue (10).

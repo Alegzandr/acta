@@ -69,6 +69,10 @@ pub struct Preferences {
     /// The plan usage meters are not shown in the status bar (Settings,
     /// Claude Code; shown by default).
     pub hide_usage: bool,
+    /// "Also log it as a decision" left unchecked when a question was last
+    /// answered (components-questions.md 5: remembered per installation;
+    /// checked by default).
+    pub skip_decision: bool,
     /// The version that last ran ("0.4.1"): a launch on another version
     /// shows "Updated to ..." in the status bar for that session.
     pub last_version: Option<String>,
@@ -120,6 +124,8 @@ struct Stored {
     flash_waiting: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     hide_usage: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    skip_decision: bool,
     #[serde(default, skip_serializing)]
     sidebar_width: Option<u16>,
     #[serde(default, skip_serializing)]
@@ -320,6 +326,7 @@ pub fn parse(text: &str) -> Result<Preferences, LoadError> {
         new_conversations: stored.new_conversations,
         flash_waiting: stored.flash_waiting,
         hide_usage: stored.hide_usage,
+        skip_decision: stored.skip_decision,
         last_version: stored.last_version.filter(|v| is_version(v)),
         layout,
     })
@@ -346,6 +353,7 @@ pub fn serialize(prefs: &Preferences) -> String {
         new_conversations: prefs.new_conversations,
         flash_waiting: prefs.flash_waiting,
         hide_usage: prefs.hide_usage,
+        skip_decision: prefs.skip_decision,
         sidebar_width: None,
         terminal_width: None,
         chat_width: None,
@@ -562,6 +570,7 @@ mod tests {
             new_conversations: true,
             flash_waiting: true,
             hide_usage: true,
+            skip_decision: true,
             last_version: Some("0.3.0".into()),
             layout: Some(migrate(&Old {
                 tabs: vec!["T-42".into(), "settings".into()],

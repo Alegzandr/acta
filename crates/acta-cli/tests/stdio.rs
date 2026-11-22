@@ -1790,6 +1790,38 @@ fn attachments_over_stdio() {
         ok && out.contains("Ship attachments.") && !out.contains("# Plan"),
         "{out}"
     );
+    // The parser command is internal: refused without the parent's marker,
+    // and for a file of another project.
+    let (ok, out, err) = cli(&data, &repo, &["pdf-text", "A-3", "--project", "P-1"], "");
+    assert!(
+        !ok && out.is_empty() && err.contains("internal"),
+        "{out}{err}"
+    );
+    let marker = "0123456789abcdef0123456789abcdef";
+    let child = |project: &str| {
+        let mut c = base_cmd(&data);
+        let mut child = c
+            .args(["pdf-text", "A-3", "--project", project])
+            .env("ACTA_PDF_CHILD", marker)
+            .current_dir(&repo)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(format!("{marker}\n").as_bytes())
+            .unwrap();
+        child.wait_with_output().unwrap()
+    };
+    let out = child("P-1");
+    let json: Value = serde_json::from_slice(&out.stdout).expect("JSON only");
+    assert_eq!(json["count"], json!(1));
+    let out = child("P-2");
+    assert!(!out.status.success() && out.stdout.is_empty());
     let (ok, out, _) = cli(&data, &repo, &["attachment", "A-3", "--pages", "1"], "");
     assert!(ok && out.contains("Storage spec for Alexandre"), "{out}");
     let (ok, out, _) = cli(&data, &repo, &["attachment", "A-1"], "");

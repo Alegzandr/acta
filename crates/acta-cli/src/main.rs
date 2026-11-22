@@ -279,6 +279,9 @@ enum Command {
     #[command(hide = true)]
     PdfText {
         id: String,
+        /// The project the file must belong to (P-n).
+        #[arg(long)]
+        project: String,
         #[arg(long, default_value_t = 1)]
         from: u32,
         #[arg(long, default_value_t = 1)]
@@ -532,10 +535,11 @@ fn run(command: Command) -> ExitCode {
         }
         Command::PdfText {
             id,
+            project,
             from,
             to,
             max_chars,
-        } => finish(pdf_text(&opener, &id, from, to, max_chars)),
+        } => finish(pdf_text(&opener, &id, &project, from, to, max_chars)),
         Command::Statusline => {
             let input = statusline::read_stdin();
             let data_dir = opener.data_dir();
@@ -555,13 +559,26 @@ fn run(command: Command) -> ExitCode {
 fn pdf_text(
     opener: &Opener,
     id: &str,
+    project: &str,
     from: u32,
     to: u32,
     max_chars: usize,
 ) -> Result<String, String> {
+    // Only for a child an Acta process started (the marker in the
+    // environment and on stdin); refused before anything is opened.
+    let mut line = String::new();
+    let _ = std::io::stdin().read_line(&mut line);
+    let marker = std::env::var(acta_core::agent::attach::PDF_CHILD_ENV).ok();
+    if !acta_core::agent::attach::is_pdf_child(marker.as_deref(), &line) {
+        return Err("pdf-text is internal to Acta; read files with `acta attachment`".into());
+    }
+    let project = ProjectId::parse(project).ok_or("--project takes P-n")?;
     let store = opener.open()?;
     let id = acta_core::model::AttachmentId::parse(id).ok_or("not a file id")?;
     let att = store.attachment(id).map_err(|e| e.to_string())?;
+    if att.project != project {
+        return Err(format!("{id} is not in {project}"));
+    }
     if att.kind != acta_core::model::FileKind::Pdf {
         return Err("not a PDF".into());
     }

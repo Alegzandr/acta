@@ -384,3 +384,201 @@ pub fn folders(store: &mut Store, root: &Path) -> acta_core::Result<()> {
         acta_core::claude_settings::set_commit(store, wt, CommitMode::Push, Some(true), false, me);
     Ok(())
 }
+
+/// Questions, Report to, contacts and the profile (screens.md 8.21 to
+/// 8.24, 8.28 to 8.30), on the sample data: two Maries at nested levels
+/// and one in another project, a contact in the trash still named, an
+/// overdue question, a 300-character one, a French "le service RH", a
+/// done topic not reported, a note with a person, a 500-character address
+/// note.
+#[cfg(debug_assertions)]
+pub fn questions(store: &mut Store, folder: &Path) -> acta_core::Result<()> {
+    use acta_core::date::Zone;
+    use acta_core::model::{ContactLevel, Record};
+    use acta_core::store::{ContactPatch, NewQuestion};
+    if !store.projects()?.is_empty() {
+        return Ok(());
+    }
+    seed(store, folder)?;
+    let me = Author::Human;
+    let claude = Author::Claude;
+    let today = Zone::system().today();
+    store.set_profile(Some("Alexandre"), Some("Product designer"))?;
+    let tree = store.tree(store.projects()?[0].id)?;
+    let acta = tree.project.id;
+    let find = |title: &str| {
+        tree.loose_topics
+            .iter()
+            .chain(tree.epics.iter().flat_map(|(_, t)| t))
+            .find(|t| t.title == title)
+            .map(|t| t.id)
+    };
+    let terminal = tree
+        .epics
+        .iter()
+        .find(|(e, _)| e.title == "Terminal")
+        .map(|(e, _)| e.id);
+    let atlas = match store.projects()?.into_iter().find(|p| p.title == "Atlas") {
+        Some(p) => p.id,
+        None => store.create_project("Atlas", "", me)?,
+    };
+    let project = ContactLevel::Project(acta);
+    let detail = |store: &mut Store, id, job: Option<&str>, company: Option<&str>| {
+        store.update_contact(
+            id,
+            ContactPatch {
+                job_title: job.map(|j| Some(j.to_owned())),
+                company: company.map(|c| Some(c.to_owned())),
+                ..ContactPatch::default()
+            },
+            me,
+        )
+    };
+    let marie = store.create_contact("Marie", project, claude)?;
+    detail(store, marie, Some("Head of legal"), Some("Acme"))?;
+    store.update_contact(
+        marie,
+        ContactPatch {
+            address_note: Some(Some(
+                "Vouvoiement. Madame Dubois in writing, Marie in person. Short messages, no \
+                 attachments; she reads on her phone between meetings, so put the question in \
+                 the first line and the context after it. She prefers one message with three \
+                 questions to three messages. Never before 9:00 or after 18:00, and not on \
+                 Wednesdays, when she is at the other office. If something is urgent, say so in \
+                 the subject and call the legal desk. Copy the legal team \
+                 on anything about contracts or data leaving the EU."
+                    .into(),
+            )),
+            ..ContactPatch::default()
+        },
+        me,
+    )?;
+    let marie_city = store.create_contact("Marie", ContactLevel::All, me)?;
+    detail(store, marie_city, Some("Head of legal"), Some("City hall"))?;
+    store.create_contact("Marie", ContactLevel::Project(atlas), me)?;
+    let legal = store.create_contact("Legal team", project, me)?;
+    let marius = store.create_contact("Marius", project, me)?;
+    detail(store, marius, Some("Accounting"), None)?;
+    let rh = store.create_contact("le service RH", project, me)?;
+    let accountant =
+        store.create_contact("Alexandre\u{2019}s accountant", ContactLevel::All, me)?;
+    store.create_contact("Paul", project, claude)?;
+    let (design, sami) = match terminal {
+        Some(e) => {
+            let design =
+                store.create_contact("Design review group", ContactLevel::Epic(acta, e), me)?;
+            let sami = store.create_contact("Sami", ContactLevel::Epic(acta, e), me)?;
+            detail(store, sami, Some("Windows packaging"), None)?;
+            (Some(design), Some(sami))
+        }
+        None => (None, None),
+    };
+    let supplier = store.create_contact("Old supplier", project, me)?;
+    let embed = find("Embed the terminal bound to the project");
+    let ask = |store: &mut Store, owner, text: &str, to, days: Option<i64>, by| {
+        store.ask(
+            NewQuestion {
+                owner,
+                text: text.into(),
+                asked_to: to,
+                expected_on: days.map(|d| today.add_days(d)),
+            },
+            by,
+        )
+    };
+    if let Some(t) = embed {
+        let owner = Owner::Topic(t);
+        ask(
+            store,
+            owner,
+            "Can we keep the v1 export format until March, or must both formats ship together?",
+            Some(marie),
+            Some(-3),
+            me,
+        )?;
+        ask(
+            store,
+            owner,
+            "Which Windows versions must the installer support, given that the terminal relies on \
+             ConPTY, that some users are still on older builds of Windows 10 at work, and that \
+             packaging would rather test fewer versions well than many badly; can the docs \
+             state Windows 10 1809 as the floor for everyone?",
+            Some(legal),
+            None,
+            claude,
+        )?;
+        let eu = ask(
+            store,
+            owner,
+            "Can the export file leave the EU?",
+            Some(legal),
+            None,
+            me,
+        )?;
+        store.answer(
+            eu,
+            Some("Inside the EEA only; ask again for anything else."),
+            true,
+            me,
+        )?;
+        let key = ask(
+            store,
+            owner,
+            "Do we need a second signing key?",
+            None,
+            None,
+            claude,
+        )?;
+        store.drop_question(key, claude)?;
+        ask(
+            store,
+            owner,
+            "Is the HR onboarding checklist final?",
+            Some(rh),
+            Some(2),
+            me,
+        )?;
+        store.set_report_to(Record::Topic(t), Some(marie), me)?;
+    }
+    if let Some(e) = terminal {
+        ask(
+            store,
+            Owner::Epic(e),
+            "Who reviews the terminal colours for contrast?",
+            design,
+            None,
+            me,
+        )?;
+        ask(
+            store,
+            Owner::Epic(e),
+            "Is ConPTY acceptable as the minimum on Windows?",
+            sami,
+            Some(-1),
+            claude,
+        )?;
+        store.set_report_to(Record::Epic(e), Some(legal), me)?;
+    }
+    ask(
+        store,
+        Owner::Project(acta),
+        "Do we keep a free tier on the website?",
+        Some(accountant),
+        Some(13),
+        me,
+    )?;
+    if let Some(t) = find("Terminal spike") {
+        store.set_report_to(Record::Topic(t), Some(marie), me)?;
+    }
+    if let Some(t) = find("App shell") {
+        store.set_report_to(Record::Topic(t), Some(marie_city), me)?;
+        store.set_reported(Record::Topic(t), true, me)?;
+    }
+    if let Some(t) = find("Sidebar tree") {
+        store.set_report_to(Record::Topic(t), Some(supplier), me)?;
+    }
+    store.delete(Record::Contact(supplier), me)?;
+    let note = store.add_note(acta, "Ask about the review room for Thursday", me)?;
+    store.set_report_to(Record::Note(note), Some(marie), me)?;
+    Ok(())
+}

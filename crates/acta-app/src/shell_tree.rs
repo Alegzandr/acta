@@ -248,6 +248,7 @@ impl Shell {
             .map(|d| (d.row, d.anchor.clone(), d.picker.clone()));
         let renaming = bench.rename.as_ref().map(|r| (r.key, r.state.clone()));
         let active_project = bench.active_project;
+        let has_contacts = bench.ws.read(cx).contacts > 0;
         let menu_items = self.menu_items(&rows, cx);
         let Some(bench) = self.bench() else {
             return div().into_any_element();
@@ -366,6 +367,9 @@ impl Shell {
         });
         let on_trash = current == Some(Route::Trash);
         let on_settings = current == Some(Route::Settings);
+        let on_contacts = matches!(current, Some(Route::Contacts) | Some(Route::Contact(_)));
+        // The Contacts row exists only once a contact does
+        // (components-contacts.md 5).
         let pinned = div()
             .flex()
             .flex_col()
@@ -373,6 +377,20 @@ impl Shell {
             .p(px(8.))
             .border_t_1()
             .border_color(t.border_subtle)
+            .when(has_contacts, |this| {
+                this.child(
+                    sidebar_row(
+                        "sidebar-contacts",
+                        Icon::Users,
+                        text(locale, Key::ContactsTitle),
+                        on_contacts,
+                        t,
+                    )
+                    .on_click(cx.listener(|shell, _, window, cx| {
+                        shell.navigate(Route::Contacts, true, window, cx)
+                    })),
+                )
+            })
             .child(
                 sidebar_row(
                     "sidebar-trash",

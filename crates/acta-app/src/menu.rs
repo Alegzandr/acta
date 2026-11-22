@@ -180,6 +180,11 @@ impl AnchorBounds {
         })
     }
 
+    /// The trigger's width as last measured.
+    pub fn width(&self) -> Option<f32> {
+        self.0.get().map(|(_, b)| f32::from(b.size.width))
+    }
+
     /// `layer` 4 below the trigger, lined up with its start or end edge,
     /// flipped above when there is more room there (components.md 5).
     pub fn below(&self, layer: impl IntoElement, align: Align) -> Option<AnyElement> {

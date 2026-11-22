@@ -46,11 +46,33 @@ pub struct Limits {
 
 /// [`output_within`] with a memory cap and an output cap as well.
 pub fn output_limited(command: &mut Command, limits: Limits) -> io::Result<Option<Bounded>> {
+    output_limited_with_input(command, limits, None)
+}
+
+/// [`output_limited`], writing `input` to the child's stdin (then closing
+/// it) instead of giving it none.
+pub fn output_limited_with_input(
+    command: &mut Command,
+    limits: Limits,
+    input: Option<&[u8]>,
+) -> io::Result<Option<Bounded>> {
     command
-        .stdin(Stdio::null())
+        .stdin(if input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let (mut child, tree) = spawn_limited(command, limits.memory)?;
+    if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
+        use std::io::Write as _;
+        let input = input.to_vec();
+        // On its own thread: a child that never reads cannot block us.
+        thread::spawn(move || {
+            let _ = stdin.write_all(&input);
+        });
+    }
     // The pipes are drained on their own threads, so a chatty child never
     // blocks on a full pipe while we wait.
     let stdout = drain(child.stdout.take(), limits.output);
@@ -174,7 +196,11 @@ fn spawn_limited(command: &mut Command, memory: Option<u64>) -> io::Result<(Chil
                         rlim_cur: bytes as libc::rlim_t,
                         rlim_max: bytes as libc::rlim_t,
                     };
-                    if libc::setrlimit(libc::RLIMIT_AS, &lim) != 0 {
+                    // `RLIMIT_DATA` counts heap and private mappings on
+                    // Linux (4.7 and later). macOS does not enforce it and
+                    // may refuse it: the time and output caps still hold.
+                    let failed = libc::setrlimit(libc::RLIMIT_DATA, &lim) != 0;
+                    if failed && cfg!(target_os = "linux") {
                         return Err(io::Error::last_os_error());
                     }
                     Ok(())
@@ -397,9 +423,13 @@ mod tests {
         assert!(out.stdout.len() > 50_000);
     }
 
-    /// A child that allocates past the cap fails instead of growing.
+    /// A child that allocates past the cap fails instead of growing, on
+    /// Windows (job object) and Linux (`RLIMIT_DATA`). macOS does not
+    /// enforce a data limit: there the run only has to end within its
+    /// other limits.
     #[test]
     fn a_child_over_its_memory_cap_fails() {
+        let enforced = cfg!(any(windows, target_os = "linux"));
         let mut cmd = if cfg!(windows) {
             let mut c = Command::new("powershell");
             c.args([
@@ -421,12 +451,32 @@ mod tests {
             },
         )
         .unwrap();
-        if let Some(out) = out {
+        if let (Some(out), true) = (out, enforced) {
             assert!(
                 !String::from_utf8_lossy(&out.stdout).contains("allocated"),
                 "{out:?}"
             );
         }
+    }
+
+    #[test]
+    fn input_reaches_the_child() {
+        let mut cmd = if cfg!(windows) {
+            let mut c = Command::new("findstr");
+            c.arg("Alexandre");
+            c
+        } else {
+            Command::new("cat")
+        };
+        let limits = Limits {
+            time: Duration::from_secs(20),
+            memory: None,
+            output: Some(1_000),
+        };
+        let out = output_limited_with_input(&mut cmd, limits, Some(b"Alexandre\n"))
+            .unwrap()
+            .expect("finished");
+        assert!(String::from_utf8_lossy(&out.stdout).contains("Alexandre"));
     }
 
     #[test]

@@ -47,6 +47,7 @@ impl Step {
 /// A PDF to read: which pages, and where its text comes from.
 pub struct PdfJob {
     id: AttachmentId,
+    project: crate::model::ProjectId,
     hash: String,
     head: String,
     name: String,
@@ -112,13 +113,50 @@ fn lock_cache() -> std::sync::MutexGuard<'static, PdfCache> {
     }
 }
 
-/// Runs `acta pdf-text` on one attachment with the limits above. A
-/// timeout, a crash, a memory failure or too much output: unreadable.
-pub fn pdf_pages_in_child(exe: &std::path::Path, id: AttachmentId, from: u32, to: u32) -> PdfText {
+/// The variable through which `acta pdf-text` learns it was started by an
+/// Acta process: the same random marker comes on its stdin. Without both
+/// it refuses, so it is not a command to run by hand (or by Claude Code).
+pub const PDF_CHILD_ENV: &str = "ACTA_PDF_CHILD";
+
+/// This process's marker for its `pdf-text` children: 16 random bytes.
+fn child_marker() -> &'static str {
+    static MARKER: OnceLock<String> = OnceLock::new();
+    MARKER.get_or_init(|| {
+        let mut b = [0u8; 16];
+        if getrandom::fill(&mut b).is_err() {
+            b[..8].copy_from_slice(&crate::time::now_ms().to_le_bytes());
+        }
+        b.iter().map(|x| format!("{x:02x}")).collect()
+    })
+}
+
+/// Whether a `pdf-text` process was started by [`pdf_pages_in_child`]:
+/// the marker in its environment equals the first line of its stdin.
+pub fn is_pdf_child(env_marker: Option<&str>, stdin_line: &str) -> bool {
+    match env_marker {
+        Some(m) => m.len() == 32 && m == stdin_line.trim(),
+        None => false,
+    }
+}
+
+/// Runs `acta pdf-text` on one attachment of `project` with the limits
+/// above. A timeout, a crash, a memory failure or too much output:
+/// unreadable.
+pub fn pdf_pages_in_child(
+    exe: &std::path::Path,
+    project: crate::model::ProjectId,
+    id: AttachmentId,
+    from: u32,
+    to: u32,
+) -> PdfText {
+    let marker = child_marker();
     let mut cmd = std::process::Command::new(exe);
+    cmd.env(PDF_CHILD_ENV, marker);
     cmd.args([
         "pdf-text".to_owned(),
         id.to_string(),
+        "--project".into(),
+        project.to_string(),
         "--from".into(),
         from.to_string(),
         "--to".into(),
@@ -131,7 +169,8 @@ pub fn pdf_pages_in_child(exe: &std::path::Path, id: AttachmentId, from: u32, to
         memory: Some(PDF_MEMORY),
         output: Some(PDF_OUTPUT),
     };
-    match crate::process::output_limited(&mut cmd, limits) {
+    let input = format!("{marker}\n");
+    match crate::process::output_limited_with_input(&mut cmd, limits, Some(input.as_bytes())) {
         Ok(Some(out)) if out.status.success() => serde_json::from_slice::<PdfPages>(&out.stdout)
             .map_or(PdfText::Unreadable, PdfText::Pages),
         _ => PdfText::Unreadable,
@@ -162,7 +201,7 @@ impl PdfJob {
         if !done {
             let fresh = match (&self.bytes, PDF_WORKER.get()) {
                 (Some(b), _) => files::pdf_pages(b, next, self.to, PDF_CHARS - used),
-                (None, Some(exe)) => pdf_pages_in_child(exe, self.id, next, self.to),
+                (None, Some(exe)) => pdf_pages_in_child(exe, self.project, self.id, next, self.to),
                 (None, None) => PdfText::Unreadable,
             };
             let PdfText::Pages(fresh) = fresh else {
@@ -471,6 +510,7 @@ impl Agent<'_> {
         };
         Ok(Step::Pdf(PdfJob {
             id: att.id,
+            project: att.project,
             hash,
             head,
             name,

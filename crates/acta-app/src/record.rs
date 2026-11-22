@@ -5,15 +5,18 @@
 use std::collections::HashSet;
 
 use acta_core::date::{Date, Zone};
+use std::collections::HashMap;
+
 use acta_core::model::{
-    Author, Entry, EntryKind, EpicId, FolderId, Owner, PageReq, ProjectId, Record, Topic, TopicId,
-    TopicSummary,
+    Author, Entry, EntryKind, EpicId, FolderId, Owner, PageReq, Place, ProjectId, QuestionId,
+    QuestionStatus, Record, Report, Topic, TopicId, TopicSummary,
 };
-use acta_core::store::{EntryFilter, KbFilter, Overview, OverviewFilter, Scope};
+use acta_core::store::{EntryFilter, KbFilter, Overview, OverviewFilter, QuestionFilter, Scope};
 use acta_core::{Result, Store};
 
 use crate::folders_model::FolderItem;
 use crate::kb_model::{self, Section};
+use crate::questions_model;
 
 /// How many entries the timeline loads at first; "older" pages follow.
 pub const TIMELINE_PAGE: i64 = 100;
@@ -126,6 +129,66 @@ pub struct Loaded {
     /// The topics behind the table's filter chip, in the list's order:
     /// the same store query as the figure that opened it.
     pub chip: Option<Chip>,
+    /// The Questions section, its roll-up row and the questions Claude
+    /// Code wrote that were not shown yet (components-questions.md 5).
+    pub questions: QuestionsData,
+    /// Topic and epic pages: who to report to, and whether it was.
+    pub report: Report,
+    /// Where the record sits, for the contacts it may name.
+    pub place: Place,
+    /// The names of the contacts the timeline's Report to events name, by
+    /// UUID (drawn with the current name).
+    pub event_names: HashMap<String, String>,
+}
+
+/// What the Questions section and the topic table's two columns need.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct QuestionsData {
+    pub section: questions_model::Section,
+    pub rollup: questions_model::Rollup,
+    /// Open questions per topic, as `(open, overdue)`.
+    pub per_topic: HashMap<TopicId, (i64, i64)>,
+    pub unread: HashSet<QuestionId>,
+}
+
+/// The page's questions, from the store in the same read.
+fn questions(
+    store: &Store,
+    owner: Owner,
+    project: ProjectId,
+    today: Date,
+) -> Result<QuestionsData> {
+    let section = questions_model::Section::of(store.questions_of(owner)?);
+    let (rollup, per_topic) = match owner {
+        Owner::Topic(_) => (questions_model::Rollup::default(), HashMap::new()),
+        Owner::Epic(_) | Owner::Project(_) => {
+            let filter = QuestionFilter {
+                statuses: vec![QuestionStatus::Open],
+                epic: match owner {
+                    Owner::Epic(e) => Some(e),
+                    _ => None,
+                },
+                ..QuestionFilter::default()
+            };
+            let scope = store.find_questions(project, &filter)?;
+            (
+                questions_model::rollup(owner, &scope, today),
+                store.open_questions_by_topic(project, today)?,
+            )
+        }
+    };
+    let unread = store
+        .unread_questions()?
+        .into_iter()
+        .filter(|(_, o)| *o == owner)
+        .map(|(q, _)| q)
+        .collect();
+    Ok(QuestionsData {
+        section,
+        rollup,
+        per_topic,
+        unread,
+    })
 }
 
 impl Loaded {
@@ -274,7 +337,28 @@ pub fn load(
                 None => None,
             };
             let entries = store.entries(id, &filter.filter(), PageReq::first(TIMELINE_PAGE))?;
+            let uuids: Vec<String> = entries
+                .items
+                .iter()
+                .filter_map(|e| e.event.as_ref())
+                .filter(|ev| {
+                    matches!(
+                        ev.kind,
+                        acta_core::model::EventKind::Report | acta_core::model::EventKind::Reported
+                    )
+                })
+                .flat_map(|ev| [ev.old.clone(), ev.new.clone()])
+                .flatten()
+                .collect();
+            let event_names = store.contact_names(&uuids)?;
             Ok(Loaded {
+                event_names,
+                questions: questions(store, owner, topic.project, today)?,
+                report: topic.report.clone(),
+                place: Place {
+                    project: topic.project,
+                    epic: topic.epic,
+                },
                 owner,
                 title: topic.title.clone(),
                 description: topic.description.clone(),
@@ -312,6 +396,13 @@ pub fn load(
             let own = kb.own.len() as i64;
             let (figures, chip) = overview(store, Scope::Epic(id), today, chip)?;
             Ok(Loaded {
+                event_names: HashMap::new(),
+                questions: questions(store, owner, epic.project, today)?,
+                report: epic.report.clone(),
+                place: Place {
+                    project: epic.project,
+                    epic: Some(epic.id),
+                },
                 owner,
                 due_on: epic.due_on,
                 overview: Some(figures),
@@ -342,6 +433,13 @@ pub fn load(
             let own = kb.own.len() as i64;
             let (figures, chip) = overview(store, Scope::Project(id), today, chip)?;
             Ok(Loaded {
+                event_names: HashMap::new(),
+                questions: questions(store, owner, id, today)?,
+                report: Report::default(),
+                place: Place {
+                    project: id,
+                    epic: None,
+                },
                 owner,
                 due_on: project.due_on,
                 overview: Some(figures),
@@ -381,9 +479,15 @@ pub fn timeline_entries(entries: &[Entry]) -> Vec<Entry> {
             .iter()
             .filter(|e| {
                 e.kind != EntryKind::System
-                    || e.event
-                        .as_ref()
-                        .is_some_and(|ev| matches!(ev.kind, EventKind::Status | EventKind::Due))
+                    || e.event.as_ref().is_some_and(|ev| {
+                        matches!(
+                            ev.kind,
+                            EventKind::Status
+                                | EventKind::Due
+                                | EventKind::Report
+                                | EventKind::Reported
+                        )
+                    })
             })
             .cloned()
             .collect(),

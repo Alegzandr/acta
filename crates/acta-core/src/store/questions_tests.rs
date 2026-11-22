@@ -1103,3 +1103,130 @@ fn a_claude_import_keeps_local_details_and_stamps_what_it_creates() {
     assert_eq!(paul.created_by, C);
     assert_eq!(paul.stamp.updated_by, C);
 }
+
+#[test]
+fn an_unmerge_puts_back_the_contact_its_uses_and_the_other_contact() {
+    let mut f = fixture();
+    let s = &mut f.t.store;
+    let p = f.project;
+    let a = contact(s, "Marie", ContactLevel::Epic(p, f.epic));
+    let b = contact(s, "Marie Dubois", ContactLevel::Project(p));
+    s.set_report_to(Record::Topic(f.topic), Some(a), H).unwrap();
+    let q = ask(s, Owner::Topic(f.other), "Sign?", Some(a), None);
+    let kept = ask(s, Owner::Topic(f.other), "Other?", Some(b), None);
+    let third = contact(s, "Marie", ContactLevel::All);
+    s.mark_distinct(a, third).unwrap();
+    let uuid_a = s.contact(a).unwrap().stamp.uuid;
+    let before = s.contact(b).unwrap();
+    let uses: Vec<Record> = s
+        .contact_uses(a)
+        .unwrap()
+        .into_iter()
+        .map(|u| u.record)
+        .collect();
+    let trace = s.merge_contacts(a, b, H).unwrap();
+    assert_eq!(trace.events.len(), 1, "the report event named a");
+    assert_eq!(trace.distinct.len(), 1);
+    s.unmerge_contacts(a, &before, &uses, &trace, H).unwrap();
+    // The event names `a` again, and "Keep both" holds again.
+    let events: Vec<Option<String>> = s
+        .entries(
+            f.topic,
+            &EntryFilter {
+                include_system: true,
+                ..Default::default()
+            },
+            PageReq::first(50),
+        )
+        .unwrap()
+        .items
+        .into_iter()
+        .filter_map(|e| e.event)
+        .filter(|e| e.kind == EventKind::Report)
+        .map(|e| e.new)
+        .collect();
+    assert_eq!(events, [Some(uuid_a)]);
+    assert!(s.is_distinct(a, third).unwrap());
+    let back = s.contact(a).unwrap();
+    assert_eq!(back.merged_into, None);
+    assert_eq!(back.level, ContactLevel::Epic(p, f.epic));
+    assert_eq!(s.contact(b).unwrap().level, ContactLevel::Project(p));
+    assert_eq!(s.topic(f.topic).unwrap().report.to.map(|c| c.id), Some(a));
+    assert_eq!(s.question(q).unwrap().asked_to.map(|c| c.id), Some(a));
+    // What named `b` before the merge still names it.
+    assert_eq!(s.question(kept).unwrap().asked_to.map(|c| c.id), Some(b));
+}
+
+#[test]
+fn a_question_is_put_back_exactly_as_it_was() {
+    let mut f = fixture();
+    let s = &mut f.t.store;
+    let marie = contact(s, "Marie", ContactLevel::Project(f.project));
+    let q = ask(
+        s,
+        Owner::Topic(f.topic),
+        "Keep v1?",
+        Some(marie),
+        Some("2026-12-04"),
+    );
+    ask(s, Owner::Topic(f.topic), "Second?", None, None);
+    let before = s.question(q).unwrap();
+    let entry = s
+        .answer(q, Some("Yes, until March."), true, H)
+        .unwrap()
+        .expect("a decision entry");
+    s.put_question(&before, H).unwrap();
+    let now = s.question(q).unwrap();
+    assert_eq!(now.status, QuestionStatus::Open);
+    assert_eq!(now.answer, None);
+    assert_eq!(now.decision_entry, None);
+    assert_eq!(now.position, before.position);
+    assert_eq!(now.asked_to.map(|c| c.id), Some(marie));
+    // The entry is the caller's to delete in the same step.
+    assert!(s.entry(entry.id).is_ok());
+    // A move is put back too.
+    s.move_question(q, Owner::Epic(f.epic), H).unwrap();
+    s.put_question(&before, H).unwrap();
+    assert_eq!(s.question(q).unwrap().owner, Owner::Topic(f.topic));
+}
+
+#[test]
+fn every_contact_is_listed_with_its_open_items_across_projects() {
+    let mut f = fixture();
+    let s = &mut f.t.store;
+    let atlas = s.create_project("Atlas", "", H).unwrap();
+    let all = contact(s, "Alexandre's accountant", ContactLevel::All);
+    let here = contact(s, "Legal team", ContactLevel::Project(f.project));
+    ask(s, Owner::Topic(f.topic), "Fees?", Some(all), None);
+    ask(s, Owner::Project(atlas), "Tax?", Some(all), None);
+    s.set_report_to(Record::Topic(f.other), Some(here), H)
+        .unwrap();
+    let list = s.contacts_all().unwrap();
+    let open = |id| list.iter().find(|c| c.contact.id == id).unwrap().open;
+    assert_eq!(open(all), 2);
+    assert_eq!(open(here), 1);
+    s.delete(Record::Contact(here), H).unwrap();
+    assert_eq!(s.contacts_all().unwrap().len(), 1);
+    assert_eq!(s.contact_count().unwrap(), 1);
+    // A contact in the trash is still named by its UUID.
+    let uuid = s.contact_any(here).unwrap().stamp.uuid;
+    let names = s.contact_names(&[uuid.clone(), "nope".into()]).unwrap();
+    assert_eq!(names.get(&uuid).map(String::as_str), Some("Legal team"));
+    assert_eq!(names.len(), 1);
+}
+
+#[test]
+fn late_answers_count_as_an_attention_line() {
+    let mut f = fixture();
+    let s = &mut f.t.store;
+    ask(s, Owner::Topic(f.topic), "Late?", None, Some("2026-11-01"));
+    let o = s
+        .overview(
+            Scope::Project(f.project),
+            d("2026-11-22"),
+            crate::date::Zone::UTC,
+        )
+        .unwrap();
+    assert_eq!(o.answers_late, 1);
+    assert_eq!(o.attention_lines(), 1);
+}

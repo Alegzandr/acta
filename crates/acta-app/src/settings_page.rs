@@ -13,11 +13,12 @@
 //! or `Down` open the menu, `Up` / `Down` move in it, `Enter` / `Space`
 //! choose and `Esc` closes.
 
+use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    App, Context, Div, Entity, EventEmitter, FocusHandle, InteractiveElement, IntoElement,
-    KeyDownEvent, ParentElement, Render, StatefulInteractiveElement, Styled, Subscription, Task,
-    Window, div, px,
+    App, AppContext, Context, Div, Entity, EventEmitter, FocusHandle, Focusable,
+    InteractiveElement, IntoElement, KeyDownEvent, ParentElement, Render,
+    StatefulInteractiveElement, Styled, Subscription, Task, Window, div, px,
 };
 
 use crate::i18n::{Key, Locale, text};
@@ -173,6 +174,15 @@ pub struct SettingsPage {
     /// The `acta` command, found off the UI thread.
     cli: Option<std::path::PathBuf>,
     _cli: Task<()>,
+    /// Settings > Profile (components-contacts.md 5): the human's name
+    /// and job title, stored in the database, and as last read.
+    profile_name: Entity<InputState>,
+    profile_job: Entity<InputState>,
+    profile: acta_core::model::Profile,
+    /// A profile was read: the fields show it at the next frame.
+    profile_fresh: bool,
+    _profile: Vec<Subscription>,
+    _profile_load: Task<()>,
     /// The page scroll, and a pending scroll to the Ready block (the
     /// status bar opens Settings there).
     scroll: gpui_kit::ScrollHandle,
@@ -210,7 +220,30 @@ impl SettingsPage {
                 cx.notify();
             });
         });
+        let locale = settings::locale(cx);
+        let placeholder = crate::when::system_name(locale);
+        let profile_name = cx.new(|cx| InputState::new(window, cx).placeholder(placeholder));
+        let profile_job = cx.new(|cx| InputState::new(window, cx));
+        let commit = |page: &mut Self,
+                      _: &Entity<InputState>,
+                      event: &InputEvent,
+                      _: &mut Window,
+                      cx: &mut Context<Self>| {
+            if matches!(event, InputEvent::PressEnter { .. } | InputEvent::Blur) {
+                page.save_profile(cx);
+            }
+        };
+        let profile_subs = vec![
+            cx.subscribe_in(&profile_name, window, commit),
+            cx.subscribe_in(&profile_job, window, commit),
+        ];
         Self {
+            profile_name,
+            profile_job,
+            profile: acta_core::model::Profile::default(),
+            profile_fresh: false,
+            _profile: profile_subs,
+            _profile_load: Task::ready(()),
             theme_focus: cx.focus_handle(),
             text_size_focus: cx.focus_handle(),
             reading_width_focus: cx.focus_handle(),
@@ -456,7 +489,14 @@ fn locale_and_theme(cx: &App) -> (Locale, ThemeSetting) {
 }
 
 impl Render for SettingsPage {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if std::mem::take(&mut self.profile_fresh) {
+            let focused =
+                |input: &Entity<InputState>| input.read(cx).focus_handle(cx).is_focused(window);
+            if !focused(&self.profile_name) && !focused(&self.profile_job) {
+                self.restore_profile(window, cx);
+            }
+        }
         let t = cx.global::<Tokens>().clone();
         let (locale, theme) = locale_and_theme(cx);
         let theme_control = self.theme_control(locale, theme, &t);
@@ -496,6 +536,7 @@ impl Render for SettingsPage {
         let claude = self.claude_section(locale, &t, cx);
         let data = self.data_sections(locale, &t, cx);
         let about = about_section(locale, &t);
+        let profile = self.profile_section(locale, &t, cx);
 
         div()
             .id("settings")
@@ -520,6 +561,7 @@ impl Render for SettingsPage {
                             .text_color(t.text_primary)
                             .child(text(locale, Key::TreeSettings)),
                     )
+                    .children(profile)
                     .child(
                         type_scale::SUBTITLE
                             .el()
@@ -640,8 +682,125 @@ impl SettingsPage {
         self.reload(cx);
     }
 
+    /// Apply the profile on `Enter` or when a field loses focus, as every
+    /// setting (no Save button). An empty name returns to the system name.
+    fn save_profile(&mut self, cx: &mut Context<Self>) {
+        let Some(ws) = self.ws.clone() else { return };
+        let name = self.profile_name.read(cx).value().trim().to_owned();
+        let job = self.profile_job.read(cx).value().trim().to_owned();
+        let name: String = name.chars().take(80).collect();
+        let job: String = job.chars().take(80).collect();
+        let now = acta_core::model::Profile {
+            name: (!name.is_empty()).then(|| name.clone()),
+            job_title: (!job.is_empty()).then(|| job.clone()),
+        };
+        if now == self.profile {
+            return;
+        }
+        self.profile = now;
+        ws.update(cx, |ws, cx| {
+            ws.write_detached(cx, Key::ErrorSave, move |store| {
+                store.set_profile(Some(&name), Some(&job))
+            })
+        });
+    }
+
+    /// `Esc` in a profile field: the stored value comes back.
+    fn restore_profile(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let name = self.profile.name.clone().unwrap_or_default();
+        let job = self.profile.job_title.clone().unwrap_or_default();
+        self.profile_name
+            .update(cx, |s, cx| s.set_value(name, window, cx));
+        self.profile_job
+            .update(cx, |s, cx| s.set_value(job, window, cx));
+    }
+
+    /// "Set your name", "Set your job title": Settings focused on the field.
+    pub fn focus_profile(&mut self, name: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let input = if name {
+            &self.profile_name
+        } else {
+            &self.profile_job
+        };
+        input.update(cx, |s, cx| s.focus(window, cx));
+    }
+
+    fn profile_section(
+        &self,
+        locale: Locale,
+        t: &Tokens,
+        cx: &mut Context<Self>,
+    ) -> Vec<gpui_kit::AnyElement> {
+        if self.ws.is_none() {
+            return Vec::new();
+        }
+        let field = |input: &Entity<InputState>| {
+            div()
+                .w(px(240.))
+                .h(px(28.))
+                .px(px(8.))
+                .flex()
+                .items_center()
+                .rounded(px(crate::theme::RADIUS_SM))
+                .bg(t.bg_raised)
+                .border_1()
+                .border_color(t.border_default)
+                .child(
+                    Input::new(input)
+                        .appearance(false)
+                        .px(px(0.))
+                        .text_size(px(type_scale::UI.size())),
+                )
+        };
+        vec![
+            type_scale::SUBTITLE
+                .el()
+                .mt(px(32.))
+                .text_color(t.text_primary)
+                .child(text(locale, Key::SettingsProfile))
+                .into_any_element(),
+            type_scale::SMALL
+                .el()
+                .mt(px(4.))
+                .mb(px(8.))
+                .text_color(t.text_tertiary)
+                .child(text(locale, Key::SettingsProfileHint))
+                .into_any_element(),
+            div()
+                .capture_action(cx.listener(
+                    |page, _: &gpui_kit::component::input::Escape, window, cx| {
+                        page.restore_profile(window, cx);
+                    },
+                ))
+                .child(setting_row(
+                    text(locale, Key::SettingsProfileName),
+                    text(locale, Key::SettingsProfileNameHint),
+                    field(&self.profile_name),
+                    t,
+                ))
+                .child(setting_row(
+                    text(locale, Key::SettingsProfileJobTitle),
+                    String::new(),
+                    field(&self.profile_job),
+                    t,
+                ))
+                .into_any_element(),
+        ]
+    }
+
     fn reload(&mut self, cx: &mut Context<Self>) {
         let Some(ws) = &self.ws else { return };
+        let profile = ws.read(cx).db.run(cx, |store| store.profile());
+        let loading = cx.spawn(async move |page, cx| {
+            if let Ok(profile) = profile.await {
+                let _ = page.update(cx, |page, cx| {
+                    page.profile = profile;
+                    page.profile_fresh = true;
+                    cx.notify();
+                });
+            }
+        });
+        self._profile_load = loading;
         let task = ws.read(cx).db.run(cx, |store| load_facts(store));
         self._load = cx.spawn(async move |page, cx| {
             if let Ok(mut facts) = task.await {

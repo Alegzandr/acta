@@ -36,7 +36,7 @@ pub use overview::{
     Scope, WEEK_DAYS,
 };
 pub use people::{
-    ADDRESS_MAX, ContactPatch, ContactSummary, DETAIL_MAX, ReportTargets, level_name,
+    ADDRESS_MAX, ContactPatch, ContactSummary, DETAIL_MAX, MergeTrace, ReportTargets, level_name,
 };
 pub use questions::{ANSWER_MAX, NewQuestion, QUESTION_MAX, QuestionFilter, decision_body};
 pub use records::{EpicPatch, NewTopic, ProjectPatch, TopicFilter, TopicPatch};
