@@ -449,6 +449,26 @@ pub fn notice(
         )
 }
 
+/// The checkbox of components.md 5: 16, `radius.xs`, `border.strong`;
+/// checked, `accent` with a `check` in `text.on-accent`. The caller makes
+/// its row the control.
+pub fn checkbox(checked: bool, t: &Tokens) -> Div {
+    div()
+        .size(px(16.))
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(crate::theme::RADIUS_XS))
+        .when(checked, |this| {
+            this.bg(t.accent)
+                .child(icon(Icon::Check, 12., t.text_on_accent))
+        })
+        .when(!checked, |this| {
+            this.border_1().border_color(t.border_strong)
+        })
+}
+
 /// A section label (`type.label`, `text.secondary`): "Current state",
 /// "Knowledge", "Timeline".
 pub fn label(text: impl Into<SharedString>, tokens: &Tokens) -> Div {

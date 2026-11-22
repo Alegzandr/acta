@@ -1,14 +1,19 @@
 //! The terminal tool window (docs/design/layout.md 4.5; components-folders.md
 //! 5, Terminal launch; screens.md 8.4, 8.11): one session per project,
-//! started in the primary effective folder of the page it was opened from,
-//! with the other folders passed along and the focus in `ACTA_*`.
-//! Navigation never restarts or moves a session; "Restart terminal here"
-//! does, with the active page's folders.
+//! started by the launch plan of the page it was opened from (ADR 0011:
+//! the active folder is the working directory, the other folders the page
+//! sees are `--add-dir`, in list order, except a folder not found and
+//! another checkout of the same repository), with the focus in `ACTA_*`.
+//! Navigation, a folder switch and a commit-mode change never restart or
+//! move a session: the header marks the mismatch and offers "Restart in
+//! ..." or "Restart here".
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
-use acta_core::model::{Author, Owner, ProjectId, Record};
+use acta_core::launch_plan::{LaunchPlan, LeftOut, PlanFolder, launch_plan};
+use acta_core::model::{Author, FolderId, Owner, ProjectId, Record};
 use acta_core::presence::SessionState;
 use acta_terminal::{
     ClaudeOptions, Conversation, Focus, LaunchError, TerminalEvent, TerminalTheme, TerminalView,
@@ -20,14 +25,17 @@ use gpui_kit::{
     StatefulInteractiveElement, Styled, Subscription, Window, div, px,
 };
 
+use crate::folders_model::{self as fm, Mismatch};
+use crate::folders_view::{self, SwitchActions, SwitchEntry, SwitchGroup};
 use crate::i18n::{Arg, Key, KeyName, Locale, text, tr};
 use crate::icons::{Icon, icon};
 use crate::paths_view;
+use crate::record::Folders;
 use crate::settings;
 use crate::theme::{Appearance, Mode, RADIUS_XS, Tokens};
 use crate::type_scale;
 use crate::ui::{self, Variant};
-use crate::workspace::{FolderRef, ToastKind, Undo, Workspace};
+use crate::workspace::{CommitColumns, FolderRef, ToastKind, Undo, Workspace};
 
 /// Where a launch comes from: the page's record and its name.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -43,6 +51,9 @@ enum Pane {
     Running {
         view: Entity<TerminalView>,
         origin: Origin,
+        /// Where it started: the working directory, the active folder
+        /// record and its commit columns then (a change marks the header).
+        start: Start,
         /// `ACTA_LAUNCH`: finds this session's presence row.
         token: String,
         /// The conversation the page resumes next time; follows `/clear`.
@@ -80,6 +91,49 @@ pub enum Send {
     Busy,
 }
 
+/// Where a session started (layout.md 4.5, Mismatch).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Start {
+    pub cwd: PathBuf,
+    pub folder: Option<FolderId>,
+    pub commit: Option<CommitColumns>,
+}
+
+/// The folders of a session's page, as the header shows them: refreshed
+/// whenever the store changes.
+#[derive(Clone, Debug, Default)]
+struct SessionPage {
+    folders: Folders,
+    /// The commit columns of the folder the session started in, now.
+    commit: Option<CommitColumns>,
+}
+
+/// The folders Acta's terminal sessions run in, with their launch tokens:
+/// a git action in one of them asks first while the session works (ADR
+/// 0011 addendum).
+#[derive(Default)]
+pub struct RunningIn(pub Vec<(PathBuf, String)>);
+
+impl gpui_kit::Global for RunningIn {}
+
+/// The launch plan as the command line takes it: the working directory
+/// first, then the `--add-dir` folders in order. A plan with no working
+/// directory stops the launch: no folder at all (the pane asks), or the
+/// active folder not found (the pane offers Locate). A session is never
+/// started in another folder on its own.
+pub fn launch_folders(
+    plan: &LaunchPlan,
+    active: Option<&Path>,
+) -> Result<Vec<PathBuf>, LaunchError> {
+    match (&plan.working_dir, active) {
+        (Some(cwd), _) => Ok(std::iter::once(cwd.clone())
+            .chain(plan.add_dirs.iter().cloned())
+            .collect()),
+        (None, Some(active)) => Err(LaunchError::PrimaryMissing(active.to_path_buf())),
+        (None, None) => Err(LaunchError::NoFolder),
+    }
+}
+
 /// What a launch's queued prompt becomes: kept (on the Ask pane) only
 /// when the launch stopped to ask for a folder; a started session already
 /// has it, and a missing folder or command drops it.
@@ -105,6 +159,12 @@ pub enum DockEvent {
     /// "Restart here": the shell restarts with the active page's origin
     /// (after the confirmation when a process runs).
     RestartHere,
+    /// "Restart in <folder>": the same for the session's own page.
+    RestartIn(Origin),
+    /// "Edit folders..." and "Add folder..." of the header switcher: on
+    /// the session's page.
+    EditFolders(Origin),
+    AddFolder(Origin),
 }
 
 pub struct TerminalDock {
@@ -120,6 +180,13 @@ pub struct TerminalDock {
     focus: FocusHandle,
     text_size: f32,
     mode: Option<Mode>,
+    /// The folders of each session's page, for the header.
+    pages: HashMap<ProjectId, SessionPage>,
+    /// The header switcher's menu, with its highlighted entry.
+    switcher: Option<usize>,
+    seen_revision: u64,
+    _refresh: Option<gpui_kit::Task<()>>,
+    _ws_sub: Option<Subscription>,
 }
 
 impl EventEmitter<DockEvent> for TerminalDock {}
@@ -159,6 +226,13 @@ impl TerminalDock {
             .terminal_text_size
             .map(f32::from)
             .unwrap_or(acta_terminal::view::DEFAULT_TEXT_SIZE);
+        let sub = cx.observe(&ws, |dock, ws, cx| {
+            let revision = ws.read(cx).revision;
+            if revision != dock.seen_revision {
+                dock.seen_revision = revision;
+                dock.refresh_pages(cx);
+            }
+        });
         Self {
             ws,
             panes: HashMap::new(),
@@ -169,7 +243,59 @@ impl TerminalDock {
             focus: cx.focus_handle(),
             text_size,
             mode: None,
+            pages: HashMap::new(),
+            switcher: None,
+            seen_revision: 0,
+            _refresh: None,
+            _ws_sub: Some(sub),
         }
+    }
+
+    /// The folders of every session's page read again (off the UI
+    /// thread), with the existence of each.
+    fn refresh_pages(&mut self, cx: &mut Context<Self>) {
+        let wanted: Vec<(ProjectId, Owner, Option<FolderId>)> = self
+            .panes
+            .iter()
+            .filter_map(|(project, pane)| match pane {
+                Pane::Running { origin, start, .. } => Some((*project, origin.owner, start.folder)),
+                _ => None,
+            })
+            .collect();
+        if wanted.is_empty() {
+            self.pages.clear();
+            return;
+        }
+        let task = self.ws.read(cx).db.run(cx, move |store| {
+            let mut out = Vec::new();
+            for (project, owner, folder) in wanted {
+                let Ok(folders) = crate::record::load_folders(store, owner) else {
+                    continue;
+                };
+                let commit = folder
+                    .and_then(|id| store.folder(id).ok())
+                    .map(|f| (f.commit_mode, f.commit_as_user, f.commit_on_default));
+                out.push((project, SessionPage { folders, commit }));
+            }
+            Ok(out)
+        });
+        self._refresh = Some(cx.spawn(async move |dock, cx| {
+            let Ok(mut pages) = task.await else { return };
+            let pages = cx
+                .background_executor()
+                .spawn(async move {
+                    for (_, page) in &mut pages {
+                        page.folders.missing =
+                            crate::workspace::missing_paths(page.folders.paths());
+                    }
+                    pages
+                })
+                .await;
+            let _ = dock.update(cx, |dock, cx| {
+                dock.pages = pages.into_iter().collect();
+                cx.notify();
+            });
+        }));
     }
 
     pub fn has_session(&self, project: ProjectId) -> bool {
@@ -300,38 +426,53 @@ impl TerminalDock {
         let new_conversations = settings::current(cx).new_conversations;
         let ws = self.ws.read(cx);
         let folders = ws.db.run(cx, move |store| {
-            // The active folder first: the session starts there.
+            // The page's folders in list order, the active one marked.
             let visible = store.visible_folders(owner)?;
             let epic = match owner {
                 Owner::Topic(id) => store.topic(id)?.epic,
                 _ => None,
             };
-            let mut folders: Vec<(PathBuf, Owner)> = visible
-                .active()
-                .into_iter()
-                .chain(visible.additional())
-                .map(|f| (PathBuf::from(&f.folder.path), f.origin))
+            let mut folders: Vec<PlanFolder> = visible
+                .folders
+                .iter()
+                .map(|f| PlanFolder {
+                    path: PathBuf::from(&f.folder.path),
+                    own: f.origin == owner,
+                    active: f.active,
+                })
                 .collect();
             if folders.is_empty()
                 && let Some(path) = unsaved
             {
-                folders.push((path, Owner::Project(project)));
+                folders.push(PlanFolder {
+                    path,
+                    own: true,
+                    active: true,
+                });
             }
+            let active = visible.active().map(|f| {
+                let c = &f.folder;
+                (
+                    f.origin,
+                    c.id,
+                    (c.commit_mode, c.commit_as_user, c.commit_on_default),
+                )
+            });
             let config = acta_terminal::claude_config_dir();
-            let conversation = match folders.first() {
-                Some((cwd, _)) => {
-                    conversation_for(store, owner, new_conversations, config.as_deref(), cwd)?
+            let conversation = match folders.iter().find(|f| f.active) {
+                Some(f) => {
+                    conversation_for(store, owner, new_conversations, config.as_deref(), &f.path)?
                 }
                 None => None,
             };
-            Ok((folders, epic, conversation))
+            Ok((folders, active, epic, conversation))
         });
         // The previous session (if any) ends when its view is dropped.
         let old = self.panes.insert(project, Pane::Starting);
         drop(old);
         cx.notify();
         cx.spawn_in(window, async move |dock, cx| {
-            let Ok((folders, epic, conversation)) = folders.await else {
+            let Ok((folders, active, epic, conversation)) = folders.await else {
                 return;
             };
             let token = acta_core::random_uuid().unwrap_or_default();
@@ -340,24 +481,36 @@ impl TerminalDock {
                 Some(Conversation::New(id)) | Some(Conversation::Resume(id)) => Some(id.clone()),
                 None => None,
             };
-            // Existence checks and the search for `claude` read the disk:
-            // off the store.
-            let primary_from = folders.first().map(|(_, from)| *from);
+            // The plan (existence, git checkouts) and the search for
+            // `claude` read the disk: off the store and the UI thread.
+            let primary_from = active.map(|(from, _, _)| from);
+            let start_folder = active.map(|(_, id, _)| id);
+            let start_commit = active.map(|(_, _, c)| c);
             let result = cx
                 .background_executor()
                 .spawn(async move {
-                    let paths: Vec<PathBuf> = folders.iter().map(|(p, _)| p.clone()).collect();
+                    let plan = launch_plan(&folders);
+                    let active = folders.iter().find(|f| f.active).map(|f| f.path.as_path());
+                    let paths = launch_folders(&plan, active)?;
                     let options = ClaudeOptions {
                         plugin_dir: plugin_dir(),
                         conversation,
                         token: (!launch_token.is_empty()).then_some(launch_token),
                         prompt,
                     };
-                    acta_terminal::launch_spec_for_claude(
+                    let mut launch = acta_terminal::launch_spec_for_claude(
                         &paths,
                         &focus_of(owner, project, epic),
                         &options,
-                    )
+                    )?;
+                    // Not found: reported; another checkout: the list says so.
+                    let missing = plan
+                        .left_out
+                        .into_iter()
+                        .filter(|(_, why)| *why == LeftOut::NotFound)
+                        .map(|(p, _)| p);
+                    launch.left_out = missing.chain(launch.left_out).collect();
+                    Ok(launch)
                 })
                 .await;
             let _ = dock.update_in(cx, |dock, window, cx| {
@@ -380,7 +533,20 @@ impl TerminalDock {
                                     .update(cx, |ws, cx| ws.toast(message, ToastKind::Error, cx));
                             }
                         }
-                        dock.running(origin, launch.spec, token, conversation_id, window, cx)
+                        let start = Start {
+                            cwd: launch.spec.cwd.clone(),
+                            folder: start_folder,
+                            commit: start_commit,
+                        };
+                        dock.running(
+                            origin,
+                            start,
+                            launch.spec,
+                            token,
+                            conversation_id,
+                            window,
+                            cx,
+                        )
                     }
                     Err(LaunchError::NoFolder) => Pane::Ask {
                         origin,
@@ -396,15 +562,18 @@ impl TerminalDock {
                 };
                 dock.panes.insert(project, pane);
                 dock.publish_tokens(cx);
+                dock.refresh_pages(cx);
                 cx.notify();
             });
         })
         .detach();
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn running(
         &mut self,
         origin: Origin,
+        start: Start,
         spec: acta_terminal::LaunchSpec,
         token: String,
         conversation: Option<String>,
@@ -454,6 +623,7 @@ impl TerminalDock {
         Pane::Running {
             view,
             origin,
+            start,
             token,
             conversation,
             _sub: sub,
@@ -471,6 +641,15 @@ impl TerminalDock {
             })
             .collect();
         cx.set_global(crate::sessions_view::TerminalTokens(tokens));
+        let running = self
+            .panes
+            .values()
+            .filter_map(|pane| match pane {
+                Pane::Running { start, token, .. } => Some((start.cwd.clone(), token.clone())),
+                _ => None,
+            })
+            .collect();
+        cx.set_global(RunningIn(running));
     }
 
     /// The launch token of the project's running terminal.
@@ -764,8 +943,12 @@ impl TerminalDock {
             }
             Some(Pane::Missing { origin, path, from }) => {
                 let (origin, path, from) = (origin.clone(), path.clone(), *from);
-                let level_name = self.owner_name(from, cx);
-                let body_key = Key::TerminalMissingBody;
+                let body_key = match origin.owner {
+                    Owner::Topic(_) => Key::TerminalMissingBodyTopic,
+                    Owner::Epic(_) => Key::TerminalMissingBodyEpic,
+                    Owner::Project(_) => Key::TerminalMissingBodyProject,
+                };
+                let level_name = origin.name.clone();
                 let retry_origin = origin.clone();
                 message(&t, surface)
                     .child(
@@ -883,18 +1066,224 @@ impl TerminalDock {
         (origin, mismatch)
     }
 
+    /// The mismatch of the session shown (layout.md 4.5): another page,
+    /// its page's active folder changed, or the commit mode of the folder
+    /// it runs in changed since it started.
+    fn mismatch(&self) -> Mismatch {
+        let (origin, other_page) = self.shown_origin();
+        let Some(project) = origin.map(|o| o.project) else {
+            return Mismatch::None;
+        };
+        let Some(Pane::Running { start, .. }) = self.panes.get(&project) else {
+            return if other_page {
+                Mismatch::RestartHere
+            } else {
+                Mismatch::None
+            };
+        };
+        let page = self.pages.get(&project);
+        let active = page.and_then(|p| p.folders.active());
+        let mode_changed = page.is_some_and(|p| p.commit.is_some() && p.commit != start.commit);
+        fm::mismatch(
+            other_page,
+            &start.cwd.to_string_lossy(),
+            active.map(|f| (f.path.as_str(), f.name.as_str())),
+            mode_changed,
+        )
+    }
+
+    /// The header switcher of the session's page: its folders, grouped.
+    fn switch_groups(&self, project: ProjectId, owner: Owner, locale: Locale) -> Vec<SwitchGroup> {
+        let Some(page) = self.pages.get(&project) else {
+            return Vec::new();
+        };
+        let folders = &page.folders;
+        fm::groups(owner, &folders.items)
+            .into_iter()
+            .filter(|(_, list)| !list.is_empty())
+            .map(|(origin, list)| SwitchGroup {
+                label: fm::group_label(locale, owner, origin, folders.level_name(origin)),
+                entries: list
+                    .into_iter()
+                    .map(|i| {
+                        let f = &folders.items[i];
+                        let missing = folders.is_missing(&f.path);
+                        SwitchEntry {
+                            id: f.id,
+                            icon: fm::shown_icon(&f.icon, None, missing),
+                            name: f.name.clone(),
+                            active: f.active,
+                            missing,
+                        }
+                    })
+                    .collect(),
+            })
+            .collect()
+    }
+
+    /// The header switcher sets the session page's active folder, exactly
+    /// as the page's own switcher does; the session keeps running.
+    fn set_page_active(
+        &mut self,
+        owner: Owner,
+        project: ProjectId,
+        id: FolderId,
+        cx: &mut Context<Self>,
+    ) {
+        self.switcher = None;
+        cx.notify();
+        let active = self
+            .pages
+            .get(&project)
+            .and_then(|p| p.folders.active())
+            .map(|f| f.id);
+        if active == Some(id) {
+            return;
+        }
+        self.ws.update(cx, |ws, cx| {
+            ws.undoable(cx, Some(project), None, move |store| {
+                let back = crate::workspace::active_pointer(store, owner)?;
+                store.set_active_folder(owner, Some(id), Author::Human)?;
+                Ok((
+                    Undo::ActiveFolder {
+                        owner,
+                        back,
+                        expect: Some(id),
+                    },
+                    (),
+                ))
+            });
+        });
+    }
+
     /// The context of the terminal's area header or view strip
-    /// (workbench.md 4.8.4): "on topic Embed the terminal", in
-    /// `text.primary` with a "Restart here" text button when the session
-    /// was started elsewhere.
+    /// (workbench.md 4.8.4; layout.md 4.5): "on topic Embed the terminal",
+    /// the folder switcher of the session's page, "(running in ...)" when
+    /// that is not where it runs, and on a mismatch the context in
+    /// `text.primary` with "Restart in ..." or "Restart here".
     pub fn header_context(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let t = cx.global::<Tokens>().clone();
         let locale = settings::locale(cx);
-        let (origin, mismatch) = self.shown_origin();
+        let (origin, _) = self.shown_origin();
         let origin = origin?;
+        let mismatch = self.mismatch();
+        let marked = mismatch != Mismatch::None;
         let waiting = self
             .session_state(origin.project, cx)
             .is_some_and(|s| s == SessionState::Waiting);
+        let project = origin.project;
+        let running = match self.panes.get(&project) {
+            Some(Pane::Running { start, .. }) => Some(start.cwd.clone()),
+            _ => None,
+        };
+        let page_active = self.pages.get(&project).and_then(|p| {
+            p.folders
+                .active()
+                .cloned()
+                .map(|f| (f.clone(), p.folders.is_missing(&f.path)))
+        });
+        let switcher = page_active.map(|(active, missing)| {
+            let running_elsewhere = running.as_ref().is_some_and(|cwd| {
+                !acta_core::folder_path::same(
+                    acta_core::paths::Os::CURRENT,
+                    &cwd.to_string_lossy(),
+                    &active.path,
+                )
+            });
+            let button = folders_view::switcher(
+                "terminal-switcher",
+                fm::shown_icon(&active.icon, None, missing),
+                &active.name,
+                missing,
+                &t,
+            )
+            .tooltip(ui::tip(active.path.clone()))
+            .on_mouse_down(gpui_kit::MouseButton::Left, |_, _, cx| {
+                cx.stop_propagation()
+            })
+            .on_click(cx.listener(|dock, _, _, cx| {
+                dock.switcher = match dock.switcher {
+                    Some(_) => None,
+                    None => Some(0),
+                };
+                cx.notify();
+            }));
+            let mut wrap = div().relative().min_w_0().child(button);
+            if self.switcher.is_some() {
+                let groups = self.switch_groups(project, origin.owner, locale);
+                let owner = origin.owner;
+                let (edit_origin, add_origin) = (origin.clone(), origin.clone());
+                wrap = wrap.child(folders_view::switcher_menu(
+                    "terminal-switch-menu",
+                    &groups,
+                    self.switcher,
+                    locale,
+                    &t,
+                    cx,
+                    SwitchActions {
+                        choose: Rc::new(move |dock: &mut Self, id, _, cx| {
+                            dock.set_page_active(owner, project, id, cx)
+                        }),
+                        edit: Rc::new(move |dock: &mut Self, _, cx| {
+                            dock.switcher = None;
+                            cx.emit(DockEvent::EditFolders(edit_origin.clone()));
+                            cx.notify();
+                        }),
+                        add: Rc::new(move |dock: &mut Self, _, cx| {
+                            dock.switcher = None;
+                            cx.emit(DockEvent::AddFolder(add_origin.clone()));
+                            cx.notify();
+                        }),
+                        close: Rc::new(|dock: &mut Self, _, cx| {
+                            dock.switcher = None;
+                            cx.notify();
+                        }),
+                    },
+                ));
+            }
+            let running_in = running.filter(|_| running_elsewhere).map(|cwd| {
+                let name = self
+                    .pages
+                    .get(&project)
+                    .and_then(|p| {
+                        p.folders.items.iter().find(|f| {
+                            acta_core::folder_path::same(
+                                acta_core::paths::Os::CURRENT,
+                                &f.path,
+                                &cwd.to_string_lossy(),
+                            )
+                        })
+                    })
+                    .map(|f| f.name.clone())
+                    .unwrap_or_else(|| paths_view::last_segment(&cwd.to_string_lossy()).to_owned());
+                type_scale::SMALL
+                    .el()
+                    .flex_shrink_0()
+                    .text_color(t.text_tertiary)
+                    .child(tr(
+                        locale,
+                        Key::TerminalRunningIn,
+                        &[("name", Arg::Text(&name))],
+                    ))
+            });
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(4.))
+                .min_w_0()
+                .child(wrap)
+                .children(running_in)
+        });
+        let action = match &mismatch {
+            Mismatch::None => None,
+            Mismatch::RestartIn(name) => Some((
+                tr(locale, Key::TerminalRestartIn, &[("name", Arg::Text(name))]),
+                true,
+            )),
+            Mismatch::RestartHere => Some((text(locale, Key::TerminalRestartHere), false)),
+        };
+        let restart_origin = origin.clone();
         Some(
             div()
                 .flex()
@@ -907,13 +1296,14 @@ impl TerminalDock {
                         .el()
                         .min_w_0()
                         .truncate()
-                        .text_color(if mismatch {
+                        .text_color(if marked {
                             t.text_primary
                         } else {
                             t.text_tertiary
                         })
                         .child(Self::context(&origin, locale)),
                 )
+                .children(switcher)
                 .when(waiting, |this| {
                     this.child(
                         type_scale::SMALL
@@ -923,19 +1313,20 @@ impl TerminalDock {
                             .child(format!("\u{b7} {}", text(locale, Key::TerminalWaiting))),
                     )
                 })
-                .when(mismatch, |this| {
-                    this.child(
-                        ui::button(
-                            "terminal-restart-text",
-                            text(locale, Key::TerminalRestartHere),
-                            Variant::Ghost,
-                            false,
-                            &t,
-                        )
+                .children(action.map(|(label, in_page)| {
+                    ui::button("terminal-restart-text", label, Variant::Ghost, false, &t)
                         .h(px(24.))
-                        .on_click(cx.listener(|_, _, _, cx| cx.emit(DockEvent::RestartHere))),
-                    )
-                })
+                        .on_mouse_down(gpui_kit::MouseButton::Left, |_, _, cx| {
+                            cx.stop_propagation()
+                        })
+                        .on_click(cx.listener(move |_, _, _, cx| {
+                            if in_page {
+                                cx.emit(DockEvent::RestartIn(restart_origin.clone()))
+                            } else {
+                                cx.emit(DockEvent::RestartHere)
+                            }
+                        }))
+                }))
                 .into_any_element(),
         )
     }
@@ -969,33 +1360,6 @@ impl TerminalDock {
             .find(|t| t.project.id == id)
             .map(|t| t.project.title.clone())
             .unwrap_or_default()
-    }
-
-    fn owner_name(&self, owner: Owner, cx: &App) -> String {
-        let ws = self.ws.read(cx);
-        for tree in &ws.projects {
-            match owner {
-                Owner::Project(id) if tree.project.id == id => return tree.project.title.clone(),
-                Owner::Epic(id) => {
-                    if let Some((e, _)) = tree.epics.iter().find(|(e, _)| e.id == id) {
-                        return e.title.clone();
-                    }
-                }
-                Owner::Topic(id) => {
-                    for t in tree
-                        .loose_topics
-                        .iter()
-                        .chain(tree.epics.iter().flat_map(|(_, t)| t))
-                    {
-                        if t.id == id {
-                            return t.title.clone();
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-        String::new()
     }
 }
 
@@ -1105,6 +1469,130 @@ impl Render for TerminalDock {
 mod tests {
     use super::*;
     use acta_core::model::{EpicId, TopicId};
+    use acta_terminal::launch::{ClaudeProgram, build_claude_launch};
+
+    fn git(dir: &Path, args: &[&str]) {
+        let out = acta_core::git_cmd::command(dir)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    #[test]
+    fn the_launch_plan_sets_the_working_directory_and_the_add_dir_order() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().to_path_buf();
+        let main = root.join("acta");
+        std::fs::create_dir_all(&main).unwrap();
+        git(&main, &["init", "-q", "-b", "main"]);
+        git(
+            &main,
+            &[
+                "-c",
+                "user.name=Alexandre",
+                "-c",
+                "user.email=alexandre@example.com",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "First",
+            ],
+        );
+        let wt = root.join("embed-terminal");
+        git(
+            &main,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "topic/embed",
+                wt.to_str().unwrap(),
+            ],
+        );
+        let notes = root.join("notes");
+        let fork = root.join("alacritty-fork");
+        let docs = root.join("acta-docs");
+        std::fs::create_dir_all(&notes).unwrap();
+        std::fs::create_dir_all(&fork).unwrap();
+        let f = |path: &Path, own: bool, active: bool| PlanFolder {
+            path: path.to_path_buf(),
+            own,
+            active,
+        };
+        // screens.md 8.11: a topic in its own worktree with a notes folder,
+        // its epic's fork, its project's checkout and a docs folder that
+        // is not on this computer.
+        let folders = [
+            f(&wt, true, true),
+            f(&notes, true, false),
+            f(&fork, false, false),
+            f(&main, false, false),
+            f(&docs, false, false),
+        ];
+        let plan = launch_plan(&folders);
+        let paths = launch_folders(&plan, Some(&wt)).unwrap();
+        let program = ClaudeProgram::Exe(PathBuf::from("claude"));
+        let launch = build_claude_launch(
+            &program,
+            &paths,
+            &Focus::default(),
+            &ClaudeOptions::default(),
+            |p| p.is_dir(),
+        )
+        .unwrap();
+        assert_eq!(
+            launch.spec.cwd, wt,
+            "Claude Code starts in the active folder"
+        );
+        let s = |p: &Path| p.to_string_lossy().into_owned();
+        assert_eq!(
+            launch.spec.args,
+            [
+                "--add-dir".to_owned(),
+                s(&notes),
+                "--add-dir".to_owned(),
+                s(&fork)
+            ],
+            "the others in list order, without the main checkout or the missing one"
+        );
+        assert_eq!(
+            plan.left_out,
+            [
+                (main.clone(), LeftOut::OtherCheckout),
+                (docs.clone(), LeftOut::NotFound)
+            ]
+        );
+
+        // The main checkout made active: the worktree, an own folder, is
+        // passed.
+        let folders = [f(&wt, true, false), f(&main, false, true)];
+        let plan = launch_plan(&folders);
+        assert_eq!(
+            launch_folders(&plan, Some(&main)).unwrap(),
+            [main.clone(), wt.clone()]
+        );
+
+        // An active folder not found stops the launch; never elsewhere.
+        let folders = [f(&docs, true, true), f(&notes, true, false)];
+        let plan = launch_plan(&folders);
+        assert_eq!(
+            launch_folders(&plan, Some(&docs)),
+            Err(LaunchError::PrimaryMissing(docs.clone()))
+        );
+        assert_eq!(
+            launch_folders(&LaunchPlan::default(), None),
+            Err(LaunchError::NoFolder)
+        );
+    }
 
     #[test]
     fn sessions_are_named_by_their_focus() {

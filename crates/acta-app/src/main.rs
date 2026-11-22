@@ -26,6 +26,7 @@ mod due;
 mod due_picker;
 mod first_run;
 mod folders_model;
+mod folders_view;
 mod fonts;
 mod i18n;
 mod icons;

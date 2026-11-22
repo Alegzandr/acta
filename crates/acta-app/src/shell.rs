@@ -464,6 +464,9 @@ struct Bench {
     /// "File with Claude Code" found Claude Code mid-task: the restart
     /// confirmation, when accepted, starts a session on the triage.
     pending_triage: Option<Origin>,
+    /// "Restart in ..." waiting for the restart confirmation: the
+    /// session's own page.
+    pending_restart: Option<Origin>,
     recent: Vec<TopicId>,
     overlay: Option<Overlay>,
     /// Where focus returns when the overlay closes.
@@ -575,7 +578,7 @@ impl Shell {
                 claude_setup::refresh_if_stale(cx);
                 // ADR 0008, "Live files": focus is the fallback for a
                 // change the folder monitor could not prove on its own.
-                bench.ws.read(cx).check_folders_again();
+                bench.ws.update(cx, |ws, cx| ws.check_folders_again(cx));
             }
         });
         Self {
@@ -649,6 +652,15 @@ impl Shell {
                 window,
                 |shell, _, event: &DockEvent, window, cx| match event {
                     DockEvent::RestartHere => shell.restart_terminal_here(window, cx),
+                    DockEvent::RestartIn(origin) => {
+                        shell.restart_terminal_in(origin.clone(), window, cx)
+                    }
+                    DockEvent::EditFolders(origin) => {
+                        shell.open_folders_of(origin.owner, false, window, cx)
+                    }
+                    DockEvent::AddFolder(origin) => {
+                        shell.open_folders_of(origin.owner, true, window, cx)
+                    }
                 },
             ),
             cx.subscribe_in(&sessions, window, Self::on_sessions),
@@ -694,6 +706,7 @@ impl Shell {
             create_in: None,
             on_pick: None,
             pending_triage: None,
+            pending_restart: None,
             recent: Vec::new(),
             overlay: None,
             return_focus: None,
@@ -1364,6 +1377,9 @@ impl Shell {
                 cx.notify();
             }
             PageEvent::ShowTerminal(project) => self.show_session_terminal(*project, window, cx),
+            PageEvent::Confirm(confirm) => {
+                self.open_dialog(DialogKind::Confirm(confirm.clone()), window, cx)
+            }
             PageEvent::StaleMemories(project) => self.open_stale_memories(*project, window, cx),
         }
     }
@@ -1825,6 +1841,10 @@ impl Shell {
                 PageView::Record(page) => page.read(cx).overview_state(cx),
                 _ => None,
             },
+            folders: match &bench.page {
+                PageView::Record(page) => page.read(cx).folder_commands(),
+                _ => commands::FolderCommands::default(),
+            },
         }
     }
 
@@ -2083,6 +2103,49 @@ impl Shell {
             Command::ShowFolders => {
                 self.with_record(cx, |page, _, cx| page.show_folders(cx), window)
             }
+            Command::FolderSwitch => {
+                self.with_record(cx, |page, _, cx| page.pick_active_folder(cx), window)
+            }
+            Command::CommitMode => {
+                self.with_record(cx, |page, _, cx| page.pick_commit_mode(cx), window)
+            }
+            Command::FolderSettings => self.with_record(
+                cx,
+                |page, window, cx| {
+                    if let Some(id) = page.settings_target() {
+                        page.open_folder_settings(id, window, cx)
+                    }
+                },
+                window,
+            ),
+            Command::FolderPull => self.with_record(
+                cx,
+                |page, _, cx| {
+                    if let Some(id) = page.git_target() {
+                        page.pull(id, cx)
+                    }
+                },
+                window,
+            ),
+            Command::FolderFetch => self.with_record(
+                cx,
+                |page, _, cx| {
+                    if let Some(id) = page.git_target() {
+                        page.fetch(id, cx)
+                    }
+                },
+                window,
+            ),
+            Command::FolderBranch => self.with_record(
+                cx,
+                |page, _, cx| {
+                    if let Some(id) = page.git_target() {
+                        page.show_folders(cx);
+                        page.open_branch_menu(id, cx)
+                    }
+                },
+                window,
+            ),
             Command::Export => self.open_export(window, cx),
             Command::Import => self.import(window, cx),
             Command::Trash => self.navigate(Route::Trash, true, window, cx),
@@ -2198,19 +2261,29 @@ impl Shell {
                 DialogEvent::Close => {
                     if let Some(bench) = shell.bench() {
                         bench.pending_triage = None;
+                        bench.pending_restart = None;
                     }
                     shell.close_overlay(window, cx)
                 }
                 DialogEvent::RestartTerminal => {
                     shell.close_overlay(window, cx);
+                    let restart = shell.bench().and_then(|b| b.pending_restart.take());
                     match shell.bench().and_then(|b| b.pending_triage.take()) {
                         Some(origin) => shell.start_triage(origin, window, cx),
-                        None => shell.do_restart_terminal(window, cx),
+                        None => match restart {
+                            Some(origin) => shell.do_restart_in(origin, window, cx),
+                            None => shell.do_restart_terminal(window, cx),
+                        },
                     }
                 }
                 DialogEvent::RemoveSetup => {
                     shell.close_overlay(window, cx);
                     claude_setup::run_remove(cx);
+                }
+                DialogEvent::Confirmed(on_confirm) => {
+                    let on_confirm = on_confirm.clone();
+                    shell.close_overlay(window, cx);
+                    (on_confirm.0)(0, window, cx);
                 }
                 DialogEvent::Setup(project) => {
                     shell.close_overlay(window, cx);
@@ -2520,6 +2593,53 @@ impl Shell {
         } else {
             self.do_restart_terminal(window, cx);
         }
+    }
+
+    /// "Restart in <folder>" (layout.md 4.5): the session's own page,
+    /// with its active folder now; confirmed while a process runs.
+    fn restart_terminal_in(&mut self, origin: Origin, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(bench) = self.bench() else { return };
+        if bench.dock.read(cx).is_running(origin.project, cx) {
+            bench.pending_restart = Some(origin);
+            self.open_dialog(DialogKind::RestartTerminal, window, cx);
+        } else {
+            self.do_restart_in(origin, window, cx);
+        }
+    }
+
+    fn do_restart_in(&mut self, origin: Origin, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(bench) = self.bench() else { return };
+        bench
+            .dock
+            .update(cx, |dock, cx| dock.restart(origin, window, cx));
+        cx.notify();
+    }
+
+    /// "Edit folders..." / "Add folder..." of the terminal header: the
+    /// session's page, its folder list unfolded (and the picker).
+    fn open_folders_of(
+        &mut self,
+        owner: Owner,
+        add: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let route = match owner {
+            Owner::Project(id) => Route::Project(id),
+            Owner::Epic(id) => Route::Epic(id),
+            Owner::Topic(id) => Route::Topic(id),
+        };
+        self.navigate(route, true, window, cx);
+        self.with_record(
+            cx,
+            |page, _, cx| {
+                page.show_folders(cx);
+                if add {
+                    page.add_folder(cx);
+                }
+            },
+            window,
+        );
     }
 
     fn do_restart_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {

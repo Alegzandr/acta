@@ -1021,33 +1021,13 @@ catalogue! {
         en: t("from project {name}"),
         fr: t("du projet {name}"),
     }
-    FoldersPrimary "folders.primary" {
-        en: t("Primary"),
-        fr: t("Principal"),
-    }
-    FoldersInclude "folders.include" {
-        en: t("Also include inherited folders"),
-        fr: t("Inclure aussi les dossiers hérités"),
-    }
-    FoldersNotUsed "folders.not_used" {
-        en: p("Not used here: {n} folder from epic {name}.", "Not used here: {n} folders from epic {name}."),
-        fr: p("Non utilisé ici\u{202f}: {n} dossier de l\u{2019}epic {name}.", "Non utilisés ici\u{202f}: {n} dossiers de l\u{2019}epic {name}."),
-    }
     FoldersAdd "folders.add" {
         en: t("Add folder\u{2026}"),
         fr: t("Ajouter un dossier\u{2026}"),
     }
     FoldersHint "folders.hint" {
-        en: t("Claude Code starts in the primary folder and may also read and edit the others."),
-        fr: t("Claude Code démarre dans le dossier principal et peut aussi lire et modifier les autres."),
-    }
-    FoldersSetHere "folders.set_here" {
-        en: t("Set folder for this topic\u{2026}"),
-        fr: t("Définir un dossier pour ce sujet\u{2026}"),
-    }
-    FoldersUses "folders.uses" {
-        en: t("This topic uses the folders of epic {name}. A folder set here replaces them for this topic only."),
-        fr: t("Ce sujet utilise les dossiers de l\u{2019}epic {name}. Un dossier défini ici les remplace pour ce sujet seulement."),
+        en: t("Claude Code starts in the active folder and may also read and edit the others."),
+        fr: t("Claude Code démarre dans le dossier actif et peut aussi lire et modifier les autres."),
     }
     FoldersNone "folders.none" {
         en: t("No working folder. The terminal will ask where to start."),
@@ -1096,10 +1076,6 @@ catalogue! {
     FoldersCopyPath "folders.copy_path" {
         en: t("Copy path"),
         fr: t("Copier le chemin"),
-    }
-    FoldersMakePrimary "folders.make_primary" {
-        en: t("Make primary"),
-        fr: t("Définir comme principal"),
     }
     FoldersMoveUp "folders.move_up" {
         en: t("Move up"),
@@ -1161,6 +1137,314 @@ catalogue! {
         en: t("Choose a working folder"),
         fr: t("Choisir un dossier de travail"),
     }
+    FoldersActive "folders.active" {
+        en: t("Active"),
+        fr: t("Actif"),
+    }
+    FoldersSetActive "folders.set_active" {
+        en: t("Set as active here"),
+        fr: t("Définir comme actif ici"),
+    }
+    FoldersEdit "folders.edit" {
+        en: t("Edit folders\u{2026}"),
+        fr: t("Modifier les dossiers\u{2026}"),
+    }
+    FoldersSettings "folders.settings" {
+        en: t("Folder settings\u{2026}"),
+        fr: t("Réglages du dossier\u{2026}"),
+    }
+    FoldersGroupTopic "folders.group.topic" {
+        en: t("This topic"),
+        fr: t("Ce sujet"),
+    }
+    FoldersGroupEpic "folders.group.epic" {
+        en: t("This epic"),
+        fr: t("Cet epic"),
+    }
+    FoldersGroupProject "folders.group.project" {
+        en: t("This project"),
+        fr: t("Ce projet"),
+    }
+    FoldersGroupFromEpic "folders.group.from_epic" {
+        en: t("From epic {name}"),
+        fr: t("De l\u{2019}epic {name}"),
+    }
+    FoldersGroupFromProject "folders.group.from_project" {
+        en: t("From project {name}"),
+        fr: t("Du projet {name}"),
+    }
+    FoldersNoOwn "folders.no_own" {
+        en: t("No folders of its own."),
+        fr: t("Aucun dossier propre."),
+    }
+    FoldersNotFoundShort "folders.not_found_short" {
+        en: t("Not found"),
+        fr: t("Introuvable"),
+    }
+    FoldersOtherCheckout "folders.other_checkout" {
+        en: t("Another checkout of the same repository as {name}. Not passed to Claude Code here."),
+        fr: t("Autre copie de travail du même dépôt que {name}. Non transmise à Claude Code ici."),
+    }
+    FoldersGitDetached "folders.git.detached" {
+        en: t("detached at {commit}"),
+        fr: t("détaché sur {commit}"),
+    }
+    FoldersGitChanged "folders.git.changed" {
+        en: t("{n} changed"),
+        fr: p("{n} modifié", "{n} modifiés"),
+    }
+    FoldersGitAutoCommit "folders.git.auto_commit" {
+        en: t("Claude Code commits automatically here"),
+        fr: t("Claude Code commite automatiquement ici"),
+    }
+    FoldersGitAutoPush "folders.git.auto_push" {
+        en: t("Claude Code commits and pushes automatically here"),
+        fr: t("Claude Code commite et pousse automatiquement ici"),
+    }
+    FoldersName "folders.name" {
+        en: t("Name"),
+        fr: t("Nom"),
+    }
+    FoldersIcon "folders.icon" {
+        en: t("Icon"),
+        fr: t("Icône"),
+    }
+    FoldersIconAuto "folders.icon.auto" {
+        en: t("Automatic"),
+        fr: t("Automatique"),
+    }
+    FoldersIconAutoHint "folders.icon.auto_hint" {
+        en: t("Automatic: a branch for a git worktree, a git folder for a repository, a folder otherwise"),
+        fr: t("Automatique\u{202f}: une branche pour un worktree git, un dossier git pour un dépôt, un dossier sinon"),
+    }
+    FoldersIconFolder "folders.icon.folder" {
+        en: t("Folder"),
+        fr: t("Dossier"),
+    }
+    FoldersIconRepo "folders.icon.repo" {
+        en: t("Git repository"),
+        fr: t("Dépôt git"),
+    }
+    FoldersIconWorktree "folders.icon.worktree" {
+        en: t("Git worktree"),
+        fr: t("Worktree git"),
+    }
+    FoldersIconCode "folders.icon.code" {
+        en: t("Code"),
+        fr: t("Code"),
+    }
+    FoldersIconDocs "folders.icon.docs" {
+        en: t("Documentation"),
+        fr: t("Documentation"),
+    }
+    FoldersIconPackage "folders.icon.package" {
+        en: t("Package"),
+        fr: t("Paquet"),
+    }
+    FoldersIconServer "folders.icon.server" {
+        en: t("Server"),
+        fr: t("Serveur"),
+    }
+    FoldersIconWeb "folders.icon.web" {
+        en: t("Web"),
+        fr: t("Web"),
+    }
+    FoldersIconMobile "folders.icon.mobile" {
+        en: t("Mobile"),
+        fr: t("Mobile"),
+    }
+    FoldersIconData "folders.icon.data" {
+        en: t("Data"),
+        fr: t("Données"),
+    }
+    FoldersIconLab "folders.icon.lab" {
+        en: t("Experiments"),
+        fr: t("Expériences"),
+    }
+    FoldersIconDesign "folders.icon.design" {
+        en: t("Design"),
+        fr: t("Design"),
+    }
+    FoldersCommits "folders.commits" {
+        en: t("Commits by Claude Code"),
+        fr: t("Commits par Claude Code"),
+    }
+    FoldersCommitManual "folders.commit.manual" {
+        en: t("Manual"),
+        fr: t("Manuel"),
+    }
+    FoldersCommitCommit "folders.commit.commit" {
+        en: t("Commit"),
+        fr: t("Commit"),
+    }
+    FoldersCommitPush "folders.commit.push" {
+        en: t("Commit and push"),
+        fr: t("Commit et push"),
+    }
+    FoldersCommitManualHint "folders.commit.manual_hint" {
+        en: t("Claude Code commits only when you ask."),
+        fr: t("Claude Code ne commite que si vous le demandez."),
+    }
+    FoldersCommitCommitHint "folders.commit.commit_hint" {
+        en: t("After each finished, tested change, Claude Code commits it."),
+        fr: t("Après chaque modification terminée et testée, Claude Code la commite."),
+    }
+    FoldersCommitPushHint "folders.commit.push_hint" {
+        en: t("After each commit, Claude Code also pushes to the branch\u{2019}s upstream. Never forced; it stops and tells you if a push is rejected or needs a sign-in."),
+        fr: t("Après chaque commit, Claude Code pousse aussi vers la branche amont. Jamais en force\u{202f}; il s\u{2019}arrête et vous prévient si un push est refusé ou demande une connexion."),
+    }
+    FoldersCommitAsUser "folders.commit.as_user" {
+        en: t("Commit in my name, without Co-Authored-By Claude"),
+        fr: t("Commiter en mon nom, sans Co-Authored-By Claude"),
+    }
+    FoldersCommitOnDefault "folders.commit.on_default" {
+        en: t("Also on {branch}"),
+        fr: t("Aussi sur {branch}"),
+    }
+    FoldersCommitIdentity "folders.commit.identity" {
+        en: t("Commits use your git identity: {name}."),
+        fr: t("Les commits utilisent votre identité git\u{202f}: {name}."),
+    }
+    FoldersCommitNoIdentity "folders.commit.no_identity" {
+        en: t("Git has no user name for this folder, so commits will fail. Acta does not set it."),
+        fr: t("Git n\u{2019}a pas de nom d\u{2019}utilisateur pour ce dossier\u{202f}: les commits échoueront. Acta ne le définit pas."),
+    }
+    FoldersCommitFile "folders.commit.file" {
+        en: t("Acta writes these rules to .claude/settings.local.json in this folder, kept out of git."),
+        fr: t("Acta écrit ces règles dans le .claude/settings.local.json de ce dossier, exclu de git."),
+    }
+    FoldersCommitTracked "folders.commit.tracked" {
+        en: t("This folder\u{2019}s .claude/settings.local.json is tracked by git, so Acta does not write it: Claude Code will ask before each commit."),
+        fr: t("Le .claude/settings.local.json de ce dossier est suivi par git, Acta ne l\u{2019}écrit donc pas\u{202f}: Claude Code demandera avant chaque commit."),
+    }
+    FoldersCommitUserOwn "folders.commit.user_key" {
+        en: t("Your own {key} setting in .claude/settings.local.json is kept."),
+        fr: t("Votre propre réglage {key} dans .claude/settings.local.json est conservé."),
+    }
+    FoldersCommitRootWins "folders.commit.root_wins" {
+        en: t("The repository\u{2019}s own local settings set attribution, and that setting wins."),
+        fr: t("Les réglages locaux du dépôt définissent attribution, et ce réglage l\u{2019}emporte."),
+    }
+    FoldersGitBehind "folders.git.behind" {
+        en: t("behind {n}"),
+        fr: t("{n} en retard"),
+    }
+    FoldersGitPull "folders.git.pull" {
+        en: t("Pull"),
+        fr: t("Pull"),
+    }
+    FoldersGitFetch "folders.git.fetch" {
+        en: t("Fetch"),
+        fr: t("Fetch"),
+    }
+    FoldersGitBranchTip "folders.git.branch_tip" {
+        en: t("Switch branch"),
+        fr: t("Changer de branche"),
+    }
+    FoldersGitLocal "folders.git.local" {
+        en: t("Branches"),
+        fr: t("Branches"),
+    }
+    FoldersGitRemote "folders.git.remote" {
+        en: t("Remote branches"),
+        fr: t("Branches distantes"),
+    }
+    FoldersGitTrack "folders.git.track" {
+        en: t("track"),
+        fr: t("suivre"),
+    }
+    FoldersGitNewBranch "folders.git.new_branch" {
+        en: t("New branch\u{2026}"),
+        fr: t("Nouvelle branche\u{2026}"),
+    }
+    FoldersGitNewBranchHint "folders.git.new_branch_hint" {
+        en: t("Name of the new branch, from the current commit"),
+        fr: t("Nom de la nouvelle branche, depuis le commit actuel"),
+    }
+    FoldersGitCreate "folders.git.create" {
+        en: t("Create"),
+        fr: t("Créer"),
+    }
+    FoldersGitPulled "folders.git.pulled" {
+        en: p("Pulled {n} commit into {branch}.", "Pulled {n} commits into {branch}."),
+        fr: p("{n} commit récupéré dans {branch}.", "{n} commits récupérés dans {branch}."),
+    }
+    FoldersGitUpToDate "folders.git.up_to_date" {
+        en: t("{branch} is up to date."),
+        fr: t("{branch} est à jour."),
+    }
+    FoldersGitErrNoGit "folders.git.err.no_git" {
+        en: t("Git is not installed on this computer."),
+        fr: t("Git n\u{2019}est pas installé sur cet ordinateur."),
+    }
+    FoldersGitErrTimedOut "folders.git.err.timed_out" {
+        en: t("Git took too long, so Acta stopped it. Nothing was changed."),
+        fr: t("Git a mis trop de temps\u{202f}: Acta l\u{2019}a arrêté. Rien n\u{2019}a été modifié."),
+    }
+    FoldersGitErrNoUpstream "folders.git.err.no_upstream" {
+        en: t("{branch} has no upstream branch to pull from. Nothing was changed."),
+        fr: t("{branch} n\u{2019}a pas de branche amont d\u{2019}où récupérer. Rien n\u{2019}a été modifié."),
+    }
+    FoldersGitErrDetached "folders.git.err.detached" {
+        en: t("There is no current branch (detached HEAD). Nothing was changed."),
+        fr: t("Il n\u{2019}y a pas de branche courante (HEAD détachée). Rien n\u{2019}a été modifié."),
+    }
+    FoldersGitErrDiverged "folders.git.err.diverged" {
+        en: t("{branch} and its upstream have diverged, so it cannot be fast-forwarded. Nothing was changed."),
+        fr: t("{branch} et sa branche amont ont divergé\u{202f}: l\u{2019}avance rapide est impossible. Rien n\u{2019}a été modifié."),
+    }
+    FoldersGitErrLocalChanges "folders.git.err.local_changes" {
+        en: t("Local changes in {folder} would be overwritten. Nothing was changed: commit them or set them aside first."),
+        fr: t("Des modifications locales de {folder} seraient écrasées. Rien n\u{2019}a été modifié\u{202f}: commitez-les ou mettez-les de côté d\u{2019}abord."),
+    }
+    FoldersGitErrSignIn "folders.git.err.sign_in" {
+        en: t("The remote asks for a sign-in, and Acta never asks for one. Nothing was changed."),
+        fr: t("Le dépôt distant demande une connexion, et Acta n\u{2019}en demande jamais. Rien n\u{2019}a été modifié."),
+    }
+    FoldersGitErrNetwork "folders.git.err.network" {
+        en: t("The remote could not be reached. Nothing was changed."),
+        fr: t("Le dépôt distant est injoignable. Rien n\u{2019}a été modifié."),
+    }
+    FoldersGitErrExists "folders.git.err.exists" {
+        en: t("A branch named {branch} already exists. Nothing was changed."),
+        fr: t("Une branche nommée {branch} existe déjà. Rien n\u{2019}a été modifié."),
+    }
+    FoldersGitErrInvalidName "folders.git.err.invalid_name" {
+        en: t("{branch} is not a valid branch name. Nothing was changed."),
+        fr: t("{branch} n\u{2019}est pas un nom de branche valide. Rien n\u{2019}a été modifié."),
+    }
+    FoldersGitErrNoBranch "folders.git.err.no_branch" {
+        en: t("There is no branch {branch}. Nothing was changed."),
+        fr: t("Il n\u{2019}y a pas de branche {branch}. Rien n\u{2019}a été modifié."),
+    }
+    FoldersGitErrElsewhere "folders.git.err.elsewhere" {
+        en: t("{branch} is checked out in another worktree. Nothing was changed."),
+        fr: t("{branch} est extraite dans un autre worktree. Rien n\u{2019}a été modifié."),
+    }
+    FoldersGitErrOther "folders.git.err.other" {
+        en: t("Git refused, and nothing was changed: {message}"),
+        fr: t("Git a refusé, rien n\u{2019}a été modifié\u{202f}: {message}"),
+    }
+    FoldersGitBusyTitle "folders.git.busy.title" {
+        en: t("Claude Code is working in {folder}"),
+        fr: t("Claude Code travaille dans {folder}"),
+    }
+    FoldersGitBusySwitch "folders.git.busy.switch" {
+        en: t("Switching to {branch} changes the files under it while it works. It is not told."),
+        fr: t("Passer sur {branch} change ses fichiers pendant qu\u{2019}il travaille. Il n\u{2019}en est pas informé."),
+    }
+    FoldersGitBusyPull "folders.git.busy.pull" {
+        en: t("Pulling changes the files under it while it works. It is not told."),
+        fr: t("Le pull change ses fichiers pendant qu\u{2019}il travaille. Il n\u{2019}en est pas informé."),
+    }
+    FoldersGitBusyConfirmSwitch "folders.git.busy.confirm_switch" {
+        en: t("Switch anyway"),
+        fr: t("Changer quand même"),
+    }
+    FoldersGitBusyConfirmPull "folders.git.busy.confirm_pull" {
+        en: t("Pull anyway"),
+        fr: t("Pull quand même"),
+    }
     TerminalTitle "terminal.title" {
         en: t("Terminal"),
         fr: t("Terminal"),
@@ -1217,10 +1501,6 @@ catalogue! {
         en: t("The working folder was not found"),
         fr: t("Le dossier de travail est introuvable"),
     }
-    TerminalMissingBody "terminal.missing.body" {
-        en: t("Claude Code was not started. This is the primary folder of epic {name}, and it is not on this computer:"),
-        fr: t("Claude Code n\u{2019}a pas été lancé. C\u{2019}est le dossier principal de l\u{2019}epic {name}, et il n\u{2019}est pas sur cet ordinateur\u{202f}:"),
-    }
     TerminalMissingLocate "terminal.missing.locate" {
         en: t("Locate folder\u{2026}"),
         fr: t("Localiser le dossier\u{2026}"),
@@ -1244,6 +1524,30 @@ catalogue! {
     TerminalRestartConfirm "terminal.restart.confirm" {
         en: t("Restart"),
         fr: t("Redémarrer"),
+    }
+    TerminalMissingBodyTopic "terminal.missing.body.topic" {
+        en: t("Claude Code was not started. This is the active folder of topic {name}, and it is not on this computer:"),
+        fr: t("Claude Code n\u{2019}a pas été lancé. C\u{2019}est le dossier actif du sujet {name}, et il n\u{2019}est pas sur cet ordinateur\u{202f}:"),
+    }
+    TerminalMissingBodyEpic "terminal.missing.body.epic" {
+        en: t("Claude Code was not started. This is the active folder of epic {name}, and it is not on this computer:"),
+        fr: t("Claude Code n\u{2019}a pas été lancé. C\u{2019}est le dossier actif de l\u{2019}epic {name}, et il n\u{2019}est pas sur cet ordinateur\u{202f}:"),
+    }
+    TerminalMissingBodyProject "terminal.missing.body.project" {
+        en: t("Claude Code was not started. This is the active folder of project {name}, and it is not on this computer:"),
+        fr: t("Claude Code n\u{2019}a pas été lancé. C\u{2019}est le dossier actif du projet {name}, et il n\u{2019}est pas sur cet ordinateur\u{202f}:"),
+    }
+    TerminalMissingOther "terminal.missing.other" {
+        en: t("Or start in another folder:"),
+        fr: t("Ou démarrer dans un autre dossier\u{202f}:"),
+    }
+    TerminalRunningIn "terminal.running_in" {
+        en: t("(running in {name})"),
+        fr: t("(lancé dans {name})"),
+    }
+    TerminalRestartIn "terminal.restart_in" {
+        en: t("Restart in {name}"),
+        fr: t("Redémarrer dans {name}"),
     }
     TerminalCloseTitle "terminal.close.title" {
         en: t("Close the terminal?"),
@@ -1841,10 +2145,6 @@ catalogue! {
         en: t("Show working folders"),
         fr: t("Afficher les dossiers de travail"),
     }
-    CmdFolderPrimary "cmd.folder_primary" {
-        en: t("Make primary folder"),
-        fr: t("Définir comme dossier principal"),
-    }
     CmdFolderUp "cmd.folder_up" {
         en: t("Move folder up"),
         fr: t("Monter le dossier"),
@@ -1885,17 +2185,49 @@ catalogue! {
         en: t("Remove folder from this project"),
         fr: t("Retirer le dossier de ce projet"),
     }
-    CmdFoldersInclude "cmd.folders_include" {
-        en: t("Include inherited folders"),
-        fr: t("Inclure les dossiers hérités"),
-    }
-    CmdFoldersExclude "cmd.folders_exclude" {
-        en: t("Stop including inherited folders"),
-        fr: t("Ne plus inclure les dossiers hérités"),
-    }
     CmdFoldersBulk "cmd.folders_bulk" {
         en: p("Apply the same change to {n} folder", "Apply the same change to {n} folders"),
         fr: p("Appliquer le même changement à {n} dossier", "Appliquer le même changement à {n} dossiers"),
+    }
+    CmdFolderSwitch "cmd.folder_switch" {
+        en: t("Switch active folder\u{2026}"),
+        fr: t("Changer de dossier actif\u{2026}"),
+    }
+    CmdFolderActive "cmd.folder_active" {
+        en: t("Make folder active"),
+        fr: t("Rendre le dossier actif"),
+    }
+    CmdFolderSettings "cmd.folder_settings" {
+        en: t("Folder settings\u{2026}"),
+        fr: t("Réglages du dossier\u{2026}"),
+    }
+    CmdCommitMode "cmd.commit_mode" {
+        en: t("Set commit mode\u{2026}"),
+        fr: t("Définir le mode de commit\u{2026}"),
+    }
+    CmdCommitModeManual "cmd.commit_mode.manual" {
+        en: t("Manual"),
+        fr: t("Manuel"),
+    }
+    CmdCommitModeCommit "cmd.commit_mode.commit" {
+        en: t("Commit automatically"),
+        fr: t("Commiter automatiquement"),
+    }
+    CmdCommitModePush "cmd.commit_mode.push" {
+        en: t("Commit and push automatically"),
+        fr: t("Commiter et pousser automatiquement"),
+    }
+    CmdFolderPull "cmd.folder_pull" {
+        en: t("Pull active folder"),
+        fr: t("Pull du dossier actif"),
+    }
+    CmdFolderFetch "cmd.folder_fetch" {
+        en: t("Fetch active folder"),
+        fr: t("Fetch du dossier actif"),
+    }
+    CmdFolderBranch "cmd.folder_branch" {
+        en: t("Switch branch of active folder\u{2026}"),
+        fr: t("Changer de branche du dossier actif\u{2026}"),
     }
     SlashH1 "slash.h1" {
         en: t("Heading 1"),
@@ -2036,6 +2368,14 @@ catalogue! {
     SettingsNotFound "settings.not_found" {
         en: t("Folders not found"),
         fr: t("Dossiers introuvables"),
+    }
+    SettingsAutoCommit "settings.auto_commit" {
+        en: t("Automatic commits"),
+        fr: t("Commits automatiques"),
+    }
+    SettingsAutoCommitHint "settings.auto_commit.hint" {
+        en: t("The default for folders set to commit automatically. Each folder can choose otherwise in its folder settings. Commits always use your own git identity."),
+        fr: t("La valeur par défaut des dossiers qui commitent automatiquement. Chaque dossier peut en décider autrement dans ses réglages. Les commits utilisent toujours votre propre identité git."),
     }
     SettingsClaude "settings.claude" {
         en: t("Claude Code"),
@@ -2332,6 +2672,10 @@ catalogue! {
     ImportWrongPassphrase "import.wrong_passphrase" {
         en: t("Wrong passphrase."),
         fr: t("Phrase secrète incorrecte."),
+    }
+    ImportAutoCommit "import.auto_commit" {
+        en: p("{n} working folder lets Claude Code commit automatically. Acta writes its rules only once the folder is found on this computer.", "{n} working folders let Claude Code commit automatically. Acta writes their rules only once each folder is found on this computer."),
+        fr: p("{n} dossier de travail laisse Claude Code commiter automatiquement. Acta n\u{2019}écrit ses règles qu\u{2019}une fois le dossier trouvé sur cet ordinateur.", "{n} dossiers de travail laissent Claude Code commiter automatiquement. Acta n\u{2019}écrit leurs règles qu\u{2019}une fois chaque dossier trouvé sur cet ordinateur."),
     }
     TrashHint "trash.hint" {
         en: t("Deleted things stay here for 30 days."),

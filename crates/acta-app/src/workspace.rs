@@ -16,8 +16,8 @@ use std::time::Duration;
 
 use acta_core::folder_identity::{self, Known, Monitor};
 use acta_core::model::{
-    Author, EpicId, FolderId, KbId, Note, NoteId, Owner, ProjectId, ProjectTree, Record, Status,
-    TopicId,
+    Author, CommitMode, EpicId, FolderId, KbId, Note, NoteId, Owner, ProjectId, ProjectTree,
+    Record, Status, TopicId,
 };
 use acta_core::store::{EpicPatch, ProjectPatch, TopicPatch, Unread};
 use acta_core::{ChangeWatcher, Store};
@@ -85,6 +85,25 @@ pub enum Undo {
         back: Option<FolderId>,
         expect: Option<FolderId>,
     },
+    /// A folder's name changed (`""`: the last segment of its path).
+    FolderName {
+        id: FolderId,
+        back: String,
+        expect: String,
+    },
+    /// A folder's icon changed (`""`: automatic).
+    FolderIcon {
+        id: FolderId,
+        back: String,
+        expect: String,
+    },
+    /// A folder's commit mode or one of its options changed; its Claude
+    /// Code settings follow (ADR 0011, 3).
+    FolderCommit {
+        id: FolderId,
+        back: CommitColumns,
+        expect: CommitColumns,
+    },
     /// A folder set or located: put the old path back as stored.
     FolderPath {
         id: FolderId,
@@ -129,6 +148,15 @@ pub enum Undo {
     Many(Vec<Undo>),
 }
 
+/// A folder's commit columns: mode, "Commit in my name" (`None`: the
+/// Settings default), "Also on <default branch>".
+pub type CommitColumns = (CommitMode, Option<bool>, bool);
+
+fn commit_columns(store: &Store, id: FolderId) -> acta_core::Result<CommitColumns> {
+    let f = store.folder(id)?;
+    Ok((f.commit_mode, f.commit_as_user, f.commit_on_default))
+}
+
 fn is_live(store: &Store, record: Record) -> acta_core::Result<bool> {
     let found = match record {
         Record::Project(id) => store.project(id).map(|_| ()),
@@ -159,6 +187,9 @@ impl Undo {
             Undo::ProjectTitle { id, expect, .. } => store.project(*id)?.title == *expect,
             Undo::Due { owner, expect, .. } => due_on(store, *owner)? == *expect,
             Undo::ActiveFolder { owner, expect, .. } => active_pointer(store, *owner)? == *expect,
+            Undo::FolderName { id, expect, .. } => store.folder(*id)?.name == *expect,
+            Undo::FolderIcon { id, expect, .. } => store.folder(*id)?.icon == *expect,
+            Undo::FolderCommit { id, expect, .. } => commit_columns(store, *id)? == *expect,
             Undo::FolderPath { id, expect, .. } => store.folder(*id)?.path == *expect,
             Undo::KbRevision { id, expect, .. } => store.kb_entry(*id)?.rev == *expect,
             Undo::KbOwner { id, expect, .. } => store.kb_entry(*id)?.owner == *expect,
@@ -294,6 +325,31 @@ impl Undo {
                     expect: *back,
                 }
             }
+            Undo::FolderName { id, back, expect } => {
+                store.set_folder_name(*id, back, me)?;
+                Undo::FolderName {
+                    id: *id,
+                    back: expect.clone(),
+                    expect: store.folder(*id)?.name,
+                }
+            }
+            Undo::FolderIcon { id, back, expect } => {
+                store.set_folder_icon(*id, back, me)?;
+                Undo::FolderIcon {
+                    id: *id,
+                    back: expect.clone(),
+                    expect: store.folder(*id)?.icon,
+                }
+            }
+            Undo::FolderCommit { id, back, expect } => {
+                let (mode, as_user, on_default) = *back;
+                store.set_commit_settings(*id, mode, as_user, on_default, me)?;
+                Undo::FolderCommit {
+                    id: *id,
+                    back: *expect,
+                    expect: commit_columns(store, *id)?,
+                }
+            }
             Undo::FolderPath { id, back, expect } => {
                 store.restore_folder_path(*id, back, me)?;
                 Undo::FolderPath {
@@ -365,6 +421,19 @@ impl Undo {
                 Undo::Many(inverse)
             }
         })
+    }
+
+    /// Whether taking the step back changes which folders exist or their
+    /// commit settings: Claude Code's settings files then follow.
+    fn touches_folders(&self) -> bool {
+        match self {
+            Undo::Restore(Record::Folder(_))
+            | Undo::Delete(Record::Folder(_))
+            | Undo::FolderCommit { .. }
+            | Undo::FolderPath { .. } => true,
+            Undo::Many(all) => all.iter().any(Undo::touches_folders),
+            _ => false,
+        }
     }
 
     /// Check and take back in one transaction. `Ok(None)`: something else
@@ -501,6 +570,10 @@ pub struct Workspace {
     pub unread: Unread,
     /// Bumped on every reload, by any process's commit.
     pub revision: u64,
+    /// Bumped when the window regains focus and when the folder monitor
+    /// reloads the pages: the folders' git state is read again then, never
+    /// by watching `.git`.
+    pub git_epoch: u64,
     undo: HashMap<Option<ProjectId>, UndoStack>,
     /// The steps undone, per project, for `Mod+Shift+Z`: each the inverse
     /// of an undo, checked the same way. A new action of the project
@@ -587,6 +660,7 @@ impl Workspace {
             projects: Vec::new(),
             unread: Unread::default(),
             revision: 0,
+            git_epoch: 0,
             undo: HashMap::new(),
             redo: HashMap::new(),
             actions: HashMap::new(),
@@ -685,7 +759,14 @@ impl Workspace {
                         })
                         .await;
                 }
-                if pass.changed && this.update(cx, |ws, cx| ws.reload(cx)).is_err() {
+                if pass.changed
+                    && this
+                        .update(cx, |ws, cx| {
+                            ws.git_epoch += 1;
+                            ws.reload(cx)
+                        })
+                        .is_err()
+                {
                     return;
                 }
             }
@@ -693,9 +774,13 @@ impl Workspace {
     }
 
     /// The window regained focus: the next monitor pass reads every
-    /// folder's identity again and searches again for missing ones.
-    pub fn check_folders_again(&self) {
+    /// folder's identity again and searches again for missing ones, and
+    /// the pages read their folders' git state again (ADR 0011 addendum,
+    /// live files).
+    pub fn check_folders_again(&mut self, cx: &mut Context<Self>) {
         self.thorough.store(true, Ordering::Relaxed);
+        self.git_epoch += 1;
+        cx.notify();
     }
 
     /// Whether `record` carries an unread dot (topics and knowledge only).
@@ -797,6 +882,17 @@ impl Workspace {
         f: impl FnOnce(&mut Store) -> acta_core::Result<(Undo, R)> + Send + 'static,
     ) -> Task<Result<R, WriteError>> {
         let task = self.write(cx, Key::ErrorSave, move |store| store.atomically(f));
+        self.push_undo(task, project, message, cx)
+    }
+
+    /// Once `task` has written, its step goes on the stack of `project`.
+    fn push_undo<R: Send + 'static>(
+        &mut self,
+        task: Task<Result<(Undo, R), WriteError>>,
+        project: Option<ProjectId>,
+        message: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<R, WriteError>> {
         cx.spawn(async move |this, cx| {
             let (undo, value) = task.await?;
             let _ = this.update(cx, |ws, cx| {
@@ -812,6 +908,24 @@ impl Workspace {
             });
             Ok(value)
         })
+    }
+
+    /// [`Workspace::write_undoable`] for a change to folders (added,
+    /// removed, located, a commit setting): Claude Code's settings files are
+    /// brought in line with the store once it is written (ADR 0011, 3).
+    pub fn write_folders<R: Send + 'static>(
+        &mut self,
+        cx: &mut Context<Self>,
+        project: Option<ProjectId>,
+        message: Option<String>,
+        f: impl FnOnce(&mut Store) -> acta_core::Result<(Undo, R)> + Send + 'static,
+    ) -> Task<Result<R, WriteError>> {
+        let task = self.write(cx, Key::ErrorSave, move |store| {
+            let done = store.atomically(f)?;
+            sync_settings(store);
+            Ok(done)
+        });
+        self.push_undo(task, project, message, cx)
     }
 
     /// `write_undoable` for callers that do not wait.
@@ -1019,7 +1133,7 @@ impl Workspace {
             };
             let Ok(task) = ws.update(cx, |ws, cx| {
                 let new = stored.clone();
-                ws.write_undoable(cx, project, None, move |store| {
+                ws.write_folders(cx, project, None, move |store| {
                     let folder = match target {
                         FolderRef::Id(id) => store.folder(id)?,
                         FolderRef::At(owner, path) => store
@@ -1104,7 +1218,7 @@ impl Workspace {
         };
         cx.notify();
         let locale = crate::settings::locale(cx);
-        let task = self.write_undoable(cx, project, None, move |store| {
+        let task = self.write_folders(cx, project, None, move |store| {
             let mut apply = Vec::new();
             let mut steps = Vec::new();
             for (id, old, new) in offer.changes {
@@ -1161,7 +1275,13 @@ impl Workspace {
         self.undoing = true;
         let started = self.actions.get(&project).copied().unwrap_or(0);
         let applied = step.clone();
-        let task = self.write(cx, Key::ErrorSave, move |store| applied.apply(store));
+        let task = self.write(cx, Key::ErrorSave, move |store| {
+            let inverse = applied.apply(store)?;
+            if applied.touches_folders() {
+                sync_settings(store);
+            }
+            Ok(inverse)
+        });
         cx.spawn(async move |ws, cx| {
             let result = task.await;
             let _ = ws.update(cx, |ws, cx| {
@@ -1270,6 +1390,22 @@ pub fn err_kind(err: &acta_core::Error) -> String {
 
 /// Folders that are not a folder on this computer (blocking: call it off
 /// the UI thread and never while holding the store).
+/// Claude Code's settings files in line with the store's columns, after a
+/// change to folders. A folder that cannot be written now (offline, a
+/// malformed file) is left for the next sync; the log says how many.
+fn sync_settings(store: &mut Store) {
+    match acta_core::claude_settings::sync_all(store) {
+        Ok((_, 0)) => {}
+        Ok((_, kept)) => crate::log::line(&format!(
+            "folders: {kept} Claude Code settings file(s) left as they were"
+        )),
+        Err(err) => crate::log::line(&format!(
+            "folders: Claude Code settings not synced: {}",
+            err_kind(&err)
+        )),
+    }
+}
+
 pub fn missing_paths(paths: impl IntoIterator<Item = String>) -> std::collections::HashSet<String> {
     paths
         .into_iter()
