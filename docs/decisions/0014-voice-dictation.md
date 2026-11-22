@@ -33,7 +33,7 @@ Facts checked on 2026-11-22 (docs and APIs read; nothing installed, built or dow
 ## Decision
 
 ### 1. Where: every multi-line editor, nothing else
-The microphone button is in each multi-line editor (DESIGN 5): descriptions of projects, epics and topics; current state; the timeline composer and an entry being edited; quick capture, the inbox capture and a note being edited; a memory's body and a document's body; the question composer and the answer editor. Not in titles, summaries, the person field, search inputs, the terminal or the chat. The placement, states and keys are in `docs/design/components-voice.md`.
+The microphone button is in each multi-line editor (DESIGN 5): descriptions of projects, epics and topics; current state; a timeline entry being edited (the human never adds entries, user ruling 2026-11-22); quick capture, the inbox capture and a note being edited; a memory's body and a document's body; the question composer and the answer editor. Not in titles, summaries, the person field, search inputs, the terminal or the chat. The placement, states and keys are in `docs/design/components-voice.md`.
 
 ### 2. Never off the machine
 Audio is recognised on this computer or not at all. No cloud recogniser, whatever the OS offers: Windows' dictation grammar and voice typing go to Microsoft's service (and the WinRT API is closed to an unpackaged app anyway); macOS' server-based `SFSpeechRecognizer` is never used (`requiresOnDeviceRecognition` is always set). Acta makes no network call for dictation except the model download the user clicks (4).

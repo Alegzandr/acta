@@ -14,7 +14,7 @@ Every multi-line editor (5) and nothing else: the places where a person writes p
 
 | Editor | Where the button sits |
 |---|---|
-| Description (project, epic, topic), current state, timeline composer, an entry being edited | the editor's footer, left of the save hint, after the `paperclip` where there is one |
+| Description (project, epic, topic), current state, a timeline entry being edited | the editor's footer, left of the save hint, after the `paperclip` where there is one |
 | Quick capture, the inbox's capture editor, a note being edited | the same footer |
 | Memory body (edited in place), document body (document editor) | memory: its editor's footer; document: the 44 bottom bar, after "Editing" and its draft state |
 | Question composer, answer editor | composer: the trailing slot of the question text field (compact, inside its right padding); answer editor: its button row, left of "Cancel" |
