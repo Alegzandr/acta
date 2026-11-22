@@ -3,10 +3,11 @@
 # runner, after checking its SHA-256. A prebuilt binary takes seconds; compiling it with
 # `cargo install` takes minutes on every run. Bump the version and the checksum
 # together (the checksum is the `.sha256` file published next to the archive).
+# Dependabot does not bump this pin; pick a release that is a few weeks old.
 set -eu
 
-VERSION=0.22.0
-SHA256=98c56e6a408bfa5c3c60744b6015aaa6aa08f743fdeb88386d06fca035bb1786
+VERSION=0.20.2
+SHA256=9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f
 
 if [ "$(uname -s)-$(uname -m)" != Linux-x86_64 ]; then
     echo "error: this script installs the Linux x86_64 binary only; elsewhere run:" >&2

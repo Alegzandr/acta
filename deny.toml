@@ -10,7 +10,8 @@ all-features = true
 version = 2
 # Yanked versions fail the check too.
 yanked = "deny"
-# Unmaintained notices for the workspace's direct dependencies only. A transitive
+# Unmaintained notices for the workspace's direct dependencies only (explicit: the
+# default is `all` before cargo-deny 0.22). A transitive
 # unmaintained crate is its parent's to replace (gpui, zbus, ...); vulnerabilities fire
 # for every crate in the graph regardless.
 unmaintained = "workspace"
