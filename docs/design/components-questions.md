@@ -70,8 +70,8 @@ On topic, epic and project pages, between Description and Knowledge (layout.md 4
 
 ### Report to
 
-**Report to row** (properties block of topic and epic pages, after Due; components-records.md 5). Label "Report to" (`prop.report_to`). The row is always shown, as Due is.
-- **Unset**: the ghost control "None" (`person.none`, French « Personne ») in `text.tertiary`; `Enter`, `R` from anywhere on the page, or a click opens the **person popover** anchored to it.
+**Report to row** (properties block of topic and epic pages, after Due; components-records.md 5). Label "Report to" (`prop.report_to`). Like Due, the row exists only while a person is set (clarity review 2026-11-22).
+- **Unset**: no row; the add chip "Report to" (`prop.add_report_to`, components-records.md 5, Properties block), `R` from anywhere on the page, or the palette opens the **person popover** anchored to the chip (or, with no pointer, to the line where the row will appear).
 - **Set**: the person as a link to the person page, then 8, the report state as a run in `type.ui`:
 
 | Case | Run | Colour |

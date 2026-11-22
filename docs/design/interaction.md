@@ -13,13 +13,13 @@ Part of the Acta design system. [DESIGN.md](../../DESIGN.md) is the index: direc
 | Switch project (palette scoped to projects; opens the project page) | `Ctrl+O` | `Cmd+O` |
 | Capture a note (from anywhere) | `Ctrl+N` | `Cmd+N` |
 | New topic (in the current epic) | `Ctrl+T` | `Cmd+T` |
-| Add a timeline entry to the current topic | `Ctrl+E` | `Cmd+E` |
 | Go to inbox | `Ctrl+I` | `Cmd+I` |
 | Open knowledge (palette scoped to documents and memories in scope, nearest level first) | `Ctrl+D` | `Cmd+D` |
 | Go to the project's knowledge base | `Ctrl+L` | `Cmd+L` |
 | New document / new memory (owned by the open project, epic or topic) | `Ctrl+Shift+D` / `Ctrl+Shift+M` | `Cmd+Shift+D` / `Cmd+Shift+M` |
 | Go to heading (in a document) | `Ctrl+Shift+O` | `Cmd+Shift+O` |
-| Attach files (only in quick capture, the inbox capture, the note, timeline and description editors; components-attachments.md 5) | `Ctrl+Shift+A` | `Cmd+Shift+A` |
+| Dictate: press to start and again to stop, or hold to talk (only in the multi-line editors; components-voice.md 5) | `Ctrl+Shift+Space` | `Cmd+Shift+Space` |
+| Attach files (only in quick capture, the inbox capture, the note editor, an entry being edited and the description editor; components-attachments.md 5) | `Ctrl+Shift+A` | `Cmd+Shift+A` |
 | Back / forward in the active tab's history | `Alt+Left` / `Alt+Right` | `Cmd+[` / `Cmd+]` |
 | Open in a new tab (on a row or a palette result) | `Ctrl+Enter` | `Cmd+Enter` |
 | Close tab | `Ctrl+W` | `Cmd+W` |
@@ -69,9 +69,11 @@ Palette commands for questions and people (exact labels, 2026-11-21; components-
 
 Palette commands for due dates (exact labels, 2026-11-21): "Set due date..." opens the due date picker (components-records.md 5) for the target; "Clear due date" is listed only when the target has one. The target is the focused row's project, epic or topic when a tree or table row has the keyboard cursor, else the open project, epic or topic page; from any other page the commands are not listed. The row's path names the target as for working folders ("Acta / Terminal / Embed the terminal"). No global shortcut: `D` is the direct key on a page and on rows, like `S`.
 
+Palette commands for dictation (exact labels, 2026-11-22; components-voice.md 5): "Dictate" (listed while a multi-line editor has focus or was the last focused element of the active page; it acts on that editor), "Stop dictating" (while a take runs), "Voice settings".
+
 **Quick capture** (`Mod+N`): a palette-sized overlay (640 wide, same position and surface) containing one multi-line editor with the placeholder "Note for Acta" and the project name as a chip, and under it the optional Report to row with the person field (components-questions.md 5): `Tab` moves from the editor to it, `Shift+Tab` back, and the field starts empty each time. Files can be pasted (`Mod+V` with files or an image and no text on the clipboard), dropped on the overlay, or chosen with the `paperclip` button (`Mod+Shift+A`); they show in the attachment strip under the editor and are saved with the note (components-attachments.md 5). `Mod+Enter` saves to that project's inbox and closes, with no toast (the inbox count increments, which is feedback enough); `Esc` closes and keeps the draft. Works while the terminal is focused via the palette. Capture never navigates away from what the user was reading.
 
-**Quick entry** (`Mod+E`): focuses the composer at the top of the timeline, scrolling it into view if needed, with the type preset to Progress; `Alt+1/2/3` switches Progress / Decision / Discussion; `Mod+Enter` saves and returns focus to where it was. An entry opened for editing (`Enter` or Edit) scrolls the page by the least amount that shows its editor whole, or brings its top into view when it is taller than the page, so an entry near the bottom never opens its editor below the fold.
+**Editing an entry** (the timeline has no composer: only Claude Code adds entries, components-records.md 5). An entry opened for editing (`Enter` or Edit) scrolls the page by the least amount that shows its editor whole, or brings its top into view when it is taller than the page, so an entry near the bottom never opens its editor below the fold.
 
 ### 6.2 Focus
 

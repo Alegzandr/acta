@@ -11,17 +11,18 @@ Plain, specific, short. Acta talks like a careful colleague's notes: it names th
 - The agent is always "Claude Code", never "AI", "the assistant" or "the bot". The human is their name ("Alexandre"), never "You" in attributions and "you" only in instructions.
 - Errors say what failed, why if known, and the next step. Never blame, never a bare code.
 - Numbers and times are exact and short: "3 open", "2 h ago", "12 Nov 2026". Counts above 99 show "99+".
-- Empty states say what the place is for and offer the one action that fills it.
+- Empty states say what the place is for and offer the one action that fills it, when the human has one (an empty timeline has none: Claude Code fills it).
+- One idea per line. A sentence that explains how something works, what it costs or where it is stored is read once: it goes in a tooltip or behind "Details", not on screen at rest (clarity review 2026-11-22). Labels never repeat on their own button.
 - Every string exists in English and in French (10). The rules above hold in both; French adds its own typography and addresses the user as "vous". What the user and Claude Code write is shown as written, in whatever language they wrote it.
 
 | Where | Before | After |
 |---|---|---|
-| Button | Submit | Add entry |
+| Button | Submit | Save answer |
 | Button | Create New Topic | New topic |
 | Menu | Remove | Delete topic |
 | Toast | Successfully deleted! | Topic deleted. Undo |
 | Empty inbox | No notes yet! Start capturing your brilliant ideas. | Inbox is empty. Notes you capture land here until they become topics. |
-| Empty timeline | Nothing to see here. | No entries yet. Add one, or let Claude Code log progress as it works. |
+| Empty timeline | Nothing to see here. | No entries yet. Claude Code logs progress here as it works. |
 | Error | Error: write failed (code 5) | Could not save the entry. The database is locked by another process. Retry |
 | Error | Invalid input | A topic needs a title. |
 | Conflict | Conflict detected! | Claude Code changed this while you were editing. |
