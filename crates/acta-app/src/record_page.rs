@@ -1179,6 +1179,10 @@ impl RecordPage {
         if self.folder_keys(event, window, cx) {
             return;
         }
+        if event.keystroke.key == "escape" && self.cancel_q_drag(cx) {
+            cx.stop_propagation();
+            return;
+        }
         if self.status_menu.is_none()
             && self.focused_block(window) == Some(record::Block::Folders)
             && self.folder_row_keys(event, window, cx)

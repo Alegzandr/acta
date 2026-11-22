@@ -127,6 +127,21 @@ pub(super) struct QuestionUi {
     reveal: std::rc::Rc<std::cell::Cell<bool>>,
     /// Captures: the section is scrolled to the top of the page.
     reveal_section: std::rc::Rc<std::cell::Cell<bool>>,
+    /// Dragging an open question: the press, then the drag; where each
+    /// open row and the section were last drawn (window coordinates).
+    press: Option<(QuestionId, usize, f32, f32)>,
+    drag: Option<QDrag>,
+    open_bounds: std::rc::Rc<std::cell::RefCell<Vec<(f32, f32)>>>,
+    section_bounds: std::rc::Rc<std::cell::Cell<Option<gpui_kit::Bounds<gpui_kit::Pixels>>>>,
+}
+
+/// An open question being dragged, the pointer in window coordinates.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct QDrag {
+    id: QuestionId,
+    from: usize,
+    x: f32,
+    y: f32,
 }
 
 impl RecordPage {
@@ -929,6 +944,142 @@ impl RecordPage {
         cx.notify();
     }
 
+    // ---- dragging (components-questions.md 5: Alt+Up / Alt+Down, drag) ----
+
+    /// The gap a drop would land in now; `None` outside the section.
+    fn q_drop_gap(&self) -> Option<usize> {
+        let drag = self.q.drag?;
+        let section = self.q.section_bounds.get()?;
+        if !section.contains(&gpui_kit::point(px(drag.x), px(drag.y))) {
+            return None;
+        }
+        Some(qm::drop_gap(&self.q.open_bounds.borrow(), drag.y))
+    }
+
+    fn q_pointer_moved(&mut self, e: &gpui_kit::MouseMoveEvent, cx: &mut Context<Self>) {
+        let (x, y) = (f32::from(e.position.x), f32::from(e.position.y));
+        if let Some((id, from, px0, py0)) = self.q.press {
+            if e.pressed_button != Some(gpui_kit::MouseButton::Left) {
+                self.q.press = None;
+                return;
+            }
+            if (x - px0).hypot(y - py0) < 4. {
+                return;
+            }
+            self.q.press = None;
+            self.q.menu = None;
+            self.q.drag = Some(QDrag { id, from, x, y });
+        }
+        if let Some(d) = self.q.drag.as_mut() {
+            d.x = x;
+            d.y = y;
+            cx.notify();
+        }
+    }
+
+    /// The release: one write, one undo step, no toast; outside the
+    /// section or on the row's own place nothing changes.
+    fn q_pointer_released(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.q.press = None;
+        let gap = self.q_drop_gap();
+        let Some(drag) = self.q.drag.take() else {
+            return;
+        };
+        cx.notify();
+        let Some(to) = gap.and_then(|g| qm::gap_target(drag.from, g)) else {
+            return;
+        };
+        let (id, from) = (drag.id, drag.from);
+        let project = self.q_project();
+        self.ws.update(cx, |ws, cx| {
+            ws.undoable(cx, project, None, move |store| {
+                store.reorder_question(id, to, Author::Human)?;
+                Ok((
+                    Undo::QuestionOrder {
+                        id,
+                        back: from,
+                        expect: to,
+                    },
+                    (),
+                ))
+            });
+        });
+        if let Some(h) = self.q.row_focus.get(to) {
+            window.focus(h, cx);
+        }
+    }
+
+    /// `Esc` during a drag: nothing changes. Whether one was on.
+    pub(super) fn cancel_q_drag(&mut self, cx: &mut Context<Self>) -> bool {
+        self.q.press = None;
+        let was = self.q.drag.take().is_some();
+        if was {
+            cx.notify();
+        }
+        was
+    }
+
+    /// While a press or a drag is on, the pointer is followed everywhere.
+    fn q_pointer_listener(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.q.press.is_none() && self.q.drag.is_none() {
+            return None;
+        }
+        let dragging = self.q.drag.is_some();
+        let landing = self.q_drop_gap().is_some();
+        let weak = cx.entity().downgrade();
+        Some(
+            gpui_kit::canvas(
+                |_, _, _| (),
+                move |_, _, window, _| {
+                    if dragging {
+                        window.set_window_cursor_style(if landing {
+                            gpui_kit::CursorStyle::ClosedHand
+                        } else {
+                            gpui_kit::CursorStyle::OperationNotAllowed
+                        });
+                    }
+                    let moved = weak.clone();
+                    window.on_mouse_event(move |e: &gpui_kit::MouseMoveEvent, phase, _, cx| {
+                        if phase == gpui_kit::DispatchPhase::Capture {
+                            let _ = moved.update(cx, |page, cx| page.q_pointer_moved(e, cx));
+                        }
+                    });
+                    let released = weak.clone();
+                    window.on_mouse_event(move |e: &gpui_kit::MouseUpEvent, phase, window, cx| {
+                        if phase == gpui_kit::DispatchPhase::Capture
+                            && e.button == gpui_kit::MouseButton::Left
+                        {
+                            let _ =
+                                released.update(cx, |page, cx| page.q_pointer_released(window, cx));
+                        }
+                    });
+                },
+            )
+            .absolute()
+            .size_0()
+            .into_any_element(),
+        )
+    }
+
+    /// The insertion line in a gap: 2 `accent`, `radius.xs` ends, taking
+    /// no height.
+    fn q_line(t: &Tokens) -> AnyElement {
+        div()
+            .relative()
+            .h(px(0.))
+            .child(
+                div()
+                    .absolute()
+                    .top(px(-1.))
+                    .left(px(-8.))
+                    .right(px(-8.))
+                    .h(px(2.))
+                    .rounded(px(RADIUS_XS))
+                    .bg(t.accent),
+            )
+            .into_any_element()
+    }
+
     /// `Enter` on the section's header: the first row, or the composer
     /// when there is none.
     pub(super) fn enter_questions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1543,6 +1694,8 @@ impl RecordPage {
         let header = self.block_el(record::Block::Questions, header, t);
         let reveal = std::rc::Rc::clone(&self.q.reveal_section);
         let scroll = self.scroll.clone();
+        let section_bounds = std::rc::Rc::clone(&self.q.section_bounds);
+        let pointer = self.q_pointer_listener(cx);
         let mut section = div()
             .id("questions")
             .relative()
@@ -1550,7 +1703,9 @@ impl RecordPage {
             .flex_col()
             .mt(px(32.))
             .child(header)
+            .children(pointer)
             .child(ui::measure(move |bounds, window| {
+                section_bounds.set(Some(bounds));
                 if reveal.replace(false) {
                     ui::scroll_into_view(&scroll, bounds, ui::Reveal::Top);
                     window.refresh();
@@ -1581,6 +1736,17 @@ impl RecordPage {
             .as_ref()
             .filter(|c| c.editing.is_none())
             .map(|c| c.below.map(|r| r + 1).unwrap_or(usize::MAX));
+        // Dragging: where the line goes, and each open row's place.
+        let gap = self.q_drop_gap().filter(|g| {
+            self.q
+                .drag
+                .is_some_and(|d| qm::gap_target(d.from, *g).is_some())
+        });
+        let dragged = self.q.drag.map(|d| d.id);
+        {
+            let mut b = self.q.open_bounds.borrow_mut();
+            b.resize(s.open.len(), (0., 0.));
+        }
         for (i, q) in s.open.iter().enumerate() {
             if new_at == Some(i) {
                 section = section.child(self.render_composer(locale, t, window, cx));
@@ -1589,7 +1755,34 @@ impl RecordPage {
                 section = section.child(self.render_composer(locale, t, window, cx));
                 continue;
             }
-            section = section.child(self.render_q_row(q, i, locale, t, today, cx));
+            if gap == Some(i) {
+                section = section.child(Self::q_line(t));
+            }
+            let bounds = std::rc::Rc::clone(&self.q.open_bounds);
+            let id = q.id;
+            section = section.child(
+                div()
+                    .relative()
+                    .when(dragged == Some(id), |this| this.opacity(0.6))
+                    // A press that moves 4 starts a drag (open rows only).
+                    .on_mouse_down(
+                        gpui_kit::MouseButton::Left,
+                        cx.listener(move |page, e: &gpui_kit::MouseDownEvent, _, cx| {
+                            page.q.press =
+                                Some((id, i, f32::from(e.position.x), f32::from(e.position.y)));
+                            cx.notify();
+                        }),
+                    )
+                    .child(self.render_q_row(q, i, locale, t, today, cx))
+                    .child(ui::measure(move |b, _| {
+                        if let Some(slot) = bounds.borrow_mut().get_mut(i) {
+                            *slot = (f32::from(b.top()), f32::from(b.bottom()));
+                        }
+                    })),
+            );
+        }
+        if gap.is_some_and(|g| g >= s.open.len()) {
+            section = section.child(Self::q_line(t));
         }
         if new_at.is_some_and(|at| at >= s.open.len()) {
             section = section.child(self.render_composer(locale, t, window, cx));

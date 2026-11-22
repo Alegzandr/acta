@@ -783,6 +783,232 @@ pub fn stored_siblings(projects: &[ProjectTree], row: &Row) -> Vec<acta_core::mo
     }
 }
 
+/// A tree row being dragged (components.md 5, Tree row, Drag to
+/// reorder): the pointer path of `Alt+Up` / `Alt+Down` and `M`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Dragged {
+    Project(ProjectId),
+    Epic(ProjectId, EpicId),
+    Topic(ProjectId, TopicId),
+}
+
+impl Dragged {
+    /// The row a drag starts from: projects, epics and topics only.
+    pub fn of(projects: &[ProjectTree], row: &Row) -> Option<Dragged> {
+        match row {
+            Row::Project { id, .. } => Some(Dragged::Project(*id)),
+            Row::Epic { id, project, .. } => Some(Dragged::Epic(*project, *id)),
+            Row::Topic { id, .. } => {
+                let project = locate_topic(projects, *id)?.project?.0;
+                Some(Dragged::Topic(project, *id))
+            }
+            _ => None,
+        }
+    }
+
+    pub fn record(self) -> acta_core::model::Record {
+        use acta_core::model::Record;
+        match self {
+            Dragged::Project(id) => Record::Project(id),
+            Dragged::Epic(_, id) => Record::Epic(id),
+            Dragged::Topic(_, id) => Record::Topic(id),
+        }
+    }
+}
+
+/// Where a drop lands: for a topic, the epic it ends in (`None`: in no
+/// epic); the index to give `Store::reorder` among its new siblings; and
+/// what is drawn.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Drop {
+    pub epic: Option<EpicId>,
+    pub index: usize,
+    pub show: DropShow,
+}
+
+/// The insertion line (its y in the tree's content and the depth it is
+/// drawn at), or a row taking the drop-target state (its index).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum DropShow {
+    Line { y: f32, depth: u8 },
+    Onto(usize),
+}
+
+/// The topics of a group in stored order, closed ones included.
+fn group_of(tree: &ProjectTree, epic: Option<EpicId>) -> Vec<TopicId> {
+    match epic {
+        None => tree.loose_topics.iter().map(|t| t.id).collect(),
+        Some(e) => tree
+            .epics
+            .iter()
+            .find(|(x, _)| x.id == e)
+            .map(|(_, ts)| ts.iter().map(|t| t.id).collect())
+            .unwrap_or_default(),
+    }
+}
+
+/// The group a topic is in.
+fn epic_of(tree: &ProjectTree, topic: TopicId) -> Option<Option<EpicId>> {
+    if tree.loose_topics.iter().any(|t| t.id == topic) {
+        return Some(None);
+    }
+    tree.epics
+        .iter()
+        .find(|(_, ts)| ts.iter().any(|t| t.id == topic))
+        .map(|(e, _)| Some(e.id))
+}
+
+/// Where `dragged` lands with the pointer at `y` in the tree's content:
+/// a topic between two topics of any group of its own project, onto an
+/// epic row (the end of its topics) or onto its project row (the end of
+/// the topics in no epic); an epic between the epics of its project; a
+/// project between projects. `None`: no target, or the row's own place.
+pub fn drop_at(
+    projects: &[ProjectTree],
+    rows: &[Row],
+    layout: &Layout,
+    dragged: Dragged,
+    y: f32,
+) -> Option<Drop> {
+    let i = layout.first_below(y);
+    let row = rows.get(i)?;
+    let upper = y < layout.top(i) + ROW / 2.;
+    // The last row of the block a header row at `h` starts: every row
+    // after it deeper than `depth`.
+    let block_end = |h: usize, depth: u8| {
+        let mut j = h;
+        while rows.get(j + 1).is_some_and(|r| r.depth() > depth) {
+            j += 1;
+        }
+        j
+    };
+    // `ids` without the dragged one, the dragged one's index among all
+    // `ids`, and the index it lands at before or after `other`.
+    fn place<T: PartialEq + Copy>(
+        ids: &[T],
+        me: T,
+        other: T,
+        after: bool,
+    ) -> Option<(usize, usize)> {
+        let cur = ids.iter().position(|x| *x == me);
+        let rest: Vec<T> = ids.iter().copied().filter(|x| *x != me).collect();
+        let at = rest.iter().position(|x| *x == other)? + usize::from(after);
+        Some((cur.unwrap_or(usize::MAX), at))
+    }
+    match dragged {
+        Dragged::Topic(project, me) => {
+            let tree = projects.iter().find(|t| t.project.id == project)?;
+            let mine = epic_of(tree, me)?;
+            let (epic, index, show) = match row {
+                Row::Topic { id, depth, .. } => {
+                    if *id == me {
+                        return None;
+                    }
+                    let epic = epic_of(tree, *id)?;
+                    let (_, at) = place(&group_of(tree, epic), me, *id, !upper)?;
+                    let y = if upper {
+                        layout.top(i)
+                    } else {
+                        layout.top(i) + ROW
+                    };
+                    (epic, at, DropShow::Line { y, depth: *depth })
+                }
+                Row::Epic { id, project: p, .. } if *p == project => {
+                    let rest = group_of(tree, Some(*id))
+                        .iter()
+                        .filter(|t| **t != me)
+                        .count();
+                    (Some(*id), rest, DropShow::Onto(i))
+                }
+                Row::Project { id, .. } if *id == project => {
+                    let rest = group_of(tree, None).iter().filter(|t| **t != me).count();
+                    (None, rest, DropShow::Onto(i))
+                }
+                _ => return None,
+            };
+            let cur = group_of(tree, mine).iter().position(|t| *t == me)?;
+            if epic == mine && index == cur {
+                return None;
+            }
+            Some(Drop { epic, index, show })
+        }
+        Dragged::Epic(project, me) => {
+            // The epic block under the pointer: its row, or a topic,
+            // "N closed" or "New topic" row inside it (then after it).
+            let h = (0..=i)
+                .rev()
+                .find(|&k| rows[k].depth() <= 1)
+                .filter(|&k| k == i || row.depth() == 2)?;
+            let Row::Epic { id, project: p, .. } = &rows[h] else {
+                return None;
+            };
+            if *p != project || *id == me {
+                return None;
+            }
+            let after = h != i || !upper;
+            let tree = projects.iter().find(|t| t.project.id == project)?;
+            let ids: Vec<EpicId> = tree.epics.iter().map(|(e, _)| e.id).collect();
+            let (cur, at) = place(&ids, me, *id, after)?;
+            if cur == at {
+                return None;
+            }
+            let y = if after {
+                layout.top(block_end(h, 1)) + ROW
+            } else {
+                layout.top(h)
+            };
+            Some(Drop {
+                epic: None,
+                index: at,
+                show: DropShow::Line { y, depth: 1 },
+            })
+        }
+        Dragged::Project(me) => {
+            let h = (0..=i).rev().find(|&k| rows[k].is_project())?;
+            let Row::Project { id, .. } = &rows[h] else {
+                return None;
+            };
+            if *id == me {
+                return None;
+            }
+            let after = h != i || !upper;
+            let ids: Vec<ProjectId> = projects.iter().map(|t| t.project.id).collect();
+            let (cur, at) = place(&ids, me, *id, after)?;
+            if cur == at {
+                return None;
+            }
+            let y = if after {
+                layout.top(block_end(h, 0)) + ROW
+            } else {
+                layout.top(h)
+            };
+            Some(Drop {
+                epic: None,
+                index: at,
+                show: DropShow::Line { y, depth: 0 },
+            })
+        }
+    }
+}
+
+/// While dragging, within 28 of the viewport's top or bottom edge the tree
+/// scrolls, up to 12 per frame, faster the nearer the edge: the change of
+/// the scroll top for a pointer at `y` in a viewport `viewport` high.
+pub fn auto_scroll(y: f32, viewport: f32) -> f32 {
+    const EDGE: f32 = 28.;
+    const MOST: f32 = 12.;
+    if viewport <= 2. * EDGE {
+        return 0.;
+    }
+    if y < EDGE {
+        -MOST * (EDGE - y.max(0.)) / EDGE
+    } else if y > viewport - EDGE {
+        MOST * (y.min(viewport) - (viewport - EDGE)) / EDGE
+    } else {
+        0.
+    }
+}
+
 /// The record of a row that can move or be deleted.
 pub fn row_record(row: &Row) -> Option<acta_core::model::Record> {
     use acta_core::model::Record;
@@ -1480,6 +1706,186 @@ mod tests {
         assert_eq!(folds.closed_shown.len(), 1);
         folds.reveal(&projects, Route::Knowledge(ProjectId(2)));
         assert!(!folds.collapsed.contains("P-2"));
+    }
+
+    #[test]
+    fn a_topic_drops_between_topics_onto_epics_and_its_project_only() {
+        let projects = acta();
+        let rows = rows(&projects, &Folds::default());
+        let layout = Layout::of(&rows);
+        let upper = |i: usize| layout.top(i) + 4.;
+        let lower = |i: usize| layout.top(i) + ROW - 4.;
+        let embed = Dragged::Topic(ProjectId(1), TopicId(2));
+        let drop = |y| drop_at(&projects, &rows, &layout, embed, y);
+        // Its own row, and just above the next topic (its own place).
+        assert_eq!(drop(upper(topic_at(&rows, 2))), None);
+        assert_eq!(drop(upper(topic_at(&rows, 3))), None);
+        // Below Scrollback, in its epic: index 1 among Terminal's topics.
+        let below = drop(lower(topic_at(&rows, 3))).unwrap();
+        assert_eq!((below.epic, below.index), (Some(EpicId(1)), 1));
+        assert_eq!(
+            below.show,
+            DropShow::Line {
+                y: layout.top(topic_at(&rows, 3)) + ROW,
+                depth: 2
+            }
+        );
+        // Above Naming: out of the epic, first of the loose topics.
+        let naming = drop(upper(topic_at(&rows, 1))).unwrap();
+        assert_eq!((naming.epic, naming.index), (None, 0));
+        // Onto its project row: the end of the loose topics.
+        let p = rows.iter().position(|r| r.is_project()).unwrap();
+        let onto = drop(upper(p)).unwrap();
+        assert_eq!((onto.epic, onto.index), (None, 1));
+        assert_eq!(onto.show, DropShow::Onto(p));
+        // Onto its own epic's row: the end of its topics (4 of them).
+        let e = rows
+            .iter()
+            .position(|r| matches!(r, Row::Epic { .. }))
+            .unwrap();
+        let end = drop(upper(e)).unwrap();
+        assert_eq!(
+            (end.epic, end.index, end.show),
+            (Some(EpicId(1)), 3, DropShow::Onto(e))
+        );
+        // Inbox, the "N closed" row and another project are no target.
+        let inbox = rows
+            .iter()
+            .position(|r| matches!(r, Row::Inbox { .. }))
+            .unwrap();
+        assert_eq!(drop(upper(inbox)), None);
+        let closed = rows
+            .iter()
+            .position(|r| matches!(r, Row::Closed { .. }))
+            .unwrap();
+        assert_eq!(drop(upper(closed)), None);
+        let atlas = rows
+            .iter()
+            .position(|r| matches!(r, Row::Project { id, .. } if *id == ProjectId(2)))
+            .unwrap();
+        assert_eq!(drop(upper(atlas)), None);
+    }
+
+    #[test]
+    fn an_epic_drops_before_or_after_a_whole_epic_block() {
+        let mut projects = acta();
+        projects[0]
+            .epics
+            .push((super::sample::epic(2, "Notes"), Vec::new()));
+        let rows = rows(&projects, &Folds::default());
+        let layout = Layout::of(&rows);
+        let terminal = Dragged::Epic(ProjectId(1), EpicId(1));
+        let notes = rows
+            .iter()
+            .position(|r| matches!(r, Row::Epic { id, .. } if *id == EpicId(2)))
+            .unwrap();
+        // The lower half of Notes' row: after its block ("New topic").
+        let drop = drop_at(
+            &projects,
+            &rows,
+            &layout,
+            terminal,
+            layout.top(notes) + ROW - 2.,
+        )
+        .unwrap();
+        assert_eq!(drop.index, 1);
+        assert_eq!(
+            drop.show,
+            DropShow::Line {
+                y: layout.top(notes + 1) + ROW,
+                depth: 1
+            }
+        );
+        // The upper half of Notes' row is Terminal's own place; a topic of
+        // Terminal is inside its own block.
+        assert_eq!(
+            drop_at(&projects, &rows, &layout, terminal, layout.top(notes) + 2.),
+            None
+        );
+        assert_eq!(
+            drop_at(
+                &projects,
+                &rows,
+                &layout,
+                terminal,
+                layout.top(topic_at(&rows, 3)) + 2.
+            ),
+            None
+        );
+        // Notes dragged into Terminal's block: before nothing, after
+        // Terminal is its own place; above Terminal's row it goes first.
+        let notes_drag = Dragged::Epic(ProjectId(1), EpicId(2));
+        let t = rows
+            .iter()
+            .position(|r| matches!(r, Row::Epic { id, .. } if *id == EpicId(1)))
+            .unwrap();
+        let first = drop_at(&projects, &rows, &layout, notes_drag, layout.top(t) + 2.).unwrap();
+        assert_eq!(first.index, 0);
+        assert_eq!(
+            drop_at(
+                &projects,
+                &rows,
+                &layout,
+                notes_drag,
+                layout.top(topic_at(&rows, 2)) + 2.
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn projects_drop_between_projects_after_a_whole_block() {
+        let projects = acta();
+        let rows = rows(&projects, &Folds::default());
+        let layout = Layout::of(&rows);
+        let atlas = rows
+            .iter()
+            .position(|r| matches!(r, Row::Project { id, .. } if *id == ProjectId(2)))
+            .unwrap();
+        let acta_drag = Dragged::Project(ProjectId(1));
+        // Acta in the lower half of Atlas' row: after Atlas' block.
+        let drop = drop_at(
+            &projects,
+            &rows,
+            &layout,
+            acta_drag,
+            layout.top(atlas) + ROW - 2.,
+        )
+        .unwrap();
+        assert_eq!(drop.index, 1);
+        assert_eq!(
+            drop.show,
+            DropShow::Line {
+                y: layout.top(rows.len() - 1) + ROW,
+                depth: 0
+            }
+        );
+        // The upper half of Atlas' row is Acta's own place.
+        assert_eq!(
+            drop_at(&projects, &rows, &layout, acta_drag, layout.top(atlas) + 2.),
+            None
+        );
+        // Atlas above Acta's row: first.
+        let first = drop_at(
+            &projects,
+            &rows,
+            &layout,
+            Dragged::Project(ProjectId(2)),
+            layout.top(0) + 2.,
+        )
+        .unwrap();
+        assert_eq!(first.index, 0);
+    }
+
+    #[test]
+    fn the_tree_scrolls_near_its_edges_faster_the_nearer() {
+        assert_eq!(auto_scroll(300., 600.), 0.);
+        assert_eq!(auto_scroll(0., 600.), -12.);
+        assert_eq!(auto_scroll(14., 600.), -6.);
+        assert_eq!(auto_scroll(600., 600.), 12.);
+        assert!(auto_scroll(590., 600.) > auto_scroll(580., 600.));
+        // A viewport too short to have edges never scrolls.
+        assert_eq!(auto_scroll(10., 40.), 0.);
     }
 
     #[test]

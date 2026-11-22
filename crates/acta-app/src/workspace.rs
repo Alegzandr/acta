@@ -121,6 +121,13 @@ pub enum Undo {
         back: Owner,
         expect: Owner,
     },
+    /// A topic dragged to a place in another epic (or out of any): its
+    /// epic and its index among that epic's topics, as one step.
+    TopicPlace {
+        id: TopicId,
+        back: (Option<EpicId>, usize),
+        expect: (Option<EpicId>, usize),
+    },
     /// A record moved among its siblings.
     Reorder {
         record: Record,
@@ -315,6 +322,12 @@ impl Undo {
             Undo::KbRevision { id, expect, .. } => store.kb_entry(*id)?.rev == *expect,
             Undo::KbOwner { id, expect, .. } => store.kb_entry(*id)?.owner == *expect,
             Undo::Reorder { record, expect, .. } => store.order_index(*record)? == *expect,
+            Undo::TopicPlace { id, expect, .. } => {
+                (
+                    store.topic(*id)?.epic,
+                    store.order_index(Record::Topic(*id))?,
+                ) == *expect
+            }
             Undo::Entry { id, expect, .. } => {
                 let e = store.entry(*id)?;
                 (e.text, e.kind) == *expect
@@ -524,6 +537,14 @@ impl Undo {
                     id: *id,
                     back: *expect,
                     expect: store.kb_entry(*id)?.owner,
+                }
+            }
+            Undo::TopicPlace { id, back, expect } => {
+                put_topic(store, *id, *back, me)?;
+                Undo::TopicPlace {
+                    id: *id,
+                    back: *expect,
+                    expect: topic_place(store, *id)?,
                 }
             }
             Undo::Reorder {
@@ -1454,6 +1475,32 @@ impl Workspace {
         })
     }
 
+    /// A topic dropped in another epic (or out of any) at `index` among
+    /// that epic's topics (components.md 5, Tree row, Drag to reorder):
+    /// one write, one undo step, no toast; contacts the move lifts say so
+    /// as `M` does.
+    pub fn place_topic(
+        &mut self,
+        id: TopicId,
+        epic: Option<EpicId>,
+        index: usize,
+        cx: &mut Context<Self>,
+    ) {
+        let project = self.project_of(Owner::Topic(id));
+        let task = self.write_undoable(cx, project, None, move |store| {
+            let back = topic_place(store, id)?;
+            store.take_lifts();
+            put_topic(store, id, (epic, index), Author::Human)?;
+            let moved = Undo::TopicPlace {
+                id,
+                back,
+                expect: topic_place(store, id)?,
+            };
+            with_lifts(store, moved)
+        });
+        self.toast_lifts(task, cx);
+    }
+
     /// Move a record among its siblings, undoably.
     pub fn reorder(
         &mut self,
@@ -1737,6 +1784,32 @@ pub struct Lifted {
     pub name: String,
     pub to: ContactLevel,
     pub record: String,
+}
+
+/// A topic's epic and its index among that epic's topics.
+pub fn topic_place(store: &Store, id: TopicId) -> acta_core::Result<(Option<EpicId>, usize)> {
+    Ok((store.topic(id)?.epic, store.order_index(Record::Topic(id))?))
+}
+
+/// Put a topic in `epic` at `index` among its topics: a move to the end of
+/// that epic when it changes, then the reorder.
+fn put_topic(
+    store: &mut Store,
+    id: TopicId,
+    (epic, index): (Option<EpicId>, usize),
+    author: Author,
+) -> acta_core::Result<()> {
+    if store.topic(id)?.epic != epic {
+        store.update_topic(
+            id,
+            TopicPatch {
+                epic: Some(epic),
+                ..TopicPatch::default()
+            },
+            author,
+        )?;
+    }
+    store.reorder(Record::Topic(id), index, author)
 }
 
 /// Inside a move's transaction, after the move: the lifts it made, as
@@ -2503,6 +2576,70 @@ mod tests {
         };
         assert!(step.apply(store).unwrap().is_some());
         assert_eq!(store.order_index(Record::Topic(a)).unwrap(), 0);
+    }
+
+    #[test]
+    fn a_topic_dropped_in_another_epic_goes_back_to_its_place_in_one_step() {
+        let mut temp = temp_store();
+        let store = &mut temp.store;
+        let (project, a) = topic(store);
+        let new = |store: &mut Store, title: &str, epic| {
+            store
+                .create_topic(
+                    NewTopic {
+                        project,
+                        epic,
+                        title: title.into(),
+                        description: String::new(),
+                        status: Status::Planned,
+                    },
+                    Author::Human,
+                )
+                .unwrap()
+        };
+        let b = new(store, "B", None);
+        let epic = store
+            .create_epic(project, "Terminal", "", Author::Human)
+            .unwrap();
+        let x = new(store, "X", Some(epic));
+        let y = new(store, "Y", Some(epic));
+        // A (first of the loose topics) dropped between X and Y.
+        let back = topic_place(store, a).unwrap();
+        assert_eq!(back, (None, 0));
+        put_topic(store, a, (Some(epic), 1), Author::Human).unwrap();
+        let order = |store: &Store, e| -> Vec<TopicId> {
+            store
+                .tree(project)
+                .unwrap()
+                .epics
+                .iter()
+                .find(|(x, _)| Some(x.id) == e)
+                .map(|(_, ts)| ts.iter().map(|t| t.id).collect())
+                .unwrap_or_else(|| {
+                    store
+                        .tree(project)
+                        .unwrap()
+                        .loose_topics
+                        .iter()
+                        .map(|t| t.id)
+                        .collect()
+                })
+        };
+        assert_eq!(order(store, Some(epic)), vec![x, a, y]);
+        let step = Undo::TopicPlace {
+            id: a,
+            back,
+            expect: topic_place(store, a).unwrap(),
+        };
+        let redo = step.apply(store).unwrap().expect("unchanged since");
+        assert_eq!(order(store, None), vec![a, b]);
+        assert_eq!(order(store, Some(epic)), vec![x, y]);
+        // The redo puts it back between X and Y.
+        assert!(redo.apply(store).unwrap().is_some());
+        assert_eq!(order(store, Some(epic)), vec![x, a, y]);
+        // Moved since by someone else: the step is refused.
+        store.reorder(Record::Topic(a), 0, Author::Claude).unwrap();
+        assert!(step.apply(store).unwrap().is_none());
     }
 
     #[test]

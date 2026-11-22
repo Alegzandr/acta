@@ -5882,7 +5882,7 @@ impl Render for Shell {
             // 4.8.7: `Esc` cancels a drag before it means anything else,
             // whatever has focus.
             .capture_key_down(cx.listener(|s, e: &KeyDownEvent, w, cx| {
-                if e.keystroke.key == "escape" && s.cancel_drag(w, cx) {
+                if e.keystroke.key == "escape" && (s.cancel_drag(w, cx) || s.cancel_tree_drag(cx)) {
                     cx.stop_propagation();
                 }
             }))
