@@ -13,7 +13,7 @@
 //! `project_id` is always set so roll-up queries need no join.
 
 /// Step `i` takes `user_version` from `i` to `i + 1`.
-pub const MIGRATIONS: &[&str] = &[V1, V2, V3, V4];
+pub const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5];
 
 /// The version this build writes.
 pub const SCHEMA_VERSION: i64 = MIGRATIONS.len() as i64;
@@ -309,4 +309,70 @@ CREATE INDEX entries_recent ON entries(created_at)
 -- "no activity" line): entries_topic needs a row read per entry for
 -- deleted_at, which missed the 5 ms budget on 10,000 topics.
 CREATE INDEX entries_live ON entries(topic_id, created_at) WHERE deleted_at IS NULL;
+"#;
+
+/// Questions (data.md request 18) and people with Report to (request 19),
+/// in one additive step.
+///
+/// - `questions`: exactly one owner, as knowledge entries and folders
+///   have it (`project_id` always set; `epic_id` or `topic_id` for an
+///   epic or a topic), the text, the person asked with its key, the day
+///   the answer is expected, the state, the answer, who resolved it and
+///   when, the decision entry logged with the answer, the stored order.
+/// - `question_markers`: when this installation last showed a question
+///   (request 1); local, never exported. No question exists before this
+///   step, so nothing is seeded.
+/// - Notes, topics and epics get a Report to person and its key; topics
+///   and epics also when it was reported and by whom. Projects have none.
+///   Keys are written by the store from `person::person_key`, never read
+///   from a file.
+const V5: &str = r#"
+CREATE TABLE questions (
+    id INTEGER PRIMARY KEY,
+    uuid TEXT NOT NULL UNIQUE,
+    project_id INTEGER NOT NULL REFERENCES projects(id),
+    epic_id INTEGER REFERENCES epics(id),
+    topic_id INTEGER REFERENCES topics(id),
+    text TEXT NOT NULL,
+    asked_to TEXT,
+    asked_key TEXT,
+    expected_on TEXT
+        CHECK (expected_on IS NULL OR expected_on GLOB '20[0-9][0-9]-[01][0-9]-[0-3][0-9]'),
+    status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'answered', 'dropped')),
+    answer TEXT,
+    resolved_at INTEGER,
+    resolved_by TEXT,
+    decision_entry_id INTEGER REFERENCES entries(id),
+    position INTEGER NOT NULL,
+    created_by TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    updated_by TEXT NOT NULL,
+    deleted_at INTEGER,
+    deleted_by TEXT,
+    deleted_batch TEXT,
+    CHECK (epic_id IS NULL OR topic_id IS NULL)
+) STRICT;
+CREATE INDEX questions_owner ON questions(project_id, epic_id, topic_id, status, position);
+CREATE INDEX questions_due ON questions(project_id, status, expected_on);
+CREATE INDEX questions_person ON questions(project_id, asked_key) WHERE asked_key IS NOT NULL;
+
+CREATE TABLE question_markers (
+    question_id INTEGER PRIMARY KEY,
+    last_seen_at INTEGER NOT NULL
+) WITHOUT ROWID;
+
+ALTER TABLE notes ADD COLUMN report_to TEXT;
+ALTER TABLE notes ADD COLUMN report_key TEXT;
+ALTER TABLE topics ADD COLUMN report_to TEXT;
+ALTER TABLE topics ADD COLUMN report_key TEXT;
+ALTER TABLE topics ADD COLUMN reported_at INTEGER;
+ALTER TABLE topics ADD COLUMN reported_by TEXT;
+ALTER TABLE epics ADD COLUMN report_to TEXT;
+ALTER TABLE epics ADD COLUMN report_key TEXT;
+ALTER TABLE epics ADD COLUMN reported_at INTEGER;
+ALTER TABLE epics ADD COLUMN reported_by TEXT;
+CREATE INDEX notes_report ON notes(project_id, report_key) WHERE report_key IS NOT NULL;
+CREATE INDEX topics_report ON topics(project_id, report_key) WHERE report_key IS NOT NULL;
+CREATE INDEX epics_report ON epics(project_id, report_key) WHERE report_key IS NOT NULL;
 "#;

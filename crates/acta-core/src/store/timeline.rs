@@ -5,7 +5,7 @@ use super::{STAMP_COLS, Store, new_uuid, required, stamp};
 use crate::error::{Error, Result};
 use crate::model::{
     Author, Entry, EntryId, EntryKind, EpicId, EventKind, Note, NoteId, Page, PageReq, ProjectId,
-    Status, SystemEvent, TopicId,
+    Record, Status, SystemEvent, TopicId,
 };
 use crate::time::now_ms;
 use rusqlite::{OptionalExtension, params};
@@ -52,10 +52,10 @@ fn entry_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Entry> {
     })
 }
 
-const NOTE_COLS: &str =
-    "id, project_id, text, author, filed_topic_id, filed_at, filed_epic_id, filed_by";
+pub(super) const NOTE_COLS: &str =
+    "id, project_id, text, author, filed_topic_id, filed_at, filed_epic_id, filed_by, report_to";
 
-fn note_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Note> {
+pub(super) fn note_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Note> {
     Ok(Note {
         id: NoteId(r.get(0)?),
         project: ProjectId(r.get(1)?),
@@ -65,7 +65,8 @@ fn note_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Note> {
         filed_at: r.get(5)?,
         filed_epic: r.get::<_, Option<i64>>(6)?.map(EpicId),
         filed_by: r.get(7)?,
-        stamp: stamp(r, 8)?,
+        report_to: r.get(8)?,
+        stamp: stamp(r, 9)?,
     })
 }
 
@@ -90,7 +91,12 @@ pub(crate) fn system_event(
 
 /// A write to a topic's timeline is a write to the topic: its Updated
 /// value and author follow (components-records.md 5, Properties block).
-fn touch_topic(tx: &rusqlite::Connection, topic: TopicId, author: Author, now: i64) -> Result<()> {
+pub(crate) fn touch_topic(
+    tx: &rusqlite::Connection,
+    topic: TopicId,
+    author: Author,
+    now: i64,
+) -> Result<()> {
     tx.execute(
         "UPDATE topics SET updated_at = ?2, updated_by = ?3 WHERE id = ?1",
         params![topic.0, now, author],
@@ -380,7 +386,8 @@ impl Store {
     }
 
     /// Marks open notes as turned into, or filed under, a topic of their
-    /// project.
+    /// project. The topic takes the first note's person when it has none
+    /// (request 19).
     pub fn file_notes(&mut self, notes: &[NoteId], topic: TopicId, author: Author) -> Result<()> {
         let tx = self.write()?;
         let project = super::records::read_topic(&tx, topic)?.project;
@@ -393,6 +400,7 @@ impl Store {
             None,
             author,
         )?;
+        super::people::carry_person(&tx, notes, Record::Topic(topic), author, now_ms())?;
         tx.commit()?;
         Ok(())
     }
@@ -415,6 +423,7 @@ impl Store {
             Some(epic.0),
             author,
         )?;
+        super::people::carry_person(&tx, notes, Record::Epic(epic), author, now_ms())?;
         tx.commit()?;
         Ok(())
     }

@@ -19,12 +19,18 @@
 //! folder's UUID, ADR 0011) and their due day (`YYYY-MM-DD`, data.md
 //! request 16), and drops `include_inherited_folders`. A version 1 file
 //! imports with the defaults: no active folder, no due day, Manual.
+//! 3 adds the `questions` array (request 18) and the Report to person of
+//! notes, topics and epics with the reported time and author of topics
+//! and epics (request 19). Person keys are recomputed on import, never
+//! read from a file. An older file imports with no questions and no
+//! person, and an update from it leaves the person columns as they are.
 
 use super::Store;
 use crate::date::Date;
 use crate::error::{Error, Result};
 use crate::model::{
-    Author, ChangeKind, CommitMode, EntryKind, EventKind, KbId, KbKind, ProjectId, Status,
+    Author, ChangeKind, CommitMode, EntryKind, EventKind, KbId, KbKind, ProjectId, QuestionStatus,
+    Status,
 };
 use crate::snapshots::SnapshotKind;
 use rusqlite::{OptionalExtension, params};
@@ -33,7 +39,7 @@ use serde::{Deserialize, Serialize};
 /// The format name written in every file.
 pub const FORMAT_NAME: &str = "acta";
 /// The format version this build writes and the newest it reads.
-pub const FORMAT_VERSION: i64 = 2;
+pub const FORMAT_VERSION: i64 = 3;
 /// The file extension, without the leading dot.
 pub const FILE_EXTENSION: &str = "acta.json";
 
@@ -51,6 +57,9 @@ pub struct ExportFile {
     pub notes: Vec<XNote>,
     pub knowledge: Vec<XKb>,
     pub folders: Vec<XFolder>,
+    /// Version 3; absent from older files.
+    #[serde(default)]
+    pub questions: Vec<XQuestion>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -91,6 +100,19 @@ pub struct XEpic {
     pub active_folder: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub due_on: Option<String>,
+    #[serde(flatten)]
+    pub report: XReport,
+}
+
+/// Version 3: who a topic or an epic is reported to, and when it was.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct XReport {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub report_to: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reported_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reported_by: Option<Author>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -110,6 +132,8 @@ pub struct XTopic {
     pub active_folder: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub due_on: Option<String>,
+    #[serde(flatten)]
+    pub report: XReport,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -140,6 +164,31 @@ pub struct XNote {
     pub filed_epic: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub filed_by: Option<Author>,
+    /// Version 3.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub report_to: Option<String>,
+}
+
+/// Version 3: a question (data.md request 18). Its owner is the topic,
+/// else the epic, else the project.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct XQuestion {
+    #[serde(flatten)]
+    pub stamp: XStamp,
+    pub project: String,
+    pub epic: Option<String>,
+    pub topic: Option<String>,
+    pub text: String,
+    pub asked_to: Option<String>,
+    pub expected_on: Option<String>,
+    pub status: QuestionStatus,
+    pub answer: Option<String>,
+    pub resolved_at: Option<i64>,
+    pub resolved_by: Option<Author>,
+    /// The UUID of the Decision entry logged with the answer.
+    pub decision_entry: Option<String>,
+    pub position: i64,
+    pub created_by: Author,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -240,6 +289,7 @@ pub struct ImportReport {
     pub knowledge: ImportCounts,
     pub revisions: ImportCounts,
     pub folders: ImportCounts,
+    pub questions: ImportCounts,
 }
 
 impl ImportReport {
@@ -253,6 +303,7 @@ impl ImportReport {
             self.knowledge,
             self.revisions,
             self.folders,
+            self.questions,
         ];
         all.iter()
             .fold(ImportCounts::default(), |a, c| ImportCounts {
@@ -274,6 +325,14 @@ fn xstamp(r: &rusqlite::Row<'_>, at: usize) -> rusqlite::Result<XStamp> {
         updated_by: r.get(at + 3)?,
         deleted_at: r.get(at + 4)?,
         deleted_by: r.get(at + 5)?,
+    })
+}
+
+fn xreport(r: &rusqlite::Row<'_>, at: usize) -> rusqlite::Result<XReport> {
+    Ok(XReport {
+        report_to: r.get(at)?,
+        reported_at: r.get(at + 1)?,
+        reported_by: r.get(at + 2)?,
     })
 }
 
@@ -328,7 +387,8 @@ impl Store {
         let epics = collect(
             conn,
             &format!(
-                "SELECT {STAMP_SQL}, p.uuid, x.title, x.description, x.state, x.position, f.uuid, x.due_on
+                "SELECT {STAMP_SQL}, p.uuid, x.title, x.description, x.state, x.position, f.uuid, x.due_on,
+                        x.report_to, x.reported_at, x.reported_by
                  FROM epics x JOIN projects p ON p.id = x.project_id
                  LEFT JOIN folders f ON f.id = x.active_folder_id
                  WHERE 1 = 1{} ORDER BY x.uuid",
@@ -344,6 +404,7 @@ impl Store {
                     position: r.get(10)?,
                     active_folder: r.get(11)?,
                     due_on: r.get(12)?,
+                    report: xreport(r, 13)?,
                 })
             },
         )?;
@@ -351,7 +412,8 @@ impl Store {
             conn,
             &format!(
                 "SELECT {STAMP_SQL}, p.uuid, e.uuid, x.title, x.description, x.status, x.state,
-                        x.state_updated_at, x.state_updated_by, x.position, f.uuid, x.due_on
+                        x.state_updated_at, x.state_updated_by, x.position, f.uuid, x.due_on,
+                        x.report_to, x.reported_at, x.reported_by
                  FROM topics x JOIN projects p ON p.id = x.project_id LEFT JOIN epics e ON e.id = x.epic_id
                  LEFT JOIN folders f ON f.id = x.active_folder_id
                  WHERE 1 = 1{} ORDER BY x.uuid",
@@ -371,6 +433,7 @@ impl Store {
                     position: r.get(14)?,
                     active_folder: r.get(15)?,
                     due_on: r.get(16)?,
+                    report: xreport(r, 17)?,
                 })
             },
         )?;
@@ -398,7 +461,7 @@ impl Store {
         let notes = collect(
             conn,
             &format!(
-                "SELECT {STAMP_SQL}, p.uuid, x.text, x.author, t.uuid, x.filed_at, e.uuid, x.filed_by
+                "SELECT {STAMP_SQL}, p.uuid, x.text, x.author, t.uuid, x.filed_at, e.uuid, x.filed_by, x.report_to
                  FROM notes x JOIN projects p ON p.id = x.project_id LEFT JOIN topics t ON t.id = x.filed_topic_id
                  LEFT JOIN epics e ON e.id = x.filed_epic_id
                  WHERE 1 = 1{} ORDER BY x.uuid",
@@ -414,6 +477,7 @@ impl Store {
                     filed_at: r.get(10)?,
                     filed_epic: r.get(11)?,
                     filed_by: r.get(12)?,
+                    report_to: r.get(13)?,
                 })
             },
         )?;
@@ -494,6 +558,36 @@ impl Store {
                 })
             },
         )?;
+        let questions = collect(
+            conn,
+            &format!(
+                "SELECT {STAMP_SQL}, p.uuid, e.uuid, t.uuid, x.text, x.asked_to, x.expected_on, x.status,
+                        x.answer, x.resolved_at, x.resolved_by, d.uuid, x.position, x.created_by
+                 FROM questions x JOIN projects p ON p.id = x.project_id
+                 LEFT JOIN epics e ON e.id = x.epic_id LEFT JOIN topics t ON t.id = x.topic_id
+                 LEFT JOIN entries d ON d.id = x.decision_entry_id
+                 WHERE 1 = 1{} ORDER BY x.uuid",
+                only("x.project_id")
+            ),
+            |r| {
+                Ok(XQuestion {
+                    stamp: xstamp(r, 0)?,
+                    project: r.get(6)?,
+                    epic: r.get(7)?,
+                    topic: r.get(8)?,
+                    text: r.get(9)?,
+                    asked_to: r.get(10)?,
+                    expected_on: r.get(11)?,
+                    status: r.get(12)?,
+                    answer: r.get(13)?,
+                    resolved_at: r.get(14)?,
+                    resolved_by: r.get(15)?,
+                    decision_entry: r.get(16)?,
+                    position: r.get(17)?,
+                    created_by: r.get(18)?,
+                })
+            },
+        )?;
         drop(read);
         Ok(ExportFile {
             format: FORMAT_NAME.into(),
@@ -507,6 +601,7 @@ impl Store {
             notes,
             knowledge: knowledge.into_iter().map(|(k, _)| k).collect(),
             folders,
+            questions,
         })
     }
 
@@ -571,6 +666,65 @@ fn seen_on_import(tx: &rusqlite::Connection, kind: &str, id: i64, at: i64) -> Re
          ON CONFLICT (kind, record_id)
          DO UPDATE SET last_seen_at = MAX(last_seen_at, excluded.last_seen_at)",
         params![kind, id, at],
+    )?;
+    Ok(())
+}
+
+/// An imported question counts as seen, as topics do.
+fn seen_question(tx: &rusqlite::Connection, id: i64, at: i64) -> Result<()> {
+    tx.execute(
+        "INSERT INTO question_markers (question_id, last_seen_at) VALUES (?1, ?2)
+         ON CONFLICT (question_id)
+         DO UPDATE SET last_seen_at = MAX(last_seen_at, excluded.last_seen_at)",
+        params![id, at],
+    )?;
+    Ok(())
+}
+
+/// A person from a file, cleaned as the store writes one; over 80
+/// characters is refused.
+fn person(uuid: &str, text: &Option<String>) -> Result<Option<String>> {
+    match text {
+        None => Ok(None),
+        Some(t) => crate::person::clean(t)
+            .map_err(|_| Error::Invalid(format!("{uuid} has an invalid person"))),
+    }
+}
+
+/// The Report to of an imported topic or epic, its key recomputed here.
+fn write_report(
+    tx: &rusqlite::Connection,
+    table: &str,
+    id: i64,
+    uuid: &str,
+    r: &XReport,
+) -> Result<()> {
+    let to = person(uuid, &r.report_to)?;
+    let (at, by) = if to.is_some() {
+        (r.reported_at, r.reported_by)
+    } else {
+        (None, None)
+    };
+    tx.execute(
+        &format!(
+            "UPDATE {table} SET report_to = ?2, report_key = ?3, reported_at = ?4, reported_by = ?5 WHERE id = ?1"
+        ),
+        params![id, to, to.as_deref().map(crate::person::person_key), at, by],
+    )?;
+    Ok(())
+}
+
+/// The Report to of an imported note, its key recomputed here.
+fn write_note_person(
+    tx: &rusqlite::Connection,
+    id: i64,
+    uuid: &str,
+    text: &Option<String>,
+) -> Result<()> {
+    let to = person(uuid, text)?;
+    tx.execute(
+        "UPDATE notes SET report_to = ?2, report_key = ?3 WHERE id = ?1",
+        params![id, to, to.as_deref().map(crate::person::person_key)],
     )?;
     Ok(())
 }
@@ -699,6 +853,9 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile, author: Author) -> Result<Im
     // A version 1 file knows nothing of due days, active folders and folder
     // settings: an update from it leaves them as they are here.
     let old_format = f.version < 2;
+    // Before version 3 there were no people: an update keeps the person
+    // columns as they are here.
+    let no_people = f.version < 3;
     let by_claude = author == Author::Claude;
     // Active folders are set once the folders exist: (table, local id,
     // folder UUID) of every project, epic and topic the merge wrote.
@@ -752,7 +909,9 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile, author: Author) -> Result<Im
                     params![s.uuid, project, x.title, x.description, x.state, x.position, due(&s.uuid, &x.due_on)?,
                             s.created_at, s.updated_at, s.updated_by, s.deleted_at, s.deleted_by],
                 )?;
-                pointers.push(("epics", tx.last_insert_rowid(), x.active_folder.as_deref()));
+                let id = tx.last_insert_rowid();
+                write_report(tx, "epics", id, &s.uuid, &x.report)?;
+                pointers.push(("epics", id, x.active_folder.as_deref()));
             }
             Action::Update(l) => {
                 let (d, db) = merged_deleted(&l, s);
@@ -765,6 +924,9 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile, author: Author) -> Result<Im
                     params![l.id, project, x.title, x.description, x.state, x.position, due(&s.uuid, &x.due_on)?,
                             s.updated_at, s.updated_by, d, db, old_format],
                 )?;
+                if !no_people {
+                    write_report(tx, "epics", l.id, &s.uuid, &x.report)?;
+                }
                 pointers.push(("epics", l.id, x.active_folder.as_deref()));
             }
             Action::Skip => {}
@@ -789,6 +951,7 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile, author: Author) -> Result<Im
                             s.created_at, s.updated_at, s.updated_by, s.deleted_at, s.deleted_by],
                 )?;
                 let id = tx.last_insert_rowid();
+                write_report(tx, "topics", id, &s.uuid, &x.report)?;
                 pointers.push(("topics", id, x.active_folder.as_deref()));
                 seen_on_import(tx, "topic", id, s.updated_at)?;
             }
@@ -805,6 +968,9 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile, author: Author) -> Result<Im
                             x.state_updated_by, x.position, due(&s.uuid, &x.due_on)?,
                             s.updated_at, s.updated_by, d, db, old_format],
                 )?;
+                if !no_people {
+                    write_report(tx, "topics", l.id, &s.uuid, &x.report)?;
+                }
                 pointers.push(("topics", l.id, x.active_folder.as_deref()));
                 seen_on_import(tx, "topic", l.id, s.updated_at)?;
             }
@@ -891,6 +1057,7 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile, author: Author) -> Result<Im
                         s.deleted_by
                     ],
                 )?;
+                write_note_person(tx, tx.last_insert_rowid(), &s.uuid, &x.report_to)?;
             }
             Action::Update(l) => {
                 let (d, db) = merged_deleted(&l, s);
@@ -901,6 +1068,9 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile, author: Author) -> Result<Im
                             filed_epic_id = ?9, filed_by = ?10 WHERE id = ?1",
                     params![l.id, x.text, filed, x.filed_at, s.updated_at, s.updated_by, d, db, filed_epic, x.filed_by],
                 )?;
+                if !no_people {
+                    write_note_person(tx, l.id, &s.uuid, &x.report_to)?;
+                }
             }
             Action::Skip => {}
         }
@@ -1022,6 +1192,61 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile, author: Author) -> Result<Im
                             x.name, icon(&x.icon), mode, as_user, on_default,
                             old_format, old_format || by_claude, by_claude],
                 )?;
+            }
+            Action::Skip => {}
+        }
+    }
+
+    for x in &f.questions {
+        let s = &x.stamp;
+        let action = decide(tx, "questions", s)?;
+        count(&mut rep.questions, &action);
+        let project = local_id(tx, "projects", &x.project)?;
+        let epic = opt_id(tx, "epics", &x.epic)?;
+        let topic = opt_id(tx, "topics", &x.topic)?;
+        // An entry this database does not have (a partial file) leaves the
+        // link out rather than refusing the whole import.
+        let entry: Option<i64> = match &x.decision_entry {
+            Some(u) => tx
+                .query_row("SELECT id FROM entries WHERE uuid = ?1", [u], |r| r.get(0))
+                .optional()?,
+            None => None,
+        };
+        let asked = person(&s.uuid, &x.asked_to)?;
+        let key = asked.as_deref().map(crate::person::person_key);
+        let expected = due(&s.uuid, &x.expected_on)?;
+        let (epic, topic) = if topic.is_some() {
+            (None, topic)
+        } else {
+            (epic, None)
+        };
+        match action {
+            Action::Insert => {
+                tx.execute(
+                    "INSERT INTO questions (uuid, project_id, epic_id, topic_id, text, asked_to, asked_key, expected_on,
+                                            status, answer, resolved_at, resolved_by, decision_entry_id, position,
+                                            created_by, created_at, updated_at, updated_by, deleted_at, deleted_by)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
+                    params![s.uuid, project, epic, topic, x.text, asked, key, expected,
+                            x.status, x.answer, x.resolved_at, x.resolved_by, entry, x.position,
+                            x.created_by, s.created_at, s.updated_at, s.updated_by, s.deleted_at, s.deleted_by],
+                )?;
+                seen_question(tx, tx.last_insert_rowid(), s.updated_at)?;
+            }
+            Action::Update(l) => {
+                let (d, db) = merged_deleted(&l, s);
+                tx.execute(
+                    "UPDATE questions SET project_id = ?2, epic_id = ?3, topic_id = ?4, text = ?5, asked_to = ?6,
+                            asked_key = ?7, expected_on = ?8, status = ?9, answer = ?10, resolved_at = ?11,
+                            resolved_by = ?12, decision_entry_id = ?13, position = ?14,
+                            updated_at = ?15, updated_by = ?16, deleted_at = ?17, deleted_by = ?18,
+                            deleted_batch = CASE WHEN deleted_at IS ?17 THEN deleted_batch ELSE NULL END
+                     WHERE id = ?1",
+                    params![l.id, project, epic, topic, x.text, asked, key, expected,
+                            x.status, x.answer, x.resolved_at, x.resolved_by, entry, x.position,
+                            s.updated_at, s.updated_by, d, db],
+                )?;
+                seen_question(tx, l.id, s.updated_at)?;
             }
             Action::Skip => {}
         }

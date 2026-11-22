@@ -171,6 +171,7 @@ pub fn report_into_empty(file: &ExportFile) -> ImportReport {
         knowledge: created(file.knowledge.len()),
         revisions: created(file.knowledge.iter().map(|k| k.revisions.len()).sum()),
         folders: created(file.folders.len()),
+        questions: created(file.questions.len()),
     }
 }
 

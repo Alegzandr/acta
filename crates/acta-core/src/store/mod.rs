@@ -11,6 +11,8 @@ mod exchange;
 mod folders;
 mod kb;
 mod overview;
+mod people;
+mod questions;
 mod records;
 mod search;
 mod seen;
@@ -19,7 +21,7 @@ mod trash;
 
 pub use exchange::{
     ExportFile, FILE_EXTENSION, FORMAT_NAME, FORMAT_VERSION, ImportCounts, ImportReport, XEntry,
-    XEpic, XFolder, XKb, XNote, XProject, XRevision, XStamp, XTopic,
+    XEpic, XFolder, XKb, XNote, XProject, XQuestion, XRevision, XStamp, XTopic,
 };
 pub use folders::{AUTO_MEMORY_PREFIX, FolderResolution, VisibleFolder, VisibleFolders};
 pub use kb::{KbCounts, KbEdit, KbFilter, KbRevisionSummary, KbUpdate, NewKb};
@@ -27,6 +29,8 @@ pub use overview::{
     IDLE_DAYS, INBOX_DAYS, Overview, OverviewEpic, OverviewFilter, OverviewItem, STALE_MEMORY_DAYS,
     Scope, WEEK_DAYS,
 };
+pub use people::ReportTargets;
+pub use questions::{ANSWER_MAX, NewQuestion, QUESTION_MAX, QuestionFilter, decision_body};
 pub use records::{EpicPatch, NewTopic, ProjectPatch, TopicFilter, TopicPatch};
 pub use search::{SNIPPET_CLOSE, SNIPPET_OPEN, SearchHit, SearchKind, SearchQuery};
 pub use seen::Unread;
@@ -487,5 +491,7 @@ pub(crate) mod test_support {
     }
 }
 
+#[cfg(test)]
+mod questions_tests;
 #[cfg(test)]
 mod tests;

@@ -45,6 +45,8 @@ serde = { version = "1", features = ["derive"] }
 # preserve_order: the settings writer keeps the user's key order.
 serde_json = { version = "1", features = ["preserve_order"] }
 sha2 = "0.10"
+# Person keys: accents removed by NFKD (person.rs).
+unicode-normalization = "0.1.26"
 uuid = { version = "1", default-features = false, features = ["std", "v7"] }
 zeroize = "1"
 

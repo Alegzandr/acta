@@ -44,6 +44,7 @@ id_type!(EntryId, "TE");
 id_type!(NoteId, "N");
 id_type!(KbId, "K");
 id_type!(FolderId, "F");
+id_type!(QuestionId, "Q");
 
 /// Who made a write. Over MCP, and when `CLAUDECODE=1`, it is Claude Code.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -113,6 +114,12 @@ pub enum EventKind {
     /// The due date changed: old and new are `YYYY-MM-DD`, absent for no
     /// date (data.md request 16).
     Due,
+    /// The Report to person changed: old and new are the person as
+    /// written, absent for none (data.md request 19).
+    Report,
+    /// Marked reported (new is the person) or not reported (old is the
+    /// person) (data.md request 19).
+    Reported,
 }
 
 /// Level a knowledge entry or a folder is attached to.
@@ -162,6 +169,7 @@ pub enum Record {
     Note(NoteId),
     Kb(KbId),
     Folder(FolderId),
+    Question(QuestionId),
 }
 
 impl fmt::Display for Record {
@@ -174,6 +182,7 @@ impl fmt::Display for Record {
             Record::Note(id) => id.fmt(f),
             Record::Kb(id) => id.fmt(f),
             Record::Folder(id) => id.fmt(f),
+            Record::Question(id) => id.fmt(f),
         }
     }
 }
@@ -233,6 +242,7 @@ pub struct Epic {
     pub position: i64,
     pub active_folder: Option<FolderId>,
     pub due_on: Option<Date>,
+    pub report: Report,
     pub stamp: Stamp,
 }
 
@@ -251,7 +261,25 @@ pub struct Topic {
     pub position: i64,
     pub active_folder: Option<FolderId>,
     pub due_on: Option<Date>,
+    pub report: Report,
     pub stamp: Stamp,
+}
+
+/// Who a topic or an epic must be reported back to, and whether it was
+/// (data.md request 19). Default: no one.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Report {
+    /// The person as written (1 to 80 chars, see [`crate::person`]).
+    pub to: Option<String>,
+    /// When it was marked reported; reset when the person changes.
+    pub at: Option<i64>,
+    pub by: Option<Author>,
+}
+
+impl Report {
+    pub fn is_reported(&self) -> bool {
+        self.to.is_some() && self.at.is_some()
+    }
 }
 
 /// One line of a list: no long text.
@@ -267,6 +295,9 @@ pub struct TopicSummary {
     pub due_on: Option<Date>,
     pub updated_at: i64,
     pub updated_by: Author,
+    /// The Report to person, if any (request 19).
+    pub report_to: Option<String>,
+    pub reported: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -277,6 +308,8 @@ pub struct EpicSummary {
     pub progress: Progress,
     pub due_on: Option<Date>,
     pub updated_at: i64,
+    pub report_to: Option<String>,
+    pub reported: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -351,6 +384,8 @@ pub struct Note {
     pub filed_at: Option<i64>,
     /// Who filed or dismissed it; `None` for notes filed before it was kept.
     pub filed_by: Option<Author>,
+    /// Who it must be reported back to (request 19); filing carries it.
+    pub report_to: Option<String>,
     pub stamp: Stamp,
 }
 
@@ -377,6 +412,63 @@ impl Note {
     pub fn is_open(&self) -> bool {
         self.fate() == NoteFate::Open
     }
+}
+
+/// A question's state (components-questions.md 5).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum QuestionStatus {
+    Open,
+    Answered,
+    Dropped,
+}
+
+/// A question to someone outside the work, answered later (data.md
+/// request 18). Owned by exactly one project, epic or topic.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Question {
+    pub id: QuestionId,
+    pub project: ProjectId,
+    pub owner: Owner,
+    /// 1 to 300 chars, one paragraph.
+    pub text: String,
+    /// The person asked (request 19), as written.
+    pub asked_to: Option<String>,
+    /// The day the answer is expected.
+    pub expected_on: Option<Date>,
+    pub status: QuestionStatus,
+    /// Markdown, at most 1,500 chars; kept when reopened.
+    pub answer: Option<String>,
+    /// When and by whom it was answered or dropped.
+    pub resolved_at: Option<i64>,
+    pub resolved_by: Option<Author>,
+    /// The Decision entry logged with the answer.
+    pub decision_entry: Option<EntryId>,
+    /// Stored order among the owner's questions.
+    pub position: i64,
+    pub created_by: Author,
+    pub stamp: Stamp,
+}
+
+impl Question {
+    pub fn is_open(&self) -> bool {
+        self.status == QuestionStatus::Open
+    }
+}
+
+/// One person of a project: computed from the person values, never stored
+/// (request 19).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Person {
+    /// [`crate::person::person_key`] of the name.
+    pub key: String,
+    /// The spelling most recently written in the project.
+    pub display: String,
+    /// Open questions asked to them, open notes naming them, topics and
+    /// epics not reported and not Dropped.
+    pub open: i64,
+    /// The newest write naming them.
+    pub last_used: i64,
 }
 
 /// A knowledge entry without its body: what lists show (ADR 0005 `kb`).

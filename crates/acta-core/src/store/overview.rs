@@ -126,6 +126,11 @@ pub struct Overview {
     /// Epics whose every topic not Dropped is Done. Project scope only.
     pub complete_epics: usize,
     pub stale_memories: usize,
+    /// Open questions at every level of the scope whose answer date has
+    /// passed (the fifth attention line, data.md request 18); the list is
+    /// [`Store::late_answers`]. Not counted by
+    /// [`Overview::attention_lines`] until the UI shows the line.
+    pub answers_late: usize,
 }
 
 impl Overview {
@@ -226,6 +231,7 @@ impl Store {
             decided: len(OverviewFilter::Decided)?,
             created: len(OverviewFilter::Created)?,
             stale_memories: len(OverviewFilter::StaleMemories)?,
+            answers_late: self.late_answers(scope, today)?.len(),
             ..Overview::default()
         };
         if o.done + o.decisions + o.created == 0 {
