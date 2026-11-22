@@ -303,6 +303,115 @@ fn quote_word(word: &str) -> String {
     format!("\"{word}{}\"", "\\".repeat(trailing))
 }
 
+/// The spelling of `PATH` to give a child. Windows names are
+/// case-insensitive and its block usually spells it `Path`: the child gets
+/// the name the parent's environment uses, so it never holds two spellings
+/// (which one a program then reads is up to the program). Elsewhere names
+/// are case-sensitive and the variable is `PATH`.
+pub fn path_var_name<S: AsRef<str>>(windows: bool, inherited: &[S]) -> String {
+    if !windows {
+        return "PATH".to_owned();
+    }
+    inherited
+        .iter()
+        .map(AsRef::as_ref)
+        .find(|n| n.eq_ignore_ascii_case("PATH"))
+        .unwrap_or("Path")
+        .to_owned()
+}
+
+/// Set `PATH` in a launch's `env` to `path` (ADR 0013: the fresh `PATH`,
+/// so a tool installed while Acta runs is found by what the terminal
+/// starts), replacing any other spelling of it there. A `path` that is
+/// not Unicode is left out: the child then inherits Acta's own.
+pub fn set_path<S: AsRef<str>>(
+    env: &mut Vec<(String, String)>,
+    windows: bool,
+    inherited: &[S],
+    path: &std::ffi::OsStr,
+) {
+    let Some(value) = path.to_str() else { return };
+    let same = |n: &str| {
+        if windows {
+            n.eq_ignore_ascii_case("PATH")
+        } else {
+            n == "PATH"
+        }
+    };
+    env.retain(|(name, _)| !same(name));
+    env.push((path_var_name(windows, inherited), value.to_owned()));
+}
+
+/// The names of this process's environment variables.
+pub fn env_names() -> Vec<String> {
+    std::env::vars_os()
+        .filter_map(|(name, _)| name.into_string().ok())
+        .collect()
+}
+
+/// A one-off command session (ADR 0013): `argv` started directly in the
+/// PTY, with no shell between Acta and the program, in `cwd`, with the
+/// fresh `PATH` when there is one. The program is `argv[0]` as given when
+/// it is a path, else the first match on `dirs` (the search of
+/// `acta_core::prereqs::locate`, with the registry `PATH`, so a manager
+/// installed since Acta started is found). `None` when the program is not
+/// found, or on Windows when it is a `.cmd` or `.bat` script, which only a
+/// shell can run.
+pub fn one_off_spec(
+    argv: &[std::ffi::OsString],
+    cwd: PathBuf,
+    dirs: &[PathBuf],
+    path: Option<&std::ffi::OsStr>,
+    is_file: impl Fn(&Path) -> bool,
+) -> Option<LaunchSpec> {
+    let (first, rest) = argv.split_first()?;
+    let given = Path::new(first);
+    let program = if given.is_absolute() {
+        is_file(given).then(|| given.to_path_buf())?
+    } else {
+        let name = first.to_str()?;
+        acta_core::prereqs::locate(acta_core::paths::Os::CURRENT, name, dirs, &is_file)?
+    };
+    let script = program
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("cmd") || e.eq_ignore_ascii_case("bat"));
+    if cfg!(windows) && script {
+        return None;
+    }
+    let mut env = Vec::new();
+    if let Some(path) = path {
+        set_path(&mut env, cfg!(windows), &env_names(), path);
+    }
+    Some(LaunchSpec {
+        program: program.to_string_lossy().into_owned(),
+        args: rest
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect(),
+        cwd,
+        env,
+        verbatim_args: false,
+    })
+}
+
+/// Claude Code on its own, as a user starts it (the checklist's "Sign
+/// in...": its own first-run flow signs in): no folders, focus, plugin or
+/// conversation of Acta's, in `cwd`.
+pub fn plain_claude_spec(program: &ClaudeProgram, cwd: PathBuf) -> Option<LaunchSpec> {
+    let launch = build_claude_launch(
+        program,
+        std::slice::from_ref(&cwd),
+        &Focus::default(),
+        &ClaudeOptions::default(),
+        |_| true,
+    )
+    .ok()?;
+    Some(LaunchSpec {
+        env: Vec::new(),
+        ..launch.spec
+    })
+}
+
 /// Remove [`claude_session_vars`] from this process's environment, so
 /// every program Acta starts (the terminal's shell and `claude`) begins a
 /// session of its own.
@@ -832,5 +941,111 @@ mod tests {
             found,
             Some(ClaudeProgram::Exe(PathBuf::from("/usr/local/bin/claude")))
         );
+    }
+
+    /// An absolute folder of Alexandre's on this OS.
+    fn abs(dir: &str) -> PathBuf {
+        if cfg!(windows) {
+            PathBuf::from("C:\\Users\\alexandre").join(dir)
+        } else {
+            alexandre(dir)
+        }
+    }
+
+    #[test]
+    fn path_keeps_the_spelling_of_the_parent_on_windows_only() {
+        assert_eq!(path_var_name(true, &["TEMP", "Path"]), "Path");
+        assert_eq!(path_var_name(true, &["PATH"]), "PATH");
+        assert_eq!(path_var_name(true, &["TEMP"]), "Path");
+        assert_eq!(path_var_name(false, &["Path"]), "PATH");
+        // Any spelling already in the launch is replaced, never doubled.
+        let mut env = vec![
+            ("path".to_owned(), "old".to_owned()),
+            ("ACTA_TERMINAL".to_owned(), "1".to_owned()),
+        ];
+        set_path(&mut env, true, &["Path"], std::ffi::OsStr::new("C:\\new"));
+        assert_eq!(
+            env,
+            vec![
+                ("ACTA_TERMINAL".to_owned(), "1".to_owned()),
+                ("Path".to_owned(), "C:\\new".to_owned()),
+            ]
+        );
+        // Elsewhere `Path` is another variable and stays.
+        let mut env = vec![("Path".to_owned(), "x".to_owned())];
+        set_path(&mut env, false, &["PATH"], std::ffi::OsStr::new("/usr/bin"));
+        assert_eq!(env.len(), 2);
+        assert_eq!(env[1], ("PATH".to_owned(), "/usr/bin".to_owned()));
+    }
+
+    /// The one-off session's command line: the program itself, found on
+    /// the search directories, its arguments as separate words for the PTY
+    /// to quote, and no shell in between.
+    #[test]
+    fn a_one_off_session_starts_the_program_itself() {
+        use std::ffi::OsString;
+        let dir = abs("tools");
+        let exe = if cfg!(windows) {
+            dir.join("gh.exe")
+        } else {
+            dir.join("gh")
+        };
+        let argv: Vec<OsString> = ["gh", "auth", "login", "--web"]
+            .iter()
+            .map(OsString::from)
+            .collect();
+        let found = |p: &Path| p == exe;
+        let dirs = std::slice::from_ref(&dir);
+        let spec = one_off_spec(&argv, abs("work"), dirs, None, found).unwrap();
+        assert_eq!(spec.program, exe.to_string_lossy());
+        assert_eq!(spec.args, ["auth", "login", "--web"]);
+        assert_eq!(spec.cwd, abs("work"));
+        assert!(!spec.verbatim_args, "the PTY quotes each word itself");
+        assert!(spec.env.is_empty());
+        for shell in ["cmd", "sh", "bash", "powershell", "zsh"] {
+            assert!(
+                !Path::new(&spec.program)
+                    .file_stem()
+                    .is_some_and(|s| s.eq_ignore_ascii_case(shell)),
+                "{shell} between Acta and the program"
+            );
+        }
+        // Not found: nothing starts.
+        assert_eq!(
+            one_off_spec(&argv, abs("work"), dirs, None, |_| false),
+            None
+        );
+        // A path is taken as given; the fresh `PATH` goes with it.
+        let argv: Vec<OsString> = vec![exe.clone().into_os_string(), "--version".into()];
+        let fresh = Some(std::ffi::OsStr::new("fresh"));
+        let spec = one_off_spec(&argv, abs("work"), &[], fresh, found).unwrap();
+        assert_eq!(spec.program, exe.to_string_lossy());
+        assert_eq!(spec.args, ["--version"]);
+        assert_eq!(spec.env.len(), 1);
+        assert!(spec.env[0].0.eq_ignore_ascii_case("PATH"));
+        assert_eq!(spec.env[0].1, "fresh");
+    }
+
+    /// A script needs a shell to run: refused, never wrapped in one.
+    #[cfg(windows)]
+    #[test]
+    fn a_one_off_session_refuses_a_script() {
+        let dir = abs("npm");
+        let shim = dir.join("gh.cmd");
+        let argv = vec![std::ffi::OsString::from("gh")];
+        assert_eq!(
+            one_off_spec(&argv, abs("work"), &[dir], None, |p| p == shim),
+            None
+        );
+    }
+
+    #[test]
+    fn sign_in_starts_claude_code_alone() {
+        let exe = abs("claude.exe");
+        let spec = plain_claude_spec(&ClaudeProgram::Exe(exe.clone()), abs("home")).unwrap();
+        assert_eq!(spec.program, exe.to_string_lossy());
+        assert!(spec.args.is_empty(), "{:?}", spec.args);
+        assert!(spec.env.is_empty());
+        assert_eq!(spec.cwd, abs("home"));
     }
 }
