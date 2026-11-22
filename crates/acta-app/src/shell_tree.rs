@@ -46,8 +46,9 @@ pub(super) struct TreeState {
     /// drag (components.md 5, Tree row, Drag to reorder).
     press: Option<TreePress>,
     drag: Option<TreeDrag>,
-    /// A drag just ended: the click its release makes opens nothing.
-    swallow_click: bool,
+    /// A drag just ended: the click its release makes on the dragged row
+    /// (dropped on its own place) opens nothing.
+    swallow_click: Option<RowKey>,
 }
 
 /// A press that becomes a drag after 4 of movement.
@@ -153,7 +154,7 @@ impl Shell {
 
     fn tree_press(&mut self, row: &Row, event: &gpui_kit::MouseDownEvent, cx: &mut Context<Self>) {
         let Some(bench) = self.bench() else { return };
-        bench.tree.swallow_click = false;
+        bench.tree.swallow_click = None;
         let dragged = tree::Dragged::of(&bench.ws.read(cx).projects, row);
         bench.tree.press = dragged.map(|dragged| TreePress {
             dragged,
@@ -210,7 +211,7 @@ impl Shell {
         let Some(drag) = bench.tree.drag.take() else {
             return;
         };
-        bench.tree.swallow_click = true;
+        bench.tree.swallow_click = Some(drag.key);
         cx.notify();
         // A drop outside the tree, on no target or on the row's own place
         // changes nothing.
@@ -278,12 +279,12 @@ impl Shell {
             return false;
         };
         bench.tree.press = None;
-        let was = bench.tree.drag.take().is_some();
-        if was {
-            bench.tree.swallow_click = true;
-            cx.notify();
-        }
-        was
+        let Some(drag) = bench.tree.drag.take() else {
+            return false;
+        };
+        bench.tree.swallow_click = Some(drag.key);
+        cx.notify();
+        true
     }
 
     /// Where the dragged row would land now, from the pointer's place in
@@ -1253,7 +1254,7 @@ fn tree_row(
                 cx.listener(move |shell, event: &gpui_kit::ClickEvent, window, cx| {
                     // The release that ends a drag is not a click.
                     if let Some(bench) = shell.bench()
-                        && std::mem::take(&mut bench.tree.swallow_click)
+                        && bench.tree.swallow_click.take() == Some(row_key)
                     {
                         return;
                     }
