@@ -23,8 +23,9 @@ const KEEP_WEEKLY: usize = 4;
 /// run. Restores in a row each snapshot the state before them, so by count
 /// alone a fourth restore would remove the first one, the only copy of the
 /// live state before the user started restoring. A run is the restore
-/// snapshots with no import, migration or manual snapshot between them
-/// (daily ones do not break it): its oldest is that live state, kept
+/// snapshots with no import or manual snapshot between them (daily ones,
+/// and a migration taken when a restored older schema is reopened, do not
+/// break it): its oldest is that live state, kept
 /// however many restores follow. At most 4 files.
 const KEEP_RESTORE: usize = 3;
 
@@ -164,14 +165,14 @@ pub(crate) fn expired(all: &[Snapshot]) -> Vec<Snapshot> {
     let mut other_seen: Vec<SnapshotKind> = Vec::new();
     let mut restore_seen = 0;
     // The oldest restore snapshot of the latest run (the list is newest
-    // first): restores until another kind other than daily appears.
+    // first): restores until an import or manual snapshot appears.
     let mut run_oldest = None;
     for (i, s) in all.iter().enumerate() {
         match s.kind {
             SnapshotKind::Restore => run_oldest = Some(i),
-            SnapshotKind::Daily => {}
-            _ if run_oldest.is_some() => break,
-            _ => {}
+            SnapshotKind::Daily | SnapshotKind::Migration => {}
+            SnapshotKind::Import | SnapshotKind::Manual if run_oldest.is_some() => break,
+            SnapshotKind::Import | SnapshotKind::Manual => {}
         }
     }
     for (i, s) in all.iter().enumerate() {
@@ -317,6 +318,15 @@ mod tests {
             ],
             "3 newest and the first of the run"
         );
+        // A migration at reopen (an older-schema snapshot restored) does not
+        // end the run: the first restore snapshot stays.
+        let mut migrated = all.clone();
+        migrated.insert(0, snap(SnapshotKind::Migration, today + 1));
+        migrated.sort_by_key(|s| std::cmp::Reverse(s.taken_at));
+        migrated.insert(0, restore(base + 3 * MS_PER_DAY));
+        let dropped = expired(&migrated);
+        assert!(!dropped.contains(&restore(base)));
+        assert!(dropped.contains(&restore(base + 4 * 60_000)));
         // Bounded however many restores follow.
         for k in 0..20 {
             all.insert(0, restore(base + 2 * MS_PER_DAY + k));
