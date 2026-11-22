@@ -1287,3 +1287,100 @@ New with contacts (2026-11-22; components-contacts.md 5, data.md 11 requests 22 
 In French, *contact* is masculine ("ajouté", "supprimé", "fusionné"); a contact's name is user text and in French always follows a colon (10.3), so sentences put it last. `{level}` is `contact.level.all` or a `level.project` / `level.epic` string; `{record}` is a record title as written; `{places}` is a list of `contact.move.place`, joined by ", " as 10.3 licenses, at most three, then `contact.move.more`.
 
 `contact.lifted.project` replaces `contact.lifted` when the contact is lifted to a project rather than to all projects. `contact.meta_updated` replaces `contact.meta` once the contact changed after it was added. The `{field}` of `contact.move.place` is `prop.report_to` or `question.field.asked`. Agent-facing text (`ok C-12 Paul (P-1)`, `refused: no contact "Mari" here`, `User: Alexandre, Product designer`) is protocol, English only, and not in this catalogue (10).
+
+### 10.4.12 Keys of memory quality (ADR 0015)
+
+New with memory quality (2026-11-22; components-knowledge.md 5, Memory quality; components-records.md 5, Overview; screens.md 8.31 to 8.33). Pending: to be moved into 10.4 and `catalogue.rs` when the UI is implemented (PLAN.md, Memory quality, phase 5): `overview.to_check` in the place of `overview.memories`, `filter.to_check` and `filter.inactive` in the place of `filter.stale_memories`, `cmd.show_to_check` and `cmd.show_inactive` in the place of `cmd.show_stale_memories`, the other `cmd.kb_*` keys after `cmd.kb_to_document`, `history.*` after `history.created.memory`, the `kb.*` keys after `kb.no_results`.
+
+**Removed** from 10.4 when they move: `overview.memories`, `filter.stale_memories`, `cmd.show_stale_memories` (the 90-day count became "to check", which counts every reason the store computes and reads the verified date, not the last update).
+
+**Reused**, not duplicated: Keep both is `contact.keep_both`; Move to epic / project in the notice are `kb.move_epic` and `kb.move_project`; Copied is `common.copied`; the stale-save notice is `conflict.notice`, `conflict.theirs`, `conflict.mine`; "Written by" is `kb.written.*`.
+
+| Key | English | French |
+|---|---|---|
+| `overview.to_check` | {n} memory to check · {n} memories to check | {n} mémoire à vérifier · {n} mémoires à vérifier |
+| `filter.to_check` | To check | À vérifier |
+| `filter.inactive` | Superseded and retired | Remplacés et obsolètes |
+| `kb.inactive_row` | {n} superseded or retired | {n} élément remplacé ou obsolète · {n} éléments remplacés ou obsolètes |
+| `kb.to_check_empty` | Nothing to check. | Rien à vérifier. |
+| `kb.inactive_empty` | Nothing is superseded or retired. | Aucun élément remplacé ou obsolète. |
+| `kb.reason.conflict` | May contradict {id} | Contredit peut-être {id} |
+| `kb.reason.duplicate` | Possible duplicate of {id} | Doublon possible de {id} |
+| `kb.reason.file_gone` | {file} was deleted or moved | {file} a été supprimé ou déplacé |
+| `kb.reason.file_gone_more` | {file} and {n} more file were deleted or moved · {file} and {n} more files were deleted or moved | {file} et {n} autre fichier ont été supprimés ou déplacés · {file} et {n} autres fichiers ont été supprimés ou déplacés |
+| `kb.reason.file_changed` | {file} changed since it was checked | {file} a changé depuis la dernière vérification |
+| `kb.reason.file_changed_more` | {file} and {n} more file changed since they were checked · {file} and {n} more files changed since they were checked | {file} et {n} autre fichier ont changé depuis la dernière vérification · {file} et {n} autres fichiers ont changé depuis la dernière vérification |
+| `kb.reason.branch_gone` | Branch {branch} no longer exists | La branche {branch} n'existe plus |
+| `kb.reason.branch_merged` | Branch {branch} was merged | La branche {branch} a été fusionnée |
+| `kb.reason.folder_removed` | Its folder was removed from Acta | Son dossier a été retiré d'Acta |
+| `kb.reason.topic_done` | Its topic is done | Son sujet est terminé |
+| `kb.reason.topic_dropped` | Its topic was dropped | Son sujet a été abandonné |
+| `kb.reason.old` | Not checked for {days} days | Non vérifiée depuis {days} jours |
+| `kb.verify` | Mark as still true | Marquer comme toujours valable |
+| `kb.retire` | Mark as no longer true | Marquer comme obsolète |
+| `kb.retired_toast.document` | Marked as no longer true. | Marqué comme obsolète. |
+| `kb.retired_toast.memory` | Marked as no longer true. | Marquée comme obsolète. |
+| `kb.make_live` | Make live again | Rétablir |
+| `kb.notice.superseded.document` | Superseded by {title} on {date}. | Remplacé le {date} par {title}. |
+| `kb.notice.superseded.memory` | Superseded by {title} on {date}. | Remplacée le {date} par {title}. |
+| `kb.notice.retired.document` | Retired by {author} on {date}. | Rendu obsolète le {date} par {author}. |
+| `kb.notice.retired.memory` | Retired by {author} on {date}. | Rendue obsolète le {date} par {author}. |
+| `kb.notice.conflict` | May contradict {id}. | Contredit peut-être {id}. |
+| `kb.notice.duplicate` | Possible duplicate of {id}. | Doublon possible de {id}. |
+| `kb.this_replaces` | This replaces it | Celle-ci la remplace |
+| `kb.replaced_toast` | {id} is now superseded by this. | {id} est désormais remplacée par celle-ci. |
+| `kb.merge_into_id` | Merge into {id} | Fusionner dans {id} |
+| `kb.merge_here` | Merge {id} into this | Fusionner {id} dans celle-ci |
+| `kb.merge_into` | Merge into... | Fusionner dans... |
+| `kb.merged` | Merged into {id}. | Fusionnée dans {id}. |
+| `kb.prop.branch` | Branch | Branche |
+| `kb.prop.sources` | Sources | Sources |
+| `kb.branch.merged` | merged | fusionnée |
+| `kb.branch.gone` | no longer exists | n'existe plus |
+| `kb.branch.tip` | True only on this branch, in {folder}. | Valable seulement sur cette branche, dans {folder}. |
+| `kb.source.entry` | {topic}, entry of {date} | {topic}, entrée du {date} |
+| `kb.source.missing` | A record not in this database | Un élément absent de cette base |
+| `kb.source.commit` | Commit {sha} | Commit {sha} |
+| `kb.source.copy_commit` | Copy commit id | Copier l'identifiant du commit |
+| `kb.source.copy_path` | {folder} · Copy path | {folder} · Copier le chemin |
+| `kb.source.changed` | changed since checked | modifié depuis la vérification |
+| `kb.source.gone` | deleted or moved | supprimé ou déplacé |
+| `kb.prov.from` | From topic {id} | Depuis le sujet {id} |
+| `kb.prov.branch` | On branch {branch} | Sur la branche {branch} |
+| `kb.prov.checked.document` | Checked {when} by {author} | Vérifié {when} par {author} |
+| `kb.prov.checked.memory` | Checked {when} by {author} | Vérifiée {when} par {author} |
+| `kb.session.on` | A Claude Code session on {topic} | Une session Claude Code sur {topic} |
+| `kb.session.any` | A Claude Code session | Une session Claude Code |
+| `kb.session.branch` | Branch {branch} | Branche {branch} |
+| `kb.also_open.memory` | Claude Code is working with this memory on {topic} | Claude Code travaille avec cette mémoire sur {topic} |
+| `kb.also_open.document` | Claude Code is working with this document on {topic} | Claude Code travaille avec ce document sur {topic} |
+| `kb.also_open.memory_any` | Claude Code is working with this memory | Claude Code travaille avec cette mémoire |
+| `kb.also_open.document_any` | Claude Code is working with this document | Claude Code travaille avec ce document |
+| `kb.also_open.read` | Last read {when} | Dernière lecture {when} |
+| `kb.also_open.wrote` | Last changed {when} | Dernière modification {when} |
+| `kb.save_merged` | Saved. Claude Code's changes to other sections are kept. | Enregistré. Les modifications de Claude Code dans les autres sections sont conservées. |
+| `kb.scan_found` | Found {n} possible duplicate. · Found {n} possible duplicates. | {n} doublon possible trouvé. · {n} doublons possibles trouvés. |
+| `kb.scan_show` | Show | Afficher |
+| `kb.scan_none` | No possible duplicates found. | Aucun doublon possible trouvé. |
+| `history.verified.document` | Marked as still true | Marqué comme toujours valable |
+| `history.verified.memory` | Marked as still true | Marquée comme toujours valable |
+| `history.superseded.document` | Superseded by {id} | Remplacé par {id} |
+| `history.superseded.memory` | Superseded by {id} | Remplacée par {id} |
+| `history.retired.document` | Retired | Rendu obsolète |
+| `history.retired.memory` | Retired | Rendue obsolète |
+| `history.retired_reason.document` | Retired: {reason} | Rendu obsolète : {reason} |
+| `history.retired_reason.memory` | Retired: {reason} | Rendue obsolète : {reason} |
+| `history.made_live.document` | Made live again | Rétabli |
+| `history.made_live.memory` | Made live again | Rétablie |
+| `history.merged` | Merged {id} into this | Fusion de {id} |
+| `cmd.show_to_check` | Show knowledge to check | Afficher les connaissances à vérifier |
+| `cmd.show_inactive` | Show superseded and retired | Afficher les éléments remplacés et obsolètes |
+| `cmd.kb_verify` | Mark as still true | Marquer comme toujours valable |
+| `cmd.kb_retire` | Mark as no longer true | Marquer comme obsolète |
+| `cmd.kb_make_live` | Make live again | Rétablir |
+| `cmd.kb_merge` | Merge into... | Fusionner dans... |
+| `cmd.kb_keep_both` | Keep both {a} and {b} | Garder les deux : {a} et {b} |
+| `cmd.kb_replace` | Replace {id} with this | Remplacer {id} par celle-ci |
+| `cmd.kb_find_duplicates` | Find duplicate memories | Trouver les mémoires en double |
+
+Notes. *Mémoire* is feminine and *document* masculine, hence the `.document` / `.memory` pairs wherever a participle agrees; conflicts, duplicates and merges concern memories only, so their strings are written in the feminine ("Celle-ci la remplace", "Fusionnée dans"). *Remplacés et obsolètes* and *élément* agree with a mixed set of documents and memories (masculine plural, as `import.safe` already uses *éléments*). "Retired" is the English state word and "Mark as no longer true" the act that produces it; French uses *obsolète* for both, since a literal "retirée" collides with *Retirer* (remove a folder). "Still true" is *toujours valable* rather than *vraie* so that one form fits both kinds. `{id}` is a knowledge id (`K-4`) in `type.code` as the meta line shows it, never translated; `{title}` and `{reason}` are what Claude Code or the human wrote, as written; `{file}` is a file name (the last path segment) and `{branch}` a branch as git has it, both in `type.code`; `{folder}` a working folder's name; `{topic}` a topic id (`T-12`) with its title as the tooltip; `{date}` the absolute date and `{when}` the long form of 10.2; `{days}` is always 90 or more, so the singular form is not needed. The reason lines have no final full stop (they are tooltip and notice lines, one per reason); the notice messages that are sentences do. Agent-facing text (`?old 140d`, `?dup K-4`, `ok K-4 verified (rev 3)`, `K-9 superseded by K-21 on 11-20`) is protocol, English only, and not in this catalogue (10).
