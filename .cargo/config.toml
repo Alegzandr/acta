@@ -18,3 +18,13 @@ GGML_AVX = "ON"
 GGML_AVX2 = "ON"
 GGML_FMA = "ON"
 GGML_F16C = "ON"
+# Optimise whisper.cpp. With MSVC and the default Visual Studio generator, the
+# `cmake` crate (0.1.58) sets CMAKE_<LANG>_FLAGS_RELEASE itself and strips the
+# optimisation flags from it, so ggml was compiled without /O2: Whisper ran
+# about 19 times slower on the CPU (ADR 0014, amendment "Vulkan spike"). When
+# the variable is already defined, the crate leaves it alone. The spelling is
+# accepted by cl, gcc and clang alike (CMake's own default elsewhere is -O3).
+# whisper-rs-sys does not rerun its build script when this changes: a target
+# directory built before it must have `whisper-rs-sys` cleaned.
+CMAKE_C_FLAGS_RELEASE = "-O2 -DNDEBUG"
+CMAKE_CXX_FLAGS_RELEASE = "-O2 -DNDEBUG"
