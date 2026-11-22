@@ -412,7 +412,7 @@ pub fn kind_of(os: Os, tool: Tool, path: &Path, target: Option<&Path>) -> Kind {
         let has = |needle: &str| s.contains(needle);
         if tool == Tool::Claude && (has("/.local/bin/") || has("/.local/share/claude/")) {
             Kind::Native
-        } else if has("/microsoft/winget/links/") || has("/microsoft/winget/packages/") {
+        } else if has("/winget/links/") || has("/winget/packages/") {
             Kind::Winget
         } else if has("/opt/homebrew/")
             || has("/Caskroom/")
@@ -428,6 +428,17 @@ pub fn kind_of(os: Os, tool: Tool, path: &Path, target: Option<&Path>) -> Kind {
             Kind::Unknown
         }
     };
+    // Under Program Files it is a machine-wide install (winget's machine
+    // scope, an MSI, Git's own installer): a per-user upgrade would not
+    // replace it, so its kind stays unknown and the update is the page.
+    let machine_wide = |p: &Path| {
+        let s = read(p);
+        os == Os::Windows
+            && (s.contains(":/program files/") || s.contains(":/program files (x86)/"))
+    };
+    if machine_wide(path) || target.is_some_and(machine_wide) {
+        return Kind::Unknown;
+    }
     let from_target = target.map(|t| of(&read(t))).unwrap_or(Kind::Unknown);
     if from_target != Kind::Unknown {
         from_target
@@ -685,6 +696,21 @@ mod tests {
                 Kind::Unknown,
             ),
             (Os::Linux, Tool::Gh, "/opt/tools/gh", None, Kind::Unknown),
+            // winget's machine scope: under Program Files, never "winget".
+            (
+                Os::Windows,
+                Tool::Gh,
+                r"C:\Program Files\WinGet\Links\gh.exe",
+                Some(r"C:\Program Files\WinGet\Packages\GitHub.cli_x\bin\gh.exe"),
+                Kind::Unknown,
+            ),
+            (
+                Os::Windows,
+                Tool::Claude,
+                r"C:\Users\Alexandre\AppData\Local\Microsoft\WinGet\Links\claude.exe",
+                Some(r"C:\Program Files (x86)\Anthropic\claude.exe"),
+                Kind::Unknown,
+            ),
         ];
         for (os, tool, path, target, want) in cases {
             let target = target.map(p);

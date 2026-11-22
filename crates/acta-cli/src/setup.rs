@@ -114,6 +114,9 @@ pub struct Prereq {
     pub kind: Option<&'static str>,
     /// The exact command Acta would run, as argv.
     pub command: Option<Vec<String>>,
+    /// The tool was found on this computer, whatever its version (`None`
+    /// for the sign-in): the app shows an outdated Claude Code as found.
+    pub found: Option<bool>,
 }
 
 impl Step {
@@ -147,6 +150,9 @@ pub fn render_steps(steps: &[Step], json_out: bool) -> String {
                     v["version"] = json!(p.version);
                     v["kind"] = json!(p.kind);
                     v["command"] = json!(p.command);
+                    if let Some(found) = p.found {
+                        v["found"] = json!(found);
+                    }
                 }
                 v
             })

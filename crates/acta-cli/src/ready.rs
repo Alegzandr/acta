@@ -106,6 +106,7 @@ fn tool_step(name: &'static str, row: &ToolRow, p: &Platform) -> Step {
             version,
             kind: (row.state != State::Missing).then(|| row.kind.as_str()),
             command,
+            found: Some(row.state != State::Missing),
         }),
     }
 }
@@ -130,6 +131,7 @@ fn sign_in_step(d: &Detection) -> Step {
             version: None,
             kind: None,
             command: None,
+            found: None,
         }),
     }
 }

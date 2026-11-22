@@ -90,6 +90,10 @@ enum Command {
         /// the sessions it starts); nothing in Claude Code is changed
         #[arg(long, conflicts_with_all = ["check", "remove"])]
         files_only: bool,
+        /// With --check: leave out the Ready for Claude Code rows (claude,
+        /// signed in, git, gh), which run each tool; for a cheap re-check
+        #[arg(long, requires = "check")]
+        no_prereqs: bool,
         /// Structured output
         #[arg(long)]
         json: bool,
@@ -430,12 +434,22 @@ fn run(command: Command) -> ExitCode {
             no_allow,
             no_statusline,
             files_only,
+            no_prereqs,
             json,
         } => {
             if files_only {
                 run_plugin_files(&opener, json)
             } else {
-                run_setup(&opener, check, remove, no_allow, no_statusline, json)
+                let prereqs = check && !no_prereqs;
+                run_setup(
+                    &opener,
+                    check,
+                    prereqs,
+                    remove,
+                    no_allow,
+                    no_statusline,
+                    json,
+                )
             }
         }
         Command::Statusline => {
@@ -494,6 +508,7 @@ fn run_plugin_files(opener: &Opener, json: bool) -> ExitCode {
 fn run_setup(
     opener: &Opener,
     check: bool,
+    prereqs: bool,
     remove: bool,
     no_allow: bool,
     no_statusline: bool,
@@ -551,7 +566,11 @@ fn run_setup(
         } else {
             acta_core::prereqs::SystemExec::current()
         };
-        let mut rows = ready::check(&machine, &is_file, &exec);
+        let mut rows = if prereqs {
+            ready::check(&machine, &is_file, &exec)
+        } else {
+            Vec::new()
+        };
         rows.extend(s.check());
         rows
     } else if remove {
@@ -1130,6 +1149,7 @@ mod tests {
             vec!["acta", "mcp"],
             vec!["acta", "hook", "session-start"],
             vec!["acta", "setup", "--check", "--json"],
+            vec!["acta", "setup", "--check", "--no-prereqs", "--json"],
             vec!["acta", "setup", "--undo"],
             vec!["acta", "link", "--topic", "T-3", "--add"],
             vec!["acta", "brief", "T-1", "--focus"],

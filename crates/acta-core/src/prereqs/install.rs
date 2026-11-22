@@ -4,7 +4,8 @@
 //! control sequences stripped, its exit code mapped to Installed or Failed,
 //! and a re-detection with the fresh `PATH` after success. No timeout and
 //! no cancel: interrupting an installer half way does more harm than
-//! waiting. The log lives in memory only; nothing here writes a file.
+//! waiting, and the app confirms before quitting while [`Installer::busy`]
+//! is set. The log lives in memory only; nothing here writes a file.
 
 use super::Tool;
 use std::collections::{HashMap, VecDeque};
@@ -123,6 +124,20 @@ impl Installer {
             // (Git's setup) still shows.
             cmd.creation_flags(0x0800_0000);
         }
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt as _;
+            // If Acta quits mid-install, its read end of the pipes closes:
+            // with SIGPIPE ignored (and inherited across exec), `curl | bash`
+            // or `brew` get EPIPE on a write instead of being killed.
+            // SAFETY: `signal` is async-signal-safe; nothing else runs here.
+            unsafe {
+                cmd.pre_exec(|| {
+                    libc::signal(libc::SIGPIPE, libc::SIG_IGN);
+                    Ok(())
+                });
+            }
+        }
         let mut child = match cmd.spawn() {
             Ok(c) => c,
             Err(_) => {
@@ -234,7 +249,11 @@ impl Installer {
             .map(|j| j.ended.unwrap_or_else(Instant::now) - j.started)
     }
 
-    /// The install running now.
+    /// The install running now. The app must ask before quitting while
+    /// this is `Some`: there is no cancel, and an installer stopped half way
+    /// can leave the tool broken. (The child is not killed when Acta exits,
+    /// its output just goes nowhere; the confirmation dialog is the UI
+    /// step's.)
     pub fn busy(&self) -> Option<Tool> {
         self.lock().busy
     }

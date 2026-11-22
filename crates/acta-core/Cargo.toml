@@ -29,6 +29,11 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_Threading",
 ] }
 
+# SIGPIPE ignored in an installer, so Acta quitting never kills it
+# through its closed output pipe (prereqs/install.rs).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dependencies]
 # The local time zone for "today" and local days (date.rs, Zone::system).
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }

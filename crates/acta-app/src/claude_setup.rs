@@ -15,7 +15,8 @@ use serde::Deserialize;
 /// `acta setup --check` (ADR 0005).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Check {
-    /// The `claude` command runs ("Claude Code found").
+    /// Claude Code is found: the `claude` row is ready, or found but
+    /// outdated (its `found` flag, ADR 0013).
     pub claude: bool,
     /// The plugin files are written and the `acta` command exists.
     pub files: bool,
@@ -41,11 +42,13 @@ impl Check {
         struct Step {
             step: String,
             ok: bool,
+            #[serde(default)]
+            found: bool,
         }
         let out: Out = serde_json::from_str(json.trim()).ok()?;
         let ok = |name: &str| out.steps.iter().any(|s| s.step == name && s.ok);
         Some(Check {
-            claude: ok("claude"),
+            claude: ok("claude") || out.steps.iter().any(|s| s.step == "claude" && s.found),
             files: ok("executable") && ok("plugin files"),
             plugin: ok("marketplace") && ok("plugin"),
             rule: ok("allow rule"),
@@ -267,6 +270,15 @@ mod tests {
             }
         );
         assert_eq!(Check::parse("not json"), None);
+        // An outdated Claude Code is found (ADR 0013): its row fails the
+        // check but carries `found`.
+        let outdated = r#"{"ok":false,"steps":[
+            {"step":"claude","ok":false,"detail":"2.1.100, needs 2.1.329+: claude update","state":"outdated","found":true},
+            {"step":"signed in","ok":false,"detail":"not signed in"}]}"#;
+        assert!(Check::parse(outdated).unwrap().claude);
+        let missing = r#"{"ok":false,"steps":[
+            {"step":"claude","ok":false,"detail":"not installed","state":"missing","found":false}]}"#;
+        assert!(!Check::parse(missing).unwrap().claude);
     }
 
     #[test]

@@ -663,11 +663,9 @@ fn setup_check_lists_ready_for_claude_code_from_a_fake_path() {
         "gh",
         &[("--version", "gh version 2.105.0 (2026-11-18)")],
     );
-    let run = |json: bool| {
+    let run_with = |extra: &[&str]| {
         let mut args = vec!["setup", "--check"];
-        if json {
-            args.push("--json");
-        }
+        args.extend_from_slice(extra);
         let out = base_cmd(&data)
             .args(&args)
             .env("ACTA_DEV_PREREQS_PATH", &tools)
@@ -678,6 +676,7 @@ fn setup_check_lists_ready_for_claude_code_from_a_fake_path() {
             .unwrap();
         String::from_utf8_lossy(&out.stdout).into_owned()
     };
+    let run = |json: bool| run_with(if json { &["--json"] } else { &[] });
     let out = run(true);
     let v: Value = serde_json::from_str(out.trim()).unwrap_or_else(|e| panic!("{e}: {out}"));
     let steps = v["steps"].as_array().unwrap();
@@ -702,9 +701,14 @@ fn setup_check_lists_ready_for_claude_code_from_a_fake_path() {
     }
     assert!(!out.contains("alexandre@"), "{out}");
     assert!(chars(&out) < 2000, "{} chars: {out}", chars(&out));
+    assert_eq!(row(0)["found"], true);
+    assert!(row(1).get("found").is_none());
     let text = run(false);
     assert!(text.starts_with("claude       ok        2.1.330"), "{text}");
     assert!(chars(&text) < 1200, "{} chars: {text}", chars(&text));
+    // The cheap form for the app's focus refresh: plugin steps only.
+    let cheap: Value = serde_json::from_str(run_with(&["--no-prereqs", "--json"]).trim()).unwrap();
+    assert_eq!(cheap["steps"][0]["step"], "executable", "{cheap}");
 
     // Without gh, its row is optional and does not change the outcome;
     // without claude, the required rows fail and say what to run.
@@ -720,6 +724,7 @@ fn setup_check_lists_ready_for_claude_code_from_a_fake_path() {
     .unwrap();
     let v: Value = serde_json::from_str(run(true).trim()).unwrap();
     assert_eq!(v["steps"][0]["state"], "missing");
+    assert_eq!(v["steps"][0]["found"], false);
     assert_eq!(v["steps"][0]["ok"], false);
     assert!(
         v["steps"][0]["command"]

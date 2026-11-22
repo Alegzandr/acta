@@ -271,23 +271,43 @@ fn terminal(argv: &[&'static str], page: &'static str) -> Choice {
     ))
 }
 
+/// Windows PowerShell by its full path under `%SystemRoot%` (else
+/// `C:\Windows`), never a `powershell.exe` found first on the `PATH`. The
+/// one argv word not written as a constant: it is derived from the system
+/// directory, not from anything a user or a file supplies.
+pub fn windows_powershell() -> OsString {
+    let root = std::env::var_os("SystemRoot")
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| OsString::from(r"C:\Windows"));
+    PathBuf::from(root)
+        .join("System32")
+        .join("WindowsPowerShell")
+        .join("v1.0")
+        .join("powershell.exe")
+        .into_os_string()
+}
+
 /// The install command for a missing tool.
 pub fn install_plan(tool: Tool, p: &Platform) -> Choice {
     let page = page_for(tool, p.os);
     match (tool, p.os) {
-        (Tool::Claude, Os::Windows) => Choice::Run(Plan::new(
-            &[
-                "powershell.exe",
-                "-NoProfile",
-                "-NonInteractive",
-                "-Command",
-                CLAUDE_INSTALL_PS1,
-            ],
-            RunsIn::Child,
-            Scope::User,
-            Source::Vendor,
-            page,
-        )),
+        (Tool::Claude, Os::Windows) => {
+            let mut plan = Plan::new(
+                &[
+                    "powershell.exe",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    CLAUDE_INSTALL_PS1,
+                ],
+                RunsIn::Child,
+                Scope::User,
+                Source::Vendor,
+                page,
+            );
+            plan.argv[0] = windows_powershell();
+            Choice::Run(plan)
+        }
         (Tool::Claude, _) => Choice::Run(Plan::new(
             &["bash", "-c", CLAUDE_INSTALL_SH],
             RunsIn::Child,
@@ -505,7 +525,6 @@ mod tests {
             "--accept-package-agreements",
             "--accept-source-agreements",
             "--disable-interactivity",
-            "powershell.exe",
             "-NoProfile",
             "-NonInteractive",
             "-Command",
@@ -535,9 +554,17 @@ mod tests {
             "github-cli",
             "--only-upgrade",
         ];
+        // The one derived word: PowerShell's full path.
+        let powershell = windows_powershell();
+        assert!(Path::new(&powershell).is_absolute() || !cfg!(windows));
+        assert!(powershell.to_string_lossy().ends_with("powershell.exe"));
         for plan in plans() {
             assert!(!plan.argv.is_empty());
             for word in &plan.argv {
+                if *word == powershell {
+                    assert_eq!(plan.argv[0], powershell, "only as the program");
+                    continue;
+                }
                 let w = word.to_str().unwrap();
                 assert!(allowed.contains(&w), "{w:?} in {}", plan.display());
             }
