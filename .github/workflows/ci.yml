@@ -48,7 +48,7 @@ jobs:
           # -Path takes a single string, so each file is analyzed on its own.
           # ParseError is a severity of its own: without it a script that does not even
           # parse is only reported on the error stream and the loop collects nothing.
-          $issues = foreach ($file in 'install.ps1', 'scripts/package.ps1', 'scripts/ci/update-e2e.ps1', 'scripts/ci/windows-perl.ps1', 'scripts/ci/windows-libclang.ps1', 'scripts/ci/windows-sde-start.ps1', 'scripts/ci/check-prereqs.ps1') {
+          $issues = foreach ($file in 'install.ps1', 'scripts/package.ps1', 'scripts/ci/update-e2e.ps1', 'scripts/ci/windows-perl.ps1', 'scripts/ci/windows-libclang.ps1', 'scripts/ci/windows-sde-start.ps1', 'scripts/ci/vulkan-sdk.ps1', 'scripts/ci/check-prereqs.ps1') {
             Invoke-ScriptAnalyzer -Path $file -Severity ParseError, Error, Warning -ExcludeRule PSAvoidUsingWriteHost
           }
           $issues | Format-Table -AutoSize ScriptName, Line, RuleName, Message
@@ -105,6 +105,22 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: scripts/ci/windows-libclang.ps1
+      # whisper.cpp's Vulkan backend (ADR 0014, amendment "Vulkan in Acta.exe") is
+      # compiled with LunarG's SDK headers and glslc, pinned and hash-checked by the
+      # scripts; the trimmed SDK is cached by the scripts' hash.
+      - name: Vulkan SDK cache (Windows, Linux)
+        if: runner.os != 'macOS'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/vulkan-sdk
+          key: vulkan-sdk-${{ runner.os }}-${{ hashFiles('scripts/ci/vulkan-sdk.*') }}
+      - name: Vulkan SDK (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: scripts/ci/vulkan-sdk.ps1 -Dir (Join-Path $env:RUNNER_TEMP 'vulkan-sdk')
+      - name: Vulkan SDK (Linux)
+        if: runner.os == 'Linux'
+        run: scripts/ci/vulkan-sdk.sh "$RUNNER_TEMP/vulkan-sdk"
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: cargo test

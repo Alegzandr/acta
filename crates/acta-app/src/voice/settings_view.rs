@@ -514,7 +514,7 @@ impl Render for VoiceSettings {
                 (m, s)
             })
             .collect();
-        let gpu_row = d.machine.is_some_and(|m| m.metal);
+        let gpu_row = d.machine.is_some_and(|m| m.gpu());
         let refusal = d.refusal;
         let level = d.level();
         let recommended = rec.and_then(|r| r.model);

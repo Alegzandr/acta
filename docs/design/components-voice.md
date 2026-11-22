@@ -1,6 +1,6 @@
 # Acta design: dictation
 
-Part of the Acta design system. [DESIGN.md](../../DESIGN.md) is the index: direction, principles, the never-list and the review checklist. Section numbers are shared across all parts.
+Part of the Acta design system. [DESIGN.md](../../DESIGN.md) is the index: direction, principles and the never-list; the review checklist is [checklist.md](checklist.md). Section numbers are shared across all parts.
 
 ## 5. Components (continued): dictation
 
@@ -109,4 +109,4 @@ The microphone device is stored by its system id in the database's local values,
 
 ### Review lines
 
-The **Dictation** block of the review checklist (DESIGN.md 9).
+The **Dictation** block of the review checklist ([checklist.md](checklist.md), 9).

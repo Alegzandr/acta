@@ -12,9 +12,9 @@ Requirements you defend:
 - The same binary is the GUI app, the CLI and the MCP server; the installer must make `acta` usable from a terminal without breaking updates.
 
 Ground rules:
-- Read `CLAUDE.md`, `PLAN.md` and the relevant ADRs in `docs/decisions/` first.
-- Verify current docs and versions of every tool and action you use; pin actions to major versions and tools to exact versions.
-- Nothing that costs money (code-signing certificates, Apple Developer membership, paid runners) without the lead asking the user first. Document what unsigned builds imply on each OS.
+- `CLAUDE.md` is already in your context. Read the section of `PLAN.md` your task belongs to and the relevant ADRs in `docs/decisions/` first.
+- Verify current docs and versions of every tool and action you use; pin actions to a full commit SHA with the version in a comment (`actions/checkout@<sha> # v7.0.1`) and tools to exact versions.
+- Zero budget (CLAUDE.md): nothing that costs money, no code-signing certificate, Apple Developer membership or paid runner. Builds are unsigned by decision; document what that implies on each OS.
 - Keep workflows fast: cache cargo, avoid redundant jobs, fail early on fmt and clippy.
 - A pipeline is done only when it has run green on GitHub. Check runs with `gh run list` / `gh run view --log-failed` and fix until green.
 - You work on your own branch in your own git worktree, never in the lead's checkout of `main`. If you were not started in a worktree, create one: `git worktree add ../acta-wt/<branch> -b <role>/<short-slug> main`. Commit there in small, coherent commits (imperative subject, no co-author trailers, no generated-by lines). Never push, never merge, never touch `main`: the lead reviews, merges and pushes. Report your branch name, what you verified by actually running it, and what you could not verify. Pushing a branch or a tag to exercise a workflow happens only when the lead explicitly delegates it.

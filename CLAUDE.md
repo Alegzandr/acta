@@ -3,12 +3,13 @@
 Local-first desktop app that complements Claude Code: a project tracker for the human and a structured, scoped memory for the agent. Rust + GPUI, Windows / macOS / Linux.
 
 ## Where things are
-- `PLAN.md` - milestones and status. Update it when a milestone moves.
-- `DESIGN.md` - design system index (principles, never-list, review checklist, map); the specs are in `docs/design/`, load only the part a task needs. UI code must conform to them.
-- `docs/decisions/` - ADRs. One short file per decision; read the relevant ones before changing architecture.
+- `PLAN.md` - milestone status and open work only. Update it when a milestone moves; move items that are done and verified to `docs/plan-history.md` (read that only to learn how something was built).
+- `DESIGN.md` - design system index (direction, principles, never-list, map of parts); the specs, including the review checklist (`checklist.md`), are in `docs/design/`, load only the part a task needs. UI code must conform to them.
+- `docs/decisions/` - ADRs, one file per decision, indexed in its `README.md`. Many are long (5-42 KB): read the `Status:` line and the `## Decision` section first, then only the other sections you need (later `Amendment`/`Addendum` sections at the end can change the decision). Read the relevant ones before changing architecture.
 - `.claude/agents/` - the team: product-designer, gpui-engineer, integration-engineer, release-engineer, reviewer.
 - `spikes/` - throwaway experiments backing the ADRs. Not part of the workspace, never depended upon.
-- Building the encrypted storage on Windows needs a native Perl for vendored OpenSSL (ADR 0003). Git's Perl does not work. On the lead's machine a portable Strawberry Perl lives at `F:/dev/acta-tools/strawberry-perl`; set `OPENSSL_SRC_PERL` to its `perl/bin/perl.exe` in the shell that runs cargo. CI on Windows runs `scripts/ci/windows-perl.ps1` before cargo: it checks the image's Strawberry Perl (`C:\Strawberry\perlin\perl.exe`) and sets `OPENSSL_SRC_PERL` for the job; Linux and macOS runners use their system Perl. Locally, keep `CARGO_TARGET_DIR` on a short path (8.3 form if needed): OpenSSL's Configure fails on long paths.
+- Building the encrypted storage on Windows needs a native Perl for vendored OpenSSL (ADR 0003). Git's Perl does not work. On the lead's machine a portable Strawberry Perl lives at `F:/dev/acta-tools/strawberry-perl`; set `OPENSSL_SRC_PERL` to its `perl/bin/perl.exe` in the shell that runs cargo. CI on Windows runs `scripts/ci/windows-perl.ps1` before cargo: it checks the image's Strawberry Perl (`C:\Strawberry\perl\bin\perl.exe`) and sets `OPENSSL_SRC_PERL` for the job; Linux and macOS runners use their system Perl. Locally, keep `CARGO_TARGET_DIR` on a short path (8.3 form if needed): OpenSSL's Configure fails on long paths.
+- Dictation's Whisper builds need libclang (`LIBCLANG_PATH`, e.g. `C:\Program Files\LLVM\bin`; CI on Windows sets it with `scripts/ci/windows-libclang.ps1`) and, for the Vulkan backend, `VULKAN_SDK`: a folder with `Include/` (Vulkan-Headers incl. `vulkan.hpp`), `Lib/vulkan-1.lib` and `Bin/glslc.exe`. The LunarG SDK provides all three; CI installs a pinned one with `scripts/ci/vulkan-sdk.ps1`/`.sh`. ggml-vulkan's nested CMake fails beyond 260 characters: keep the target dir very short (a `subst` drive over the scratchpad works).
 
 ## Conventions
 - Everything in English: code, docs, commits.

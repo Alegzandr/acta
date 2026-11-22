@@ -8,6 +8,11 @@
 //! whisper.cpp's logs dropped, stderr discarded by the parent, and the C
 //! runtime's stdout pointed at the null device so nothing printed by native
 //! code can corrupt the protocol (it runs on a private copy of the handle).
+//!
+//! The graphics card (ADR 0014, amendment "Vulkan in Acta.exe"): on Windows
+//! and Linux the Vulkan loader is opened only by a worker that probes the card
+//! or was asked to use it (`vulkan_shim::allow`); a worker on the processor
+//! never loads a GPU driver.
 
 use std::fs::File;
 use std::path::Path;
@@ -29,7 +34,7 @@ pub fn run() -> i32 {
     let Some(output) = private_stdout() else {
         return 2;
     };
-    match serve(std::io::stdin(), output, make) {
+    match serve(std::io::stdin(), output, make, probe) {
         ServeEnd::Closed | ServeEnd::Idle => 0,
         ServeEnd::EngineGone => EXIT_ENGINE_GONE,
         ServeEnd::Broken => 2,
@@ -37,6 +42,10 @@ pub fn run() -> i32 {
 }
 
 fn make(spec: &EngineSpec) -> Result<Box<dyn Engine>, EngineError> {
+    // Before whisper.cpp first touches ggml, which fixes the backends for
+    // the process's life.
+    #[cfg(any(windows, target_os = "linux"))]
+    crate::vulkan_shim::allow(spec.gpu());
     match spec {
         EngineSpec::Whisper {
             model,
@@ -51,13 +60,62 @@ fn make(spec: &EngineSpec) -> Result<Box<dyn Engine>, EngineError> {
         )?)),
         // The scripted engine of the end-to-end tests, which run a debug
         // build; a release build does not contain it.
+        // On the "graphics card" it fails as a broken driver would: the
+        // worker ends, and the app falls back to the processor.
         #[cfg(debug_assertions)]
-        EngineSpec::Fake { script } => Ok(Box::new(acta_core::voice::engine::FakeEngine::new(
+        EngineSpec::Fake { gpu: true, .. } => Err(EngineError::Exited),
+        #[cfg(debug_assertions)]
+        EngineSpec::Fake { script, .. } => Ok(Box::new(acta_core::voice::engine::FakeEngine::new(
             script.clone(),
         ))),
         #[cfg(not(debug_assertions))]
         EngineSpec::Fake { .. } => Err(EngineError::Model),
     }
+}
+
+/// The dedicated memory of the best discrete graphics card ggml can use
+/// through Vulkan, 0 for none. A worker started for the probe loads no model.
+fn probe() -> u64 {
+    #[cfg(any(windows, target_os = "linux"))]
+    {
+        crate::vulkan_shim::allow(true);
+        best_gpu_memory()
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
+    {
+        0
+    }
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+fn best_gpu_memory() -> u64 {
+    use std::ffi::c_void;
+    // ggml's device registry (ggml-backend.h), in the static libraries
+    // whisper-rs links. `enum ggml_backend_dev_type`: CPU 0, GPU 1, IGPU 2,
+    // ACCEL 3; integrated graphics share the system's memory and are not the
+    // GPU tier.
+    const GGML_BACKEND_DEVICE_TYPE_GPU: i32 = 1;
+    unsafe extern "C" {
+        fn ggml_backend_dev_count() -> usize;
+        fn ggml_backend_dev_get(index: usize) -> *mut c_void;
+        fn ggml_backend_dev_type(device: *mut c_void) -> i32;
+        fn ggml_backend_dev_memory(device: *mut c_void, free: *mut usize, total: *mut usize);
+    }
+    let mut best = 0u64;
+    // SAFETY: ggml's documented API; devices are owned by its registry and
+    // live for the process.
+    unsafe {
+        for i in 0..ggml_backend_dev_count() {
+            let device = ggml_backend_dev_get(i);
+            if device.is_null() || ggml_backend_dev_type(device) != GGML_BACKEND_DEVICE_TYPE_GPU {
+                continue;
+            }
+            let (mut free, mut total) = (0usize, 0usize);
+            ggml_backend_dev_memory(device, &mut free, &mut total);
+            best = best.max(total as u64);
+        }
+    }
+    best
 }
 
 /// Crash reports without memory contents: no heap in Windows error

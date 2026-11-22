@@ -11,8 +11,14 @@
 //! | `Start` | to | language code | `Started` or `Error` |
 //! | `Phrase` | to | 16 kHz mono `f32` LE samples | `Text` or `Error` |
 //! | `Stop` | to | none | none |
+//! | `Probe` | to | none | `Gpu` |
+//! | `Gpu` | from | `u64` LE: the dedicated memory of the best graphics card Whisper can use, 0 for none | |
 //! | `Text` | from | UTF-8 | |
 //! | `Error` | from | [`EngineError`] code | |
+//!
+//! `Probe` is the only request of a worker started for it: the graphics
+//! card is looked at in a worker, never in the GUI process (ADR 0014,
+//! amendment "Vulkan in Acta.exe"), and that worker loads no model.
 //!
 //! Every buffer that held samples or text is zeroed once used.
 
@@ -51,7 +57,31 @@ pub enum EngineSpec {
     },
     /// Scripted text for tests ([`super::engine::FakeEngine`]); the worker
     /// exits with [`EXIT_ENGINE_GONE`] at an `Exit` step, as a crash would.
-    Fake { script: Vec<FakeStep> },
+    /// With `gpu`, the worker fails to start the engine as a broken
+    /// graphics driver would, so the fall back to the processor is tested.
+    Fake {
+        script: Vec<FakeStep>,
+        #[serde(default)]
+        gpu: bool,
+    },
+}
+
+impl EngineSpec {
+    /// Whether this spec asks for the graphics card.
+    pub fn gpu(&self) -> bool {
+        match self {
+            EngineSpec::Whisper { gpu, .. } | EngineSpec::Fake { gpu, .. } => *gpu,
+        }
+    }
+
+    /// The same engine on the processor only.
+    pub fn without_gpu(&self) -> EngineSpec {
+        let mut spec = self.clone();
+        match &mut spec {
+            EngineSpec::Whisper { gpu, .. } | EngineSpec::Fake { gpu, .. } => *gpu = false,
+        }
+        spec
+    }
 }
 
 /// The first request: what to load and how long to idle.
@@ -70,6 +100,7 @@ pub enum Request {
     Start(Lang),
     Phrase(AudioBuf),
     Stop,
+    Probe,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -78,16 +109,21 @@ pub enum Reply {
     Started,
     Text(String),
     Error(EngineError),
+    /// Dedicated memory of the best graphics card Whisper can use, in
+    /// bytes; 0 when there is none.
+    Gpu(u64),
 }
 
 const INIT: u8 = 1;
 const START: u8 = 2;
 const PHRASE: u8 = 3;
 const STOP: u8 = 4;
+const PROBE: u8 = 5;
 const READY: u8 = 0x81;
 const STARTED: u8 = 0x82;
 const TEXT: u8 = 0x83;
 const ERROR: u8 = 0x84;
+const GPU: u8 = 0x85;
 
 fn error_code(e: EngineError) -> u8 {
     match e {
@@ -159,6 +195,7 @@ pub fn write_request(w: &mut dyn Write, req: &Request) -> io::Result<()> {
         Request::Start(lang) => write_frame(w, START, &[lang.code()]),
         Request::Phrase(samples) => write_phrase(w, samples.as_slice()),
         Request::Stop => write_frame(w, STOP, &[]),
+        Request::Probe => write_frame(w, PROBE, &[]),
     }
 }
 
@@ -194,6 +231,7 @@ pub fn read_request(r: &mut dyn Read) -> io::Result<Option<Request>> {
             Request::Phrase(samples)
         }
         STOP => Request::Stop,
+        PROBE => Request::Probe,
         _ => return Err(bad("unknown request")),
     };
     Ok(Some(req))
@@ -205,6 +243,7 @@ pub fn write_reply(w: &mut dyn Write, reply: &Reply) -> io::Result<()> {
         Reply::Started => write_frame(w, STARTED, &[]),
         Reply::Text(t) => write_frame(w, TEXT, t.as_bytes()),
         Reply::Error(e) => write_frame(w, ERROR, &[error_code(*e)]),
+        Reply::Gpu(memory) => write_frame(w, GPU, &memory.to_le_bytes()),
     }
 }
 
@@ -225,6 +264,9 @@ pub fn read_reply(r: &mut dyn Read) -> io::Result<Option<Reply>> {
                 .and_then(|c| error_from(*c))
                 .ok_or_else(|| bad("error"))?,
         ),
+        GPU => Reply::Gpu(u64::from_le_bytes(
+            body.as_slice().try_into().map_err(|_| bad("gpu"))?,
+        )),
         _ => return Err(bad("unknown reply")),
     };
     Ok(Some(reply))
@@ -266,6 +308,7 @@ mod tests {
                     FakeStep::Fail,
                     FakeStep::Exit,
                 ],
+                gpu: true,
             },
             idle_secs: 1,
         };
@@ -283,6 +326,7 @@ mod tests {
             other => panic!("{other:?}"),
         }
         assert!(matches!(round_trip(Request::Stop), Request::Stop));
+        assert!(matches!(round_trip(Request::Probe), Request::Probe));
     }
 
     #[test]
@@ -296,12 +340,39 @@ mod tests {
             Reply::Error(EngineError::Exited),
             Reply::Error(EngineError::Failed),
             Reply::Error(EngineError::NotAllowed),
+            Reply::Gpu(0),
+            Reply::Gpu(16 << 30),
         ] {
             let mut buf = Vec::new();
             write_reply(&mut buf, &reply).unwrap();
             let back = read_reply(&mut buf.as_slice()).unwrap().unwrap();
             assert_eq!(back, reply);
         }
+    }
+
+    #[test]
+    fn an_old_fake_spec_has_no_gpu_and_without_gpu_clears_it() {
+        let old: EngineSpec = serde_json::from_str(r#"{"engine":"fake","script":[]}"#).unwrap();
+        assert!(!old.gpu());
+        let whisper = EngineSpec::Whisper {
+            model: PathBuf::from("m.bin"),
+            vad: None,
+            threads: 2,
+            gpu: true,
+        };
+        assert!(whisper.gpu());
+        assert!(!whisper.without_gpu().gpu());
+        let fake = EngineSpec::Fake {
+            script: vec![],
+            gpu: true,
+        };
+        assert_eq!(
+            fake.without_gpu(),
+            EngineSpec::Fake {
+                script: vec![],
+                gpu: false
+            }
+        );
     }
 
     #[test]
@@ -320,6 +391,8 @@ mod tests {
         }
         // A phrase whose length is not a whole number of samples.
         assert!(read_request(&mut &[4u8, 0, 0, 0, PHRASE, 1, 2, 3][..]).is_err());
+        // A memory size that is not 8 bytes.
+        assert!(read_reply(&mut &[4u8, 0, 0, 0, GPU, 1, 2, 3][..]).is_err());
         // Invalid UTF-8 text.
         assert!(read_reply(&mut &[3u8, 0, 0, 0, TEXT, 0xff, 0xfe][..]).is_err());
     }

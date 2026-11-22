@@ -171,6 +171,22 @@ jobs:
       # Small (885 KB) and pinned by SHA-256, so it is fetched on every build, never cached.
       - name: Silero VAD
         run: scripts/vad.sh --fetch
+      # whisper.cpp's Vulkan backend (ADR 0014, amendment "Vulkan in Acta.exe"): LunarG's
+      # SDK headers and glslc, pinned and hash-checked by the scripts. A tag build
+      # downloads and checks it afresh; dry runs use the cache.
+      - name: Vulkan SDK cache (Windows, Linux)
+        if: runner.os != 'macOS' && needs.check.outputs.publish != 'true'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/vulkan-sdk
+          key: vulkan-sdk-${{ runner.os }}-${{ hashFiles('scripts/ci/vulkan-sdk.*') }}
+      - name: Vulkan SDK (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: scripts/ci/vulkan-sdk.ps1 -Dir (Join-Path $env:RUNNER_TEMP 'vulkan-sdk')
+      - name: Vulkan SDK (Linux)
+        if: runner.os == 'Linux'
+        run: scripts/ci/vulkan-sdk.sh "$RUNNER_TEMP/vulkan-sdk"
       # whisper.cpp is built with CMake (ADR 0014). For the Intel build on the Apple
       # silicon runner, CMake must target x86_64: whisper-rs-sys hands CMAKE_*
       # variables to CMake, and ggml then picks its x86 code paths. The cmake crate

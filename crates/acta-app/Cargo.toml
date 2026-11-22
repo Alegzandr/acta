@@ -59,6 +59,12 @@ objc2-foundation = "0.3"
 objc2-avf-audio = "0.3"
 objc2-speech = "0.3.2"
 
+# Vulkan on Windows and Linux (ADR 0014, amendment "Vulkan in Acta.exe"): ggml-vulkan
+# linked statically; the loader is found at run time by `vulkan_shim.rs`, so the
+# executable never imports it. Building needs VULKAN_SDK (headers, glslc).
+[target.'cfg(any(windows, target_os = "linux"))'.dependencies]
+whisper-rs = { version = "0.16", features = ["vulkan"] }
+
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"
 # The chat panel (ADR 0009): the system web view, Windows only for now (macOS and
@@ -83,6 +89,7 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_Console",
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_ErrorReporting",
+    "Win32_System_LibraryLoader",
     "Win32_System_Threading",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
