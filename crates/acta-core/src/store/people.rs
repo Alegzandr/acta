@@ -787,6 +787,111 @@ impl Store {
         Ok(())
     }
 
+    /// Takes back a merge (the app's undo): `from` comes back from the
+    /// trash, the records in `uses` (what named `from` before the merge)
+    /// name it again, and `into` gets back its details and level as
+    /// `before` held them.
+    pub fn unmerge_contacts(
+        &mut self,
+        from: ContactId,
+        before: &Contact,
+        uses: &[Record],
+        author: Author,
+    ) -> Result<()> {
+        let tx = self.write()?;
+        let now = now_ms();
+        tx.execute(
+            "UPDATE contacts SET merged_into = NULL, deleted_at = NULL, deleted_by = NULL, deleted_batch = NULL,
+                    updated_at = ?2, updated_by = ?3 WHERE id = ?1",
+            params![from.0, now, author],
+        )?;
+        write_level(&tx, before.id, before.level, author, now)?;
+        tx.execute(
+            "UPDATE contacts SET job_title = ?2, company = ?3, address_note = ?4 WHERE id = ?1",
+            params![
+                before.id.0,
+                before.job_title,
+                before.company,
+                before.address_note
+            ],
+        )?;
+        for record in uses {
+            let (table, col, id) = match *record {
+                Record::Question(q) => ("questions", "asked_contact_id", q.0),
+                Record::Topic(t) => ("topics", "report_contact_id", t.0),
+                Record::Epic(e) => ("epics", "report_contact_id", e.0),
+                Record::Note(n) => ("notes", "report_contact_id", n.0),
+                _ => continue,
+            };
+            tx.execute(
+                &format!(
+                    "UPDATE {table} SET {col} = ?2, updated_at = ?3, updated_by = ?4 WHERE id = ?1 AND {col} = ?5"
+                ),
+                params![id, from.0, now, author, before.id.0],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// The names of the contacts with these UUIDs, in the trash too (the
+    /// timeline's Report to events store UUIDs and draw the name now).
+    pub fn contact_names(
+        &self,
+        uuids: &[String],
+    ) -> Result<std::collections::HashMap<String, String>> {
+        let mut out = std::collections::HashMap::new();
+        let mut stmt = self
+            .conn
+            .prepare("SELECT name FROM contacts WHERE uuid = ?1")?;
+        for u in uuids {
+            if let Some(name) = stmt.query_row([u], |r| r.get::<_, String>(0)).optional()? {
+                out.insert(u.clone(), name);
+            }
+        }
+        Ok(out)
+    }
+
+    /// How many live contacts exist (the sidebar's Contacts row).
+    pub fn contact_count(&self) -> Result<usize> {
+        let n: i64 = self.conn.query_row(
+            "SELECT count(*) FROM contacts WHERE deleted_at IS NULL",
+            [],
+            |r| r.get(0),
+        )?;
+        Ok(n as usize)
+    }
+
+    /// Every live contact, each with its open items across its whole scope
+    /// (the Contacts page's "3 open"): open questions asked to them, topics
+    /// and epics not reported, open notes naming them.
+    pub fn contacts_all(&self) -> Result<Vec<ContactSummary>> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {CONTACT_COLS}, {STAMP_COLS},
+               (SELECT count(*) FROM questions q WHERE q.asked_contact_id = contacts.id
+                   AND q.status = 'open' AND q.deleted_at IS NULL)
+             + (SELECT count(*) FROM topics t WHERE t.report_contact_id = contacts.id
+                   AND t.reported_at IS NULL AND t.status <> 'dropped' AND t.deleted_at IS NULL)
+             + (SELECT count(*) FROM epics e WHERE e.report_contact_id = contacts.id
+                   AND e.reported_at IS NULL AND e.deleted_at IS NULL)
+             + (SELECT count(*) FROM notes n WHERE n.report_contact_id = contacts.id
+                   AND n.filed_at IS NULL AND n.deleted_at IS NULL),
+               0
+             FROM contacts WHERE deleted_at IS NULL
+             ORDER BY id"
+        ))?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(ContactSummary {
+                    contact: contact_row(r)?,
+                    open: r.get(15)?,
+                    last_named: r.get(16)?,
+                })
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
     /// "Keep both": the pair is no longer flagged as a possible duplicate.
     pub fn mark_distinct(&mut self, a: ContactId, b: ContactId) -> Result<()> {
         let (a, b) = if a.0 < b.0 { (a, b) } else { (b, a) };

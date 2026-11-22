@@ -128,8 +128,7 @@ pub struct Overview {
     pub stale_memories: usize,
     /// Open questions at every level of the scope whose answer date has
     /// passed (the fifth attention line, data.md request 18); the list is
-    /// [`Store::late_answers`]. Not counted by
-    /// [`Overview::attention_lines`] until the UI shows the line.
+    /// [`Store::late_answers`].
     pub answers_late: usize,
 }
 
@@ -138,11 +137,13 @@ impl Overview {
         self.inbox_oldest_days.is_some_and(|d| d >= INBOX_DAYS)
     }
 
-    /// How many attention lines apply (blocked, overdue, idle, old inbox).
+    /// How many attention lines apply (blocked, overdue, late answers,
+    /// idle, old inbox).
     pub fn attention_lines(&self) -> usize {
         [
             self.blocked > 0,
             self.overdue > 0,
+            self.answers_late > 0,
             self.idle > 0,
             self.inbox_needs_attention(),
         ]
