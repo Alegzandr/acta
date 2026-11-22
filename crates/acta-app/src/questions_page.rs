@@ -224,6 +224,7 @@ impl QuestionsPage {
                 .default_value(q.text.clone())
         });
         text.update(cx, |s, cx| s.focus(window, cx));
+        crate::voice::attach(&text, window, cx);
         let value = q
             .asked_to
             .as_ref()
@@ -458,6 +459,18 @@ impl QuestionsPage {
         };
         let narrow = ui::column_width() < 400.;
         let picker_focus = e.picker.focus_handle(cx);
+        let counter = qm::counter(&e.text.read(cx).value()).map(|n| {
+            type_scale::SMALL
+                .el()
+                .flex_shrink_0()
+                .text_color(t.text_tertiary)
+                .font_features(type_scale::tabular())
+                .child(tr(
+                    locale,
+                    Key::QuestionCounter,
+                    &[("n", Arg::Count(n as u64))],
+                ))
+        });
         div()
             .id("qp-edit")
             .flex()
@@ -505,32 +518,91 @@ impl QuestionsPage {
                     .flex()
                     .flex_col()
                     .gap(px(8.))
+                    // The composer's field (components-questions.md 5,
+                    // Composer), with the dictation microphone and the
+                    // counter over 240 characters.
                     .child(
-                        type_scale::UI
-                            .el()
-                            .text_color(t.text_primary)
-                            .child(Textarea::new(&e.text).appearance(false)),
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_start()
+                            .gap(px(8.))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .px(px(8.))
+                                    .rounded(px(RADIUS_SM))
+                                    .bg(t.bg_raised)
+                                    .border_1()
+                                    .border_color(t.border_default)
+                                    .flex()
+                                    .flex_row()
+                                    .items_start()
+                                    .child(
+                                        type_scale::UI.el().flex_1().min_w_0().child(
+                                            Textarea::new(&e.text)
+                                                .appearance(false)
+                                                .text_size(px(type_scale::UI.size()))
+                                                .line_height(px(type_scale::UI.line())),
+                                        ),
+                                    )
+                                    .children(
+                                        crate::voice::ui::mic_for(&e.text, cx)
+                                            .map(|m| div().py(px(2.)).mr(px(-6.)).child(m)),
+                                    ),
+                            )
+                            .children(counter),
                     )
+                    .children(crate::voice::ui::line_for(&e.text, cx))
                     .child(
                         div()
                             .flex()
                             .flex_row()
                             .flex_wrap()
                             .items_center()
-                            .gap(px(8.))
-                            .child(label(Key::QuestionFieldAsked))
+                            .gap_x(px(16.))
+                            .gap_y(px(8.))
                             .child(
                                 div()
-                                    .when(narrow, |d| d.flex_1())
-                                    .when(!narrow, |d| d.w(px(240.)))
-                                    .child(e.picker.clone()),
+                                    .flex()
+                                    .flex_row()
+                                    .items_center()
+                                    .gap(px(8.))
+                                    .child(label(Key::QuestionFieldAsked))
+                                    .child(
+                                        div()
+                                            .when(narrow, |d| d.flex_1())
+                                            .when(!narrow, |d| d.w(px(240.)))
+                                            .child(e.picker.clone()),
+                                    ),
                             )
-                            .child(div().w(px(8.)))
-                            .child(label(Key::QuestionFieldBy))
-                            .child(div().relative().child(date_button).children(date_picker)),
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_row()
+                                    .items_center()
+                                    .gap(px(8.))
+                                    .child(label(Key::QuestionFieldBy))
+                                    .child(
+                                        div().relative().child(date_button).children(date_picker),
+                                    ),
+                            ),
                     ),
             )
             .into_any_element()
+    }
+
+    /// Debug builds' captures: the first open question edited in place.
+    #[cfg(debug_assertions)]
+    pub fn dev_edit_first(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let first = self
+            .data
+            .as_ref()
+            .and_then(|d| d.questions.iter().find(|q| q.is_open()).cloned());
+        if let Some(q) = first {
+            self.start_edit(&q, window, cx);
+        }
     }
 
     fn set_filter(&mut self, filter: Filter, cx: &mut Context<Self>) {

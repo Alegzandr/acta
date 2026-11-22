@@ -402,14 +402,17 @@ impl TerminalDock {
         }
     }
 
-    /// The folders of every session's page read again (off the UI
-    /// thread), with the existence of each.
+    /// The folders of every session's page (and of a page whose active
+    /// folder was not found) read again off the UI thread, with the
+    /// existence of each.
     fn refresh_pages(&mut self, cx: &mut Context<Self>) {
         let wanted: Vec<(ProjectId, Owner, Option<FolderId>)> = self
             .panes
             .iter()
             .filter_map(|(project, pane)| match pane {
                 Pane::Running { origin, start, .. } => Some((*project, origin.owner, start.folder)),
+                // The not-found message offers the page's other folders.
+                Pane::Missing { origin, .. } => Some((*project, origin.owner, None)),
                 _ => None,
             })
             .collect();

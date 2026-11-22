@@ -1380,6 +1380,42 @@ impl RecordPage {
                     self.q.menu = Some((id, 0, 0));
                 }
             }
+            // The first open question held over the lower half of the
+            // second, as if the pointer were there.
+            "q-drag" => {
+                let bounds = self.q.open_bounds.borrow().clone();
+                if let (Some(id), Some((top, bottom))) = (first, bounds.get(1).copied()) {
+                    let x = self
+                        .q
+                        .section_bounds
+                        .get()
+                        .map_or(200., |b| f32::from(b.left()) + 100.);
+                    self.q.drag = Some(QDrag {
+                        id,
+                        from: 0,
+                        x,
+                        y: bottom - (bottom - top) / 4.,
+                    });
+                }
+            }
+            // The composer after the store refused its contact.
+            "q-refused" => {
+                self.open_composer(None, None, window, cx);
+                let place = self.q_place();
+                if let (Some(c), Some(place)) = (&self.q.composer, place) {
+                    let typed = "Who signs the export policy?";
+                    c.text.update(cx, |s, cx| s.set_value(typed, window, cx));
+                    c.picker
+                        .update(cx, |p, cx| p.refuse("Marie Dubois", place, window, cx));
+                }
+            }
+            // The keyboard on the page's second block (the folder row, or
+            // the current state).
+            "blocks" => {
+                if let Some(second) = self.block_order.get(1).copied() {
+                    self.focus_block(second, window, cx);
+                }
+            }
             "report-popover" => {
                 self.open_report_to(window, cx);
                 if !query.is_empty()

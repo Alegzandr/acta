@@ -232,6 +232,46 @@ impl Shell {
         });
     }
 
+    /// Debug builds' captures: the first open topic of an epic dragged
+    /// over the lower half of the next topic of that epic (`onto`: over
+    /// the project's row), as if the pointer were there.
+    #[cfg(debug_assertions)]
+    pub(super) fn dev_tree_drag(&mut self, onto: bool, cx: &mut Context<Self>) {
+        let (rows, layout) = self.tree_rows(cx);
+        let Some(bench) = self.bench() else { return };
+        let projects = bench.ws.read(cx).projects.clone();
+        let in_epic = |r: &Row| matches!(r, Row::Topic { depth: 2, .. });
+        let Some(from) = rows.iter().position(in_epic) else {
+            return;
+        };
+        let to = if onto {
+            rows.iter().position(|r| r.is_project())
+        } else {
+            (from + 1..rows.len()).find(|&i| in_epic(&rows[i]))
+        };
+        let Some(to) = to else { return };
+        let Some(dragged) = tree::Dragged::of(&projects, &rows[from]) else {
+            return;
+        };
+        let bounds = bench.tree.scroll.bounds();
+        let scroll_top = -f32::from(bench.tree.scroll.offset().y);
+        let y = f32::from(bounds.top()) + layout.top(to) - scroll_top + tree::ROW * 0.75;
+        let x = f32::from(bounds.left()) + 120.;
+        let epic = match dragged {
+            tree::Dragged::Topic(_, id) => {
+                tree::locate_topic(&projects, id).map(|l| l.epic.map(|e| e.0))
+            }
+            _ => None,
+        };
+        bench.tree.drag = Some(TreeDrag {
+            dragged,
+            key: rows[from].key(),
+            epic,
+            x,
+            y,
+        });
+    }
+
     /// `Esc` during a drag: nothing changes. Whether a drag was on.
     pub(super) fn cancel_tree_drag(&mut self, cx: &mut Context<Self>) -> bool {
         let Some(bench) = self.bench() else {

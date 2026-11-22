@@ -691,6 +691,23 @@ impl InboxPage {
         cx.notify();
     }
 
+    /// Debug builds' captures: the Report to filter's menu open, with its
+    /// search typed into (`ACTA_DEV_QUERY`) when it has one.
+    #[cfg(debug_assertions)]
+    pub fn dev_open_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let people = report_people(&self.notes.iter().collect::<Vec<_>>());
+        self.open_filter_menu(
+            people.len() > crate::contacts_model::FILTER_SEARCH_OVER,
+            window,
+            cx,
+        );
+        if let (Some((input, _)), Ok(query)) =
+            (&self.filter_search, std::env::var("ACTA_DEV_QUERY"))
+        {
+            input.update(cx, |s, cx| s.set_value(query, window, cx));
+        }
+    }
+
     fn step_filter_menu(&mut self, up: bool, cx: &mut Context<Self>) {
         let len = self.filter_rows.borrow().len();
         if let Some(hl) = self.filter_menu.as_mut()

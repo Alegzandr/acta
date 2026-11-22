@@ -380,6 +380,21 @@ pub fn folders(store: &mut Store, root: &Path) -> acta_core::Result<()> {
     let n = store.add_folder(Owner::Topic(embed), &notes, me)?;
     store.set_folder_name(n, "Design notes", me)?;
     store.set_folder_icon(n, "book-open", me)?;
+    // The same notes folder on another topic of the epic: "Also attached
+    // to topic ..." (components-folders.md 5).
+    if let Some(other) = topics.iter().find(|t| t.id != embed) {
+        store.add_folder(Owner::Topic(other.id), &notes, me)?;
+    }
+    // `ACTA_DEV_SEED=folders-missing`: the project's active folder is the
+    // one not found, so its terminal asks (Terminal launch).
+    if std::env::var("ACTA_DEV_SEED").as_deref() == Ok("folders-missing")
+        && let Some(gone) = store
+            .folders(project)?
+            .into_iter()
+            .find(|f| f.path.ends_with("acta-docs"))
+    {
+        store.set_active_folder(project, Some(gone.id), me)?;
+    }
     let _ =
         acta_core::claude_settings::set_commit(store, wt, CommitMode::Push, Some(true), false, me);
     Ok(())
@@ -580,6 +595,25 @@ pub fn questions(store: &mut Store, folder: &Path) -> acta_core::Result<()> {
     store.delete(Record::Contact(supplier), me)?;
     let note = store.add_note(acta, "Ask about the review room for Thursday", me)?;
     store.set_report_to(Record::Note(note), Some(marie), me)?;
+    // `ACTA_DEV_SEED=people`: nine more notes, each for someone else, so
+    // the inbox's Report to filter has its search (over 8 contacts).
+    if std::env::var("ACTA_DEV_SEED").as_deref() == Ok("people") {
+        for name in [
+            "Alexandre",
+            "Bruno",
+            "Chloé",
+            "Dominique",
+            "Élodie",
+            "Fatou",
+            "Gaspard",
+            "Hélène",
+            "Inès",
+        ] {
+            let c = store.create_contact(name, project, me)?;
+            let n = store.add_note(acta, &format!("Tell {name} where the export stands"), me)?;
+            store.set_report_to(Record::Note(n), Some(c), me)?;
+        }
+    }
     Ok(())
 }
 

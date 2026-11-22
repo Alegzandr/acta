@@ -1065,6 +1065,33 @@ impl Shell {
         .detach();
     }
 
+    /// Debug builds' captures of drags and in-place editors (see the
+    /// `tree-drag` arm of [`Shell::dev_overlay`]).
+    #[cfg(debug_assertions)]
+    fn dev_drag_and_pages(&mut self, which: &str, window: &mut Window, cx: &mut Context<Self>) {
+        match which {
+            "tree-drag" | "tree-drag-onto" => self.dev_tree_drag(which == "tree-drag-onto", cx),
+            "qpage-edit" => {
+                if let Some(bench) = self.bench()
+                    && let PageView::Questions(page) = &bench.page
+                {
+                    let page = page.clone();
+                    page.update(cx, |page, cx| page.dev_edit_first(window, cx));
+                }
+            }
+            "inbox-filter" => {
+                if let Some(bench) = self.bench()
+                    && let PageView::Inbox(page) = &bench.page
+                {
+                    let page = page.clone();
+                    page.update(cx, |page, cx| page.dev_open_filter(window, cx));
+                }
+            }
+            _ => {}
+        }
+        cx.notify();
+    }
+
     /// Debug builds: `ACTA_DEV_OVERLAY=palette|capture|terminal|chat|chat-palette|browser|browser-palette|export|snapshots`
     /// opens that surface at launch, so captures need no input.
     fn dev_overlay(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1273,7 +1300,7 @@ impl Shell {
             #[cfg(debug_assertions)]
             Ok(
                 which @ ("q-composer" | "q-answer" | "q-closed" | "q-menu" | "q-scroll"
-                | "report-popover" | "contact-move"),
+                | "report-popover" | "contact-move" | "q-drag" | "q-refused" | "blocks"),
             ) => {
                 let which = which.to_owned();
                 cx.spawn_in(window, async move |shell, cx| {
@@ -1298,6 +1325,23 @@ impl Shell {
                                 window,
                             )
                         }
+                    });
+                })
+                .detach();
+            }
+            // Dragging tree rows (components.md 5): a topic held over the
+            // lower half of another topic's row, or over its epic's row;
+            // the Questions page with its first open question edited in
+            // place; the inbox's Report to filter open with its search.
+            #[cfg(debug_assertions)]
+            Ok(which @ ("tree-drag" | "tree-drag-onto" | "qpage-edit" | "inbox-filter")) => {
+                let which = which.to_owned();
+                cx.spawn_in(window, async move |shell, cx| {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(1500))
+                        .await;
+                    let _ = shell.update_in(cx, |shell, window, cx| {
+                        shell.dev_drag_and_pages(&which, window, cx)
                     });
                 })
                 .detach();
@@ -5580,7 +5624,9 @@ fn seed_if_asked(store: &mut acta_core::Store) {
             || seed == "long"
             || seed == "due"
             || seed == "folders"
+            || seed == "folders-missing"
             || seed == "questions"
+            || seed == "people"
             || seed == "attachments")
         && let Some(dir) = crate::launch_dir()
         && let Err(err) = match seed.as_str() {
@@ -5589,9 +5635,9 @@ fn seed_if_asked(store: &mut acta_core::Store) {
             #[cfg(debug_assertions)]
             "due" => crate::dev_seed::due(store, &dir),
             #[cfg(debug_assertions)]
-            "folders" => crate::dev_seed::folders(store, &dir),
+            "folders" | "folders-missing" => crate::dev_seed::folders(store, &dir),
             #[cfg(debug_assertions)]
-            "questions" => crate::dev_seed::questions(store, &dir),
+            "questions" | "people" => crate::dev_seed::questions(store, &dir),
             #[cfg(debug_assertions)]
             "attachments" => crate::dev_seed::attachments(store, &dir),
             _ => crate::dev_seed::seed(store, &dir),
