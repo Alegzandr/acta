@@ -26,7 +26,9 @@ ADR 0004 (Decision, Release workflow).
    workflow installs, and every dependency licence is accepted by `about.toml`
    (`scripts/licenses.sh`).
 2. `build`, one job per channel (`win-x64`, `osx-arm64`, `osx-x64`, `linux-x64`):
-   `cargo build --release --locked` with no cargo cache, then `scripts/package.ps1` or
+   `scripts/vad.sh --fetch` (the Silero VAD of ADR 0014, checked against its pin in
+   `models.rs`), `cargo build --release --locked` with no cargo cache (`build.rs` checks
+   the VAD again), then `scripts/package.ps1` or
    `scripts/package.sh` (stage, fetch the previous release for the delta, `vpk pack`).
 3. `collect`, read-only: `SHA256SUMS` over the packages and the two install scripts.
 4. `publish`, the only job with write permissions, in the `release` environment:
@@ -85,13 +87,22 @@ are the only runs that save the cargo cache, and only dry runs read it.
 Locally, for the current machine:
 
 ```sh
+scripts/vad.sh --fetch          # the Silero VAD every package ships (885 KB, pinned)
 cargo build --release --locked
 scripts/licenses.sh             # needs cargo-about 0.9.3; on Windows from Git Bash
 scripts/package.sh              # macOS, Linux; needs vpk 1.2.161, Linux also squashfs-tools
 scripts\package.ps1             # Windows
 ```
 
-The result is in `releases/<channel>/`. `vpk` is a .NET tool:
+The result is in `releases/<channel>/`. Packaging refuses to run without the pinned
+Silero VAD in `assets/voice/` (git-ignored).
+
+`.github/workflows/weekly.yml` runs read-only drift checks every Monday and on demand:
+the winget ids and Claude Code install one-liners Acta uses (ADR 0013,
+`scripts/ci/check-prereqs.ps1`) and the size and SHA-256 of every pinned model on
+Hugging Face (ADR 0014, `scripts/ci/check-model-pins.sh`). A red run means a pin in
+`commands.rs` or `models.rs` no longer matches the outside world: check the change by
+hand, then update the constant and its ADR. `vpk` is a .NET tool:
 `dotnet tool install -g vpk --version 1.2.161`. Its version must always equal the
 `velopack` crate version; bump them together. `cargo-about` is installed with
 `cargo install cargo-about --locked --version 0.9.3`; its version is pinned in
