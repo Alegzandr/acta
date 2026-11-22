@@ -171,16 +171,6 @@ pub fn group_label(locale: Locale, page: Owner, origin: Owner, name: &str) -> St
     tr(locale, key, &[("name", Arg::Text(name))])
 }
 
-/// A name cut at `max` characters with an ellipsis (the origin's page name
-/// on the folded row: 24).
-pub fn cut(name: &str, max: usize) -> String {
-    if name.chars().count() > max {
-        name.chars().take(max - 1).chain(['\u{2026}']).collect()
-    } else {
-        name.to_owned()
-    }
-}
-
 /// The git state of a folder as the row shows it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GitLine {
@@ -535,8 +525,6 @@ mod tests {
         );
         assert_eq!(mismatch(true, here, other, false), Mismatch::RestartHere);
         assert_eq!(mismatch(true, here, same, false), Mismatch::RestartHere);
-        assert_eq!(cut("Embed the terminal in the app", 24).chars().count(), 24);
-        assert_eq!(cut("Acta", 24), "Acta");
     }
 
     fn git(dir: &Path, args: &[&str]) {

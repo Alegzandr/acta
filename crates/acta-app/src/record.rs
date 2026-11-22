@@ -88,14 +88,6 @@ impl Folders {
         self.items.iter().map(|f| f.path.clone()).collect()
     }
 
-    /// Missing folders among the additional ones (not the active one).
-    pub fn missing_additional(&self) -> usize {
-        self.items
-            .iter()
-            .filter(|f| !f.active && self.is_missing(&f.path))
-            .count()
-    }
-
     /// The name of a level (the page, its epic, its project).
     pub fn level_name(&self, owner: Owner) -> &str {
         self.levels

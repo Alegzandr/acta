@@ -199,12 +199,6 @@ pub(crate) enum LayoutMenu {
 /// Width of the header's chevron that replaces the tabs that do not fit.
 const OVERFLOW_CHEVRON: f32 = 24.;
 
-/// A view tab's width: padding 8 a side around its name in `type.label`
-/// (12), counted generously so a tab never clips.
-fn view_tab_width(name: &str) -> f32 {
-    16. + 7.5 * name.chars().count() as f32
-}
-
 /// Which view tabs of a header fit in `available` (4.8.4), in order: as
 /// many as fit from the first, the active one always, with room left for
 /// the chevron when some are left out. `None` when all fit.
@@ -2020,15 +2014,19 @@ impl Shell {
         };
         let key = place_key(place);
         let single = g.tabs.len() == 1;
+        // The tabs keep their room (they are fitted to the header below);
+        // the context takes what is left and gives way inside it.
         let mut left = div()
             .flex()
             .flex_row()
             .items_center()
             .gap(px(4.))
-            .min_w_0()
-            .flex_shrink(1.);
+            .flex_shrink_0();
+        let mut left_width = 0.;
         if single {
-            let name = ui::label(text(locale, view_name(active)), &t)
+            let label = text(locale, view_name(active));
+            left_width = ui::text_width(type_scale::LABEL, &label, cx);
+            let name = ui::label(label, &t)
                 .flex_shrink_0()
                 .relative()
                 .child(measure(&geometry, move |g, r| {
@@ -2047,17 +2045,46 @@ impl Shell {
             let buttons_n = own + 1 + usize::from(matches!(place, Place::Side(_)));
             let fit = self.bench().and_then(|bench| {
                 let width = *bench.ui.geometry.borrow().group_widths.get(&(key, group))?;
-                let available = width - 16. - buttons_n as f32 * 32. - 8.;
+                // The terminal's context keeps its smallest form (layout.md
+                // 4.5): the tabs give way first.
+                let reserve = if active == ViewId::Terminal {
+                    crate::terminal_dock::HEADER_RESERVE
+                } else {
+                    0.
+                };
+                let available = width - 16. - buttons_n as f32 * 32. - 8. - reserve;
                 let widths: Vec<f32> = g
                     .tabs
                     .iter()
                     .map(|tab| match tab {
-                        Tab::View(v) => view_tab_width(&text(locale, view_name(*v))),
+                        // Measured: padding 8 + 8 around the label; a busy
+                        // dot (gap 4, dot 6) is allowed for.
+                        Tab::View(v) => {
+                            ui::text_width(type_scale::LABEL, &text(locale, view_name(*v)), cx)
+                                + 16.
+                                + if *v == active { 0. } else { 10. }
+                        }
                         Tab::Page(_) => 0.,
                     })
                     .collect();
-                fitting_tabs(&widths, g.active, available)
+                let fit = fitting_tabs(&widths, g.active, available);
+                Some((fit, widths))
             });
+            let (fit, widths) = match fit {
+                Some((fit, widths)) => (fit, Some(widths)),
+                None => (None, None),
+            };
+            if let Some(widths) = &widths {
+                let shown: Vec<f32> = widths
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| fit.as_ref().is_none_or(|f| f.contains(i)))
+                    .map(|(_, w)| *w)
+                    .collect();
+                left_width = shown.iter().sum::<f32>()
+                    + 4. * shown.len().saturating_sub(1) as f32
+                    + fit.as_ref().map_or(0., |_| OVERFLOW_CHEVRON + 4.);
+            }
             for (i, tab) in g.tabs.iter().enumerate() {
                 let Tab::View(v) = *tab else { continue };
                 if fit.as_ref().is_some_and(|shown| !shown.contains(&i)) {
@@ -2100,7 +2127,26 @@ impl Shell {
                 );
             }
         }
-        let context = self.view_context(active, &t, cx);
+        // The group's width less its padding (16), the tabs, the gaps around
+        // the context and the spacer (3 x 8), the buttons (24 + 8 each) and
+        // the folded chevron.
+        let available = {
+            let own = match active {
+                ViewId::Terminal => 1,
+                ViewId::Chat | ViewId::AgentBrowser => 2,
+                _ => 0,
+            };
+            let buttons_n = own
+                + usize::from(!active.is_web())
+                + usize::from(matches!(place, Place::Side(_)))
+                + usize::from(folded_more);
+            geometry
+                .borrow()
+                .group_widths
+                .get(&(key, group))
+                .map(|w| (w - 16. - left_width - 24. - buttons_n as f32 * 32.).max(0.))
+        };
+        let context = self.view_context(active, available, &t, cx);
         let buttons = self.view_buttons(active, place, cx);
         let side = match place {
             Place::Side(side) => Some(side),
@@ -2345,9 +2391,12 @@ impl Shell {
     }
 
     /// The context text of a view's header or strip (4.8.4).
+    /// `available`: the width the header leaves the context, once the
+    /// tabs and the buttons have theirs (`None` before the first layout).
     fn view_context(
         &mut self,
         view: ViewId,
+        available: Option<f32>,
         t: &Tokens,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
@@ -2355,7 +2404,7 @@ impl Shell {
         match view {
             ViewId::Terminal => {
                 let dock = bench.dock.clone();
-                dock.update(cx, |dock, cx| dock.header_context(cx))
+                dock.update(cx, |dock, cx| dock.header_context(available, cx))
             }
             #[cfg(windows)]
             ViewId::Chat => Some(
@@ -2625,7 +2674,7 @@ impl Shell {
     /// 4.8.3: the 28 strip under a page-area tab bar for a view tab: its
     /// context and its buttons.
     fn view_strip(&mut self, view: ViewId, t: &Tokens, cx: &mut Context<Self>) -> AnyElement {
-        let context = self.view_context(view, t, cx);
+        let context = self.view_context(view, None, t, cx);
         let buttons = self.view_buttons(view, Place::Page, cx);
         div()
             .flex()
@@ -3589,7 +3638,6 @@ mod overflow_tests {
         assert_eq!(fitting_tabs(&widths, 3, 200.), Some(vec![0, 3]));
         // Hardly any room: the active one alone.
         assert_eq!(fitting_tabs(&widths, 2, 60.), Some(vec![2]));
-        assert!(view_tab_width("Knowledge") > view_tab_width("Chat"));
     }
 
     #[test]

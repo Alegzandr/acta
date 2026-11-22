@@ -913,6 +913,46 @@ impl RecordPage {
         );
     }
 
+    /// Development captures (`ACTA_DEV_OVERLAY=folders-*`): the list
+    /// unfolded, the switcher open, the active folder's settings form, or
+    /// its branch selector.
+    #[cfg(debug_assertions)]
+    pub fn dev_folders(&mut self, which: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.folder_ui.open = which != "folders-switcher";
+        match which {
+            "folders-switcher" => self.folder_ui.switcher = Some(0),
+            "folders-form" => {
+                if let Some(id) = self.settings_target() {
+                    self.open_folder_settings(id, window, cx)
+                }
+            }
+            "folders-branch" => {
+                if let Some(id) = self.git_target() {
+                    self.open_branch_menu(id, cx)
+                }
+            }
+            // A running session's page changes under it (layout.md 4.5).
+            "terminal-switch" => {
+                self.folder_ui.open = false;
+                let next = self
+                    .folders()
+                    .and_then(|f| f.items.iter().find(|i| i.own && !i.active))
+                    .map(|i| i.id);
+                if let Some(id) = next {
+                    self.set_active(id, cx)
+                }
+            }
+            "terminal-commit" => {
+                self.folder_ui.open = false;
+                if let Some(f) = self.commit_target() {
+                    self.set_commit(f.id, CommitMode::Commit, f.commit_as_user, false, cx)
+                }
+            }
+            _ => {}
+        }
+        cx.notify();
+    }
+
     // ---- palette ----
 
     /// "Switch active folder...": the palette lists the folders the page
@@ -1373,7 +1413,6 @@ impl RecordPage {
         let open = self.folder_ui.open;
         let active_missing = folders.is_missing(&active.path);
         let others = folders.items.len().saturating_sub(1);
-        let missing_others = folders.missing_additional();
         let active_disk = self.folder_ui.disk.get(&active.path);
         let glyph = fm::shown_icon(
             &active.icon,
@@ -1383,7 +1422,39 @@ impl RecordPage {
         // The switcher, with its menu anchored under it.
         let switcher = {
             let menu_open = self.folder_ui.switcher;
-            let tip = active.path.clone();
+            let mut tip = vec![active.path.clone()];
+            if !active.own {
+                tip.push(fm::group_label(
+                    locale,
+                    self.owner,
+                    active.origin,
+                    folders.level_name(active.origin),
+                ));
+            }
+            if let Some(line) = self.git_line_of(&active, folders) {
+                let mut git = fm::branch_text(locale, &line);
+                if line.changed > 0 {
+                    git.push_str(" \u{b7} ");
+                    git.push_str(&tr(
+                        locale,
+                        Key::FoldersGitChanged,
+                        &[("n", Arg::Count(line.changed as u64))],
+                    ));
+                }
+                if line.behind > 0 {
+                    git.push_str(" \u{b7} ");
+                    git.push_str(&tr(
+                        locale,
+                        Key::FoldersGitBehind,
+                        &[("n", Arg::Count(line.behind as u64))],
+                    ));
+                }
+                tip.push(git);
+                if let Some(key) = line.auto.and_then(fm::auto_tip) {
+                    tip.push(text(locale, key));
+                }
+            }
+            let tip = tip.join("\n");
             let button =
                 folders_view::switcher("folder-switcher", glyph, &active.name, active_missing, t)
                     .tooltip(ui::tip(tip))
@@ -1397,7 +1468,10 @@ impl RecordPage {
                         page.folder_ui.branch_menu = None;
                         cx.notify();
                     }));
-            let mut wrap = div().relative().min_w_0().child(button);
+            let mut wrap = div()
+                .relative()
+                .min_w(px(crate::terminal_dock::SWITCHER_MIN))
+                .child(button.w_full().overflow_hidden());
             if menu_open.is_some() {
                 let groups = self.switch_groups(folders, locale);
                 wrap = wrap.child(folders_view::switcher_menu(
@@ -1429,54 +1503,10 @@ impl RecordPage {
             }
             wrap
         };
-        let git = self
-            .git_line_of(&active, folders)
-            .map(|line| self.render_git("folded", &active, &line, locale, t, cx));
         let count = (others > 0).then(|| folders_view::count(locale, others, t));
-        let missing_extra = (missing_others > 0 && !active_missing).then(|| {
-            div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(4.))
-                .flex_shrink_0()
-                .child(icon(Icon::FolderX, 14., t.warning))
-                .child(
-                    type_scale::SMALL
-                        .el()
-                        .text_color(t.text_secondary)
-                        .child(tr(
-                            locale,
-                            Key::FoldersNNotFound,
-                            &[("n", Arg::Count(missing_others as u64))],
-                        )),
-                )
-        });
-        let origin = (!active.own).then(|| {
-            let name = fm::cut(folders.level_name(active.origin), 24);
-            let key = match active.origin {
-                Owner::Project(_) => Key::FoldersFromProject,
-                _ => Key::FoldersFromEpic,
-            };
-            let route = match active.origin {
-                Owner::Project(id) => Route::Project(id),
-                Owner::Epic(id) => Route::Epic(id),
-                Owner::Topic(id) => Route::Topic(id),
-            };
-            let link = t.text_secondary;
-            type_scale::SMALL
-                .el()
-                .id("folder-origin")
-                .min_w_0()
-                .truncate()
-                .text_color(t.text_tertiary)
-                .hover(move |s| s.text_color(link).underline())
-                .child(tr(locale, key, &[("name", Arg::Text(&name))]))
-                .on_click(cx.listener(move |_, _, _, cx| {
-                    cx.stop_propagation();
-                    cx.emit(PageEvent::Open(route));
-                }))
-        });
+        // Under 360 of column the not-found words drop; `folder-x` (in the
+        // switcher) and Locate remain.
+        let words = ui::column_width() >= 360.;
         let state = active_missing.then(|| {
             let from = active.origin;
             let path = active.path.clone();
@@ -1486,12 +1516,16 @@ impl RecordPage {
                 .items_center()
                 .gap(px(8.))
                 .flex_shrink_0()
-                .child(
-                    type_scale::SMALL
-                        .el()
-                        .text_color(t.text_secondary)
-                        .child(text(locale, Key::FoldersNotFound)),
-                )
+                .when(words, |this| {
+                    this.child(
+                        type_scale::SMALL
+                            .el()
+                            .min_w_0()
+                            .truncate()
+                            .text_color(t.text_secondary)
+                            .child(text(locale, Key::FoldersNotFound)),
+                    )
+                })
                 .child(
                     ui::button(
                         "folder-locate",
@@ -1516,7 +1550,6 @@ impl RecordPage {
             16.,
             t.text_secondary,
         );
-        let two_line = ui::two_line_rows();
         let header = ui::focusable(div().id("folder-row"), t, false)
             .px(px(8.))
             .ml(px(-8.))
@@ -1557,45 +1590,9 @@ impl RecordPage {
                         .font_features(type_scale::tabular())
                         .child(number(locale, folders.items.len() as u64)),
                 )
-        } else if two_line {
-            // Under 520: the switcher and the count on the first line, the
-            // rest on a second line aligned with the switcher's icon.
-            let first = div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(8.))
-                .h(px(28.))
-                .min_w_0()
-                .child(chevron)
-                .child(switcher)
-                .children(count.map(|c| c.ml(px(4.))))
-                .children(missing_extra);
-            let rest: Vec<AnyElement> = git
-                .into_iter()
-                .chain(origin.map(IntoElement::into_any_element))
-                .chain(state.map(IntoElement::into_any_element))
-                .collect();
-            let has_rest = !rest.is_empty();
-            header
-                .flex()
-                .flex_col()
-                .h(px(if has_rest { 52. } else { 28. }))
-                .child(first)
-                .when(has_rest, |this| {
-                    this.child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap(px(12.))
-                            .h(px(24.))
-                            .pl(px(28.))
-                            .min_w_0()
-                            .children(rest),
-                    )
-                })
         } else {
+            // At rest: the switcher and the count, one line at every width
+            // (clarity review 2026-11-22); the rest is the switcher's tooltip.
             header
                 .flex()
                 .flex_row()
@@ -1605,10 +1602,7 @@ impl RecordPage {
                 .min_w_0()
                 .child(chevron)
                 .child(switcher)
-                .children(git.map(|g| div().ml(px(4.)).min_w_0().child(g)))
-                .children(count.map(|c| c.ml(px(4.))))
-                .children(missing_extra)
-                .children(origin.map(|o| o.ml(px(4.))))
+                .children(count)
                 .children(state.map(|s| s.ml(px(4.))))
         };
         if !open {
@@ -1666,7 +1660,7 @@ impl RecordPage {
         }
         list = list
             .child(
-                div().pt(px(4.)).child(
+                div().pt(px(4.)).flex().child(
                     ui::button(
                         "folder-add",
                         text(locale, Key::FoldersAdd),
@@ -1674,10 +1668,9 @@ impl RecordPage {
                         false,
                         t,
                     )
-                    .h(px(28.))
+                    .ml(px(-12.))
                     .child(icon(Icon::Plus, 16., t.text_secondary))
                     .flex_row_reverse()
-                    .justify_end()
                     .on_click(cx.listener(|page, _, _, cx| page.add_folder(cx))),
                 ),
             )
@@ -1757,7 +1750,7 @@ impl RecordPage {
             .child(
                 type_scale::UI
                     .el()
-                    .min_w_0()
+                    .min_w(px(48.))
                     .truncate()
                     .text_color(if f.active && !missing {
                         t.text_primary
@@ -1797,7 +1790,8 @@ impl RecordPage {
                 .child(
                     type_scale::SMALL
                         .el()
-                        .flex_shrink_0()
+                        .min_w_0()
+                        .truncate()
                         .text_color(t.text_secondary)
                         .child(text(locale, Key::FoldersNotFound)),
                 )
@@ -2106,12 +2100,10 @@ impl RecordPage {
             .flex()
             .flex_row()
             .flex_wrap()
+            .flex_1()
+            .min_w_0()
             .gap(px(2.))
-            .max_w(px(if ui::two_line_rows() {
-                7. * 30.
-            } else {
-                13. * 30.
-            }))
+            .when(ui::two_line_rows(), |this| this.max_w(px(7. * 30.)))
             .child(
                 toggle(
                     format!("fi-auto-{}", id.0),
@@ -2200,13 +2192,20 @@ impl RecordPage {
                         .flex_row()
                         .items_center()
                         .gap(px(8.))
-                        .h(px(24.))
+                        .min_h(px(24.))
                         .px(px(4.))
                         .ml(px(-4.))
                         .rounded(px(RADIUS_SM))
                         .hover(move |s| s.bg(hover))
                         .child(ui::checkbox(checked, t))
-                        .child(type_scale::UI.el().text_color(t.text_primary).child(label))
+                        .child(
+                            type_scale::UI
+                                .el()
+                                .flex_1()
+                                .min_w_0()
+                                .text_color(t.text_primary)
+                                .child(label),
+                        )
                 };
                 let mut options = div().flex().flex_col().gap(px(4.)).child(
                     check_row(

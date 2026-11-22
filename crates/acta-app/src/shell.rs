@@ -927,6 +927,49 @@ impl Shell {
                 })
                 .detach();
             }
+            // Working folders (screens.md 8.11), once the page has loaded:
+            // the list unfolded, the switcher open, the settings form of
+            // the active folder, the branch selector.
+            #[cfg(debug_assertions)]
+            Ok(
+                which @ ("folders-open" | "folders-switcher" | "folders-form" | "folders-branch"),
+            ) => {
+                let which = which.to_owned();
+                cx.spawn_in(window, async move |shell, cx| {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(1500))
+                        .await;
+                    let _ = shell.update_in(cx, |shell, window, cx| {
+                        shell.with_record(
+                            cx,
+                            |page, window, cx| page.dev_folders(&which, window, cx),
+                            window,
+                        )
+                    });
+                })
+                .detach();
+            }
+            // The terminal header after the session's page changed: its
+            // active folder ("Restart in ...") or the commit mode of the
+            // folder the session runs in ("Restart here").
+            #[cfg(debug_assertions)]
+            Ok(which @ ("terminal-switch" | "terminal-commit")) => {
+                let which = which.to_owned();
+                self.view_action(ViewId::Terminal, ViewAction::Show, window, cx);
+                cx.spawn_in(window, async move |shell, cx| {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(8000))
+                        .await;
+                    let _ = shell.update_in(cx, |shell, window, cx| {
+                        shell.with_record(
+                            cx,
+                            |page, window, cx| page.dev_folders(&which, window, cx),
+                            window,
+                        )
+                    });
+                })
+                .detach();
+            }
             Ok("capture") => self.open_capture(window, cx),
             Ok("terminal") => self.view_action(ViewId::Terminal, ViewAction::Show, window, cx),
             // Shown without taking the keyboard, for captures.
@@ -4246,9 +4289,12 @@ impl Shell {
                 .shadow(vec![t.shadow_overlay()])
                 .children(glyph)
                 .child(
+                    // `min_w_0`: the message wraps inside the toast's 360
+                    // instead of running past its background.
                     type_scale::UI
                         .el()
                         .flex_1()
+                        .min_w_0()
                         .text_color(t.text_primary)
                         .child(toast.message.clone()),
                 )
@@ -4456,13 +4502,15 @@ fn key_loss(db: PathBuf, unreadable: bool) -> Content {
 fn seed_if_asked(store: &mut acta_core::Store) {
     let seed = std::env::var("ACTA_DEV_SEED").unwrap_or_default();
     if cfg!(debug_assertions)
-        && (seed == "1" || seed == "bare" || seed == "long" || seed == "due")
+        && (seed == "1" || seed == "bare" || seed == "long" || seed == "due" || seed == "folders")
         && let Some(dir) = crate::launch_dir()
         && let Err(err) = match seed.as_str() {
             "bare" => crate::dev_seed::bare(store, &dir),
             "long" => crate::dev_seed::long(store, &dir),
             #[cfg(debug_assertions)]
             "due" => crate::dev_seed::due(store, &dir),
+            #[cfg(debug_assertions)]
+            "folders" => crate::dev_seed::folders(store, &dir),
             _ => crate::dev_seed::seed(store, &dir),
         }
     {

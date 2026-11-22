@@ -35,7 +35,7 @@ use crate::settings;
 use crate::theme::{Appearance, Mode, RADIUS_XS, Tokens};
 use crate::type_scale;
 use crate::ui::{self, Variant};
-use crate::workspace::{CommitColumns, FolderRef, ToastKind, Undo, Workspace};
+use crate::workspace::{CommitColumns, FolderRef, Undo, Workspace};
 
 /// Where a launch comes from: the page's record and its name.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -95,6 +95,9 @@ pub enum Send {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Start {
     pub cwd: PathBuf,
+    /// Folders the page sees that were not found and were left out of
+    /// the session: marked in the header's switcher, never a toast.
+    pub left_out: Vec<PathBuf>,
     pub folder: Option<FolderId>,
     pub commit: Option<CommitColumns>,
 }
@@ -104,6 +107,8 @@ pub struct Start {
 #[derive(Clone, Debug, Default)]
 struct SessionPage {
     folders: Folders,
+    /// What the disk says of each folder (its automatic icon).
+    disk: HashMap<String, fm::Disk>,
     /// The commit columns of the folder the session started in, now.
     commit: Option<CommitColumns>,
 }
@@ -132,6 +137,119 @@ pub fn launch_folders(
         (None, Some(active)) => Err(LaunchError::PrimaryMissing(active.to_path_buf())),
         (None, None) => Err(LaunchError::NoFolder),
     }
+}
+
+/// Gap between the parts of the terminal header's context.
+pub const HEADER_GAP: f32 = 8.;
+/// The context label is not truncated below this while something else
+/// can still give way; under [`CONTEXT_SHOWN`] it is left out.
+pub const CONTEXT_MIN: f32 = 56.;
+pub const CONTEXT_SHOWN: f32 = 24.;
+/// The switcher besides its name: padding 4 + icon 16 + gap 6, gap 6 +
+/// chevron 12 + padding 4.
+pub const SWITCHER_CHROME: f32 = 48.;
+/// The switcher at its smallest: its icon and chevron.
+pub const SWITCHER_MIN: f32 = SWITCHER_CHROME;
+/// What the header keeps for the context at its smallest (the switcher,
+/// the "running in" mark and the restart icon, with their gaps): the view
+/// tabs give way to their chevron before it.
+pub const HEADER_RESERVE: f32 = SWITCHER_MIN + 2. * (ICON_SLOT + HEADER_GAP) + HEADER_GAP;
+/// An icon slot: the "(running in ...)" mark or the restart icon button.
+pub const ICON_SLOT: f32 = 24.;
+
+/// The full widths of the header context's parts; `None` for a part not
+/// shown, a switcher of 0 when there is none.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct HeaderParts {
+    pub context: f32,
+    pub switcher: f32,
+    /// The switcher at its smallest (larger with the left-out mark).
+    pub switcher_min: f32,
+    pub running: Option<f32>,
+    pub waiting: Option<f32>,
+    pub restart: Option<f32>,
+}
+
+/// How the parts share the width: the context's and the switcher's widths,
+/// and whether "(running in ...)" and the restart action keep their words.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HeaderFit {
+    pub context: f32,
+    pub switcher: f32,
+    pub running_text: bool,
+    pub restart_text: bool,
+}
+
+impl HeaderFit {
+    fn total(&self, p: &HeaderParts) -> f32 {
+        let parts = [
+            (self.context >= CONTEXT_SHOWN).then_some(self.context),
+            (p.switcher > 0.).then_some(self.switcher),
+            p.running
+                .map(|w| if self.running_text { w } else { ICON_SLOT }),
+            p.waiting,
+            p.restart
+                .map(|w| if self.restart_text { w } else { ICON_SLOT }),
+        ];
+        let shown: Vec<f32> = parts.into_iter().flatten().collect();
+        shown.iter().sum::<f32>() + HEADER_GAP * shown.len().saturating_sub(1) as f32
+    }
+}
+
+/// The terminal header's context in `available` (layout.md 4.5), giving
+/// way in this order: the context label truncates (to [`CONTEXT_MIN`]),
+/// then "(running in ...)" becomes an icon with its words as tooltip,
+/// then "Restart in ..." becomes an icon button, then the switcher's name
+/// truncates, then the label goes. The sum never exceeds `available` while
+/// the icons fit; nothing is drawn over anything.
+pub fn fit_header(available: f32, p: HeaderParts) -> HeaderFit {
+    let mut fit = HeaderFit {
+        context: p.context,
+        switcher: p.switcher,
+        running_text: true,
+        restart_text: true,
+    };
+    let fits = |f: &HeaderFit| f.total(&p) <= available + 0.5;
+    // The context takes what the others leave, between `min` and its size.
+    let settle = |f: &mut HeaderFit, min: f32| {
+        let others = HeaderFit { context: 0., ..*f }.total(&p);
+        let others = if others > 0. { others + HEADER_GAP } else { 0. };
+        f.context = (available - others).clamp(min.min(p.context), p.context);
+    };
+
+    let min = CONTEXT_MIN;
+    settle(&mut fit, min);
+    if fits(&fit) {
+        return fit;
+    }
+    for step in 0..3 {
+        match step {
+            0 if p.running.is_some() => fit.running_text = false,
+            1 if p.restart.is_some() => fit.restart_text = false,
+            2 if p.switcher > 0. => {
+                let others = HeaderFit {
+                    switcher: 0.,
+                    context: min.min(p.context),
+                    ..fit
+                }
+                .total(&p)
+                    + HEADER_GAP;
+                fit.switcher =
+                    (available - others).clamp(p.switcher_min.min(p.switcher), p.switcher);
+            }
+            _ => continue,
+        }
+        settle(&mut fit, min);
+        if fits(&fit) {
+            return fit;
+        }
+    }
+    // Last, the label shrinks below its minimum and goes.
+    settle(&mut fit, 0.);
+    if fit.context < CONTEXT_SHOWN {
+        fit.context = 0.;
+    }
+    fit
 }
 
 /// What a launch's queued prompt becomes: kept (on the Ask pane) only
@@ -275,7 +393,14 @@ impl TerminalDock {
                 let commit = folder
                     .and_then(|id| store.folder(id).ok())
                     .map(|f| (f.commit_mode, f.commit_as_user, f.commit_on_default));
-                out.push((project, SessionPage { folders, commit }));
+                out.push((
+                    project,
+                    SessionPage {
+                        folders,
+                        disk: HashMap::new(),
+                        commit,
+                    },
+                ));
             }
             Ok(out)
         });
@@ -287,6 +412,7 @@ impl TerminalDock {
                     for (_, page) in &mut pages {
                         page.folders.missing =
                             crate::workspace::missing_paths(page.folders.paths());
+                        page.disk = fm::read_disk(&page.folders.items);
                     }
                     pages
                 })
@@ -519,22 +645,9 @@ impl TerminalDock {
                 }
                 let pane = match result {
                     Ok(launch) => {
-                        if !launch.left_out.is_empty() {
-                            let locale = settings::locale(cx);
-                            for folder in &launch.left_out {
-                                let name =
-                                    paths_view::last_segment(&folder.to_string_lossy()).to_owned();
-                                let message = tr(
-                                    locale,
-                                    Key::TerminalLeftOut,
-                                    &[("folder", Arg::Text(&name))],
-                                );
-                                dock.ws
-                                    .update(cx, |ws, cx| ws.toast(message, ToastKind::Error, cx));
-                            }
-                        }
                         let start = Start {
                             cwd: launch.spec.cwd.clone(),
+                            left_out: launch.left_out.clone(),
                             folder: start_folder,
                             commit: start_commit,
                         };
@@ -1110,7 +1223,11 @@ impl TerminalDock {
                         let missing = folders.is_missing(&f.path);
                         SwitchEntry {
                             id: f.id,
-                            icon: fm::shown_icon(&f.icon, None, missing),
+                            icon: fm::shown_icon(
+                                &f.icon,
+                                page.disk.get(&f.path).and_then(|d| d.git.as_ref()),
+                                missing,
+                            ),
                             name: f.name.clone(),
                             active: f.active,
                             missing,
@@ -1161,7 +1278,14 @@ impl TerminalDock {
     /// the folder switcher of the session's page, "(running in ...)" when
     /// that is not where it runs, and on a mismatch the context in
     /// `text.primary` with "Restart in ..." or "Restart here".
-    pub fn header_context(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    /// `available` is the width the header leaves it (the tabs and the
+    /// buttons keep theirs); the parts give way by [`fit_header`], so
+    /// nothing overlaps at any width.
+    pub fn header_context(
+        &mut self,
+        available: Option<f32>,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         let t = cx.global::<Tokens>().clone();
         let locale = settings::locale(cx);
         let (origin, _) = self.shown_origin();
@@ -1176,27 +1300,103 @@ impl TerminalDock {
             Some(Pane::Running { start, .. }) => Some(start.cwd.clone()),
             _ => None,
         };
-        let page_active = self.pages.get(&project).and_then(|p| {
+        let page = self.pages.get(&project);
+        let page_active = page.and_then(|p| {
             p.folders
                 .active()
                 .cloned()
-                .map(|f| (f.clone(), p.folders.is_missing(&f.path)))
+                .map(|f| (p.folders.is_missing(&f.path), f))
         });
-        let switcher = page_active.map(|(active, missing)| {
-            let running_elsewhere = running.as_ref().is_some_and(|cwd| {
-                !acta_core::folder_path::same(
+        let running_note = match (&running, &page_active) {
+            (Some(cwd), Some((_, active)))
+                if !acta_core::folder_path::same(
                     acta_core::paths::Os::CURRENT,
                     &cwd.to_string_lossy(),
                     &active.path,
-                )
-            });
+                ) =>
+            {
+                let cwd = cwd.to_string_lossy();
+                let name = page
+                    .and_then(|p| {
+                        p.folders.items.iter().find(|f| {
+                            acta_core::folder_path::same(
+                                acta_core::paths::Os::CURRENT,
+                                &f.path,
+                                &cwd,
+                            )
+                        })
+                    })
+                    .map(|f| f.name.clone())
+                    .unwrap_or_else(|| paths_view::last_segment(&cwd).to_owned());
+                Some(tr(
+                    locale,
+                    Key::TerminalRunningIn,
+                    &[("name", Arg::Text(&name))],
+                ))
+            }
+            _ => None,
+        };
+        let action = match &mismatch {
+            Mismatch::None => None,
+            Mismatch::RestartIn(name) => Some((
+                tr(locale, Key::TerminalRestartIn, &[("name", Arg::Text(name))]),
+                true,
+            )),
+            Mismatch::RestartHere => Some((text(locale, Key::TerminalRestartHere), false)),
+        };
+        // Folders left out of the session (not found): one mark in the
+        // switcher, the names in its tooltip.
+        let left_out: Vec<String> = match self.panes.get(&project) {
+            Some(Pane::Running { start, .. }) => start
+                .left_out
+                .iter()
+                .map(|p| {
+                    let p = p.to_string_lossy();
+                    let name = page
+                        .and_then(|pg| pg.folders.items.iter().find(|f| f.path == p))
+                        .map(|f| f.name.clone())
+                        .unwrap_or_else(|| paths_view::last_segment(&p).to_owned());
+                    tr(
+                        locale,
+                        Key::TerminalLeftOut,
+                        &[("folder", Arg::Text(&name))],
+                    )
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        let mark = if left_out.is_empty() { 0. } else { 14. + 6. };
+        let context = Self::context(&origin, locale);
+        let waiting_text = format!("\u{b7} {}", text(locale, Key::TerminalWaiting));
+        // Every part at full size, measured with the font.
+        let parts = HeaderParts {
+            context: ui::text_width(type_scale::SMALL, &context, cx),
+            switcher: page_active.as_ref().map_or(0., |(_, f)| {
+                ui::text_width(type_scale::UI, &f.name, cx) + SWITCHER_CHROME + mark
+            }),
+            switcher_min: SWITCHER_MIN + mark,
+            running: running_note
+                .as_ref()
+                .map(|n| ui::text_width(type_scale::SMALL, n, cx)),
+            waiting: waiting.then(|| ui::text_width(type_scale::SMALL, &waiting_text, cx)),
+            restart: action
+                .as_ref()
+                .map(|(label, _)| ui::text_width(type_scale::UI, label, cx) + 24.),
+        };
+        let fit = fit_header(available.unwrap_or(f32::MAX), parts);
+        let switcher = page_active.map(|(missing, active)| {
+            let git = page
+                .and_then(|p| p.disk.get(&active.path))
+                .and_then(|d| d.git.clone());
             let button = folders_view::switcher(
                 "terminal-switcher",
-                fm::shown_icon(&active.icon, None, missing),
+                fm::shown_icon(&active.icon, git.as_ref(), missing),
                 &active.name,
                 missing,
                 &t,
             )
+            .w_full()
+            .overflow_hidden()
             .tooltip(ui::tip(active.path.clone()))
             .on_mouse_down(gpui_kit::MouseButton::Left, |_, _, cx| {
                 cx.stop_propagation()
@@ -1208,7 +1408,23 @@ impl TerminalDock {
                 };
                 cx.notify();
             }));
-            let mut wrap = div().relative().min_w_0().child(button);
+            let alert = (!left_out.is_empty()).then(|| {
+                div()
+                    .id("terminal-left-out")
+                    .flex_shrink_0()
+                    .child(icon(Icon::TriangleAlert, 14., t.warning))
+                    .tooltip(ui::tip(left_out.join("\n")))
+            });
+            let mut wrap = div()
+                .relative()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(6.))
+                .flex_shrink_0()
+                .w(px(fit.switcher))
+                .child(div().flex_1().min_w_0().child(button))
+                .children(alert);
             if self.switcher.is_some() {
                 let groups = self.switch_groups(project, origin.owner, locale);
                 let owner = origin.owner;
@@ -1241,92 +1457,92 @@ impl TerminalDock {
                     },
                 ));
             }
-            let running_in = running.filter(|_| running_elsewhere).map(|cwd| {
-                let name = self
-                    .pages
-                    .get(&project)
-                    .and_then(|p| {
-                        p.folders.items.iter().find(|f| {
-                            acta_core::folder_path::same(
-                                acta_core::paths::Os::CURRENT,
-                                &f.path,
-                                &cwd.to_string_lossy(),
-                            )
-                        })
-                    })
-                    .map(|f| f.name.clone())
-                    .unwrap_or_else(|| paths_view::last_segment(&cwd.to_string_lossy()).to_owned());
+            wrap
+        });
+        // "(running in ...)": the words, or an `info` mark carrying them.
+        let running_el = running_note.map(|note| {
+            if fit.running_text {
                 type_scale::SMALL
                     .el()
                     .flex_shrink_0()
                     .text_color(t.text_tertiary)
-                    .child(tr(
-                        locale,
-                        Key::TerminalRunningIn,
-                        &[("name", Arg::Text(&name))],
-                    ))
-            });
-            div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(4.))
-                .min_w_0()
-                .child(wrap)
-                .children(running_in)
+                    .child(note)
+                    .into_any_element()
+            } else {
+                div()
+                    .id("terminal-running-in")
+                    .flex_shrink_0()
+                    .size(px(24.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(icon(Icon::Info, 14., t.text_tertiary))
+                    .tooltip(ui::tip(note))
+                    .into_any_element()
+            }
         });
-        let action = match &mismatch {
-            Mismatch::None => None,
-            Mismatch::RestartIn(name) => Some((
-                tr(locale, Key::TerminalRestartIn, &[("name", Arg::Text(name))]),
-                true,
-            )),
-            Mismatch::RestartHere => Some((text(locale, Key::TerminalRestartHere), false)),
-        };
         let restart_origin = origin.clone();
+        let action_el = action.map(|(label, in_page)| {
+            let el = if fit.restart_text {
+                ui::button("terminal-restart-text", label, Variant::Ghost, false, &t).h(px(24.))
+            } else {
+                ui::ghost_icon_button(
+                    "terminal-restart-text",
+                    Icon::RotateCw,
+                    24.,
+                    false,
+                    false,
+                    true,
+                    &t,
+                )
+                .tooltip(ui::tip(label))
+            };
+            el.on_mouse_down(gpui_kit::MouseButton::Left, |_, _, cx| {
+                cx.stop_propagation()
+            })
+            .on_click(cx.listener(move |_, _, _, cx| {
+                if in_page {
+                    cx.emit(DockEvent::RestartIn(restart_origin.clone()))
+                } else {
+                    cx.emit(DockEvent::RestartHere)
+                }
+            }))
+        });
         Some(
             div()
                 .flex()
                 .flex_row()
                 .items_center()
-                .gap(px(8.))
+                .gap(px(HEADER_GAP))
                 .min_w_0()
-                .child(
-                    type_scale::SMALL
-                        .el()
-                        .min_w_0()
-                        .truncate()
-                        .text_color(if marked {
-                            t.text_primary
-                        } else {
-                            t.text_tertiary
-                        })
-                        .child(Self::context(&origin, locale)),
-                )
+                .overflow_hidden()
+                .when(fit.context >= CONTEXT_SHOWN, |this| {
+                    this.child(
+                        type_scale::SMALL
+                            .el()
+                            .flex_shrink_0()
+                            .w(px(fit.context))
+                            .truncate()
+                            .text_color(if marked {
+                                t.text_primary
+                            } else {
+                                t.text_tertiary
+                            })
+                            .child(context),
+                    )
+                })
                 .children(switcher)
+                .children(running_el)
                 .when(waiting, |this| {
                     this.child(
                         type_scale::SMALL
                             .el()
                             .flex_shrink_0()
                             .text_color(t.warning)
-                            .child(format!("\u{b7} {}", text(locale, Key::TerminalWaiting))),
+                            .child(waiting_text),
                     )
                 })
-                .children(action.map(|(label, in_page)| {
-                    ui::button("terminal-restart-text", label, Variant::Ghost, false, &t)
-                        .h(px(24.))
-                        .on_mouse_down(gpui_kit::MouseButton::Left, |_, _, cx| {
-                            cx.stop_propagation()
-                        })
-                        .on_click(cx.listener(move |_, _, _, cx| {
-                            if in_page {
-                                cx.emit(DockEvent::RestartIn(restart_origin.clone()))
-                            } else {
-                                cx.emit(DockEvent::RestartHere)
-                            }
-                        }))
-                }))
+                .children(action_el)
                 .into_any_element(),
         )
     }
@@ -1481,6 +1697,63 @@ mod tests {
             "{}",
             String::from_utf8_lossy(&out.stderr)
         );
+    }
+
+    #[test]
+    fn the_header_gives_way_in_order_and_never_overlaps() {
+        let p = HeaderParts {
+            context: 220.,
+            switcher: 140.,
+            switcher_min: SWITCHER_MIN,
+            running: Some(150.),
+            waiting: None,
+            restart: Some(160.),
+        };
+        let full = 220. + 140. + 150. + 160. + 3. * HEADER_GAP;
+        let at = |w: f32| fit_header(w, p);
+        // Room for all: nothing gives way.
+        let f = at(full + 10.);
+        assert_eq!((f.context, f.switcher), (220., 140.));
+        assert!(f.running_text && f.restart_text);
+        // 1. The label truncates first, down to its minimum.
+        let f = at(full - 100.);
+        assert_eq!(f.context, 120.);
+        assert!(f.running_text && f.restart_text);
+        // 2. Then "(running in ...)" becomes its icon.
+        let f = at(140. + 150. + 160. + CONTEXT_MIN + 3. * HEADER_GAP - 1.);
+        assert!(!f.running_text && f.restart_text);
+        // 3. Then the restart action becomes an icon button.
+        let f = at(CONTEXT_MIN + 140. + 2. * ICON_SLOT + 3. * HEADER_GAP + 20.);
+        assert!(!f.running_text && !f.restart_text);
+        assert_eq!(f.switcher, 140.);
+        // 4. Then the switcher's name truncates, then the label goes.
+        let f = at(CONTEXT_MIN + 100. + 2. * ICON_SLOT + 3. * HEADER_GAP);
+        assert!(f.switcher < 140. && f.switcher >= SWITCHER_MIN);
+        let f = at(SWITCHER_MIN + 2. * ICON_SLOT + 2. * HEADER_GAP);
+        assert_eq!((f.context, f.switcher), (0., SWITCHER_MIN));
+        // At every width the parts take no more than they are given, as
+        // long as the icons fit.
+        let floor = SWITCHER_MIN + 2. * ICON_SLOT + 2. * HEADER_GAP;
+        let mut w = floor;
+        while w < full + 50. {
+            let f = at(w);
+            assert!(f.total(&p) <= w + 0.5, "{w}: {f:?}");
+            if f.context > 0. {
+                assert!(f.context >= CONTEXT_SHOWN);
+            }
+            w += 7.;
+        }
+        // A short label is never stretched; no switcher takes no room.
+        let small = HeaderParts {
+            context: 40.,
+            switcher: 0.,
+            switcher_min: 0.,
+            running: None,
+            waiting: None,
+            restart: None,
+        };
+        assert_eq!(fit_header(500., small).context, 40.);
+        assert_eq!(fit_header(30., small).context, 30.);
     }
 
     #[test]

@@ -602,6 +602,11 @@ pub fn two_line(width: f32) -> bool {
     width < TWO_LINE_UNDER
 }
 
+/// The width of the content column being laid out (unknown: very wide).
+pub fn column_width() -> f32 {
+    COLUMN_WIDTH.with(|w| w.get())
+}
+
 /// Whether the rows of the column being laid out take their two-line form.
 pub fn two_line_rows() -> bool {
     two_line(COLUMN_WIDTH.with(|w| w.get()))
@@ -871,6 +876,27 @@ pub fn label_width(labels: &[&str], cx: &gpui_kit::App) -> f32 {
             .sum()
     };
     labels.iter().map(|l| width(l)).fold(0., f32::max).ceil() + 1.
+}
+
+/// The width `text` takes in `role` (at the current text size), measured
+/// with the font's own advances, rounded up: for rows that allocate their
+/// width by priority instead of letting parts overlap.
+pub fn text_width(role: type_scale::TypeRole, text: &str, cx: &gpui_kit::App) -> f32 {
+    let system = cx.text_system();
+    let mut font = gpui_kit::font(role.family());
+    font.weight = role.weight;
+    let font = system.resolve_font(&font);
+    let size = role.size();
+    let width: f32 = text
+        .chars()
+        .map(|ch| {
+            system
+                .advance(font, px(size), ch)
+                .map(|a| f32::from(a.width))
+                .unwrap_or(size * 0.6)
+        })
+        .sum();
+    width.ceil() + 1.
 }
 
 /// A ghost value in the properties block: padding 0 x 8, shifted left by 8
