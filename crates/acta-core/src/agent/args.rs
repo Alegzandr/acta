@@ -33,6 +33,7 @@ pub struct BriefArgs {
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
 pub struct EntriesArgs {
+    /// Default: the focus.
     pub topic: Option<String>,
     /// progress, decision or discussion.
     #[serde(rename = "type")]
@@ -56,6 +57,7 @@ pub struct LogArgs {
     pub state: Option<String>,
     /// draft, planned, active, blocked, done or dropped.
     pub status: Option<String>,
+    /// Default: the focus.
     pub topic: Option<String>,
 }
 
@@ -121,7 +123,7 @@ pub struct KbArgs {
     pub query: Option<String>,
     /// document or memory.
     pub kind: Option<String>,
-    /// T-n, E-n or P-n.
+    /// T-n, E-n or P-n. Default: the focus.
     pub id: Option<String>,
     pub cursor: Option<i64>,
 }
