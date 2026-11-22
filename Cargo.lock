@@ -84,7 +84,7 @@ dependencies = [
 
 [[package]]
 name = "acta-app"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "acta-browser",
  "acta-core",
@@ -110,7 +110,7 @@ dependencies = [
 
 [[package]]
 name = "acta-browser"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "getrandom 0.4.3",
  "hmac 0.12.1",
@@ -124,7 +124,7 @@ dependencies = [
 
 [[package]]
 name = "acta-cli"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "acta-browser",
  "acta-core",
@@ -140,7 +140,7 @@ dependencies = [
 
 [[package]]
 name = "acta-core"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "chrono",
  "getrandom 0.4.3",
@@ -161,7 +161,7 @@ dependencies = [
 
 [[package]]
 name = "acta-terminal"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "acta-core",
  "alacritty_terminal",
