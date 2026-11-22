@@ -1065,6 +1065,33 @@ impl Shell {
         .detach();
     }
 
+    /// Debug builds' captures of drags and in-place editors (see the
+    /// `tree-drag` arm of [`Shell::dev_overlay`]).
+    #[cfg(debug_assertions)]
+    fn dev_drag_and_pages(&mut self, which: &str, window: &mut Window, cx: &mut Context<Self>) {
+        match which {
+            "tree-drag" | "tree-drag-onto" => self.dev_tree_drag(which == "tree-drag-onto", cx),
+            "qpage-edit" => {
+                if let Some(bench) = self.bench()
+                    && let PageView::Questions(page) = &bench.page
+                {
+                    let page = page.clone();
+                    page.update(cx, |page, cx| page.dev_edit_first(window, cx));
+                }
+            }
+            "inbox-filter" => {
+                if let Some(bench) = self.bench()
+                    && let PageView::Inbox(page) = &bench.page
+                {
+                    let page = page.clone();
+                    page.update(cx, |page, cx| page.dev_open_filter(window, cx));
+                }
+            }
+            _ => {}
+        }
+        cx.notify();
+    }
+
     /// Debug builds: `ACTA_DEV_OVERLAY=palette|capture|terminal|chat|chat-palette|browser|browser-palette|export|snapshots`
     /// opens that surface at launch, so captures need no input.
     fn dev_overlay(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1273,7 +1300,7 @@ impl Shell {
             #[cfg(debug_assertions)]
             Ok(
                 which @ ("q-composer" | "q-answer" | "q-closed" | "q-menu" | "q-scroll"
-                | "report-popover" | "contact-move"),
+                | "report-popover" | "contact-move" | "q-drag" | "q-refused" | "blocks"),
             ) => {
                 let which = which.to_owned();
                 cx.spawn_in(window, async move |shell, cx| {
@@ -1298,6 +1325,23 @@ impl Shell {
                                 window,
                             )
                         }
+                    });
+                })
+                .detach();
+            }
+            // Dragging tree rows (components.md 5): a topic held over the
+            // lower half of another topic's row, or over its epic's row;
+            // the Questions page with its first open question edited in
+            // place; the inbox's Report to filter open with its search.
+            #[cfg(debug_assertions)]
+            Ok(which @ ("tree-drag" | "tree-drag-onto" | "qpage-edit" | "inbox-filter")) => {
+                let which = which.to_owned();
+                cx.spawn_in(window, async move |shell, cx| {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(1500))
+                        .await;
+                    let _ = shell.update_in(cx, |shell, window, cx| {
+                        shell.dev_drag_and_pages(&which, window, cx)
                     });
                 })
                 .detach();
@@ -1825,7 +1869,10 @@ impl Shell {
         // A page in another group: that group takes focus first.
         let current = self.bench().map(|b| b.current);
         if current != Some(tab)
-            && matches!(event, PageEvent::Open(_) | PageEvent::NewKb(_))
+            && matches!(
+                event,
+                PageEvent::Open(_) | PageEvent::NewKb(_) | PageEvent::OpenEntry(..)
+            )
             && let Some(bench) = self.bench()
             && let Some(spot) = bench.layout.locate(Tab::Page(tab))
         {
@@ -1871,6 +1918,7 @@ impl Shell {
             }
             PageEvent::StaleMemories(project) => self.open_stale_memories(*project, window, cx),
             PageEvent::LateAnswers(scope) => self.open_late_answers(*scope, window, cx),
+            PageEvent::OpenEntry(topic, entry) => self.open_entry(*topic, *entry, window, cx),
         }
     }
 
@@ -1938,6 +1986,24 @@ impl Shell {
     }
 
     /// The Overview's late answers: the Questions page with Overdue.
+    /// "Logged as a decision": the topic, with that entry focused.
+    pub(super) fn open_entry(
+        &mut self,
+        topic: TopicId,
+        entry: acta_core::model::EntryId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.navigate(Route::Topic(topic), true, window, cx);
+        if let Some(bench) = self.bench()
+            && let PageView::Record(page) = &bench.page
+            && page.read(cx).topic() == Some(topic)
+        {
+            let page = page.clone();
+            page.update(cx, |page, cx| page.focus_entry(entry, window, cx));
+        }
+    }
+
     pub(super) fn open_late_answers(
         &mut self,
         scope: Owner,
@@ -2503,6 +2569,12 @@ impl Shell {
                 PageView::Record(page) => page.read(cx).question_context(window),
                 _ => None,
             },
+            folder: match &bench.page {
+                PageView::Record(page) => page.read(cx).focused_folder_commands(window),
+                _ => None,
+            },
+            attach: crate::attach_ui::target_tray(cx).is_some(),
+            attachment: crate::attach_ui::focused_file(window, cx).is_some(),
             on_contact: matches!(bench.page, PageView::Contact(_)),
             dictate: crate::voice::get(cx).is_some_and(|d| {
                 let d = d.read(cx);
@@ -2783,6 +2855,13 @@ impl Shell {
                 |page, window, cx| page.run_question(q, window, cx),
                 window,
             ),
+            Command::Folder(f) => self.with_record(
+                cx,
+                |page, window, cx| page.run_folder_command(f, window, cx),
+                window,
+            ),
+            Command::Attach => crate::attach_ui::attach_to_target(window, cx),
+            Command::AttachmentSave => crate::attach_ui::save_focused(window, cx),
             Command::ContactsOpen => self.navigate(Route::Contacts, true, window, cx),
             Command::ContactGo => self.pick_contact(window, cx),
             Command::ContactNew => self.open_palette(None, Some(CreateKind::Contact), window, cx),
@@ -2987,13 +3066,33 @@ impl Shell {
         let sub = cx.subscribe_in(
             &capture,
             window,
-            |shell, _, event: &CaptureEvent, window, cx| {
-                let CaptureEvent::Close(draft, tray) = event;
-                if let Some(bench) = shell.bench() {
-                    bench.capture_draft = draft.clone();
-                    bench.capture_tray = tray.clone();
+            |shell, _, event: &CaptureEvent, window, cx| match event {
+                CaptureEvent::Close(draft, tray) => {
+                    if let Some(bench) = shell.bench() {
+                        bench.capture_draft = draft.clone();
+                        bench.capture_tray = tray.clone();
+                    }
+                    shell.close_overlay(window, cx);
                 }
-                shell.close_overlay(window, cx);
+                // The note was refused for its contact: the capture comes
+                // back with the text and the files, unless another overlay
+                // took the screen meanwhile (the draft then waits).
+                CaptureEvent::Refused { body, name, tray } => {
+                    let Some(bench) = shell.bench() else { return };
+                    bench.capture_draft = body.clone();
+                    bench.capture_tray = Some(tray.clone());
+                    if bench.overlay.is_some() {
+                        return;
+                    }
+                    shell.open_capture(window, cx);
+                    let capture = shell.bench().and_then(|b| match &b.overlay {
+                        Some(Overlay::Capture(c)) => Some(c.clone()),
+                        _ => None,
+                    });
+                    if let Some(capture) = capture {
+                        capture.update(cx, |c, cx| c.refused(name, window, cx));
+                    }
+                }
             },
         );
         let Some(bench) = self.bench() else { return };
@@ -5186,18 +5285,29 @@ impl Shell {
 
     /// The palette and quick capture: 96 below the window top, centred,
     /// no scrim; dialogs draw their own scrim. Above every other layer (the
-    /// sidebar over the page, the toast, menus, a drag).
-    fn overlay_element(&mut self) -> Option<AnyElement> {
+    /// sidebar over the page, the toast, menus, a drag). Both are modal: a
+    /// transparent layer over the window takes every click outside them,
+    /// which closes them and reaches nothing behind (the user's report of
+    /// 2026-11-22: the app behind stayed clickable under the palette).
+    fn overlay_element(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let outside = cx.listener(|shell, _: &gpui_kit::MouseDownEvent, window, cx| {
+            shell.overlay_clicked_outside(window, cx)
+        });
         let bench = self.bench()?;
         let top = |child: AnyElement| {
             deferred(
                 div()
+                    .id("overlay-catcher")
                     .absolute()
-                    .top(px(96.))
+                    .top_0()
                     .left_0()
-                    .right_0()
+                    .size_full()
+                    .occlude()
+                    .on_any_mouse_down(outside)
+                    .pt(px(96.))
                     .flex()
                     .justify_center()
+                    .items_start()
                     .child(child),
             )
             .with_priority(OVERLAY_PRIORITY)
@@ -5216,6 +5326,31 @@ impl Shell {
                 .with_priority(OVERLAY_PRIORITY)
                 .into_any_element(),
         })
+    }
+
+    /// The palette is open: `Tab` never leaves it.
+    fn modal_overlay(&mut self) -> bool {
+        self.bench()
+            .is_some_and(|b| matches!(b.overlay, Some(Overlay::Palette(_))))
+    }
+
+    /// A click outside the palette or quick capture: it closes, as `Esc`
+    /// does (capture keeps its draft), and the click acts on nothing else.
+    fn overlay_clicked_outside(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        cx.stop_propagation();
+        let Some(bench) = self.bench() else { return };
+        match &bench.overlay {
+            Some(Overlay::Palette(_)) => {
+                bench.create_in = None;
+                bench.on_pick = None;
+                self.close_overlay(window, cx);
+            }
+            Some(Overlay::Capture(capture)) => {
+                let capture = capture.clone();
+                capture.update(cx, |c, cx| c.close(cx));
+            }
+            _ => {}
+        }
     }
 
     fn toast_element(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -5525,7 +5660,9 @@ fn seed_if_asked(store: &mut acta_core::Store) {
             || seed == "long"
             || seed == "due"
             || seed == "folders"
+            || seed == "folders-missing"
             || seed == "questions"
+            || seed == "people"
             || seed == "attachments")
         && let Some(dir) = crate::launch_dir()
         && let Err(err) = match seed.as_str() {
@@ -5534,9 +5671,9 @@ fn seed_if_asked(store: &mut acta_core::Store) {
             #[cfg(debug_assertions)]
             "due" => crate::dev_seed::due(store, &dir),
             #[cfg(debug_assertions)]
-            "folders" => crate::dev_seed::folders(store, &dir),
+            "folders" | "folders-missing" => crate::dev_seed::folders(store, &dir),
             #[cfg(debug_assertions)]
-            "questions" => crate::dev_seed::questions(store, &dir),
+            "questions" | "people" => crate::dev_seed::questions(store, &dir),
             #[cfg(debug_assertions)]
             "attachments" => crate::dev_seed::attachments(store, &dir),
             _ => crate::dev_seed::seed(store, &dir),
@@ -5816,7 +5953,7 @@ impl Render for Shell {
         }
         let dragging = matches!(&self.content, Content::Workbench(b) if b.ui.dragging());
         let status_bar = is_bench.then(|| self.status_bar(cx));
-        let overlay = self.overlay_element();
+        let overlay = self.overlay_element(cx);
 
         let frame = type_scale::UI
             .el()
@@ -5827,7 +5964,7 @@ impl Render for Shell {
             // 4.8.7: `Esc` cancels a drag before it means anything else,
             // whatever has focus.
             .capture_key_down(cx.listener(|s, e: &KeyDownEvent, w, cx| {
-                if e.keystroke.key == "escape" && s.cancel_drag(w, cx) {
+                if e.keystroke.key == "escape" && (s.cancel_drag(w, cx) || s.cancel_tree_drag(cx)) {
                     cx.stop_propagation();
                 }
             }))
@@ -5858,6 +5995,15 @@ impl Render for Shell {
             // Dictation (components-voice.md 5): push-to-talk ends on the
             // key's release, wherever the focus is.
             .capture_key_up(crate::voice::key_up)
+            .capture_key_down(crate::voice::any_key_down)
+            // One take, one undo step: the window sees an editor's undo
+            // and redo first (voice/group.rs).
+            .capture_action(|_: &gpui_kit::component::input::Undo, window, cx| {
+                crate::voice::undo_key(true, window, cx)
+            })
+            .capture_action(|_: &gpui_kit::component::input::Redo, window, cx| {
+                crate::voice::undo_key(false, window, cx)
+            })
             .on_action(
                 cx.listener(|s, _: &crate::voice::OpenVoiceSettings, w, cx| {
                     s.open_voice_settings(w, cx)
@@ -5889,8 +6035,17 @@ impl Render for Shell {
                 let focus = !s.terminal_focused(w, cx);
                 s.cycle_tab(false, focus, w, cx)
             }))
-            .on_action(|_: &FocusNext, window, cx| window.focus_next(cx))
-            .on_action(|_: &FocusPrevious, window, cx| window.focus_prev(cx))
+            // Focus stays in the palette while it is open (it is modal).
+            .on_action(cx.listener(|s, _: &FocusNext, window, cx| {
+                if !s.modal_overlay() {
+                    window.focus_next(cx)
+                }
+            }))
+            .on_action(cx.listener(|s, _: &FocusPrevious, window, cx| {
+                if !s.modal_overlay() {
+                    window.focus_prev(cx)
+                }
+            }))
             .on_action(cx.listener(|s, _: &OpenPalette, w, cx| s.open_palette(None, None, w, cx)))
             .on_action(cx.listener(|s, _: &GoToTopic, w, cx| {
                 s.open_palette(Some(Group::Topics), None, w, cx)

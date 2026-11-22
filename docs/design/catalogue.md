@@ -423,6 +423,8 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `contact.move.more` | +{n} more | +{n} autre · +{n} autres |
 | `contact.lifted` | {name} is now a contact of all projects, so {record} still sees them. | Contact étendu à tous les projets pour rester visible depuis {record} : {name}. |
 | `contact.lifted.project` | {name} is now a contact of project {project}, so {record} still sees them. | Contact étendu au projet {project} pour rester visible depuis {record} : {name}. |
+| `contact.lift_kept` | {name} stays a contact of all projects. | Le contact reste dans tous les projets : {name}. |
+| `contact.lift_kept.project` | {name} stays a contact of project {project}. | Le contact reste au niveau du projet {project} : {name}. |
 | `contacts.title` | Contacts | Contacts |
 | `contacts.count` | {n} contact · {n} contacts | {n} contact · {n} contacts |
 | `contacts.filter.project` | This project | Ce projet |
@@ -489,7 +491,10 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `folders.n_not_found` | {n} not found | {n} introuvable · {n} introuvables |
 | `folders.also_topic` | Also attached to topic {name}. | Également rattaché au sujet {name}. |
 | `folders.also_epic` | Also attached to epic {name}. | Également rattaché à l'epic {name}. |
-| `folders.also_more` | Also attached to topics {a}, {b} and {n} more. | Également rattaché aux sujets {a}, {b} et {n} autre. · Également rattaché aux sujets {a}, {b} et {n} autres. |
+| `folders.also_two` | Also attached to {a} and {b}. | Également rattaché à {a} et à {b}. |
+| `folders.also_more` | Also attached to {a}, {b} and {n} more. | Également rattaché à {a}, à {b} et à {n} autre. · Également rattaché à {a}, à {b} et à {n} autres. |
+| `folders.also_name.topic` | topic {name} | sujet {name} |
+| `folders.also_name.epic` | epic {name} | epic {name} |
 | `folders.also.tip` | A session started in this folder outside Acta opens on {level} and is told about both. | Une session lancée dans ce dossier hors d'Acta s'ouvre sur : {level}, et est informée des deux. |
 | `folders.show.w` | Show in Explorer (W) | Afficher dans l'Explorateur |
 | `folders.show.m` | Reveal in Finder (M) | Afficher dans le Finder |
@@ -1277,7 +1282,7 @@ From the clarity review of 2026-11-22 ([reviews/2026-11-22-clarity.md](reviews/2
 | `prop.add_report_to` | Report to | À rapporter à |
 | `meta.record` | {id} · Updated {when} by {author} | {id} · Modifié {when} par {author} |
 
-`{level}` in `folders.also.tip` is a `level.*` string ("Epic Terminal", « Epic Terminal »), which is why the French follows a colon. `prop.add_due` and `prop.add_report_to` label the hover-revealed add chips of an unset optional property (components-records.md 5, Properties block). `meta.record` is the one meta line under the properties block that replaces the Id and Updated rows; `{id}` is in `type.code`. `settings.setup.details` (the former text of `settings.setup.hint`) is the body behind "What setup changes", followed by `settings.plugin.hint`. The Settings rows Snapshots, Trash and Keyboard shortcuts take `settings.restore`, `common.open` and `common.open` as their buttons, so a label is never repeated on its own button.
+`{a}` and `{b}` in `folders.also_two` and `folders.also_more` are `folders.also_name.*` strings (each name carries its level word, "topic Scrollback"); `folders.also_two` is for exactly two other owners, `folders.also_more` for three or more (`{n}` is at least 1, plural on `{n}`); one other owner keeps `folders.also_topic` / `folders.also_epic` (review of `gpui-engineer/gaps`, 2026-11-22). `{level}` in `folders.also.tip` is a `level.*` string ("Epic Terminal", « Epic Terminal »), which is why the French follows a colon. `prop.add_due` and `prop.add_report_to` label the hover-revealed add chips of an unset optional property (components-records.md 5, Properties block). `meta.record` is the one meta line under the properties block that replaces the Id and Updated rows; `{id}` is in `type.code`. `settings.setup.details` (the former text of `settings.setup.hint`) is the body behind "What setup changes", followed by `settings.plugin.hint`. The Settings rows Snapshots, Trash and Keyboard shortcuts take `settings.restore`, `common.open` and `common.open` as their buttons, so a label is never repeated on its own button.
 
 ### 10.4.11 Keys of contacts and the profile
 
@@ -1287,7 +1292,7 @@ New with contacts (2026-11-22; components-contacts.md 5, data.md 11 requests 22 
 
 In French, *contact* is masculine ("ajouté", "supprimé", "fusionné"); a contact's name is user text and in French always follows a colon (10.3), so sentences put it last. `{level}` is `contact.level.all` or a `level.project` / `level.epic` string; `{record}` is a record title as written; `{places}` is a list of `contact.move.place`, joined by ", " as 10.3 licenses, at most three, then `contact.move.more`.
 
-`contact.lifted.project` replaces `contact.lifted` when the contact is lifted to a project rather than to all projects. `contact.meta_updated` replaces `contact.meta` once the contact changed after it was added. The `{field}` of `contact.move.place` is `prop.report_to` or `question.field.asked`. Agent-facing text (`ok C-12 Paul (P-1)`, `refused: no contact "Mari" here`, `User: Alexandre, Product designer`) is protocol, English only, and not in this catalogue (10).
+`contact.lifted.project` replaces `contact.lifted` when the contact is lifted to a project rather than to all projects. `contact.lift_kept` (and `.project`) is the toast when a tree drag that lifted a contact is undone: the topic goes back, the contact stays at its wider level (review of `gpui-engineer/gaps`, 2026-11-22). `contact.meta_updated` replaces `contact.meta` once the contact changed after it was added. The `{field}` of `contact.move.place` is `prop.report_to` or `question.field.asked`. Agent-facing text (`ok C-12 Paul (P-1)`, `refused: no contact "Mari" here`, `User: Alexandre, Product designer`) is protocol, English only, and not in this catalogue (10).
 
 ### 10.4.12 Keys of memory quality (ADR 0015)
 
@@ -1385,6 +1390,107 @@ New with memory quality (2026-11-22; components-knowledge.md 5, Memory quality; 
 | `cmd.kb_find_duplicates` | Find duplicate memories | Trouver les mémoires en double |
 
 Notes. *Mémoire* is feminine and *document* masculine, hence the `.document` / `.memory` pairs wherever a participle agrees; conflicts, duplicates and merges concern memories only, so their strings are written in the feminine ("Celle-ci la remplace", "Fusionnée dans"). *Remplacés et obsolètes* and *élément* agree with a mixed set of documents and memories (masculine plural, as `import.safe` already uses *éléments*). "Retired" is the English state word and "Mark as no longer true" the act that produces it; French uses *obsolète* for both, since a literal "retirée" collides with *Retirer* (remove a folder). "Still true" is *toujours valable* rather than *vraie* so that one form fits both kinds. `{id}` is a knowledge id (`K-4`) in `type.code` as the meta line shows it, never translated; `{title}` and `{reason}` are what Claude Code or the human wrote, as written; `{file}` is a file name (the last path segment) and `{branch}` a branch as git has it, both in `type.code`; `{folder}` a working folder's name; `{topic}` a topic id (`T-12`) with its title as the tooltip; `{date}` the absolute date and `{when}` the long form of 10.2; `{days}` is always 90 or more, so the singular form is not needed. The reason lines have no final full stop (they are tooltip and notice lines, one per reason); the notice messages that are sentences do. Agent-facing text (`?old 140d`, `?dup K-4`, `ok K-4 verified (rev 3)`, `K-9 superseded by K-21 on 11-20`) is protocol, English only, and not in this catalogue (10).
+
+### 10.4.13 Keys of zoom and section folds
+
+New with zoom and section folds (2026-11-22; layout.md 4.9, components-records.md 5 Section fold, screens.md 8.34 and 8.35). Pending: to be moved into 10.4 and `catalogue.rs` when they are implemented, `cmd.zoom*` and `cmd.sections_*` after `cmd.reading_width`, `settings.zoom*` after `settings.language.hint`, `zoom.*` beside the status bar's keys, `section.*` after `section.timeline`. `{value}`, `{applied}` and `{chosen}` are percents in the form of 10.2 ("150%", "150 %" with U+202F). `{section}` is the section's own label key (`section.timeline`, ...), in French between « » because it is a name inside a sentence.
+
+**Reused**, not duplicated: the folded Topics count is `table.count`; the stepper of the Zoom row is the Terminal text size row's.
+
+| Key | English | French |
+|---|---|---|
+| `cmd.zoom_in` | Zoom in | Zoom avant |
+| `cmd.zoom_out` | Zoom out | Zoom arrière |
+| `cmd.zoom_reset` | Reset zoom | Réinitialiser le zoom |
+| `cmd.zoom` | Zoom: {value} | Zoom : {value} |
+| `cmd.sections_collapse` | Collapse all sections | Replier toutes les sections |
+| `cmd.sections_expand` | Expand all sections | Déplier toutes les sections |
+| `settings.zoom` | Zoom | Zoom |
+| `settings.zoom.hint` | Everything in the window. | Tout le contenu de la fenêtre. |
+| `zoom.status` | Zoom {value} | Zoom {value} |
+| `zoom.status.tip` | Reset to 100% | Revenir à 100 % |
+| `zoom.limited` | You chose {chosen}. {applied} is the most this window can show. | Vous avez choisi {chosen}. Cette fenêtre ne peut pas afficher plus de {applied}. |
+| `section.fold` | Collapse {section} | Replier « {section} » |
+| `section.unfold` | Expand {section} | Déplier « {section} » |
+| `section.count.entries` | {n} entry · {n} entries | {n} entrée · {n} entrées |
+
+### 10.4.14 Keys of the trash's selection and purge
+
+New with the user's ruling of 2026-11-22 (components-app.md 5, Trash page; data.md 11, request 25; ADR 0006 amendment). Pending: to be moved into 10.4 and `catalogue.rs` with the `trash.*` family when implemented. Palette commands follow the toolbar: "Restore selected", "Delete selected permanently...", "Empty trash..." (on the trash page only).
+
+| Key | English | French |
+|---|---|---|
+| `trash.selected` | {n} selected | {n} sélectionné · {n} sélectionnés |
+| `trash.delete_selected` | Delete permanently... | Supprimer définitivement... |
+| `trash.empty_all` | Empty trash... | Vider la corbeille... |
+| `trash.restored_n` | {n} item restored. · {n} items restored. | {n} élément restauré. · {n} éléments restaurés. |
+| `trash.confirm_title` | Delete {n} item permanently? · Delete {n} items permanently? | Supprimer définitivement {n} élément ? · Supprimer définitivement {n} éléments ? |
+| `trash.confirm_empty_title` | Empty the trash? | Vider la corbeille ? |
+| `trash.confirm_body` | They are removed from Acta's database now and cannot be restored. Snapshots made before today still hold them until they are replaced. | Ils sont retirés dès maintenant de la base de données d'Acta et ne pourront pas être restaurés. Les sauvegardes faites avant aujourd'hui les conservent jusqu'à leur remplacement. |
+| `trash.confirm_project` | {n} project with {content} · {n} projects with {content} | {n} projet avec {content} · {n} projets avec {content} |
+| `trash.confirm_delete` | Delete permanently | Supprimer définitivement |
+| `trash.delete_failed` | Could not delete. The database is busy; try again. | Suppression impossible. La base de données est occupée ; réessayez. |
+| `trash.kept_tip` | Still named in Acta, so it cannot be deleted. | Encore cité dans Acta : il ne peut pas être supprimé. |
+| `cmd.trash_restore` | Restore selected | Restaurer la sélection |
+| `cmd.trash_delete` | Delete selected permanently... | Supprimer définitivement la sélection... |
+| `cmd.trash_empty` | Empty trash... | Vider la corbeille... |
+
+### 10.4.15 Keys of the agent browser's developer tools
+
+New with the user's request of 2026-11-22 (components-app.md 5, Agent browser). Pending: into 10.4 after the `browser.*` keys when implemented.
+
+| Key | English | French |
+|---|---|---|
+| `browser.devtools` | Open developer tools | Ouvrir les outils de développement |
+| `cmd.browser_devtools` | Agent browser: Open developer tools | Navigateur de l'agent : ouvrir les outils de développement |
+
+### 10.4.16 Keys of "who writes what"
+
+From the user's rule of 2026-11-22 (components-records.md 5, Who writes what; data.md 11, request 26). Pending until implemented.
+
+**Removed** from 10.4 when it lands: `state.placeholder`, `description.placeholder`, `question.placeholder`, `question.answer_placeholder`, `question.log_decision`, `question.save_answer`, `questions.new`, `cmd.question_new`, `kb.new_document`, `kb.new_memory`, and the palette commands for New document and New memory.
+
+| Key | English | French |
+|---|---|---|
+| `state.empty` | Claude Code writes where this stands as it works. | Claude Code indique ici où en est le travail, au fil de l'avancement. |
+| `file.as_question` | Question for {path} | Question pour {path} |
+| `file.as_answer` | Answer to {id} | Réponse à {id} |
+| `capture.answer_chip` | Answer to {id} | Réponse à {id} |
+| `inbox.answers` | answers {id} | répond à {id} |
+
+### 10.4.17 Keys of page-bound tools and Claude Code (no project)
+
+From the user's decisions of 2026-11-22 (layout.md 4.5.1, data.md 11 request 27). Pending until implemented. `{level}` is the `level.*` word ("Topic", "Epic", "Project"; in French « Sujet », « Epic », « Projet »), `{id}` the short id, `{title}` the record's title as written, `{folder}` a folder's name, `{n}` the instance number.
+
+**Replaced** when it lands: `cmd.restart_terminal` ("Restart terminal here") by `cmd.claude_restart`; the terminal header's "Restart here" by `tool.restart_in` alone.
+
+| Key | English | French |
+|---|---|---|
+| `tool.owner` | {level} {id} {title} | {level} {id} {title} |
+| `tool.claude_n` | Claude {n} | Claude {n} |
+| `tool.chat_n` | Chat {n} | Chat {n} |
+| `tool.browser_n` | Browser {n} | Navigateur {n} |
+| `tool.browser_for` | Browser for Claude {n} | Navigateur de Claude {n} |
+| `tool.driven_by` | driven by Claude {n} | piloté par Claude {n} |
+| `tool.claude_start` | Start Claude Code here | Démarrer Claude Code ici |
+| `tool.claude_new` | New Claude Code session here | Nouvelle session Claude Code ici |
+| `tool.claude_none` | No Claude Code on this {level_lower} | Pas de Claude Code sur ce {level_lower} · Pas de Claude Code sur cet {level_lower} |
+| `tool.claude_none_body` | Starts in {folder} with what this {level_lower} knows. | Démarre dans {folder} avec ce que sait ce {level_lower}. |
+| `tool.no_owner` | Claude Code belongs to a project, an epic or a topic. Open one to start it or see its sessions. | Claude Code appartient à un projet, un epic ou un sujet. Ouvrez-en un pour le démarrer ou voir ses sessions. |
+| `tool.chat_new` | New chat here | Nouveau chat ici |
+| `tool.browser_new` | New browser here | Nouveau navigateur ici |
+| `tool.restart_in` | Restart in {folder} | Redémarrer dans {folder} |
+| `tool.limit` | {n} is the most on one page. | {n} au maximum sur une même page. |
+| `tool.free` | Claude Code (no project) | Claude Code (sans projet) |
+| `tool.free_context` | In your home folder, without Acta's context | Dans votre dossier personnel, sans le contexte d'Acta |
+| `tool.free_title` | Claude Code without a project | Claude Code sans projet |
+| `tool.free_body` | For work that needs no project: it starts in your home folder and knows nothing about Acta. | Pour un travail sans projet : il démarre dans votre dossier personnel et ne sait rien d'Acta. |
+| `tool.free_start` | Start | Démarrer |
+| `tool.free_new` | New Claude Code (no project) | Nouveau Claude Code (sans projet) |
+| `cmd.claude_restart` | Restart Claude Code | Redémarrer Claude Code |
+| `chat.clear_all_body` | This deletes the cookies and site data of every chat from this computer. Your conversations stay in your Claude account. | Cela supprime de cet ordinateur les cookies et données de site de tous les chats. Vos conversations restent dans votre compte Claude. |
+
+`{level_lower}` is the level word in lower case ("topic", « sujet »); the French form picks "cet" before "epic" (« cet epic »). The commands "Start Claude Code here", "New chat here" and "New browser here" use the `tool.*` labels above as their palette text.
 
 ### 10.4.20 Keys of files and commits
 
@@ -1500,3 +1606,53 @@ The git letters M, A, U, D, R, C, ref names, hashes, paths, file names and git's
 | `cmd.viewer_rendered` | Show rendered | Afficher le rendu |
 | `cmd.diff_next_file` | Next changed file | Fichier modifié suivant |
 | `cmd.diff_prev_file` | Previous changed file | Fichier modifié précédent |
+
+### 10.4.21 Keys of Markdown rendering and the editor
+
+From the user's request of 2026-11-22 (components-editor.md 5). Pending until implemented; numbered high so that sections added meanwhile by other work keep their numbers. The heading and list commands reuse `slash.h1` to `slash.h3`, `slash.bullets`, `slash.numbers`, `slash.tasks` and `slash.quote` as their palette, bubble and context-menu labels; "Copied" is `common.copied`. `{mod}` is the `Ctrl` / `Cmd` key name of 6.1 (`KeyName::Mod`), `{host}` a host name, `{slug}` a heading anchor and `{item}` a task's text as written (at most 60 characters, then "…"), none of them translated. The alert words name GitHub's alert kinds and are translated like any label; what follows them is content and is not.
+
+| Key | English | French |
+|---|---|---|
+| `md.alert.note` | Note | Remarque |
+| `md.alert.tip` | Tip | Conseil |
+| `md.alert.important` | Important | Important |
+| `md.alert.warning` | Warning | Attention |
+| `md.alert.caution` | Caution | Prudence |
+| `md.copy_code` | Copy code | Copier le code |
+| `md.copy_plain` | Copy as plain text | Copier en texte brut |
+| `md.anchor_missing` | No heading “{slug}” on this page | Aucun titre « {slug} » sur cette page |
+| `md.open_link` | Open link | Ouvrir le lien |
+| `md.copy_link` | Copy link address | Copier l'adresse du lien |
+| `md.mod_click` | {mod}+click to open | {mod}+clic pour ouvrir |
+| `md.link_blocked` | Not opened: Acta opens only web and e-mail links. | Non ouvert : Acta n'ouvre que les liens web et e-mail. |
+| `md.link_mismatch` | This link goes to {host}, not to the address it shows. | Ce lien mène à {host}, pas à l'adresse qu'il affiche. |
+| `md.link_open_host` | Open {host} | Ouvrir {host} |
+| `md.image` | Image | Image |
+| `md.image_blocked` | Not shown: only files attached in Acta are displayed. | Non affichée : seuls les fichiers joints dans Acta sont affichés. |
+| `md.image_missing` | File {id} is not in this project. | Le fichier {id} n'est pas dans ce projet. |
+| `md.image_undecodable` | This file cannot be shown as an image. | Ce fichier ne peut pas être affiché comme image. |
+| `md.footnote_back` | Back to the text | Retour au texte |
+| `md.toggle_stale` | Not changed: Claude Code rewrote this list a moment ago. | Non modifié : Claude Code vient de réécrire cette liste. |
+| `md.link_placeholder` | Paste or type a link | Collez ou saisissez un lien |
+| `md.link_text` | Text | Texte |
+| `md.link_open` | Open | Ouvrir |
+| `md.link_remove` | Remove link | Retirer le lien |
+| `md.link_invalid` | Only web and e-mail links open from Acta. | Seuls les liens web et e-mail s'ouvrent depuis Acta. |
+| `md.paste_images_dropped` | Images in the pasted text were left out. Paste or drop them as files. | Les images du texte collé ont été laissées de côté. Collez-les ou déposez-les comme fichiers. |
+| `md.turn_into` | Turn into | Transformer en |
+| `md.cut` | Cut | Couper |
+| `md.copy` | Copy | Copier |
+| `md.paste` | Paste | Coller |
+| `slash.text` | Text | Texte |
+| `cmd.md_bold` | Bold | Gras |
+| `cmd.md_italic` | Italic | Italique |
+| `cmd.md_code` | Inline code | Code en ligne |
+| `cmd.md_strike` | Strikethrough | Barré |
+| `cmd.md_link` | Link... | Lien... |
+| `cmd.md_paste_plain` | Paste as plain text | Coller en texte brut |
+| `cmd.md_source_show` | Show Markdown source | Afficher la source Markdown |
+| `cmd.md_source_hide` | Show formatted text | Afficher le texte mis en forme |
+| `kb.rev_checked` | Checked “{item}” | « {item} » coché |
+| `kb.rev_unchecked` | Unchecked “{item}” | « {item} » décoché |
+
+The palette lists the `cmd.md_*` commands, the heading and list commands and Quote only while a Markdown editor has focus, each with its key from components-editor.md 5. In French the alert word Attention is the usual rendering of GitHub's "Warning" and Prudence of "Caution"; `md.image_blocked` agrees with *image* (feminine).

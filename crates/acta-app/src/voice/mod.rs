@@ -18,6 +18,7 @@
 pub mod capture;
 #[cfg(debug_assertions)]
 pub mod dev;
+pub mod group;
 pub mod machine;
 #[cfg(target_os = "macos")]
 pub mod macos;
@@ -42,8 +43,8 @@ use acta_core::voice::take::{Controller, EditorId, Editors, Output, StopReason, 
 use acta_core::voice::worker::WorkerClient;
 use gpui_kit::component::input::{InputEditsEvent, InputEvent, TextareaState};
 use gpui_kit::{
-    AnyWindowHandle, App, AppContext as _, Context, Entity, Focusable as _, Global, KeyUpEvent,
-    KeystrokeEvent, Subscription, Task, WeakEntity, Window, actions,
+    AnyWindowHandle, App, AppContext as _, Context, Entity, Focusable as _, Global, KeyDownEvent,
+    KeyUpEvent, KeystrokeEvent, Subscription, Task, WeakEntity, Window, actions,
 };
 
 use self::capture::{CaptureError, Device};
@@ -200,6 +201,21 @@ pub fn init(cx: &mut App) {
             d.update(cx, |d, cx| d.request_stop(StopReason::Asked, cx));
         }
     });
+}
+
+/// The window's listener for keys, before any element: a key other than
+/// undo or redo ends the focused editor's take group ([`group`]).
+pub fn any_key_down(event: &KeyDownEvent, window: &mut Window, cx: &mut App) {
+    if let Some(d) = get(cx) {
+        d.update(cx, |d, cx| d.key_in_editor(event, window, cx));
+    }
+}
+
+/// The window's listener for an editor's undo and redo ([`group`]).
+pub fn undo_key(undo: bool, window: &mut Window, cx: &mut App) {
+    if let Some(d) = get(cx) {
+        d.update(cx, |d, cx| d.undo_key(undo, window, cx));
+    }
 }
 
 pub fn get(cx: &App) -> Option<Entity<Dictation>> {
@@ -372,6 +388,14 @@ pub struct Dictation {
     gesture_editor: Option<EditorId>,
     /// `Mod+Enter` stopped this editor's take: it saves once written.
     save_after: Option<EditorId>,
+    /// Each editor's last take, so `Mod+Z` takes it back as one step
+    /// ([`group`]); and the undo and redo steps sent to an editor that the
+    /// window's listener lets through.
+    groups: HashMap<EditorId, group::TakeGroup>,
+    passing: (usize, usize),
+    /// The editor an undo or redo key acted on since its last other key:
+    /// the edits that follow are that undo's, not the person's.
+    replaying: Option<EditorId>,
     last_focused: Option<EditorId>,
     level: f32,
     pub machine: Option<Machine>,
@@ -419,6 +443,9 @@ impl Dictation {
             gestures: Gestures::default(),
             gesture_editor: None,
             save_after: None,
+            groups: HashMap::new(),
+            passing: (0, 0),
+            replaying: None,
             last_focused: None,
             level: acta_core::voice::level::FLOOR_DBFS,
             machine: None,
@@ -598,6 +625,81 @@ impl Dictation {
 
     /// The editor "Dictate" acts on: the focused one, else the last one
     /// focused that is still open.
+    /// `Mod+Z` (`undo`) or `Mod+Shift+Z` in the editor with the focus,
+    /// seen by the window before the editor: when it holds exactly what
+    /// its last take left (or, for redo, what was there before it), the
+    /// take's other phrases are undone or redone with it, as one step.
+    /// The steps sent here pass through.
+    pub fn undo_key(&mut self, undo: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let passing = if undo {
+            &mut self.passing.0
+        } else {
+            &mut self.passing.1
+        };
+        if *passing > 0 {
+            *passing -= 1;
+            return;
+        }
+        let Some(editor) = self.focused_editor(window, cx) else {
+            return;
+        };
+        self.replaying = Some(editor);
+        let Some(state) = self.editors.get(&editor).and_then(|s| s.state.upgrade()) else {
+            return;
+        };
+        let value = state.read(cx).value().to_string();
+        let Some(g) = self.groups.get_mut(&editor) else {
+            return;
+        };
+        let more = if undo { g.undo(&value) } else { g.redo(&value) };
+        if more == 0 {
+            return;
+        }
+        if undo {
+            self.passing.0 += more;
+        } else {
+            self.passing.1 += more;
+        }
+        let handle = state.read(cx).focus_handle(cx).clone();
+        for _ in 0..more {
+            let handle = handle.clone();
+            window.defer(cx, move |window, cx| {
+                if undo {
+                    handle.dispatch_action(&gpui_kit::component::input::Undo, window, cx);
+                } else {
+                    handle.dispatch_action(&gpui_kit::component::input::Redo, window, cx);
+                }
+            });
+        }
+    }
+
+    /// A key pressed in the editor with the focus: any but undo, redo or
+    /// a modifier alone ends that editor's take group.
+    pub fn key_in_editor(&mut self, event: &KeyDownEvent, window: &Window, cx: &App) {
+        let k = &event.keystroke;
+        let macos = cfg!(target_os = "macos");
+        let secondary = if macos {
+            k.modifiers.platform
+        } else {
+            k.modifiers.control
+        };
+        if group::keeps_group(&k.key, secondary, k.modifiers.shift, macos) {
+            return;
+        }
+        self.replaying = None;
+        if let Some(editor) = self.focused_editor(window, cx)
+            && let Some(g) = self.groups.get_mut(&editor)
+        {
+            g.end();
+        }
+    }
+
+    /// The editor of [`Dictation::target`].
+    pub fn target_editor(&self) -> Option<Entity<TextareaState>> {
+        let id = self.target()?;
+        self.editors.get(&id)?.state.upgrade()
+    }
+
     pub fn target(&self) -> Option<EditorId> {
         self.last_focused.filter(|id| {
             self.editors
@@ -1120,6 +1222,10 @@ impl Dictation {
             return;
         };
         controller.start(editor, caret, lang);
+        if let Some(state) = self.editors.get(&editor).and_then(|s| s.state.upgrade()) {
+            let value = state.read(cx).value().to_string();
+            self.groups.insert(editor, group::TakeGroup::start(&value));
+        }
         let (tx, events) = mpsc::channel();
         let handle = self.open_capture(tx);
         crate::log::line("voice: take started");
@@ -1230,6 +1336,20 @@ impl Dictation {
             if removed == 0 && slot.own.front() == Some(&(at, inserted)) {
                 slot.own.pop_front();
                 continue;
+            }
+            // Typing while the take writes: its phrases are no longer the
+            // newest steps, back to back. Any other edit after it, but an
+            // undo's or a redo's, ends the group.
+            let running = self
+                .controller
+                .as_ref()
+                .is_some_and(|c| c.state(editor) != TakeState::Idle);
+            if let Some(g) = self.groups.get_mut(&editor) {
+                if running {
+                    g.typed();
+                } else if self.replaying != Some(editor) {
+                    g.end();
+                }
             }
             if let Some(c) = &mut self.controller {
                 c.edited(editor, at, removed, inserted);
@@ -1453,6 +1573,10 @@ impl Dictation {
                     let _ = slot.window.update(cx, |_, window, cx| {
                         state.update(cx, |s, cx| apply(s, &insertion, window, cx));
                     });
+                    let value = state.read(cx).value().to_string();
+                    if let Some(g) = self.groups.get_mut(&editor) {
+                        g.phrase(&value);
+                    }
                 }
                 Output::Done { editor, .. } => {
                     if self.save_after == Some(editor) {
