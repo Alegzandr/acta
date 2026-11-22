@@ -166,6 +166,11 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: scripts/ci/windows-libclang.ps1
+      # The Silero VAD every package ships (ADR 0014, 4), before the build: build.rs
+      # checks it against its pin, and the packaging scripts copy it beside the app.
+      # Small (885 KB) and pinned by SHA-256, so it is fetched on every build, never cached.
+      - name: Silero VAD
+        run: scripts/vad.sh --fetch
       # whisper.cpp is built with CMake (ADR 0014). For the Intel build on the Apple
       # silicon runner, CMake must target x86_64: whisper-rs-sys hands CMAKE_*
       # variables to CMake, and ggml then picks its x86 code paths. The cmake crate
