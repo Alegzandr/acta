@@ -722,7 +722,7 @@ Answering the first question (`A`):
          8  [x] Also log it as a decision       [Cancel] [Save answer]
 ```
 
-The "3 closed" row unfolded, and the composer open (`Q`), with the contact picker (8.29):
+The "3 closed" row unfolded, and the composer open (`Q`), with the contact picker (8.29). Superseded on 2026-11-22: the composer is gone (components-records.md 5, Who writes what); the same fields are the editor of an existing question (`E`):
 
 ```
         v 3 closed
@@ -1026,7 +1026,7 @@ Annotations: no accent and no red anywhere in dictation; the stop square, the pr
 
 Annotations: "This project" lists what the active project sees: all projects, the project, its epics. Rows are 32: name `type.ui` `text.primary`, details `type.small` `text.tertiary` (truncated first), the open count at the right, absent at 0. Paul was created by Claude Code and not yet shown here: the unread dot. Group headers are links to the level's page; a `plus` on hover adds a contact in that group. `M` on a row moves it (the palette lists levels; a narrower level where it is named outside reads "Used outside" and refuses with the list of places). `[u]` is `users`, the pinned row that exists only once a contact does.
 
-### 8.29 Contact picker (Asked, in the question composer of a topic in epic Terminal)
+### 8.29 Contact picker (Asked, in the question editor of a topic in epic Terminal)
 
 Typing "mar":
 

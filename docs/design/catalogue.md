@@ -1438,3 +1438,17 @@ New with the user's request of 2026-11-22 (components-app.md 5, Agent browser). 
 |---|---|---|
 | `browser.devtools` | Open developer tools | Ouvrir les outils de développement |
 | `cmd.browser_devtools` | Agent browser: Open developer tools | Navigateur de l'agent : ouvrir les outils de développement |
+
+### 10.4.16 Keys of "who writes what"
+
+From the user's rule of 2026-11-22 (components-records.md 5, Who writes what; data.md 11, request 26). Pending until implemented.
+
+**Removed** from 10.4 when it lands: `state.placeholder`, `description.placeholder`, `question.placeholder`, `question.answer_placeholder`, `question.log_decision`, `question.save_answer`, `questions.new`, `cmd.question_new`, `kb.new_document`, `kb.new_memory`, and the palette commands for New document and New memory.
+
+| Key | English | French |
+|---|---|---|
+| `state.empty` | Claude Code writes where this stands as it works. | Claude Code indique ici où en est le travail, au fil de l'avancement. |
+| `file.as_question` | Question for {path} | Question pour {path} |
+| `file.as_answer` | Answer to {id} | Réponse à {id} |
+| `capture.answer_chip` | Answer to {id} | Réponse à {id} |
+| `inbox.answers` | answers {id} | répond à {id} |
