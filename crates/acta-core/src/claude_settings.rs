@@ -543,7 +543,7 @@ pub fn apply(store: &mut Store, folder: &Path, wanted: Wanted) -> Result<Outcome
 }
 
 /// Refuses a `.claude` directory or settings file that is a link (symbolic
-/// link, junction or other reparse point), or that resolves outside the
+/// link or junction), or that resolves outside the
 /// folder: a tracked `.claude -> ../other/.claude` would otherwise get
 /// commit rules written into another repository.
 fn no_links(folder: &Path) -> Result<(), String> {
@@ -572,15 +572,10 @@ fn no_links(folder: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// A symbolic link, or on Windows a junction (Rust reports both). Other
+/// reparse points (OneDrive placeholders, deduplicated files) are plain
+/// files; where they lead is judged by the containment check.
 fn is_link(m: &fs::Metadata) -> bool {
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        // FILE_ATTRIBUTE_REPARSE_POINT: links, junctions and the like.
-        if m.file_attributes() & 0x400 != 0 {
-            return true;
-        }
-    }
     m.file_type().is_symlink()
 }
 
