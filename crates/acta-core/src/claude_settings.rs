@@ -519,6 +519,75 @@ pub fn apply(store: &mut Store, folder: &Path, wanted: Wanted) -> Result<Outcome
     Ok(outcome)
 }
 
+/// What Acta recorded adding to a folder's file: its top-level keys and
+/// `env` variables, so the folder form can tell the user's own from Acta's.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Recorded {
+    pub keys: Vec<String>,
+    pub env: Vec<String>,
+}
+
+/// The ledger's entries of a folder (stored path).
+pub fn recorded(store: &Store, folder: &Path) -> crate::Result<Recorded> {
+    let ledger = read_ledger(store, folder)?.unwrap_or_default();
+    Ok(Recorded {
+        keys: ledger.keys,
+        env: ledger.env,
+    })
+}
+
+/// What the folder form says about the settings file
+/// (components-folders.md 5, Folder settings).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FileState {
+    /// Tracked by git: Acta does not write it.
+    pub tracked: bool,
+    /// An `attribution` of the user's own is in the file.
+    pub user_attribution: bool,
+    /// A sign-in variable of the user's own is in the file's `env`.
+    pub user_env: bool,
+    /// macOS and Linux: the repository root's local file sets
+    /// `attribution`, and Claude Code takes that one.
+    pub root_attribution: bool,
+}
+
+/// Reads the files (and `git ls-files`): call it off the UI thread and
+/// without holding the store.
+pub fn file_state(folder: &Path, recorded: &Recorded) -> FileState {
+    let read = |p: &Path| {
+        fs::read_to_string(p)
+            .ok()
+            .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+    };
+    let mine = read(&folder.join(LOCAL_SETTINGS));
+    let user_attribution = mine
+        .as_ref()
+        .is_some_and(|v| v.get(ATTRIBUTION_KEY).is_some())
+        && !recorded.keys.iter().any(|k| k == ATTRIBUTION_KEY);
+    let user_env = mine
+        .as_ref()
+        .and_then(|v| v.get("env"))
+        .and_then(Value::as_object)
+        .is_some_and(|env| {
+            PUSH_ENV
+                .iter()
+                .any(|(n, _)| env.contains_key(*n) && !recorded.env.iter().any(|e| e == n))
+        });
+    let root_attribution = !cfg!(windows)
+        && git::inspect(folder).is_some_and(|g| {
+            let canon = |p: &Path| fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+            canon(&g.root) != canon(folder)
+                && read(&g.root.join(LOCAL_SETTINGS))
+                    .is_some_and(|v| v.get(ATTRIBUTION_KEY).is_some())
+        });
+    FileState {
+        tracked: tracked(folder).unwrap_or(false),
+        user_attribution,
+        user_env,
+        root_attribution,
+    }
+}
+
 /// Whether the settings file is tracked by git. Outside a repository, or
 /// where git sees none or is not installed, nothing can be tracked; any
 /// other failure to answer writes nothing.

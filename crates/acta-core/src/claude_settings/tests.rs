@@ -576,3 +576,30 @@ fn the_exclude_line_uses_canonical_paths() {
         "{exclude}"
     );
 }
+
+#[test]
+fn the_form_tells_the_users_own_entries_and_a_tracked_file() {
+    let mut t = open();
+    let tmp = tempfile::tempdir().unwrap();
+    let r = tmp.path().join("acta");
+    repo(&r);
+    let s = &mut t.store;
+    let state = |s: &Store| file_state(&r, &recorded(s, &r).unwrap());
+    assert_eq!(state(s), FileState::default());
+    // Acta's own attribution and variables are not the user's.
+    apply(s, &r, mode(CommitMode::Push, true)).unwrap();
+    assert_eq!(state(s), FileState::default());
+    // The user's own, in a file Acta did not write.
+    let user = tmp.path().join("user");
+    repo(&user);
+    fs::create_dir_all(user.join(".claude")).unwrap();
+    fs::write(
+        user.join(LOCAL_SETTINGS),
+        r#"{"attribution": {"commit": "Alexandre"}, "env": {"GIT_TERMINAL_PROMPT": "1"}}"#,
+    )
+    .unwrap();
+    let st = file_state(&user, &recorded(s, &user).unwrap());
+    assert!(st.user_attribution && st.user_env && !st.tracked);
+    git(&user, &["add", "-f", LOCAL_SETTINGS]);
+    assert!(file_state(&user, &recorded(s, &user).unwrap()).tracked);
+}
