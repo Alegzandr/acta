@@ -466,7 +466,7 @@ Annotations: icons are the folders' own: `[g]` `git-branch` (automatic, a worktr
 +----------------------+-------------------------------------------------------------------------+
 ```
 
-Annotations: Settings is a page in the active tab; its sidebar row is selected. Sections in `type.subtitle`, setting rows of at least 44 with the description under the label and the control at the right. The fourth check is missing, so "Set up Claude Code" is the primary button. The Working folders, Chat and About sections follow below the fold. Nothing here has a Save button.
+Annotations: Settings is a page in the active tab; its sidebar row is selected. Sections in `type.subtitle`, setting rows of at least 44 with the description under the label and the control at the right. The fourth check is missing, so "Set up Claude Code" is the primary button. Since ADR 0013 the "Ready for Claude Code" block of 8.26 heads the section, and its Claude Code row replaces "Claude Code found". The Working folders, Chat and About sections follow below the fold. Nothing here has a Save button.
 
 ### 8.13 Chat panel states
 
@@ -859,3 +859,62 @@ The viewer, on the second of two images of the note:
 ```
 
 Annotations: `[f]` is `file-text`, `[@]` `paperclip`, `(i)` `info`. Images come before other files; names are cut in the middle so the extension stays. The quick capture's third file shows "Adding… 40%" because it has taken over 400 ms; the note can be saved meanwhile. A file over 25 MB would instead leave the line "trace.zip is 48 MB; the limit is 25 MB per file." in `danger` with `triangle-alert`. PDFs offer Save as (and, once ADR 0012 accepts it, Open in another app); the viewer is for images and text-like files only. Made into a topic, the note's files go to the topic's description; the filed card then lists them in `text.secondary` under "Moved to T-51".
+
+### 8.26 Ready for Claude Code (Settings, Windows)
+
+```
+|        Claude Code                                               <- type.subtitle             |
+|    8   Ready for Claude Code                                     <- type.label                |
+|        What Claude Code uses on this computer. Acta installs nothing without your click,      |
+|        and only from the publisher or your system's package manager.   <- small, tertiary     |
+|    8   (v) Claude Code                                      2.1.330                           | 44
+|            Runs in Acta's terminal and does the work. Required.                               |
+|        (o) Signed in to Claude                        Not signed in       [Sign in...]        | 44 primary
+|            Claude Code needs your Claude subscription. You sign in once, in Acta's terminal.  |
+|        (o) Git                                        Not installed       [Install...]        | 44 ghost
+|            Commits and branches, and Git Bash, the shell Claude Code prefers on Windows.      |
+|            Recommended.                                                                       |
+|        (!) GitHub CLI                                 Install failed   Retry  Show log        | 44
+|            Lets Claude Code open pull requests and read issues on GitHub. Optional.           |
+|            The installer stopped with code 1.                         <- small, secondary     |
+|            +--------------------------------------------------------------------------+      |
+|            | Found GitHub CLI [GitHub.cli] Version 2.105.0                            |      | type.code
+|            | Downloading https://github.com/cli/cli/releases/download/v2.105.0/...    |      | max 200
+|            | ...                                                                      |      |
+|            +--------------------------------------------------------------------------+      |
+|            Copy log   Hide log                                                                |
+|        Check again                                                                            |
+|    16  (v) Plugin files written                                     Done                      |
+|        ...                                                                                    |
+|        [Set up Claude Code]  Remove from Claude Code                 <- secondary while a     |
+|                                                                         required row waits    |
+```
+
+```
++------------------------------------------------+
+|  Install Git?                                  |  type.heading
+|                                                |
+|  Acta runs Windows Package Manager (winget),   |  type.reading
+|  which downloads Git for Windows from its      |
+|  publisher and checks it against the hash in   |
+|  winget's catalogue.                           |
+|  For you only. Windows may still ask for       |
+|  permission.                                   |
+|  Updates come from winget, not from Acta.      |
+|                                                |
+|  Command                                       |  type.label
+|  +------------------------------------------+  |
+|  | winget install --id Git.Git -e --source  |  |  type.code, wraps
+|  | winget --scope user                      |  |
+|  | --accept-package-agreements              |  |
+|  | --accept-source-agreements               |  |
+|  | --disable-interactivity                  |  |
+|  +------------------------------------------+  |
+|  Copy command                                  |  ghost
+|                                                |
+|                       [Cancel]   [Install]     |  Cancel focused
++------------------------------------------------+
+  width 440
+```
+
+Annotations: `(v)` is `check` in `success`, `(o)` `circle-dashed` in `text.tertiary`, `(!)` `triangle-alert` (`danger` when failed, `warning` when outdated). Signed in is the first required row not ready, so its button is the primary and "Set up Claude Code" is secondary until it is. The GitHub CLI row shows because an attached folder has a `github.com` remote. On first run (8.5) the same block, without GitHub CLI and without "Check again", sits above "Start with a project" while a required or recommended row is not ready; once all are ready it is gone. On Linux, "Install..." on Git ends in "Open in terminal": the command (`sudo apt-get install git`) starts in a new session of Acta's terminal and the row reads "Finish in the terminal" with "Show terminal".
