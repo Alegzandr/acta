@@ -8,9 +8,14 @@
 //! `index.lock`), `GIT_TERMINAL_PROMPT=0` and `GCM_INTERACTIVE=never` (a
 //! sign-in fails instead of waiting), `core.fsmonitor` off (a repository's
 //! config could name a command to run on every status or `ls-files`),
-//! messages in the C locale so the error
-//! kinds can be told apart, and none of the `GIT_DIR`-style variables of a
-//! surrounding git process. Nothing here stashes, forces or edits config.
+//! messages in the C locale so the error kinds can be told apart, and none
+//! of the `GIT_DIR`-style variables of a surrounding git process. Nothing
+//! here stashes, forces or edits config.
+//!
+//! Not covered: a repository's `filter.<driver>.clean` or `.process` (named
+//! in `.gitattributes`) can still run when `status` looks at a changed
+//! file. No single switch turns every filter off; the user's own git runs
+//! them the same way in that repository.
 
 use crate::process::{Bounded, output_within};
 use std::path::Path;
