@@ -5,141 +5,110 @@
 <h1 align="center">Acta</h1>
 
 <p align="center">
-  A local-first desktop workbench for long projects: a tracker for you, and a structured,
-  scoped memory for Claude Code.
-  Written in Rust with GPUI, for Windows, macOS and Linux.
+  <strong>The project tracker you and Claude Code share.</strong><br>
+  You see where the work stands; Claude Code starts every session already knowing it.
 </p>
 
 <p align="center">
-  <a href="https://github.com/Alegzandr/acta/releases/latest">Latest release</a> ·
+  <a href="https://github.com/Alegzandr/acta/releases/latest">Download</a> ·
+  <a href="#get-started">Get started</a> ·
   <a href="docs/install.md">Install guide</a> ·
-  <a href="PLAN.md">Roadmap</a> ·
   <a href="LICENSE">MIT licence</a>
 </p>
 
-> **Alpha.** Acta is usable day to day and tracks its own development. Expect rough
-> edges; your data stays in one encrypted file on your machine. Progress is in
-> [PLAN.md](PLAN.md).
+## Why
 
-## What it does
+Claude Code starts each session from zero. You explain the context again, decisions get
+lost in old conversations, and the `CLAUDE.md` file keeps growing until nobody reads it.
 
-- **Track the work.** Projects, epics and topics in a tree. Each page has a status, an
-  optional due date, a current state, open questions and a timeline written by Claude
-  Code. A calm Overview shows only what needs you: blocked, overdue, idle, unanswered.
-- **Give Claude Code a scoped memory.** An MCP server, a CLI and hooks brief each session
-  on the topic it works on and let it read and write that topic, its epic and project, in
-  compact answers that do not flood its context.
-- **Keep a knowledge base you can read.** Documents and the agent's durable memories,
-  filed on projects, epics and topics, visible and editable by you.
-- **Know who is who.** Contacts (with levels: all projects, a project or an epic) for the
-  people you ask questions or report back to; your own profile.
-- **Run Claude Code beside the page.** An integrated terminal opens Claude Code in the
-  page's active folder, resumes that page's conversation, and shows which session works
-  where. Your plan usage stays visible in the status bar.
-- **Work in your repositories.** Several named folders per page, inherited from above,
-  with branch state, Pull and branch switching, and per-folder commit modes (manual,
-  commit, commit and push), guarded so Claude Code never skips hooks or force-pushes.
-- **Notes, files and voice.** A notes inbox Claude Code can triage; files attached to notes
-  and entries, encrypted in the database; dictation with a local Whisper model you choose
-  to download.
-- **Ready for Claude Code.** Acta checks Claude Code, your sign-in, Git and the GitHub CLI,
-  and installs what is missing with one confirmed click.
-- **Embedded tools.** A claude.ai chat panel and a browser Claude Code can drive, both with
-  their own profile (Windows).
-- **Stay on your machine.** One encrypted local database, its key in the system keychain.
-  No Acta account, no Acta server, no telemetry.
-- **Work from the keyboard.** One command palette reaches everything; every view can be
-  moved, hidden and restored, VS Code style.
+Acta keeps the work in one place, split into small topics, that both of you use:
 
-## Status
+- **You** get a tracker: projects, epics and topics, each with a status, a short
+  "where we are", and a timeline of what was done and decided.
+- **Claude Code** gets that same tracker as its memory. When a session starts, it is
+  briefed on the topic it works on, only that topic, in a few lines. As it works, it
+  logs progress and decisions and saves what it must remember.
 
-Released versions are on the [releases page](https://github.com/Alegzandr/acta/releases).
-Milestones M0 to M8 are done or in hands-on QA; the features added since (folder sets,
-due dates, questions and contacts, attachments, dictation, Ready for Claude Code, memory
-quality) are tracked in [PLAN.md](PLAN.md). Self-update is proven end to end on Windows,
-macOS and Linux for every release.
+The next session picks up where the last one stopped, and you can read, correct or
+delete anything Claude Code remembers.
 
-## Install
+What Claude Code sees at the start of a session (an example):
 
-Windows 10/11 (PowerShell):
+```
+Acta briefing (project tracker and memory; see the acta:using-acta skill).
+T-12 Resume interrupted downloads · active
+State (11-21, claude): Range requests work and are tested. Next: retry with backoff.
+#4 11-21 decision human  Keep the partial file next to the target, never in temp
+#3 11-20 progress claude  Resume tested against a local server: cut, wrong hash, redirect
+```
+
+## Get started
+
+You need a Claude subscription to use Claude Code. Acta installs anything else
+that is missing (Claude Code itself, Git), but only after you confirm.
+
+**1. Install.** Per user, no administrator rights; Acta opens when it is done.
+
+Windows 10 or 11, in PowerShell:
 
 ```powershell
 irm https://github.com/Alegzandr/acta/releases/latest/download/install.ps1 | iex
 ```
 
-macOS and Linux:
+macOS (Apple silicon or Intel) and Linux (x86_64, glibc 2.35+):
 
 ```sh
 curl -fsSL https://github.com/Alegzandr/acta/releases/latest/download/install.sh | sh
 ```
 
-| System | Architecture | Installs to |
-|---|---|---|
-| Windows 10, 11 | x64 | `%LocalAppData%\Acta` |
-| macOS | Apple silicon, Intel | `~/Applications/Acta.app` |
-| Linux (glibc 2.35+) | x86_64 | `~/.local/share/acta/Acta.AppImage` |
+**2. Choose a folder.** Pick the repository you work on: it becomes your first project.
 
-Per user, no administrator rights; Acta starts when the install finishes. Builds are not
-signed: the project has no budget for certificates. The install scripts are meant to
-avoid most warnings. A file downloaded with a browser is expected to trigger SmartScreen
-on Windows (**More info**, then **Run anyway**) and Gatekeeper on macOS (**System
-Settings > Privacy & Security > Open Anyway**); these warnings are described from the
-vendors' documentation, not yet from our own tests
-([what has been verified](docs/install.md#what-has-been-verified)). Checksums,
-provenance and uninstalling are in the [install guide](docs/install.md).
+**3. Set up Claude Code.** Click **Set up Claude Code** (in Settings > Claude Code), or
+run `acta setup` in a terminal. This adds Acta to Claude Code, for you only; `acta setup
+--remove` undoes it.
 
-## Updates
+**4. Work as usual.** Start Claude Code in Acta's terminal (`` Ctrl+` ``) or in your own
+terminal, in that folder. Ask it to work on something; Acta fills itself in as it goes.
 
-By design, Acta checks GitHub Releases each time it starts. When a newer version exists
-it downloads it, only the difference when it can, applies it and restarts before the
-window opens, without asking and without administrator rights. The check is limited to a
-few seconds; if it is slow or fails, Acta opens normally and updates at a later start.
-Updating uses [Velopack](https://velopack.io).
+Acta updates itself when it starts. Builds are not signed (the project has no budget
+for certificates); the commands above avoid most warnings, and the
+[install guide](docs/install.md) covers browser downloads, checksums and uninstalling.
 
-Each release is checked by an end-to-end update test on Windows, macOS and Linux.
+## Also in Acta
 
-## Build from source
+- **Notes inbox.** Jot things down (`Ctrl+N`); Claude Code turns them into topics.
+- **Knowledge base.** Documents and memories on each project, epic or topic, that
+  Claude Code reads only when they matter.
+- **Your repositories.** Folders per page, with branch state and the commit mode you
+  allow Claude Code (manual, commit, or commit and push).
+- **Questions and contacts.** Track what you asked of whom, and who you report to.
+- **Files and voice.** Attach files to notes; dictate with a local Whisper model.
+- **Keyboard first.** One command palette (`Ctrl+K`) reaches everything.
 
-Install Rust with [rustup](https://rustup.rs); the toolchain is pinned in
-`rust-toolchain.toml` and installed on first use.
+On macOS, `Cmd` replaces `Ctrl`, except for the terminal's `` Ctrl+` ``.
 
-- **Windows:** Visual Studio Build Tools with the Windows SDK, and LLVM (libclang, for
-  the Whisper bindings; set `LIBCLANG_PATH` if it is not in `C:\Program Files\LLVM\bin`).
-  The encrypted storage builds a vendored OpenSSL, which needs a native Perl such as
-  [Strawberry Perl](https://strawberryperl.com); Git's Perl does not work. Point
-  `OPENSSL_SRC_PERL` at its `perl.exe` if it is not first on your PATH. Dictation's
-  Vulkan backend needs the [Vulkan SDK](https://vulkan.lunarg.com/sdk/home) (free; set
-  `VULKAN_SDK`, which its installer does). Keep the target directory on a short path:
-  the shader generator's nested CMake build fails beyond 260 characters.
-- **macOS:** Xcode command line tools and CMake.
-- **Linux:** the packages listed in `scripts/ci/linux-deps.sh` (Ubuntu names), and the
-  Vulkan SDK's headers and `glslc`: `scripts/ci/vulkan-sdk.sh <folder>` fetches them,
-  then set `VULKAN_SDK` to that folder (a distribution's `glslc` package works too).
+## Your data stays yours
 
-```sh
-cargo run -p acta-app
-```
+Everything is in one encrypted file on your computer. The key is in Windows Credential
+Manager or the Linux Secret Service; on macOS it is a private file beside the data,
+because unsigned builds would otherwise ask for your password after every update
+([why](docs/decisions/0003-storage.md)). No account, no Acta server, no telemetry.
+Export to an open JSON format at any time.
 
-`cargo build --release --locked` produces `target/release/Acta` (the app) and
-`target/release/acta-cli` (the command line, installed as `acta`). Packaging is
-described in [docs/releasing.md](docs/releasing.md).
+## Status
 
-## Project docs
-
-- [PLAN.md](PLAN.md): milestones and what is done.
-- [DESIGN.md](DESIGN.md): the design system every screen follows.
-- [docs/decisions/](docs/decisions/): architecture decision records.
-- [docs/releasing.md](docs/releasing.md): how a release is cut and checked.
-- [docs/install.md](docs/install.md): install, updates, uninstall and verification in
-  detail.
+Alpha: used every day to build Acta itself, with rough edges. What is planned and open
+is in [PLAN.md](PLAN.md); report problems in
+[issues](https://github.com/Alegzandr/acta/issues).
 
 ## Contributing
 
-Issues and pull requests are welcome; read [CONTRIBUTING.md](CONTRIBUTING.md) first.
-Report security problems privately, as [SECURITY.md](SECURITY.md) explains.
+Read [CONTRIBUTING.md](CONTRIBUTING.md); building from source is in
+[docs/building.md](docs/building.md). Security problems are reported privately, as
+[SECURITY.md](SECURITY.md) explains. Design choices live in [DESIGN.md](DESIGN.md) and
+[docs/decisions/](docs/decisions/).
 
 ## Licence
 
-Acta is released under the [MIT licence](LICENSE). The third-party components it ships
-keep their own licences; their texts are included in every package, next to Acta's own
-(`licenses/Acta-LICENSE.txt`).
+[MIT](LICENSE). Third-party components keep their own licences; their texts ship in
+every package.
