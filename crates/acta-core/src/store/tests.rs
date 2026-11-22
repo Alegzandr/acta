@@ -2434,6 +2434,8 @@ fn set_due_writes_the_event_and_the_author() {
     assert_eq!(store.epic(e).unwrap().stamp.updated_by, C);
     assert_eq!(store.project(p).unwrap().due_on, day);
     assert_eq!(store.epics(p).unwrap()[0].due_on, day);
+    // The tree carries the project's own date (its due mark, 4.2.1).
+    assert_eq!(store.tree(p).unwrap().project.due_on, day);
     // Out of range is refused.
     let far = Date::from_days(crate::time::days_from_civil(2100, 1, 1));
     assert!(store.set_due(Owner::Topic(t), Some(far), H).is_err());

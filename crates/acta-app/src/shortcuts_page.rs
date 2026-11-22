@@ -129,6 +129,7 @@ pub fn groups(locale: Locale, macos: bool) -> Vec<(Key, Vec<Row>)> {
         r(Key::TabOpenNew, vec![vec![m, enter]]),
         r(Key::TreeRename, vec![vec!["E"], vec!["F2"]]),
         r(Key::ShortcutsListStatus, vec![vec!["S"]]),
+        c(Command::SetDue),
         r(Key::TreeMoveEpic, vec![vec!["M"]]),
         r(
             Key::ShortcutsListReorder,

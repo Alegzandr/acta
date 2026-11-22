@@ -11,6 +11,7 @@
 use std::collections::HashSet;
 use std::ops::Range;
 
+use acta_core::date::{Date, DueState, due_state};
 use acta_core::model::{EpicId, ProjectId, ProjectTree, Status, TopicId, TopicSummary};
 use acta_core::store::Unread;
 
@@ -39,6 +40,8 @@ pub enum Row {
         id: ProjectId,
         title: String,
         expanded: bool,
+        /// Its own due date while it is open; see [`row_due`].
+        due: Option<Date>,
     },
     Inbox {
         project: ProjectId,
@@ -52,12 +55,14 @@ pub enum Row {
         project: ProjectId,
         title: String,
         expanded: bool,
+        due: Option<Date>,
     },
     Topic {
         id: TopicId,
         title: String,
         status: Status,
         depth: u8,
+        due: Option<Date>,
     },
     Closed {
         group: Group,
@@ -269,6 +274,8 @@ pub enum Letter {
     Rename,
     /// `M`: move to epic.
     Move,
+    /// `D`: the due date picker of a project, epic or topic row.
+    Due,
     /// `Space`: open in the active tab, focus stays in the tree (6.2).
     Preview,
     /// Type-ahead with the buffer so far.
@@ -288,6 +295,7 @@ pub fn letter(buffer: &str, ch: char) -> Letter {
         's' => Letter::Status,
         'e' => Letter::Rename,
         'm' => Letter::Move,
+        'd' => Letter::Due,
         ' ' => Letter::Preview,
         _ => Letter::Find(ch.to_string()),
     }
@@ -480,6 +488,7 @@ fn topic_row(topic: &TopicSummary, depth: u8) -> Row {
         title: topic.title.clone(),
         status: topic.status,
         depth,
+        due: topic.due_on.filter(|_| topic.status.is_open()),
     }
 }
 
@@ -493,6 +502,7 @@ pub fn rows(projects: &[ProjectTree], folds: &Folds) -> Vec<Row> {
             id: project.id,
             title: project.title.clone(),
             expanded,
+            due: project.due_on.filter(|_| project.progress.is_open()),
         });
         if !expanded {
             continue;
@@ -518,6 +528,7 @@ pub fn rows(projects: &[ProjectTree], folds: &Folds) -> Vec<Row> {
                 project: project.id,
                 title: epic.title.clone(),
                 expanded,
+                due: epic.due_on.filter(|_| epic.progress.is_open()),
             });
             if expanded && topics.is_empty() {
                 rows.push(Row::NewTopic {
@@ -659,21 +670,33 @@ pub fn title_width(width: f32, depth: u8, trailing: f32) -> f32 {
 pub const PARENT_TRAILING: f32 = 24.;
 
 /// A due mark (4.2.1, Due marks): an open record due before today, or
-/// today. Due dates are not in the store yet: see [`row_due`].
+/// today.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[allow(dead_code, reason = "due dates come with store v4; see row_due")]
 pub enum Due {
     Overdue,
     Today,
 }
 
-/// The due mark of a row. The hook for due dates: once the summaries carry
-/// a due date (store v4), a project, epic or topic row that is open (a
-/// topic not closed, an epic or project not complete) and due before today
-/// returns `Overdue`, due today `Today`; never rolled up into a folded
-/// parent, and nothing for any other row.
-pub fn row_due(_row: &Row) -> Option<Due> {
-    None
+/// The date behind a row's due mark: a project, epic or topic row carries
+/// its own date only while the record is open (a topic not closed, an epic
+/// or project not complete).
+pub fn row_due_date(row: &Row) -> Option<Date> {
+    match row {
+        Row::Project { due, .. } | Row::Epic { due, .. } | Row::Topic { due, .. } => *due,
+        _ => None,
+    }
+}
+
+/// The due mark of a row on `today`: `Overdue` before today, `Today` on
+/// it, nothing otherwise. Never rolled up into a folded parent: each row
+/// shows its own date only. `today` is passed in, so the marks change at
+/// midnight without rebuilding the rows.
+pub fn row_due(row: &Row, today: Date) -> Option<Due> {
+    match due_state(row_due_date(row), today, true) {
+        DueState::Overdue(_) => Some(Due::Overdue),
+        DueState::Today => Some(Due::Today),
+        _ => None,
+    }
 }
 
 /// The one signal of a row's trailing slot at rest (4.2.1, "One signal, in
@@ -857,6 +880,7 @@ pub mod sample {
             progress: Progress::default(),
             inbox: 4,
             knowledge: 55,
+            due_on: None,
             updated_at: 0,
         }
     }
@@ -902,17 +926,20 @@ mod tests {
             title: String::new(),
             status: Status::Active,
             depth: 2,
+            due: None,
         };
         let epic = |expanded| Row::Epic {
             id: EpicId(1),
             project: ProjectId(1),
             title: "Terminal".into(),
             expanded,
+            due: None,
         };
         let project = |id, expanded| Row::Project {
             id: ProjectId(id),
             title: String::new(),
             expanded,
+            due: None,
         };
         assert!(row_unread(&topic(3), &projects, &unread));
         assert!(!row_unread(&topic(2), &projects, &unread));
@@ -1091,6 +1118,8 @@ mod tests {
         assert_eq!(letter("", 's'), Letter::Status);
         assert_eq!(letter("", 'e'), Letter::Rename);
         assert_eq!(letter("", 'm'), Letter::Move);
+        assert_eq!(letter("", 'D'), Letter::Due);
+        assert_eq!(letter("de", 'd'), Letter::Find("ded".into()));
         assert_eq!(letter("", ' '), Letter::Preview);
         assert_eq!(letter("", 'n'), Letter::Find("n".into()));
         assert_eq!(letter("na", 'j'), Letter::Find("naj".into()));
@@ -1315,8 +1344,105 @@ mod tests {
             Some(Signal::Due(Due::Today))
         );
         assert_eq!(signal(false, false, None), None);
+        let today = day("2026-11-21");
         let rows = rows(&acta(), &Folds::default());
-        assert!(rows.iter().all(|r| row_due(r).is_none()), "no dates yet");
+        assert!(rows.iter().all(|r| row_due(r, today).is_none()), "no dates");
+    }
+
+    fn day(iso: &str) -> Date {
+        Date::parse_iso(iso).unwrap()
+    }
+
+    /// The tree of 4.2.1 with dates (today is Saturday 21 Nov 2026): an
+    /// overdue loose topic, a topic due tomorrow, a blocked overdue one, a
+    /// done one with a past date, an epic due today and an overdue project.
+    fn dated() -> Vec<ProjectTree> {
+        use acta_core::model::Progress;
+        let mut projects = acta();
+        let tree = &mut projects[0];
+        tree.project.due_on = Some(day("2026-11-01"));
+        tree.project.progress = Progress { done: 1, total: 4 };
+        tree.loose_topics[0].due_on = Some(day("2026-11-18"));
+        let (epic, topics) = &mut tree.epics[0];
+        epic.due_on = Some(day("2026-11-21"));
+        epic.progress = Progress { done: 1, total: 3 };
+        topics[0].due_on = Some(day("2026-11-22"));
+        topics[1].due_on = Some(day("2026-11-20"));
+        topics[2].due_on = Some(day("2026-11-01"));
+        projects
+    }
+
+    fn row_of(rows: &[Row], route: Route) -> &Row {
+        rows.iter().find(|r| r.route() == Some(route)).unwrap()
+    }
+
+    #[test]
+    fn due_marks_show_overdue_and_today_on_open_records_only() {
+        use acta_core::model::Progress;
+        let today = day("2026-11-21");
+        let mut folds = Folds::default();
+        folds.closed_shown.insert(Group::Epic(EpicId(1)).key());
+        let rows = rows(&dated(), &folds);
+        let mark = |route| row_due(row_of(&rows, route), today);
+        assert_eq!(mark(Route::Project(ProjectId(1))), Some(Due::Overdue));
+        assert_eq!(mark(Route::Epic(EpicId(1))), Some(Due::Today));
+        assert_eq!(mark(Route::Topic(TopicId(1))), Some(Due::Overdue));
+        // Tomorrow is "due soon": the tree draws nothing for it.
+        assert_eq!(mark(Route::Topic(TopicId(2))), None);
+        // Blocked and overdue: the glyph leads, the mark trails.
+        assert_eq!(mark(Route::Topic(TopicId(3))), Some(Due::Overdue));
+        // Done with a past date: never overdue.
+        assert_eq!(mark(Route::Topic(TopicId(4))), None);
+        assert_eq!(mark(Route::Project(ProjectId(2))), None);
+        // A complete epic or project is closed: no mark.
+        let mut complete = dated();
+        complete[0].epics[0].0.progress = Progress { done: 3, total: 3 };
+        complete[0].project.progress = Progress { done: 3, total: 3 };
+        let rows = super::rows(&complete, &folds);
+        assert_eq!(
+            row_due(row_of(&rows, Route::Project(ProjectId(1))), today),
+            None
+        );
+        assert_eq!(row_due(row_of(&rows, Route::Epic(EpicId(1))), today), None);
+        // An epic or project with no topic is open.
+        let mut empty = dated();
+        empty[0].project.progress = Progress::default();
+        let rows = super::rows(&empty, &folds);
+        assert_eq!(
+            row_due(row_of(&rows, Route::Project(ProjectId(1))), today),
+            Some(Due::Overdue)
+        );
+    }
+
+    #[test]
+    fn due_marks_change_at_midnight_without_rebuilding_the_rows() {
+        let rows = rows(&dated(), &Folds::default());
+        let tomorrow = row_of(&rows, Route::Topic(TopicId(2)));
+        assert_eq!(row_due(tomorrow, day("2026-11-21")), None);
+        assert_eq!(row_due(tomorrow, day("2026-11-22")), Some(Due::Today));
+        assert_eq!(row_due(tomorrow, day("2026-11-23")), Some(Due::Overdue));
+    }
+
+    #[test]
+    fn due_marks_are_never_rolled_up_and_unread_wins() {
+        let today = day("2026-11-21");
+        let mut folds = Folds::default();
+        folds.toggle("E-1".into());
+        let rows = rows(&dated(), &folds);
+        // The folded epic shows its own date (today), not its topics'
+        // overdue ones.
+        assert_eq!(
+            row_due(row_of(&rows, Route::Epic(EpicId(1))), today),
+            Some(Due::Today)
+        );
+        let mut undated = dated();
+        undated[0].epics[0].0.due_on = None;
+        let rows = super::rows(&undated, &folds);
+        assert_eq!(row_due(row_of(&rows, Route::Epic(EpicId(1))), today), None);
+        // An unread overdue topic shows the dot; once read, the mark.
+        let mark = Some(Due::Overdue);
+        assert_eq!(signal(false, true, mark), Some(Signal::Unread));
+        assert_eq!(signal(false, false, mark), Some(Signal::Due(Due::Overdue)));
     }
 
     #[test]

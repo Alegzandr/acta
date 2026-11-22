@@ -1,8 +1,9 @@
 //! The project, epic and topic pages (docs/design/layout.md 4.2; screens.md
-//! 8.1, 8.6, 8.14): title, the properties block, then the sections in their
-//! fixed order. A topic: current state, description, knowledge, timeline.
-//! An epic: description, knowledge, topic table. A project: description,
-//! knowledge, the topic table grouped by epic.
+//! 8.1, 8.6, 8.14, 8.20): title, the properties block, then the sections in
+//! their fixed order. A topic: current state, description, knowledge,
+//! timeline. An epic: "Needs attention" when something does, description,
+//! knowledge, topic table. A project: the Overview, description, knowledge,
+//! the topic table grouped by epic.
 //!
 //! Writes are sent to the workspace and the page reloads when its revision
 //! moves, whoever wrote; an editor being used is never overwritten by a
@@ -10,11 +11,12 @@
 
 use std::path::PathBuf;
 
+use acta_core::date::{Date, DueState, due_state};
 use acta_core::model::{
     Author, Entry, EntryId, EntryKind, KbId, KbKind, KbSummary, Owner, Record, Status, TopicId,
     TopicSummary,
 };
-use acta_core::store::{EpicPatch, NewEntry, ProjectPatch, TopicPatch};
+use acta_core::store::{EpicPatch, NewEntry, OverviewFilter, ProjectPatch, TopicPatch};
 use gpui_kit::component::input::{Escape, Input, InputEvent, InputState, Textarea, TextareaState};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
@@ -24,6 +26,8 @@ use gpui_kit::{
     deferred, div, point, px,
 };
 
+use crate::due::{self, Outcome, Tone};
+use crate::due_picker::{AnchorBounds, DuePicker, DuePickerEvent};
 use crate::i18n::{Arg, Key, KeyName, Locale, number, text, tr};
 use crate::icons::{Icon, icon};
 use crate::kb_model;
@@ -60,6 +64,9 @@ pub enum PageEvent {
     /// "File with Claude Code" (screens.md 8.2): run the triage command in
     /// the project's terminal.
     Triage(acta_core::model::ProjectId),
+    /// The Overview's memory line: the knowledge page with the chip "Not
+    /// updated for 90 days".
+    StaleMemories(acta_core::model::ProjectId),
 }
 
 gpui_kit::actions!(
@@ -69,6 +76,8 @@ gpui_kit::actions!(
         OpenStatusMenu,
         /// `E` / `F2`: rename the page's record.
         EditTitle,
+        /// `D`: the due date picker of the page's record.
+        OpenDuePicker,
     ]
 );
 
@@ -106,8 +115,38 @@ pub struct RecordPage {
     kb_inherited_open: bool,
     id_copied: bool,
     seen_revision: u64,
+    /// The due date picker, open on the Due row (components-records.md 5).
+    due_picker: Option<Entity<DuePicker>>,
+    _due_sub: Option<Subscription>,
+    due_anchor: AnchorBounds,
+    due_focus: FocusHandle,
+    /// Scroll the Due row into view once laid out (opened from the
+    /// palette).
+    reveal_due: std::rc::Rc<std::cell::Cell<bool>>,
+    /// The table's filter chip, set from the Overview or the palette.
+    chip: Option<OverviewFilter>,
+    /// Scroll the table into view and focus its first row once the list
+    /// is loaded (a figure of the Overview was opened).
+    reveal_table: std::rc::Rc<std::cell::Cell<bool>>,
+    focus_first_row: bool,
+    table_focus: FocusHandle,
+    /// One focus handle per table row, in the order drawn, and the topic
+    /// each row showed in the last frame: `D` on a focused row dates it.
+    row_focus: Vec<FocusHandle>,
+    row_ids: std::cell::RefCell<Vec<TopicId>>,
+    /// The due date picker on a table row, anchored to its title.
+    table_due: Option<TableDue>,
     _load: Task<()>,
     _subs: Vec<Subscription>,
+}
+
+/// The due date picker opened on a row of the topic table (`D`).
+struct TableDue {
+    row: usize,
+    topic: TopicId,
+    picker: Entity<DuePicker>,
+    anchor: AnchorBounds,
+    _sub: Subscription,
 }
 
 /// The entry menu: Edit, Copy as Markdown, Change type, Delete; "Change
@@ -147,7 +186,11 @@ impl RecordPage {
     #[cfg(windows)]
     /// The status menu is open (the chat's web view hides under it).
     pub fn menu_open(&self) -> bool {
-        self.status_menu.is_some() || self.entry_menu.is_some() || self.kb_new_menu.is_some()
+        self.status_menu.is_some()
+            || self.entry_menu.is_some()
+            || self.kb_new_menu.is_some()
+            || self.due_picker.is_some()
+            || self.table_due.is_some()
     }
 
     pub fn new(
@@ -162,7 +205,11 @@ impl RecordPage {
                 .auto_grow(1, 16)
                 .placeholder(text(locale, Key::ComposerPlaceholder))
         });
-        let mut subs = vec![cx.observe(&ws, |page, _, cx| page.reload_if_moved(cx))];
+        let mut subs = vec![
+            cx.observe(&ws, |page, _, cx| page.reload_if_moved(cx)),
+            // The Overview counts in local days: a new day recounts.
+            cx.observe_global::<due::Today>(|page, cx| page.reload(cx)),
+        ];
         subs.push(cx.subscribe_in(&composer, window, Self::on_composer));
         let mut page = Self {
             ws,
@@ -191,6 +238,18 @@ impl RecordPage {
             kb_inherited_open: false,
             id_copied: false,
             seen_revision: 0,
+            due_picker: None,
+            _due_sub: None,
+            due_anchor: AnchorBounds::default(),
+            due_focus: cx.focus_handle(),
+            reveal_due: Default::default(),
+            chip: None,
+            reveal_table: Default::default(),
+            focus_first_row: false,
+            table_focus: cx.focus_handle(),
+            row_focus: Vec::new(),
+            row_ids: Default::default(),
+            table_due: None,
             _load: Task::ready(()),
             _subs: subs,
         };
@@ -216,11 +275,11 @@ impl RecordPage {
     pub fn reload(&mut self, cx: &mut Context<Self>) {
         let owner = self.owner;
         let filter = self.filter;
-        let task = self
-            .ws
-            .read(cx)
-            .db
-            .run(cx, move |store| record::load(store, owner, filter));
+        let today = due::today(cx);
+        let chip = self.chip;
+        let task = self.ws.read(cx).db.run(cx, move |store| {
+            record::load(store, owner, filter, today, chip)
+        });
         self._load = cx.spawn(async move |page, cx| {
             let loaded = task.await;
             let paths = loaded.as_ref().ok().map(|d| d.folders.paths());
@@ -289,6 +348,219 @@ impl RecordPage {
         }
         cx.notify();
         self.ws.update(cx, |ws, cx| ws.set_status(id, status, cx));
+    }
+
+    /// Open the due date picker on the Due row (`D`, `Enter` or a click on
+    /// the row, "Set due date..."). `reveal`: scroll the row into view by
+    /// the least amount (from the palette, the human asked).
+    pub fn open_due_picker(&mut self, reveal: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(data) = &self.data else { return };
+        let current = data.due_on;
+        let today = due::today(cx);
+        let picker = cx.new(|cx| DuePicker::new(today, current, window, cx));
+        let sub = cx.subscribe_in(
+            &picker,
+            window,
+            |page, _, event: &DuePickerEvent, window, cx| {
+                let DuePickerEvent::Done(outcome) = *event;
+                page.close_due_picker(outcome, window, cx);
+            },
+        );
+        self.status_menu = None;
+        self.due_picker = Some(picker);
+        self._due_sub = Some(sub);
+        self.reveal_due.set(reveal);
+        cx.notify();
+    }
+
+    #[cfg(debug_assertions)]
+    /// Debug builds' captures: type into the open picker, and press Enter.
+    pub fn dev_type_due(
+        &mut self,
+        input: &str,
+        enter: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(picker) = &self.due_picker {
+            picker.update(cx, |p, cx| p.dev_type(input, enter, window, cx));
+        }
+    }
+
+    /// `D`: on a focused row of the topic table, the picker of that topic,
+    /// anchored to the row's title; anywhere else on the page, the page's
+    /// own Due row (the focused element wins, components-records.md 5).
+    pub fn open_due_here(&mut self, reveal: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((row, topic)) = self.focused_row(window) else {
+            self.open_due_picker(reveal, window, cx);
+            return;
+        };
+        let current = self
+            .data
+            .as_ref()
+            .and_then(|d| d.all_topics().into_iter().find(|t| t.id == topic))
+            .and_then(|t| t.due_on);
+        let today = due::today(cx);
+        let picker = cx.new(|cx| DuePicker::new(today, current, window, cx));
+        let sub = cx.subscribe_in(
+            &picker,
+            window,
+            |page, _, event: &DuePickerEvent, window, cx| {
+                let DuePickerEvent::Done(outcome) = *event;
+                let Some(due) = page.table_due.take() else {
+                    return;
+                };
+                if let Outcome::Set(date) = outcome {
+                    page.ws
+                        .update(cx, |ws, cx| ws.set_due(Owner::Topic(due.topic), date, cx));
+                }
+                if let Some(handle) = page.row_focus.get(due.row) {
+                    window.focus(handle, cx);
+                }
+                cx.notify();
+            },
+        );
+        self.table_due = Some(TableDue {
+            row,
+            topic,
+            picker,
+            anchor: AnchorBounds::default(),
+            _sub: sub,
+        });
+        cx.notify();
+    }
+
+    #[cfg(debug_assertions)]
+    /// Debug builds' captures: `D` on the table's first row.
+    pub fn dev_due_on_first_row(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(first) = self.row_focus.first() {
+            window.focus(first, cx);
+        }
+        self.open_due_here(false, window, cx);
+    }
+
+    /// The table row with keyboard focus, and its topic.
+    fn focused_row(&self, window: &Window) -> Option<(usize, TopicId)> {
+        let row = self.row_focus.iter().position(|h| h.is_focused(window))?;
+        let topic = *self.row_ids.borrow().get(row)?;
+        Some((row, topic))
+    }
+
+    /// What "Set due date..." and "Clear due date" act on from this page:
+    /// a focused table row's topic, else the page's record; with its date.
+    pub fn due_target(&self, window: &Window) -> Option<(Owner, Option<Date>)> {
+        let data = self.data.as_ref()?;
+        Some(match self.focused_row(window) {
+            Some((_, topic)) => {
+                let due = data
+                    .all_topics()
+                    .into_iter()
+                    .find(|t| t.id == topic)
+                    .and_then(|t| t.due_on);
+                (Owner::Topic(topic), due)
+            }
+            None => (self.owner, data.due_on),
+        })
+    }
+
+    /// Close the picker, write what it set, and put focus back on the row.
+    fn close_due_picker(&mut self, outcome: Outcome, window: &mut Window, cx: &mut Context<Self>) {
+        self.due_picker = None;
+        self._due_sub = None;
+        if let Outcome::Set(due) = outcome {
+            self.set_due(due, cx);
+        }
+        window.focus(&self.due_focus, cx);
+        cx.notify();
+    }
+
+    /// Set or clear the date: optimistic, one undo step, no toast.
+    pub fn set_due(&mut self, due: Option<Date>, cx: &mut Context<Self>) {
+        let Some(data) = self.data.as_mut() else {
+            return;
+        };
+        if data.due_on == due {
+            return;
+        }
+        data.due_on = due;
+        if let Some(topic) = data.topic.as_mut() {
+            topic.due_on = due;
+        }
+        let owner = self.owner;
+        self.ws.update(cx, |ws, cx| ws.set_due(owner, due, cx));
+        cx.notify();
+    }
+
+    /// Whether "More" (a project) or "Needs attention" (an epic) is open,
+    /// as remembered (layout.md 4.7, record ids only).
+    fn overview_open(&self, cx: &App) -> bool {
+        let key = self.owner.to_string();
+        settings::current(cx).overview_open.contains(&key)
+    }
+
+    /// "More" / "Less", or the epic's "Needs attention" folded or not.
+    pub fn set_overview_open(&mut self, open: bool, cx: &mut Context<Self>) {
+        let key = self.owner.to_string();
+        settings::change(cx, |p| {
+            p.overview_open.retain(|k| *k != key);
+            if open {
+                p.overview_open.push(key);
+            }
+        });
+        cx.notify();
+    }
+
+    /// Whether the page shows an Overview whose "More" (or expansion) the
+    /// palette can toggle, and whether it is open.
+    pub fn overview_state(&self, cx: &App) -> Option<bool> {
+        match self.owner {
+            Owner::Project(_) | Owner::Epic(_) => Some(self.overview_open(cx)),
+            Owner::Topic(_) => None,
+        }
+    }
+
+    /// Open the list behind a figure of the Overview (components-records.md
+    /// 5, Click-through): the table with its chip or its Overdue segment,
+    /// scrolled to and with focus on its first row; the inbox; the
+    /// knowledge page's stale memories.
+    pub fn show_filter(&mut self, filter: OverviewFilter, cx: &mut Context<Self>) {
+        let Some(project) = self.project_id() else {
+            return;
+        };
+        match filter {
+            OverviewFilter::Inbox => cx.emit(PageEvent::Open(Route::Inbox(project))),
+            OverviewFilter::StaleMemories => cx.emit(PageEvent::StaleMemories(project)),
+            OverviewFilter::Overdue => {
+                self.chip = None;
+                self.table_filter = table::Filter::Overdue;
+                self.table_sort = None;
+                self.reveal_table_now(cx);
+            }
+            chip => {
+                self.chip = Some(chip);
+                self.table_sort = None;
+                self.reveal_table_now(cx);
+            }
+        }
+    }
+
+    /// Scroll to the table and focus its first row once the page reloaded
+    /// (the human asked, so 6.5 rule 2 is not broken).
+    fn reveal_table_now(&mut self, cx: &mut Context<Self>) {
+        self.reveal_table.set(true);
+        self.focus_first_row = true;
+        self.reload(cx);
+        cx.notify();
+    }
+
+    /// The chip's `x`, `Backspace` on it or `Esc` in the list: back to the
+    /// segmented control at Open.
+    fn clear_chip(&mut self, cx: &mut Context<Self>) {
+        if self.chip.take().is_some() {
+            self.table_filter = table::Filter::Open;
+            self.reload(cx);
+            cx.notify();
+        }
     }
 
     pub fn edit_title(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -859,6 +1131,13 @@ impl RecordPage {
             return;
         }
         let Some(highlight) = self.status_menu else {
+            if event.keystroke.key == "escape"
+                && self.chip.is_some()
+                && self.table_focus.contains_focused(window, cx)
+            {
+                self.clear_chip(cx);
+                cx.stop_propagation();
+            }
             return;
         };
         let key = event.keystroke.key.as_str();
@@ -965,6 +1244,10 @@ impl RecordPage {
                     text(locale, Key::PropStatus),
                     div().child(status_button).children(menu).into_any_element(),
                 ));
+                rows.push((
+                    text(locale, Key::PropDue),
+                    self.render_due(data, locale, t, cx),
+                ));
                 let epic = match &data.epic {
                     Some((epic, name)) => {
                         let epic = *epic;
@@ -992,6 +1275,10 @@ impl RecordPage {
             Owner::Epic(id) => {
                 rows.push((text(locale, Key::PropProgress), progress(data, locale, t)));
                 rows.push((
+                    text(locale, Key::PropDue),
+                    self.render_due(data, locale, t, cx),
+                ));
+                rows.push((
                     text(locale, Key::PropFolders),
                     self.render_folders(data, locale, t, cx),
                 ));
@@ -1002,6 +1289,10 @@ impl RecordPage {
             }
             Owner::Project(_) => {
                 rows.push((text(locale, Key::PropProgress), progress(data, locale, t)));
+                rows.push((
+                    text(locale, Key::PropDue),
+                    self.render_due(data, locale, t, cx),
+                ));
                 rows.push((
                     text(locale, Key::PropFolders),
                     self.render_folders(data, locale, t, cx),
@@ -1020,6 +1311,72 @@ impl RecordPage {
                     .map(|(label, value)| ui::property(label, width, value, t)),
             )
             .into_any_element()
+    }
+
+    /// The Due row (components-records.md 5): "None", or the date and its
+    /// relative phrase in two runs; the picker hangs under it.
+    fn render_due(
+        &self,
+        data: &Loaded,
+        locale: Locale,
+        t: &Tokens,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let today = due::today(cx);
+        let open = data.due_open();
+        let state = due_state(data.due_on, today, open);
+        let value = match data.due_on {
+            None => div()
+                .text_color(t.text_tertiary)
+                .child(text(locale, Key::DueNone))
+                .into_any_element(),
+            Some(day) => {
+                let phrase = due::phrase(locale, state)
+                    .map(|(words, tone)| div().text_color(tone_color(tone, t)).child(words));
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap(px(8.))
+                    .child(
+                        div()
+                            .text_color(if state == DueState::Closed {
+                                t.text_secondary
+                            } else {
+                                t.text_primary
+                            })
+                            .child(due::date(locale, day)),
+                    )
+                    .children(phrase)
+                    .into_any_element()
+            }
+        };
+        let reveal = std::rc::Rc::clone(&self.reveal_due);
+        let scroll = self.scroll.clone();
+        let button = ui::ghost_value("prop-due", t)
+            .relative()
+            .track_focus(&self.due_focus)
+            .on_click(cx.listener(|page, _, window, cx| page.open_due_picker(false, window, cx)))
+            .on_key_down(cx.listener(|page, event: &KeyDownEvent, _, cx| {
+                if matches!(event.keystroke.key.as_str(), "delete" | "backspace")
+                    && !event.keystroke.modifiers.modified()
+                {
+                    page.set_due(None, cx);
+                    cx.stop_propagation();
+                }
+            }))
+            .child(value)
+            .child(self.due_anchor.measure())
+            .child(ui::measure(move |bounds, window| {
+                if reveal.replace(false) {
+                    ui::scroll_into_view(&scroll, bounds, ui::Reveal::Whole);
+                    window.refresh();
+                }
+            }));
+        let picker = self
+            .due_picker
+            .as_ref()
+            .and_then(|p| self.due_anchor.below(p.clone().into_any_element()));
+        div().child(button).children(picker).into_any_element()
     }
 
     fn render_id(
@@ -1880,22 +2237,7 @@ impl RecordPage {
         let composer = self.render_composer(locale, t, cx);
         let mut list = div().flex().flex_col().gap(px(32.)).mt(px(32.));
         let human = when::initial(&when::human_name(locale));
-        // System events other than status changes have no line in the
-        // catalogue yet (docs/design/data.md 11, request 10): not shown.
-        // Status changes in quick succession read as one line, and a
-        // change undone leaves none (components-records.md 5).
-        let shown: Vec<Entry> = record::collapse_status_events(
-            data.entries
-                .iter()
-                .filter(|e| {
-                    e.kind != EntryKind::System
-                        || e.event
-                            .as_ref()
-                            .is_some_and(|ev| ev.kind == acta_core::model::EventKind::Status)
-                })
-                .cloned()
-                .collect(),
-        );
+        let shown: Vec<Entry> = record::timeline_entries(&data.entries);
         // The empty state is about what is shown: a timeline of hidden
         // system events alone is empty too.
         if shown.iter().all(|e| e.kind == EntryKind::System) {
@@ -2195,47 +2537,50 @@ impl RecordPage {
         t: &Tokens,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let filters = table::Filter::ALL
-            .into_iter()
-            .enumerate()
-            .map(|(i, filter)| {
-                let key = match filter {
-                    table::Filter::Open => Key::TableFilterOpen,
-                    table::Filter::All => Key::TableFilterAll,
-                    table::Filter::Closed => Key::TableFilterClosed,
-                };
-                ui::segment(
-                    ("table-filter", i),
-                    text(locale, key),
-                    self.table_filter == filter,
-                    t,
-                )
-                .on_click(cx.listener(move |page, _, _, cx| {
-                    page.table_filter = filter;
-                    cx.notify();
-                }))
-            })
-            .collect::<Vec<_>>();
-        let all: Vec<TopicSummary> = if matches!(self.owner, Owner::Epic(_)) {
-            data.topics.clone()
-        } else {
-            let mut all = data.loose.clone();
-            for (_, _, topics) in &data.groups {
-                all.extend(topics.iter().cloned());
-            }
-            all
-        };
+        let all: Vec<TopicSummary> = data.all_topics();
         if all.is_empty() {
             return self.render_no_topics(locale, t, cx);
         }
-        let count = all.iter().filter(|t| self.table_filter.keeps(t)).count();
+        let today = due::today(cx);
+        // The Due column and its two segments exist only while a listed
+        // topic has a date.
+        let dated = table::has_dates(&all);
+        let current = self.table_filter.effective(dated);
+        let filters = table::Filter::shown(dated)
+            .iter()
+            .enumerate()
+            .map(|(i, &filter)| {
+                let key = match filter {
+                    table::Filter::Open => Key::TableFilterOpen,
+                    table::Filter::Overdue => Key::TableFilterOverdue,
+                    table::Filter::Week => Key::TableFilterWeek,
+                    table::Filter::All => Key::TableFilterAll,
+                    table::Filter::Closed => Key::TableFilterClosed,
+                };
+                ui::segment(("table-filter", i), text(locale, key), current == filter, t).on_click(
+                    cx.listener(move |page, _, _, cx| {
+                        page.table_filter = filter;
+                        cx.notify();
+                    }),
+                )
+            })
+            .collect::<Vec<_>>();
+        let chip = data.chip.as_ref().filter(|(f, _)| Some(*f) == self.chip);
+        let count = match chip {
+            Some((_, ids)) => table::chip_rows(&all, ids, None).len(),
+            None => all.iter().filter(|t| current.keeps(t, today)).count(),
+        };
+        let control = match chip {
+            Some((filter, _)) => self.render_chip(*filter, locale, t, cx),
+            None => ui::segmented(t).children(filters).into_any_element(),
+        };
         let toolbar = div()
             .flex()
             .flex_row()
             .items_center()
             .gap(px(12.))
             .h(px(28.))
-            .child(ui::segmented(t).children(filters))
+            .child(control)
             .child(type_scale::SMALL.el().text_color(t.text_tertiary).child(tr(
                 locale,
                 Key::TableCount,
@@ -2330,6 +2675,17 @@ impl RecordPage {
                 self,
                 cx,
             ))
+            .when(dated, |this| {
+                this.child(header_cell(
+                    "th-due",
+                    Column::Due,
+                    Some(Key::TableDue),
+                    Some(88.),
+                    true,
+                    self,
+                    cx,
+                ))
+            })
             .child(header_cell(
                 "th-entries",
                 Column::Entries,
@@ -2350,10 +2706,58 @@ impl RecordPage {
             ));
         let mut body = div().flex().flex_col();
         let mut row_index: usize = 0;
+        self.row_ids.borrow_mut().clear();
         let mut row = |topic: &TopicSummary, cx: &mut Context<Self>| {
             let id = topic.id;
+            self.row_ids.borrow_mut().push(id);
+            let handle = self.row_focus.get(row_index).cloned();
+            // The row's picker hangs under its title (status 24 + gap 8 +
+            // padding 8 from the row's edge).
+            let picker = self
+                .table_due
+                .as_ref()
+                .filter(|d| d.row == row_index && d.topic == id)
+                .map(|d| {
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left(px(40.))
+                        .w(px(1.))
+                        .h(px(32.))
+                        .child(d.anchor.measure())
+                        .children(d.anchor.below(d.picker.clone().into_any_element()))
+                });
             let open = topic.status.is_open();
+            let due_cell = dated.then(|| {
+                let cell = due::cell(locale, topic.due_on, today, open);
+                div()
+                    .id(("table-due", row_index))
+                    .w(px(88.))
+                    .flex_shrink_0()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .justify_end()
+                    .gap(px(4.))
+                    .when_some(cell, |this, cell| {
+                        let color = tone_color(cell.tone, t);
+                        this.tooltip(ui::tip(cell.tip))
+                            .when(cell.alert, |this| {
+                                this.child(icon(Icon::ClockAlert, 12., color))
+                            })
+                            .child(
+                                type_scale::SMALL
+                                    .el()
+                                    .font_features(type_scale::tabular())
+                                    .text_color(color)
+                                    .child(cell.text),
+                            )
+                    })
+            });
             let r = ui::focusable(div().id(("table-row", row_index)), t, false)
+                .when_some(handle, |this, handle| this.track_focus(&handle))
+                .relative()
+                .children(picker)
                 .flex()
                 .flex_row()
                 .items_center()
@@ -2387,6 +2791,7 @@ impl RecordPage {
                         })
                         .child(topic.title.clone()),
                 )
+                .children(due_cell)
                 .child(
                     type_scale::SMALL
                         .el()
@@ -2410,8 +2815,13 @@ impl RecordPage {
             row_index += 1;
             r
         };
-        if matches!(self.owner, Owner::Epic(_)) {
-            for topic in table::rows(&data.topics, self.table_filter, self.table_sort) {
+        if let Some((_, ids)) = chip {
+            // Under a chip the table is the chip's list, ungrouped.
+            for topic in table::chip_rows(&all, ids, self.table_sort) {
+                body = body.child(row(topic, cx));
+            }
+        } else if matches!(self.owner, Owner::Epic(_)) {
+            for topic in table::rows(&data.topics, current, self.table_sort, today) {
                 body = body.child(row(topic, cx));
             }
         } else {
@@ -2446,18 +2856,518 @@ impl RecordPage {
                             )),
                     );
                 body = body.child(group);
-                for topic in table::rows(topics, self.table_filter, self.table_sort) {
+                for topic in table::rows(topics, current, self.table_sort, today) {
                     body = body.child(row(topic, cx));
                 }
             }
         }
+        let reveal = std::rc::Rc::clone(&self.reveal_table);
+        let scroll = self.scroll.clone();
         div()
+            .id("topic-table")
+            .relative()
+            .track_focus(&self.table_focus)
             .flex()
             .flex_col()
             .mt(px(32.))
             .child(toolbar)
             .child(header)
             .child(body)
+            .child(ui::measure(move |bounds, window| {
+                if reveal.replace(false) {
+                    ui::scroll_into_view(&scroll, bounds, ui::Reveal::Top);
+                    window.refresh();
+                }
+            }))
+            .into_any_element()
+    }
+
+    /// The Overview (components-records.md 5, screens.md 8.20): on a project
+    /// page the header, the attention lines that apply and "More"; on an
+    /// epic page the collapsed "Needs attention", only when something
+    /// applies. `None` where there is nothing to show.
+    fn render_overview(
+        &self,
+        data: &Loaded,
+        locale: Locale,
+        t: &Tokens,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let o = data.overview.as_ref()?;
+        let open = self.overview_open(cx);
+        let count = |n: usize| [("n", Arg::Count(n as u64))];
+        let mut lines: Vec<(Icon, gpui_kit::Hsla, String, OverviewFilter)> = Vec::new();
+        if o.blocked > 0 {
+            let words = tr(locale, Key::OverviewBlocked, &count(o.blocked));
+            lines.push((Icon::CirclePause, t.warning, words, OverviewFilter::Blocked));
+        }
+        if o.overdue > 0 {
+            let words = tr(locale, Key::OverviewOverdue, &count(o.overdue));
+            lines.push((Icon::ClockAlert, t.warning, words, OverviewFilter::Overdue));
+        }
+        if o.idle > 0 {
+            let words = tr(locale, Key::OverviewIdle, &count(o.idle));
+            lines.push((
+                Icon::CircleDot,
+                t.text_secondary,
+                words,
+                OverviewFilter::Idle,
+            ));
+        }
+        // The inbox is project-wide: never on an epic page.
+        if matches!(self.owner, Owner::Project(_)) && o.inbox_needs_attention() {
+            let days = o.inbox_oldest_days.unwrap_or_default().max(0) as u64;
+            let words = tr(
+                locale,
+                Key::OverviewInbox,
+                &[
+                    ("n", Arg::Count(o.inbox as u64)),
+                    ("days", Arg::Count(days)),
+                ],
+            );
+            lines.push((Icon::Inbox, t.text_secondary, words, OverviewFilter::Inbox));
+        }
+        let line_els = lines
+            .into_iter()
+            .enumerate()
+            .map(|(i, (glyph, color, words, filter))| {
+                overview_control(("ov-line", i), 32., t)
+                    .on_click(cx.listener(move |page, _, _, cx| page.show_filter(filter, cx)))
+                    .child(
+                        div()
+                            .size(px(16.))
+                            .flex_shrink_0()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(icon(glyph, 14., color)),
+                    )
+                    .child(
+                        type_scale::UI
+                            .el()
+                            .font_features(type_scale::tabular())
+                            .text_color(t.text_primary)
+                            .child(words),
+                    )
+                    .into_any_element()
+            })
+            .collect::<Vec<_>>();
+        match self.owner {
+            Owner::Topic(_) => None,
+            Owner::Epic(_) => {
+                // Present only when a line applies; collapsed by default.
+                if line_els.is_empty() {
+                    return None;
+                }
+                let n = line_els.len();
+                let header = ui::focusable(div().id("ov-attention"), t, false)
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(8.))
+                    .h(px(28.))
+                    .px(px(8.))
+                    .mx(px(-8.))
+                    .rounded(px(RADIUS_SM))
+                    .hover({
+                        let hover = t.fill_hover;
+                        move |s| s.bg(hover)
+                    })
+                    .on_click(cx.listener(move |page, _, _, cx| page.set_overview_open(!open, cx)))
+                    .on_key_down(cx.listener(|page, event: &KeyDownEvent, _, cx| {
+                        match event.keystroke.key.as_str() {
+                            "right" => page.set_overview_open(true, cx),
+                            "left" => page.set_overview_open(false, cx),
+                            _ => return,
+                        }
+                        cx.stop_propagation();
+                    }))
+                    .child(icon(
+                        if open {
+                            Icon::ChevronDown
+                        } else {
+                            Icon::ChevronRight
+                        },
+                        14.,
+                        t.text_secondary,
+                    ))
+                    .child(ui::label(text(locale, Key::OverviewAttention), t))
+                    .child(
+                        type_scale::SMALL
+                            .el()
+                            .font_features(type_scale::tabular())
+                            .text_color(t.text_tertiary)
+                            .child(number(locale, n as u64)),
+                    );
+                Some(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .mt(px(24.))
+                        .child(header)
+                        .when(open, |this| {
+                            this.child(div().flex().flex_col().mt(px(4.)).children(line_els))
+                        })
+                        .into_any_element(),
+                )
+            }
+            Owner::Project(_) => {
+                // Present while the project has a topic; its empty state
+                // says what to do otherwise.
+                if data.all_topics().is_empty() {
+                    return None;
+                }
+                let calm = line_els.is_empty();
+                let more = ui::focusable(div().id("ov-more"), t, false)
+                    .flex()
+                    .flex_row()
+                    .flex_none()
+                    .items_center()
+                    .gap(px(4.))
+                    .h(px(24.))
+                    .px(px(8.))
+                    .rounded(px(RADIUS_SM))
+                    .text_color(t.text_secondary)
+                    .hover({
+                        let (hover, primary) = (t.fill_hover, t.text_primary);
+                        move |s| s.bg(hover).text_color(primary)
+                    })
+                    .on_click(cx.listener(move |page, _, _, cx| page.set_overview_open(!open, cx)))
+                    .child(type_scale::UI.el().child(text(
+                        locale,
+                        if open {
+                            Key::OverviewLess
+                        } else {
+                            Key::OverviewMore
+                        },
+                    )))
+                    .child(icon(
+                        if open {
+                            Icon::ChevronUp
+                        } else {
+                            Icon::ChevronDown
+                        },
+                        14.,
+                        t.text_secondary,
+                    ));
+                let header = div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(8.))
+                    .h(px(28.))
+                    .child(ui::label(text(locale, Key::OverviewTitle), t))
+                    .when(calm, |this| {
+                        this.child(
+                            type_scale::SMALL
+                                .el()
+                                .text_color(t.text_tertiary)
+                                .child(text(locale, Key::OverviewClear)),
+                        )
+                    })
+                    .child(div().flex_1())
+                    .child(more);
+                let mut section = div()
+                    .flex()
+                    .flex_col()
+                    .mt(px(24.))
+                    .child(header)
+                    .when(!calm, |this| {
+                        this.child(div().flex().flex_col().mt(px(4.)).children(line_els))
+                    });
+                if open {
+                    section = section.children(self.render_more(o, locale, t, cx));
+                }
+                Some(section.into_any_element())
+            }
+        }
+    }
+
+    /// Behind "More": Last 7 days, Epics and the memory line, each only
+    /// when it has something to say.
+    fn render_more(
+        &self,
+        o: &acta_core::store::Overview,
+        locale: Locale,
+        t: &Tokens,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        let block = |label: String, content: AnyElement| {
+            div()
+                .flex()
+                .flex_col()
+                .mt(px(16.))
+                .child(
+                    type_scale::SMALL
+                        .el()
+                        .h(px(16.))
+                        .text_color(t.text_tertiary)
+                        .child(label),
+                )
+                .child(div().mt(px(4.)).child(content))
+                .into_any_element()
+        };
+        let mut blocks = Vec::new();
+        // Last 7 days.
+        let week: Vec<(Key, usize, OverviewFilter)> = [
+            (Key::OverviewWeekDone, o.done, OverviewFilter::Done),
+            (
+                Key::OverviewWeekDecisions,
+                o.decisions,
+                OverviewFilter::Decided,
+            ),
+            (Key::OverviewWeekNew, o.created, OverviewFilter::Created),
+        ]
+        .into_iter()
+        .filter(|(_, n, _)| *n > 0)
+        .collect();
+        if !week.is_empty() {
+            let links = week.into_iter().enumerate().map(|(i, (key, n, filter))| {
+                overview_control(("ov-week", i), 28., t)
+                    .mx(px(0.))
+                    .ml(if i == 0 { px(-8.) } else { px(0.) })
+                    .on_click(cx.listener(move |page, _, _, cx| page.show_filter(filter, cx)))
+                    .child(
+                        type_scale::UI
+                            .el()
+                            .font_features(type_scale::tabular())
+                            .text_color(t.text_primary)
+                            .child(tr(locale, key, &[("n", Arg::Count(n as u64))])),
+                    )
+            });
+            blocks.push(block(
+                text(locale, Key::OverviewWeek),
+                div()
+                    .flex()
+                    .flex_row()
+                    .flex_wrap()
+                    .gap(px(8.))
+                    .children(links)
+                    .into_any_element(),
+            ));
+        } else if let Some(at) = o.last_activity {
+            let when = when::long(locale, at);
+            blocks.push(block(
+                text(locale, Key::OverviewWeek),
+                type_scale::UI
+                    .el()
+                    .text_color(t.text_primary)
+                    .child(tr(
+                        locale,
+                        Key::OverviewWeekNone,
+                        &[("when", Arg::Text(&when))],
+                    ))
+                    .into_any_element(),
+            ));
+        }
+        // Epics.
+        if !o.epics.is_empty() || o.complete_epics > 0 {
+            const SHOWN: usize = 8;
+            let today = due::today(cx);
+            let dated = o.epics.iter().any(|e| e.due_on.is_some());
+            let mut rows = div().flex().flex_col();
+            for (i, epic) in o.epics.iter().take(SHOWN).enumerate() {
+                let (done, total) = (epic.progress.done, epic.progress.total);
+                let fraction = if total > 0 {
+                    done as f32 / total as f32
+                } else {
+                    0.
+                };
+                let name = match epic.epic {
+                    Some(_) => epic.title.clone(),
+                    None => text(locale, Key::TreeNoEpic),
+                };
+                let target = epic.epic;
+                let cell = due::cell(locale, epic.due_on, today, epic.progress.is_open());
+                rows = rows.child(
+                    overview_control(("ov-epic", i), 28., t)
+                        .on_click(cx.listener(move |page, _, _, cx| match target {
+                            Some(id) => cx.emit(PageEvent::Open(Route::Epic(id))),
+                            // "No epic": the table, at its "No epic" group
+                            // (the first).
+                            None => {
+                                page.chip = None;
+                                page.reveal_table_now(cx);
+                            }
+                        }))
+                        .child(
+                            type_scale::UI
+                                .el()
+                                .id(("ov-epic-name", i))
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .text_color(t.text_primary)
+                                .tooltip(ui::tip(name.clone()))
+                                .child(name),
+                        )
+                        .child(
+                            div()
+                                .w(px(120.))
+                                .h(px(4.))
+                                .flex_shrink_0()
+                                .rounded(px(RADIUS_XS))
+                                .bg(t.fill_selected)
+                                .child(
+                                    div()
+                                        .h_full()
+                                        .w(px(120. * fraction))
+                                        .rounded(px(RADIUS_XS))
+                                        .bg(t.text_secondary),
+                                ),
+                        )
+                        .child(
+                            type_scale::SMALL
+                                .el()
+                                .ml(px(4.))
+                                .flex_shrink_0()
+                                .whitespace_nowrap()
+                                .font_features(type_scale::tabular())
+                                .text_color(t.text_tertiary)
+                                .child(tr(
+                                    locale,
+                                    Key::TableGroupProgress,
+                                    &[
+                                        ("done", Arg::Count(done as u64)),
+                                        ("total", Arg::Count(total as u64)),
+                                    ],
+                                )),
+                        )
+                        .when(dated, |this| {
+                            this.child(
+                                div()
+                                    .w(px(88.))
+                                    .flex_shrink_0()
+                                    .flex()
+                                    .flex_row()
+                                    .items_center()
+                                    .justify_end()
+                                    .gap(px(4.))
+                                    .when_some(cell, |this, cell| {
+                                        let color = tone_color(cell.tone, t);
+                                        this.when(cell.alert, |this| {
+                                            this.child(icon(Icon::ClockAlert, 12., color))
+                                        })
+                                        .child(
+                                            type_scale::SMALL
+                                                .el()
+                                                .font_features(type_scale::tabular())
+                                                .text_color(color)
+                                                .child(cell.text),
+                                        )
+                                    }),
+                            )
+                        }),
+                );
+            }
+            if o.epics.len() > SHOWN {
+                let more = o.epics.len() - SHOWN;
+                rows = rows.child(
+                    overview_control("ov-epics-more", 28., t)
+                        .on_click(cx.listener(|page, _, _, cx| {
+                            page.chip = None;
+                            page.reveal_table_now(cx);
+                        }))
+                        .child(type_scale::UI.el().text_color(t.text_primary).child(tr(
+                            locale,
+                            Key::OverviewEpicsMore,
+                            &[("n", Arg::Count(more as u64))],
+                        ))),
+                );
+            }
+            if o.complete_epics > 0 {
+                rows = rows.child(
+                    type_scale::UI
+                        .el()
+                        .h(px(28.))
+                        .flex()
+                        .items_center()
+                        .text_color(t.text_tertiary)
+                        .child(tr(
+                            locale,
+                            Key::OverviewEpicsComplete,
+                            &[("n", Arg::Count(o.complete_epics as u64))],
+                        )),
+                );
+            }
+            blocks.push(block(
+                text(locale, Key::OverviewEpics),
+                rows.into_any_element(),
+            ));
+        }
+        // Knowledge.
+        if o.stale_memories > 0 {
+            let line =
+                overview_control("ov-memories", 28., t)
+                    .on_click(cx.listener(|page, _, _, cx| {
+                        page.show_filter(OverviewFilter::StaleMemories, cx)
+                    }))
+                    .child(
+                        type_scale::UI
+                            .el()
+                            .font_features(type_scale::tabular())
+                            .text_color(t.text_primary)
+                            .child(tr(
+                                locale,
+                                Key::OverviewMemories,
+                                &[("n", Arg::Count(o.stale_memories as u64))],
+                            )),
+                    );
+            blocks.push(block(
+                text(locale, Key::SectionKnowledge),
+                line.into_any_element(),
+            ));
+        }
+        blocks
+    }
+
+    /// The filter chip (components-records.md 5): in place of the segmented
+    /// control while set; its `x`, or `Backspace` on it, clears it.
+    fn render_chip(
+        &self,
+        filter: OverviewFilter,
+        locale: Locale,
+        t: &Tokens,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let key = match filter {
+            OverviewFilter::Blocked => Key::FilterBlocked,
+            OverviewFilter::Idle => Key::FilterIdle,
+            OverviewFilter::Done => Key::FilterDoneWeek,
+            OverviewFilter::Decided => Key::FilterDecidedWeek,
+            OverviewFilter::Created => Key::FilterCreatedWeek,
+            // Not chips of the table: Overdue is its own segment, the
+            // inbox and memories open their pages.
+            _ => Key::FilterBlocked,
+        };
+        ui::focusable(div().id("table-chip"), t, false)
+            .flex()
+            .flex_row()
+            .flex_none()
+            .items_center()
+            .gap(px(4.))
+            .h(px(24.))
+            .pl(px(8.))
+            .pr(px(4.))
+            .rounded(px(RADIUS_SM))
+            .bg(t.fill_selected)
+            .on_key_down(cx.listener(|page, event: &KeyDownEvent, _, cx| {
+                if event.keystroke.key == "backspace" {
+                    page.clear_chip(cx);
+                    cx.stop_propagation();
+                }
+            }))
+            .child(
+                type_scale::UI
+                    .el()
+                    .text_color(t.text_primary)
+                    .child(text(locale, key)),
+            )
+            .child(
+                ui::ghost_icon_button("table-chip-clear", Icon::X, 16., false, false, true, t)
+                    .tooltip(ui::tip(text(locale, Key::FilterClear)))
+                    .on_click(cx.listener(|page, _, _, cx| page.clear_chip(cx))),
+            )
             .into_any_element()
     }
 
@@ -2714,8 +3624,12 @@ fn system_line(entry: &Entry, locale: Locale) -> String {
     let author = when::author(locale, entry.author);
     let when = when::long(locale, entry.stamp.created_at);
     let status = event_status(entry);
-    let what = match status {
-        Some(status) => {
+    let due = entry
+        .event
+        .as_ref()
+        .filter(|e| e.kind == acta_core::model::EventKind::Due);
+    let what = match (status, due) {
+        (Some(status), _) => {
             let name = text(locale, ui::status_key(status));
             tr(
                 locale,
@@ -2723,9 +3637,56 @@ fn system_line(entry: &Entry, locale: Locale) -> String {
                 &[("author", Arg::Text(&author)), ("status", Arg::Text(&name))],
             )
         }
-        None => entry.text.clone(),
+        (None, Some(event)) => match event.new.as_deref().and_then(Date::parse_iso) {
+            Some(day) => {
+                let date = due::date(locale, day);
+                tr(
+                    locale,
+                    Key::EventDueSet,
+                    &[("author", Arg::Text(&author)), ("date", Arg::Text(&date))],
+                )
+            }
+            None => tr(
+                locale,
+                Key::EventDueCleared,
+                &[("author", Arg::Text(&author))],
+            ),
+        },
+        (None, None) => entry.text.clone(),
     };
     format!("{what} \u{2013} {when}")
+}
+
+/// A ghost control of the Overview: a row `height` high, padding 0 x 8,
+/// hanging 8 into the gutter as list rows do, hover and pressed fills,
+/// the focus ring.
+fn overview_control(
+    id: impl Into<gpui_kit::ElementId>,
+    height: f32,
+    t: &Tokens,
+) -> gpui_kit::Stateful<gpui_kit::Div> {
+    let (hover, pressed) = (t.fill_hover, t.fill_pressed);
+    ui::focusable(div().id(id.into()), t, false)
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(8.))
+        .h(px(height))
+        .px(px(8.))
+        .mx(px(-8.))
+        .rounded(px(RADIUS_SM))
+        .cursor_pointer()
+        .hover(move |s| s.bg(hover))
+        .active(move |s| s.bg(pressed))
+}
+
+/// The colour of a due phrase or cell.
+fn tone_color(tone: Tone, t: &Tokens) -> gpui_kit::Hsla {
+    match tone {
+        Tone::Warning => t.warning,
+        Tone::Secondary => t.text_secondary,
+        Tone::Tertiary => t.text_tertiary,
+    }
 }
 
 fn progress(data: &Loaded, locale: Locale, t: &Tokens) -> AnyElement {
@@ -2838,7 +3799,22 @@ impl Render for RecordPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.global::<Tokens>().clone();
         let locale = settings::locale(cx);
-        let _ = window;
+        // A figure of the Overview was opened: focus the table's first row
+        // once it is drawn.
+        if self.focus_first_row && self.data.is_some() {
+            self.focus_first_row = false;
+            cx.on_next_frame(window, |page, window, cx| {
+                if let Some(first) = page.row_focus.first() {
+                    window.focus(first, cx);
+                }
+            });
+        }
+        // A focus handle for each table row (`D` on a row, focus after a
+        // click-through).
+        let rows = self.data.as_ref().map_or(0, |d| d.all_topics().len());
+        while self.row_focus.len() < rows {
+            self.row_focus.push(cx.focus_handle());
+        }
         let mut column = ui::column();
         if self.gone {
             column = column.child(
@@ -2868,6 +3844,7 @@ impl Render for RecordPage {
                 column = column.child(self.render_state(&data, locale, &t, cx));
             }
             column = column
+                .children(self.render_overview(&data, locale, &t, cx))
                 .child(self.render_description(&data, locale, &t, cx))
                 .child(self.render_knowledge(&data, locale, &t, cx));
             if self.topic().is_some() {
@@ -2894,6 +3871,9 @@ impl Render for RecordPage {
                 }
             }))
             .on_action(cx.listener(|page, _: &EditTitle, window, cx| page.edit_title(window, cx)))
+            .on_action(cx.listener(|page, _: &OpenDuePicker, window, cx| {
+                page.open_due_here(false, window, cx)
+            }))
             .on_action(cx.listener(|page, _: &Escape, window, cx| page.cancel_editors(window, cx)))
             .on_key_down(cx.listener(Self::on_key))
             .child(column)
