@@ -5285,18 +5285,29 @@ impl Shell {
 
     /// The palette and quick capture: 96 below the window top, centred,
     /// no scrim; dialogs draw their own scrim. Above every other layer (the
-    /// sidebar over the page, the toast, menus, a drag).
-    fn overlay_element(&mut self) -> Option<AnyElement> {
+    /// sidebar over the page, the toast, menus, a drag). Both are modal: a
+    /// transparent layer over the window takes every click outside them,
+    /// which closes them and reaches nothing behind (the user's report of
+    /// 2026-11-22: the app behind stayed clickable under the palette).
+    fn overlay_element(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let outside = cx.listener(|shell, _: &gpui_kit::MouseDownEvent, window, cx| {
+            shell.overlay_clicked_outside(window, cx)
+        });
         let bench = self.bench()?;
         let top = |child: AnyElement| {
             deferred(
                 div()
+                    .id("overlay-catcher")
                     .absolute()
-                    .top(px(96.))
+                    .top_0()
                     .left_0()
-                    .right_0()
+                    .size_full()
+                    .occlude()
+                    .on_any_mouse_down(outside)
+                    .pt(px(96.))
                     .flex()
                     .justify_center()
+                    .items_start()
                     .child(child),
             )
             .with_priority(OVERLAY_PRIORITY)
@@ -5315,6 +5326,31 @@ impl Shell {
                 .with_priority(OVERLAY_PRIORITY)
                 .into_any_element(),
         })
+    }
+
+    /// The palette is open: `Tab` never leaves it.
+    fn modal_overlay(&mut self) -> bool {
+        self.bench()
+            .is_some_and(|b| matches!(b.overlay, Some(Overlay::Palette(_))))
+    }
+
+    /// A click outside the palette or quick capture: it closes, as `Esc`
+    /// does (capture keeps its draft), and the click acts on nothing else.
+    fn overlay_clicked_outside(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        cx.stop_propagation();
+        let Some(bench) = self.bench() else { return };
+        match &bench.overlay {
+            Some(Overlay::Palette(_)) => {
+                bench.create_in = None;
+                bench.on_pick = None;
+                self.close_overlay(window, cx);
+            }
+            Some(Overlay::Capture(capture)) => {
+                let capture = capture.clone();
+                capture.update(cx, |c, cx| c.close(cx));
+            }
+            _ => {}
+        }
     }
 
     fn toast_element(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -5917,7 +5953,7 @@ impl Render for Shell {
         }
         let dragging = matches!(&self.content, Content::Workbench(b) if b.ui.dragging());
         let status_bar = is_bench.then(|| self.status_bar(cx));
-        let overlay = self.overlay_element();
+        let overlay = self.overlay_element(cx);
 
         let frame = type_scale::UI
             .el()
@@ -5999,8 +6035,17 @@ impl Render for Shell {
                 let focus = !s.terminal_focused(w, cx);
                 s.cycle_tab(false, focus, w, cx)
             }))
-            .on_action(|_: &FocusNext, window, cx| window.focus_next(cx))
-            .on_action(|_: &FocusPrevious, window, cx| window.focus_prev(cx))
+            // Focus stays in the palette while it is open (it is modal).
+            .on_action(cx.listener(|s, _: &FocusNext, window, cx| {
+                if !s.modal_overlay() {
+                    window.focus_next(cx)
+                }
+            }))
+            .on_action(cx.listener(|s, _: &FocusPrevious, window, cx| {
+                if !s.modal_overlay() {
+                    window.focus_prev(cx)
+                }
+            }))
             .on_action(cx.listener(|s, _: &OpenPalette, w, cx| s.open_palette(None, None, w, cx)))
             .on_action(cx.listener(|s, _: &GoToTopic, w, cx| {
                 s.open_palette(Some(Group::Topics), None, w, cx)

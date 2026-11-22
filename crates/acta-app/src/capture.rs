@@ -200,7 +200,7 @@ impl Capture {
         self.tray.update(cx, |tray, cx| tray.paste(clip, cx));
     }
 
-    fn close(&mut self, cx: &mut Context<Self>) {
+    pub fn close(&mut self, cx: &mut Context<Self>) {
         let draft = self.editor.read(cx).value().to_string();
         let tray = (!self.tray.read(cx).is_empty()).then(|| self.tray.clone());
         cx.emit(CaptureEvent::Close(draft, tray));
