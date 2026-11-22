@@ -4,9 +4,9 @@
 //!
 //! Taken before every migration, import and snapshot restore, and once per
 //! day of use. Retention: the 7 newest daily snapshots, then the newest of
-//! each of the 4 weeks before them, the 3 newest `restore` snapshots, and
-//! the newest of every other kind. A snapshot being restored is never
-//! removed by retention.
+//! each of the 4 weeks before them, the `restore` snapshots (see
+//! [`KEEP_RESTORE_MS`]), and the newest of every other kind. A snapshot
+//! being restored is never removed by retention.
 
 use crate::error::Result;
 use crate::fsutil;
@@ -19,6 +19,13 @@ pub const SNAPSHOT_DIR: &str = "snapshots";
 const KEEP_DAILY: usize = 7;
 const KEEP_WEEKLY: usize = 4;
 const KEEP_RESTORE: usize = 3;
+/// `restore` snapshots are kept by count (the 3 newest) and also by age:
+/// every one taken less than 7 days before the newest snapshot stays.
+/// Restores in a row each snapshot the state before them, so by count
+/// alone a fourth restore would remove the first one, the only copy of the
+/// live state before the user started restoring. By age, that copy stays
+/// for a week however many restores follow.
+const KEEP_RESTORE_MS: i64 = 7 * time::MS_PER_DAY;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SnapshotKind {
@@ -155,6 +162,7 @@ pub(crate) fn expired(all: &[Snapshot]) -> Vec<Snapshot> {
     let mut weeks: Vec<i64> = Vec::new();
     let mut other_seen: Vec<SnapshotKind> = Vec::new();
     let mut restore_seen = 0;
+    let newest = all.iter().map(|s| s.taken_at).max().unwrap_or(0);
     for (i, s) in all.iter().enumerate() {
         if s.kind == SnapshotKind::Daily {
             if daily_seen < KEEP_DAILY {
@@ -168,7 +176,7 @@ pub(crate) fn expired(all: &[Snapshot]) -> Vec<Snapshot> {
                 }
             }
         } else if s.kind == SnapshotKind::Restore {
-            if restore_seen < KEEP_RESTORE {
+            if restore_seen < KEEP_RESTORE || newest - s.taken_at < KEEP_RESTORE_MS {
                 restore_seen += 1;
                 keep[i] = true;
             }
@@ -257,6 +265,41 @@ mod tests {
             .collect();
         assert_eq!(restores.len(), 3);
         assert!(restores.contains(&&&snap(SnapshotKind::Restore, today - 50)));
+    }
+
+    #[test]
+    fn restores_in_a_row_keep_the_state_before_the_first() {
+        // Alexandre restores six times in one afternoon: each restore
+        // snapshots the state before it, the first one the live state.
+        let today = 20_778;
+        let base = today * MS_PER_DAY;
+        let mut all: Vec<Snapshot> = (0..6)
+            .map(|k| Snapshot {
+                path: PathBuf::from(file_name(SnapshotKind::Restore, base + k * 60_000)),
+                kind: SnapshotKind::Restore,
+                taken_at: base + k * 60_000,
+            })
+            .collect();
+        all.push(snap(SnapshotKind::Daily, today));
+        all.sort_by_key(|s| std::cmp::Reverse(s.taken_at));
+        let first = all.iter().find(|s| s.taken_at == base).unwrap().clone();
+        assert!(expired(&all).is_empty(), "all within the week");
+        // Eight days later, the count rule alone remains.
+        let later = Snapshot {
+            path: PathBuf::from(file_name(SnapshotKind::Restore, base + 8 * MS_PER_DAY)),
+            kind: SnapshotKind::Restore,
+            taken_at: base + 8 * MS_PER_DAY,
+        };
+        all.insert(0, later);
+        let dropped = expired(&all);
+        assert!(dropped.contains(&first));
+        assert_eq!(
+            dropped
+                .iter()
+                .filter(|s| s.kind == SnapshotKind::Restore)
+                .count(),
+            4
+        );
     }
 
     #[test]
