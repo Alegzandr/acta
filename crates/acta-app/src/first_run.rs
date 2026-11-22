@@ -1,8 +1,11 @@
 //! First run, docs/design/screens.md 8.5: no sidebar until a project exists;
 //! "Choose a folder" creates the project named after the folder, attaches
 //! the folder as its primary working folder and opens its inbox. The three
-//! "Then" steps are plain text rows, not a checklist.
+//! "Then" steps are plain text rows, not a checklist. While Claude Code
+//! is not ready, the Ready for Claude Code block heads the column (ADR
+//! 0013; components-app.md 5).
 
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     Context, EventEmitter, InteractiveElement, IntoElement, ParentElement, Render,
     StatefulInteractiveElement, Styled, Window, div, px,
@@ -16,6 +19,14 @@ use crate::ui::{self, Variant};
 
 pub enum FirstRunEvent {
     ChooseFolder,
+    /// A button of the Ready for Claude Code block.
+    Ready(crate::ready::Request),
+}
+
+impl From<crate::ready::Request> for FirstRunEvent {
+    fn from(request: crate::ready::Request) -> Self {
+        FirstRunEvent::Ready(request)
+    }
 }
 
 pub struct FirstRun;
@@ -29,6 +40,12 @@ impl Render for FirstRun {
         let macos = cfg!(target_os = "macos");
         let m = KeyName::Mod.label(locale, macos);
         let ctrl = KeyName::Ctrl.label(locale, macos);
+        let ready = crate::ready::first_run_shows(cx);
+        let block = if ready {
+            crate::ready::block::<Self, FirstRunEvent>(true, locale, &t, cx)
+        } else {
+            Vec::new()
+        };
         // The step labels' column is as wide as the longest label in this
         // language, so the hints line up without a fixed width.
         let labels = [Key::FirstrunStep1, Key::FirstrunStep2, Key::FirstrunStep3]
@@ -75,6 +92,9 @@ impl Render for FirstRun {
                     .pb(px(48.))
                     .flex()
                     .flex_col()
+                    // Ready for Claude Code (ADR 0013), while a required or
+                    // recommended row is not ready; GitHub CLI never here.
+                    .when(ready, |this| this.children(block).child(div().h(px(32.))))
                     .child(
                         type_scale::TITLE
                             .el()

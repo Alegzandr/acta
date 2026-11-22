@@ -11,13 +11,11 @@ use std::time::Duration;
 
 use serde::Deserialize;
 
-/// The four checks the Settings page lists, from the steps of
-/// `acta setup --check` (ADR 0005).
+/// The three checks of Acta's own setup the Settings page lists, from the
+/// steps of `acta setup --check --no-prereqs` (ADR 0005). Whether Claude
+/// Code is there is the Ready for Claude Code block's (`ready.rs`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Check {
-    /// Claude Code is found: the `claude` row is ready, or found but
-    /// outdated (its `found` flag, ADR 0013).
-    pub claude: bool,
     /// The plugin files are written and the `acta` command exists.
     pub files: bool,
     /// The marketplace is added and the plugin installed.
@@ -28,7 +26,7 @@ pub struct Check {
 
 impl Check {
     pub fn complete(self) -> bool {
-        self.claude && self.files && self.plugin && self.rule
+        self.files && self.plugin && self.rule
     }
 
     /// Parse the JSON of `acta setup --check --json`. Unknown steps are
@@ -42,13 +40,10 @@ impl Check {
         struct Step {
             step: String,
             ok: bool,
-            #[serde(default)]
-            found: bool,
         }
         let out: Out = serde_json::from_str(json.trim()).ok()?;
         let ok = |name: &str| out.steps.iter().any(|s| s.step == name && s.ok);
         Some(Check {
-            claude: ok("claude") || out.steps.iter().any(|s| s.step == "claude" && s.found),
             files: ok("executable") && ok("plugin files"),
             plugin: ok("marketplace") && ok("plugin"),
             rule: ok("allow rule"),
@@ -88,10 +83,15 @@ fn run(args: &[&str], limit: Duration) -> Option<String> {
     Some(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-/// `acta setup --check --json`. `None` when the command could not run or
-/// answered something else; the status bar then reports "not set up".
+/// `acta setup --check --no-prereqs --json`: Acta's own steps only (the
+/// Ready rows are detected in the app, `ready.rs`, and run each tool).
+/// `None` when the command could not run or answered something else; the
+/// status bar then reports "not set up".
 pub fn check() -> Option<Check> {
-    Check::parse(&run(&["setup", "--check", "--json"], CHECK_LIMIT)?)
+    Check::parse(&run(
+        &["setup", "--check", "--no-prereqs", "--json"],
+        CHECK_LIMIT,
+    )?)
 }
 
 /// "Set up Claude Code" / "Run setup again": `acta setup`, then the open
@@ -137,22 +137,32 @@ pub fn remove() -> Option<Check> {
 /// The Claude Code status of the status bar (layout.md 4.6).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Status {
+    /// Claude Code is not installed (components-app.md 5, Ready).
+    NotInstalled,
+    /// Claude Code is not signed in.
+    SignedOut,
     NotSetUp,
-    NotFound,
     /// Set up, but the active project has no working folder.
     NoFolder,
     Ready,
 }
 
-/// The status from the last check and whether the active project has a
+/// The status from the required Ready rows (first, before any setup
+/// status), the last setup check and whether the active project has a
 /// folder (`None`: no project, or not known yet; setup alone decides).
-pub fn status(check: Option<Check>, project_has_folder: Option<bool>) -> Status {
-    match check {
-        None => Status::NotSetUp,
-        Some(c) if !c.claude => Status::NotFound,
-        Some(c) if !c.complete() => Status::NotSetUp,
-        Some(_) if project_has_folder == Some(false) => Status::NoFolder,
-        Some(_) => Status::Ready,
+pub fn status(
+    ready: crate::ready_model::Readiness,
+    check: Option<Check>,
+    project_has_folder: Option<bool>,
+) -> Status {
+    use crate::ready_model::Readiness;
+    match (ready, check) {
+        (Readiness::Missing, _) => Status::NotInstalled,
+        (Readiness::SignedOut, _) => Status::SignedOut,
+        (_, None) => Status::NotSetUp,
+        (_, Some(c)) if !c.complete() => Status::NotSetUp,
+        (_, Some(_)) if project_has_folder == Some(false) => Status::NoFolder,
+        (_, Some(_)) => Status::Ready,
     }
 }
 
@@ -242,9 +252,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_four_checks_come_from_the_steps_of_the_cli() {
+    fn the_three_checks_come_from_the_steps_of_the_cli() {
         let all = r#"{"ok":true,"steps":[
-            {"step":"claude","ok":true,"detail":"found"},
             {"step":"executable","ok":true,"detail":"found"},
             {"step":"plugin files","ok":true,"detail":"up to date"},
             {"step":"marketplace","ok":true,"detail":"added"},
@@ -254,7 +263,6 @@ mod tests {
         let check = Check::parse(all).unwrap();
         assert!(check.complete());
         let partial = r#"{"ok":false,"steps":[
-            {"step":"claude","ok":true,"detail":"found"},
             {"step":"executable","ok":true,"detail":"found"},
             {"step":"plugin files","ok":false,"detail":"missing"},
             {"step":"marketplace","ok":true,"detail":"added"},
@@ -263,22 +271,22 @@ mod tests {
         assert_eq!(
             Check::parse(partial).unwrap(),
             Check {
-                claude: true,
                 files: false,
                 plugin: false,
                 rule: true
             }
         );
         assert_eq!(Check::parse("not json"), None);
-        // An outdated Claude Code is found (ADR 0013): its row fails the
-        // check but carries `found`.
-        let outdated = r#"{"ok":false,"steps":[
-            {"step":"claude","ok":false,"detail":"2.1.100, needs 2.1.329+: claude update","state":"outdated","found":true},
-            {"step":"signed in","ok":false,"detail":"not signed in"}]}"#;
-        assert!(Check::parse(outdated).unwrap().claude);
-        let missing = r#"{"ok":false,"steps":[
-            {"step":"claude","ok":false,"detail":"not installed","state":"missing","found":false}]}"#;
-        assert!(!Check::parse(missing).unwrap().claude);
+        // Rows of a full check (ADR 0013) change nothing here: Claude
+        // Code's presence is the Ready block's.
+        let with_rows = r#"{"ok":false,"steps":[
+            {"step":"claude","ok":false,"detail":"not installed","state":"missing","found":false},
+            {"step":"executable","ok":true,"detail":"found"},
+            {"step":"plugin files","ok":true,"detail":"up to date"},
+            {"step":"marketplace","ok":true,"detail":"added"},
+            {"step":"plugin","ok":true,"detail":"installed"},
+            {"step":"allow rule","ok":true,"detail":"present"}]}"#;
+        assert!(Check::parse(with_rows).unwrap().complete());
     }
 
     #[test]
@@ -288,21 +296,31 @@ mod tests {
     }
 
     #[test]
-    fn the_status_reports_setup_first_then_the_project_folder() {
+    fn the_status_reports_the_required_rows_then_setup_then_the_folder() {
+        use crate::ready_model::Readiness;
         let done = Check {
-            claude: true,
             files: true,
             plugin: true,
             rule: true,
         };
-        let missing = Check {
-            claude: false,
-            ..done
-        };
-        assert_eq!(status(None, Some(true)), Status::NotSetUp);
-        assert_eq!(status(Some(missing), Some(true)), Status::NotFound);
+        let r = Readiness::Ready;
+        assert_eq!(
+            status(Readiness::Missing, Some(done), Some(true)),
+            Status::NotInstalled
+        );
+        assert_eq!(
+            status(Readiness::SignedOut, None, Some(true)),
+            Status::SignedOut
+        );
+        // Not known yet: setup alone decides.
+        assert_eq!(
+            status(Readiness::Unknown, Some(done), Some(true)),
+            Status::Ready
+        );
+        assert_eq!(status(r, None, Some(true)), Status::NotSetUp);
         assert_eq!(
             status(
+                r,
                 Some(Check {
                     rule: false,
                     ..done
@@ -311,8 +329,8 @@ mod tests {
             ),
             Status::NotSetUp
         );
-        assert_eq!(status(Some(done), Some(false)), Status::NoFolder);
-        assert_eq!(status(Some(done), Some(true)), Status::Ready);
-        assert_eq!(status(Some(done), None), Status::Ready);
+        assert_eq!(status(r, Some(done), Some(false)), Status::NoFolder);
+        assert_eq!(status(r, Some(done), Some(true)), Status::Ready);
+        assert_eq!(status(r, Some(done), None), Status::Ready);
     }
 }

@@ -837,6 +837,72 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// A one-off session (ADR 0013) runs the program itself with the fresh
+    /// `PATH`: `where` finds a file that only the fresh `PATH` reaches,
+    /// so ConPTY gave the child that `PATH` and not the inherited `Path`.
+    #[cfg(windows)]
+    #[test]
+    fn a_one_off_session_gets_the_fresh_path() {
+        use std::ffi::{OsStr, OsString};
+        let dir = std::env::temp_dir().join(format!("acta oneoff {}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("probe-alexandre.bat"), "@echo off\r\n").unwrap();
+        let mut fresh = OsString::from(dir.as_os_str());
+        fresh.push(";");
+        fresh.push(std::env::var_os("PATH").unwrap_or_default());
+        let dirs = acta_core::prereqs::locate::split_path(&fresh);
+        let argv: Vec<OsString> = ["where", "probe-alexandre"]
+            .iter()
+            .map(OsString::from)
+            .collect();
+        let spec = crate::launch::one_off_spec(
+            &argv,
+            std::env::temp_dir(),
+            &dirs,
+            Some(OsStr::new(&fresh)),
+            |p| p.is_file(),
+        )
+        .expect("where.exe is found");
+        assert!(spec.program.to_ascii_lowercase().ends_with("where.exe"));
+        let session = Session::spawn(&spec, GridSize::new(200, 30), TerminalTheme::dark())
+            .expect("spawn where.exe");
+        assert_eq!(wait_exit(&session), Some(Some(0)), "{}", session.text());
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(
+            session.text().contains("probe-alexandre.bat"),
+            "{}",
+            session.text()
+        );
+        drop(session);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_one_off_session_gets_the_fresh_path_unix() {
+        use std::ffi::{OsStr, OsString};
+        let mut fresh = OsString::from("/acta-alexandre:");
+        fresh.push(std::env::var_os("PATH").unwrap_or_default());
+        let dirs = acta_core::prereqs::locate::split_path(&fresh);
+        let spec = crate::launch::one_off_spec(
+            &[OsString::from("env")],
+            std::env::temp_dir(),
+            &dirs,
+            Some(OsStr::new(&fresh)),
+            |p| p.is_file(),
+        )
+        .expect("env is found");
+        let session = Session::spawn(&spec, GridSize::new(200, 60), TerminalTheme::dark())
+            .expect("spawn env");
+        assert_eq!(wait_exit(&session), Some(Some(0)));
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(
+            session.text().contains("PATH=/acta-alexandre:"),
+            "{}",
+            session.text()
+        );
+    }
+
     /// Arguments reach the program as separate words, quotes included.
     #[cfg(unix)]
     #[test]
