@@ -917,6 +917,7 @@ impl Shell {
             Ok("palette") => {
                 self.open_palette(None, None, window, cx);
                 // `ACTA_DEV_QUERY`: typed into it (the ranking of 8.3).
+                #[cfg(debug_assertions)]
                 if let Ok(query) = std::env::var("ACTA_DEV_QUERY")
                     && let Some(bench) = self.bench()
                     && let Some(Overlay::Palette(palette)) = &bench.overlay
