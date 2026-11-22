@@ -3599,6 +3599,7 @@ impl Shell {
             }
             PageEvent::StaleMemories(project) => self.open_stale_memories(*project, window, cx),
             PageEvent::LateAnswers(scope) => self.open_late_answers(*scope, window, cx),
+            PageEvent::OpenEntry(topic, entry) => self.open_entry(*topic, *entry, window, cx),
             PageEvent::Saved(_) | PageEvent::Located(_) => cx.notify(),
         }
     }

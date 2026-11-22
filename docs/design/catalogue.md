@@ -423,6 +423,8 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `contact.move.more` | +{n} more | +{n} autre · +{n} autres |
 | `contact.lifted` | {name} is now a contact of all projects, so {record} still sees them. | Contact étendu à tous les projets pour rester visible depuis {record} : {name}. |
 | `contact.lifted.project` | {name} is now a contact of project {project}, so {record} still sees them. | Contact étendu au projet {project} pour rester visible depuis {record} : {name}. |
+| `contact.lift_kept` | {name} stays a contact of all projects. | Le contact reste dans tous les projets : {name}. |
+| `contact.lift_kept.project` | {name} stays a contact of project {project}. | Le contact reste au niveau du projet {project} : {name}. |
 | `contacts.title` | Contacts | Contacts |
 | `contacts.count` | {n} contact · {n} contacts | {n} contact · {n} contacts |
 | `contacts.filter.project` | This project | Ce projet |
@@ -489,7 +491,10 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `folders.n_not_found` | {n} not found | {n} introuvable · {n} introuvables |
 | `folders.also_topic` | Also attached to topic {name}. | Également rattaché au sujet {name}. |
 | `folders.also_epic` | Also attached to epic {name}. | Également rattaché à l'epic {name}. |
-| `folders.also_more` | Also attached to topics {a}, {b} and {n} more. | Également rattaché aux sujets {a}, {b} et {n} autre. · Également rattaché aux sujets {a}, {b} et {n} autres. |
+| `folders.also_two` | Also attached to {a} and {b}. | Également rattaché à {a} et à {b}. |
+| `folders.also_more` | Also attached to {a}, {b} and {n} more. | Également rattaché à {a}, à {b} et à {n} autre. · Également rattaché à {a}, à {b} et à {n} autres. |
+| `folders.also_name.topic` | topic {name} | sujet {name} |
+| `folders.also_name.epic` | epic {name} | epic {name} |
 | `folders.also.tip` | A session started in this folder outside Acta opens on {level} and is told about both. | Une session lancée dans ce dossier hors d'Acta s'ouvre sur : {level}, et est informée des deux. |
 | `folders.show.w` | Show in Explorer (W) | Afficher dans l'Explorateur |
 | `folders.show.m` | Reveal in Finder (M) | Afficher dans le Finder |
@@ -1277,7 +1282,7 @@ From the clarity review of 2026-11-22 ([reviews/2026-11-22-clarity.md](reviews/2
 | `prop.add_report_to` | Report to | À rapporter à |
 | `meta.record` | {id} · Updated {when} by {author} | {id} · Modifié {when} par {author} |
 
-`{level}` in `folders.also.tip` is a `level.*` string ("Epic Terminal", « Epic Terminal »), which is why the French follows a colon. `prop.add_due` and `prop.add_report_to` label the hover-revealed add chips of an unset optional property (components-records.md 5, Properties block). `meta.record` is the one meta line under the properties block that replaces the Id and Updated rows; `{id}` is in `type.code`. `settings.setup.details` (the former text of `settings.setup.hint`) is the body behind "What setup changes", followed by `settings.plugin.hint`. The Settings rows Snapshots, Trash and Keyboard shortcuts take `settings.restore`, `common.open` and `common.open` as their buttons, so a label is never repeated on its own button.
+`{a}` and `{b}` in `folders.also_two` and `folders.also_more` are `folders.also_name.*` strings (each name carries its level word, "topic Scrollback"); `folders.also_two` is for exactly two other owners, `folders.also_more` for three or more (`{n}` is at least 1, plural on `{n}`); one other owner keeps `folders.also_topic` / `folders.also_epic` (review of `gpui-engineer/gaps`, 2026-11-22). `{level}` in `folders.also.tip` is a `level.*` string ("Epic Terminal", « Epic Terminal »), which is why the French follows a colon. `prop.add_due` and `prop.add_report_to` label the hover-revealed add chips of an unset optional property (components-records.md 5, Properties block). `meta.record` is the one meta line under the properties block that replaces the Id and Updated rows; `{id}` is in `type.code`. `settings.setup.details` (the former text of `settings.setup.hint`) is the body behind "What setup changes", followed by `settings.plugin.hint`. The Settings rows Snapshots, Trash and Keyboard shortcuts take `settings.restore`, `common.open` and `common.open` as their buttons, so a label is never repeated on its own button.
 
 ### 10.4.11 Keys of contacts and the profile
 
@@ -1287,7 +1292,7 @@ New with contacts (2026-11-22; components-contacts.md 5, data.md 11 requests 22 
 
 In French, *contact* is masculine ("ajouté", "supprimé", "fusionné"); a contact's name is user text and in French always follows a colon (10.3), so sentences put it last. `{level}` is `contact.level.all` or a `level.project` / `level.epic` string; `{record}` is a record title as written; `{places}` is a list of `contact.move.place`, joined by ", " as 10.3 licenses, at most three, then `contact.move.more`.
 
-`contact.lifted.project` replaces `contact.lifted` when the contact is lifted to a project rather than to all projects. `contact.meta_updated` replaces `contact.meta` once the contact changed after it was added. The `{field}` of `contact.move.place` is `prop.report_to` or `question.field.asked`. Agent-facing text (`ok C-12 Paul (P-1)`, `refused: no contact "Mari" here`, `User: Alexandre, Product designer`) is protocol, English only, and not in this catalogue (10).
+`contact.lifted.project` replaces `contact.lifted` when the contact is lifted to a project rather than to all projects. `contact.lift_kept` (and `.project`) is the toast when a tree drag that lifted a contact is undone: the topic goes back, the contact stays at its wider level (review of `gpui-engineer/gaps`, 2026-11-22). `contact.meta_updated` replaces `contact.meta` once the contact changed after it was added. The `{field}` of `contact.move.place` is `prop.report_to` or `question.field.asked`. Agent-facing text (`ok C-12 Paul (P-1)`, `refused: no contact "Mari" here`, `User: Alexandre, Product designer`) is protocol, English only, and not in this catalogue (10).
 
 ### 10.4.12 Keys of memory quality (ADR 0015)
 

@@ -1661,6 +1661,14 @@ catalogue! {
         en: t("{name} is now a contact of project {project}, so {record} still sees them."),
         fr: t("Contact étendu au projet {project} pour rester visible depuis {record} : {name}."),
     }
+    ContactLiftKept "contact.lift_kept" {
+        en: t("{name} stays a contact of all projects."),
+        fr: t("Le contact reste dans tous les projets : {name}."),
+    }
+    ContactLiftKeptProject "contact.lift_kept.project" {
+        en: t("{name} stays a contact of project {project}."),
+        fr: t("Le contact reste au niveau du projet {project} : {name}."),
+    }
     ContactsTitle "contacts.title" {
         en: t("Contacts"),
         fr: t("Contacts"),
@@ -1925,9 +1933,21 @@ catalogue! {
         en: t("Also attached to epic {name}."),
         fr: t("Également rattaché à l\u{2019}epic {name}."),
     }
+    FoldersAlsoTwo "folders.also_two" {
+        en: t("Also attached to {a} and {b}."),
+        fr: t("Également rattaché à {a} et à {b}."),
+    }
     FoldersAlsoMore "folders.also_more" {
-        en: t("Also attached to topics {a}, {b} and {n} more."),
-        fr: p("Également rattaché aux sujets {a}, {b} et {n} autre.", "Également rattaché aux sujets {a}, {b} et {n} autres."),
+        en: t("Also attached to {a}, {b} and {n} more."),
+        fr: p("Également rattaché à {a}, à {b} et à {n} autre.", "Également rattaché à {a}, à {b} et à {n} autres."),
+    }
+    FoldersAlsoNameTopic "folders.also_name.topic" {
+        en: t("topic {name}"),
+        fr: t("sujet {name}"),
+    }
+    FoldersAlsoNameEpic "folders.also_name.epic" {
+        en: t("epic {name}"),
+        fr: t("epic {name}"),
     }
     FoldersAlsoTip "folders.also.tip" {
         en: t("A session started in this folder outside Acta opens on {level} and is told about both."),

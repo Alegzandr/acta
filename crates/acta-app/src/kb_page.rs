@@ -1255,7 +1255,7 @@ impl DocPage {
                             window.focus(&page.focus, cx);
                         }
                         Err(WriteError::Stale) => page.load_conflict(cx),
-                        Err(WriteError::Failed) => {}
+                        Err(WriteError::Failed | WriteError::OutOfScope) => {}
                     }
                     cx.notify();
                 });
