@@ -69,6 +69,8 @@ fn kind_icon(record: Record) -> Icon {
         Record::Folder(_) => Icon::FolderOpen,
         Record::Question(_) => Icon::CircleQuestionMark,
         Record::Contact(_) => Icon::User,
+        // The `paperclip` icon arrives with the attachments UI.
+        Record::Attachment(_) => Icon::FileText,
     }
 }
 

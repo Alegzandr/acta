@@ -33,6 +33,14 @@
 //! Report to columns as they are. A reference that is a name rather than
 //! a UUID (a file written before contacts) resolves by key among the
 //! project's own contacts, else creates one at the project level.
+//! 4 adds attachments (ADR 0012, 9): a `blobs` array (one per distinct
+//! content: SHA-256, size, media type, and the content in base64 unless
+//! the export left files out) and an `attachments` array (owner, blob
+//! hash, name, size, order, the note a filing moved it from), and a note's
+//! `filed_entry`. Import checks each blob's hash, links content this
+//! database already holds, and leaves out attachment rows whose content is
+//! neither here nor in the file (named as "not in the export"). An older
+//! file imports with no attachments and leaves `filed_entry` as it is.
 
 use super::Store;
 use crate::date::Date;
@@ -48,7 +56,7 @@ use serde::{Deserialize, Serialize};
 /// The format name written in every file.
 pub const FORMAT_NAME: &str = "acta";
 /// The format version this build writes and the newest it reads.
-pub const FORMAT_VERSION: i64 = 3;
+pub const FORMAT_VERSION: i64 = 4;
 /// The file extension, without the leading dot.
 pub const FILE_EXTENSION: &str = "acta.json";
 
@@ -75,6 +83,49 @@ pub struct ExportFile {
     /// Version 3: the profile, in an "Everything" export only (request 23).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<XProfile>,
+    /// Version 4: the content of attached files, one per hash.
+    #[serde(default)]
+    pub blobs: Vec<XBlob>,
+    /// Version 4: attached files (ADR 0012).
+    #[serde(default)]
+    pub attachments: Vec<XAttachment>,
+}
+
+/// Version 4: one distinct content. `content` is base64, absent when the
+/// export left files out.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct XBlob {
+    /// SHA-256 of the content, lowercase hex.
+    pub hash: String,
+    pub size: i64,
+    pub media_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+}
+
+/// Version 4: an attached file. Its owner is exactly one of `note`,
+/// `entry`, `topic` (the description) or `epic` (the description).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct XAttachment {
+    #[serde(flatten)]
+    pub stamp: XStamp,
+    pub project: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub topic: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub epic: Option<String>,
+    /// The blob's hash.
+    pub blob: String,
+    pub name: String,
+    pub size: i64,
+    pub position: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub moved_from_note: Option<String>,
+    pub created_by: Author,
 }
 
 /// Version 3: a contact. Its level is the epic, else the project, else
@@ -208,6 +259,9 @@ pub struct XNote {
     /// Version 3: a contact UUID.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub report_to: Option<String>,
+    /// Version 4: the UUID of the entry the note was filed as.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filed_entry: Option<String>,
 }
 
 /// Version 3: a question (data.md request 18). Its owner is the topic,
@@ -388,6 +442,10 @@ pub struct ImportReport {
     pub contacts: ImportCounts,
     /// Contacts widened so every imported reference stays in scope.
     pub lifted: i64,
+    pub attachments: ImportCounts,
+    /// Names of attachments whose content was in neither the file nor
+    /// this database (an export without files): left out.
+    pub files_not_in_export: Vec<String>,
 }
 
 impl ImportReport {
@@ -403,6 +461,7 @@ impl ImportReport {
             self.folders,
             self.questions,
             self.contacts,
+            self.attachments,
         ];
         all.iter()
             .fold(ImportCounts::default(), |a, c| ImportCounts {
@@ -435,6 +494,74 @@ fn xreport(r: &rusqlite::Row<'_>, at: usize) -> rusqlite::Result<XReport> {
     })
 }
 
+impl Store {
+    /// Bytes of the distinct contents an export would carry.
+    fn export_files_bytes(&self, project: Option<ProjectId>) -> Result<u64> {
+        let only = project.map_or(String::new(), |p| format!(" WHERE project_id = {}", p.0));
+        let n: i64 = self.conn.query_row(
+            &format!(
+                "SELECT coalesce(sum(size), 0) FROM attachment_blobs
+                 WHERE complete = 1 AND id IN (SELECT blob_id FROM attachments{only})"
+            ),
+            [],
+            |r| r.get(0),
+        )?;
+        Ok(n.max(0) as u64)
+    }
+}
+
+/// The blobs the exported attachments name, each once, sorted by hash;
+/// the content read chunk by chunk.
+fn export_blobs(
+    conn: &rusqlite::Connection,
+    project: Option<ProjectId>,
+    include_files: bool,
+) -> Result<Vec<XBlob>> {
+    use base64::Engine as _;
+    let only = project.map_or(String::new(), |p| format!(" WHERE project_id = {}", p.0));
+    let heads = collect(
+        conn,
+        &format!(
+            "SELECT id, hash, size, media_type FROM attachment_blobs
+             WHERE complete = 1 AND id IN (SELECT blob_id FROM attachments{only}) ORDER BY hash"
+        ),
+        |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                XBlob {
+                    hash: r.get(1)?,
+                    size: r.get(2)?,
+                    media_type: r.get(3)?,
+                    content: None,
+                },
+            ))
+        },
+    )?;
+    let mut out = Vec::with_capacity(heads.len());
+    for (id, mut blob) in heads {
+        if include_files {
+            let mut stmt =
+                conn.prepare("SELECT data FROM attachment_chunks WHERE blob_id = ?1 ORDER BY seq")?;
+            let mut rows = stmt.query([id])?;
+            let mut text = String::with_capacity((blob.size as usize).div_ceil(3) * 4);
+            // 1 MiB is not a multiple of 3: bytes left over from a chunk
+            // are encoded with the next one.
+            let mut carry: Vec<u8> = Vec::new();
+            while let Some(row) = rows.next()? {
+                let data: Vec<u8> = row.get(0)?;
+                carry.extend_from_slice(&data);
+                let whole = carry.len() / 3 * 3;
+                base64::engine::general_purpose::STANDARD.encode_string(&carry[..whole], &mut text);
+                carry.drain(..whole);
+            }
+            base64::engine::general_purpose::STANDARD.encode_string(&carry, &mut text);
+            blob.content = Some(text);
+        }
+        out.push(blob);
+    }
+    Ok(out)
+}
+
 fn collect<T>(
     conn: &rusqlite::Connection,
     sql: &str,
@@ -446,8 +573,43 @@ fn collect<T>(
 }
 
 impl Store {
-    /// Everything, or one project (trash included), as an export document.
+    /// Everything, or one project (trash included), as an export document,
+    /// attached files' content included.
     pub fn export(&self, project: Option<ProjectId>) -> Result<ExportFile> {
+        self.export_with(project, true)
+    }
+
+    /// [`Store::export`]; with `include_files` false, attachments keep
+    /// their names and sizes and the blobs carry no content (the export
+    /// dialog's checkbox, ADR 0012, 9).
+    ///
+    /// With files, an export an import could not read back (over
+    /// [`MAX_IMPORT_BYTES`]) is refused with [`Error::ExportTooLarge`]:
+    /// export without files then (ADR 0012, 9).
+    pub fn export_with(
+        &self,
+        project: Option<ProjectId>,
+        include_files: bool,
+    ) -> Result<ExportFile> {
+        self.export_within(project, include_files, MAX_IMPORT_BYTES)
+    }
+
+    /// [`Store::export_with`] against a given import limit (tests).
+    pub(crate) fn export_within(
+        &self,
+        project: Option<ProjectId>,
+        include_files: bool,
+        limit: u64,
+    ) -> Result<ExportFile> {
+        if include_files {
+            let bytes = self.export_files_bytes(project)?;
+            // Base64 is 4 characters per 3 bytes; the records around it
+            // get a 64th of the limit.
+            let size = bytes.div_ceil(3) * 4;
+            if size + limit / 64 > limit {
+                return Err(Error::ExportTooLarge { size, limit });
+            }
+        }
         let project_uuid = match project {
             Some(p) => Some(
                 self.conn
@@ -560,9 +722,9 @@ impl Store {
         let notes = collect(
             conn,
             &format!(
-                "SELECT {STAMP_SQL}, p.uuid, x.text, x.author, t.uuid, x.filed_at, e.uuid, x.filed_by, c.uuid
+                "SELECT {STAMP_SQL}, p.uuid, x.text, x.author, t.uuid, x.filed_at, e.uuid, x.filed_by, c.uuid, fe.uuid
                  FROM notes x LEFT JOIN contacts c ON c.id = x.report_contact_id JOIN projects p ON p.id = x.project_id LEFT JOIN topics t ON t.id = x.filed_topic_id
-                 LEFT JOIN epics e ON e.id = x.filed_epic_id
+                 LEFT JOIN epics e ON e.id = x.filed_epic_id LEFT JOIN entries fe ON fe.id = x.filed_entry_id
                  WHERE 1 = 1{} ORDER BY x.uuid",
                 only("x.project_id")
             ),
@@ -577,6 +739,7 @@ impl Store {
                     filed_epic: r.get(11)?,
                     filed_by: r.get(12)?,
                     report_to: r.get(13)?,
+                    filed_entry: r.get(14)?,
                 })
             },
         )?;
@@ -736,6 +899,37 @@ impl Store {
                 })
             }
         };
+        let attachments = collect(
+            conn,
+            &format!(
+                "SELECT {STAMP_SQL}, p.uuid, n.uuid, en.uuid, t.uuid, e.uuid, b.hash, x.name, b.size,
+                        x.position, m.uuid, x.created_by
+                 FROM attachments x JOIN projects p ON p.id = x.project_id
+                 JOIN attachment_blobs b ON b.id = x.blob_id
+                 LEFT JOIN notes n ON n.id = x.note_id LEFT JOIN entries en ON en.id = x.entry_id
+                 LEFT JOIN topics t ON t.id = x.topic_id LEFT JOIN epics e ON e.id = x.epic_id
+                 LEFT JOIN notes m ON m.id = x.moved_from_note_id
+                 WHERE b.complete = 1{} ORDER BY x.uuid",
+                only("x.project_id")
+            ),
+            |r| {
+                Ok(XAttachment {
+                    stamp: xstamp(r, 0)?,
+                    project: r.get(6)?,
+                    note: r.get(7)?,
+                    entry: r.get(8)?,
+                    topic: r.get(9)?,
+                    epic: r.get(10)?,
+                    blob: r.get(11)?,
+                    name: r.get(12)?,
+                    size: r.get(13)?,
+                    position: r.get(14)?,
+                    moved_from_note: r.get(15)?,
+                    created_by: r.get(16)?,
+                })
+            },
+        )?;
+        let blobs = export_blobs(conn, project, include_files)?;
         drop(read);
         Ok(ExportFile {
             format: FORMAT_NAME.into(),
@@ -752,6 +946,8 @@ impl Store {
             questions,
             contacts,
             profile,
+            blobs,
+            attachments,
         })
     }
 
@@ -1551,6 +1747,8 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile, author: Author) -> Result<Im
         }
     }
 
+    merge_attachments(tx, f, &mut rep)?;
+
     rep.contacts.created += contacts_made;
     // Records of this database that still name a contact the file merged
     // away now name the one that holds its uses; and every reference the
@@ -1601,4 +1799,148 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile, author: Author) -> Result<Im
     }
 
     Ok(rep)
+}
+
+/// Version 4: notes' `filed_entry`, then blobs (hash checked, content this
+/// database holds linked), then attachment rows. Rows whose content is in
+/// neither place are left out and named in the report.
+fn merge_attachments(
+    tx: &rusqlite::Connection,
+    f: &ExportFile,
+    rep: &mut ImportReport,
+) -> Result<()> {
+    use base64::Engine as _;
+    if f.version < 4 {
+        return Ok(());
+    }
+    for x in &f.notes {
+        let Some(e) = &x.filed_entry else { continue };
+        let entry: Option<i64> = tx
+            .query_row("SELECT id FROM entries WHERE uuid = ?1", [e], |r| r.get(0))
+            .optional()?;
+        if entry.is_some() {
+            tx.execute(
+                "UPDATE notes SET filed_entry_id = ?2 WHERE uuid = ?1",
+                params![x.stamp.uuid, entry],
+            )?;
+        }
+    }
+    let mut blobs: std::collections::HashMap<&str, i64> = std::collections::HashMap::new();
+    for b in &f.blobs {
+        let local: Option<i64> = tx
+            .query_row(
+                "SELECT id FROM attachment_blobs WHERE hash = ?1 AND complete = 1",
+                [&b.hash],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let id = match (local, &b.content) {
+            (Some(id), _) => id,
+            (None, Some(text)) => {
+                // Over the attachment limit, or longer than its own size
+                // says: refused before anything is decoded.
+                let max = super::attachments::MAX_FILE_BYTES;
+                if b.size < 0
+                    || b.size as u64 > max
+                    || text.len() as u64 > (b.size as u64).div_ceil(3) * 4 + 4
+                {
+                    return Err(Error::Invalid(format!(
+                        "blob {} is over the {} limit for a file, or larger than its size says",
+                        b.hash,
+                        crate::files::size_label(max as i64)
+                    )));
+                }
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(text)
+                    .map_err(|_| Error::Invalid(format!("blob {} is not valid base64", b.hash)))?;
+                if bytes.len() as i64 != b.size {
+                    return Err(Error::Invalid(format!(
+                        "blob {} has {} bytes, not the {} it declares",
+                        b.hash,
+                        bytes.len(),
+                        b.size
+                    )));
+                }
+                if super::attachments::hash_of(&bytes) != b.hash {
+                    return Err(Error::Invalid(format!(
+                        "blob {} does not match its hash",
+                        b.hash
+                    )));
+                }
+                super::attachments::put_blob(tx, &bytes)?
+            }
+            (None, None) => continue,
+        };
+        blobs.insert(b.hash.as_str(), id);
+    }
+    for x in &f.attachments {
+        let s = &x.stamp;
+        let blob = match blobs.get(x.blob.as_str()) {
+            Some(id) => Some(*id),
+            None => tx
+                .query_row(
+                    "SELECT id FROM attachment_blobs WHERE hash = ?1 AND complete = 1",
+                    [&x.blob],
+                    |r| r.get(0),
+                )
+                .optional()?,
+        };
+        let Some(blob) = blob else {
+            rep.files_not_in_export
+                .push(super::attachments::clean_name(&x.name));
+            continue;
+        };
+        let action = decide(tx, "attachments", s)?;
+        count(&mut rep.attachments, &action);
+        let project = local_id(tx, "projects", &x.project)?;
+        let note = opt_id(tx, "notes", &x.note)?;
+        let entry = opt_id(tx, "entries", &x.entry)?;
+        let topic = opt_id(tx, "topics", &x.topic)?;
+        let epic = opt_id(tx, "epics", &x.epic)?;
+        let owners = [note, entry, topic, epic]
+            .iter()
+            .filter(|o| o.is_some())
+            .count();
+        if owners != 1 {
+            return Err(Error::Invalid(format!(
+                "attachment {} must have exactly one owner",
+                s.uuid
+            )));
+        }
+        let moved = match &x.moved_from_note {
+            Some(u) => tx
+                .query_row("SELECT id FROM notes WHERE uuid = ?1", [u], |r| {
+                    r.get::<_, i64>(0)
+                })
+                .optional()?,
+            None => None,
+        };
+        let name = super::attachments::clean_name(&x.name);
+        match action {
+            Action::Insert => {
+                tx.execute(
+                    "INSERT INTO attachments (uuid, project_id, note_id, entry_id, topic_id, epic_id, blob_id, name,
+                                              position, moved_from_note_id, created_by, created_at, updated_at,
+                                              updated_by, deleted_at, deleted_by)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+                    params![s.uuid, project, note, entry, topic, epic, blob, name, x.position, moved,
+                            x.created_by, s.created_at, s.updated_at, s.updated_by, s.deleted_at, s.deleted_by],
+                )?;
+            }
+            Action::Update(l) => {
+                let (d, db) = merged_deleted(&l, s);
+                tx.execute(
+                    "UPDATE attachments SET project_id = ?2, note_id = ?3, entry_id = ?4, topic_id = ?5, epic_id = ?6,
+                            name = ?7, position = ?8, moved_from_note_id = ?9, updated_at = ?10, updated_by = ?11,
+                            deleted_at = ?12, deleted_by = ?13,
+                            deleted_batch = CASE WHEN deleted_at IS ?12 THEN deleted_batch ELSE NULL END
+                     WHERE id = ?1",
+                    params![l.id, project, note, entry, topic, epic, name, x.position, moved,
+                            s.updated_at, s.updated_by, d, db],
+                )?;
+            }
+            Action::Skip => {}
+        }
+    }
+    Ok(())
 }

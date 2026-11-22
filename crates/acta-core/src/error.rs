@@ -121,6 +121,21 @@ pub enum Error {
         size: u64,
         limit: u64,
     },
+    /// A file over the attachment limit (ADR 0012, 2); sizes in bytes.
+    AttachmentTooLarge {
+        size: u64,
+        limit: u64,
+    },
+    /// The owner already holds the most files it may (ADR 0012, 2).
+    TooManyFiles {
+        limit: i64,
+    },
+    /// An export with files would be larger than an import reads (ADR
+    /// 0012, 9); sizes in bytes. The export without files works.
+    ExportTooLarge {
+        size: u64,
+        limit: u64,
+    },
     Io(std::io::Error),
     Json(serde_json::Error),
     Db(rusqlite::Error),
@@ -180,6 +195,24 @@ impl fmt::Display for Error {
                     mib(limit)
                 )
             }
+            Error::AttachmentTooLarge { size, limit } => {
+                write!(
+                    f,
+                    "the file is {}; the limit is {} per file",
+                    crate::files::size_label(*size as i64),
+                    crate::files::size_label(*limit as i64)
+                )
+            }
+            Error::ExportTooLarge { size, limit } => write!(
+                f,
+                "with its files this export would be about {}, over the {} an import reads; export without files (acta export --no-files): names and sizes stay",
+                crate::files::size_label(*size as i64),
+                crate::files::size_label(*limit as i64)
+            ),
+            Error::TooManyFiles { limit } => write!(
+                f,
+                "{limit} files is the most a note, an entry or a description can hold"
+            ),
             Error::Io(e) => write!(f, "{e}"),
             Error::Json(e) => write!(f, "{e}"),
             Error::Db(e) => write!(f, "{e}"),

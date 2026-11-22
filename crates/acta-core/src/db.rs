@@ -61,6 +61,14 @@ pub(crate) fn connect(path: &Path, key: &Key, mode: Mode) -> Result<Connection, 
         }
         Err(e) => return Err(e.into()),
     }
+    // A new file starts with incremental auto-vacuum (ADR 0012, 4): set
+    // before its first page is written, it needs no VACUUM.
+    if let Mode::Live { create: true } = mode {
+        let empty: i64 = conn.pragma_query_value(None, "page_count", |r| r.get(0))?;
+        if empty == 0 {
+            conn.execute_batch("PRAGMA auto_vacuum = INCREMENTAL;")?;
+        }
+    }
     if let Mode::Live { .. } = mode {
         conn.execute_batch(&format!(
             "PRAGMA journal_mode = WAL;
@@ -294,6 +302,41 @@ pub(crate) fn migrate(
             restored_from: None,
         }),
     }
+}
+
+/// From the attachments schema on, freed pages go back to the file system
+/// on a purge (`PRAGMA incremental_vacuum`, ADR 0012, 4). Switching a
+/// database made before it takes one `VACUUM`, which rewrites the whole
+/// file: only the app (its background maintenance) and `acta setup` run it,
+/// never a hook, `acta mcp` or another CLI command, and with a short busy
+/// timeout, so it waits for nobody and is tried again later when the
+/// database is in use. The migration snapshot was taken before (at open).
+/// SQLCipher builds keep temporary data in memory (`SQLITE_TEMP_STORE=2`),
+/// so the copy `VACUUM` makes never touches the disk in plaintext. Returns
+/// whether the database now runs incrementally.
+pub(crate) fn enable_incremental_vacuum(conn: &Connection) -> rusqlite::Result<bool> {
+    if user_version(conn)? < crate::schema::INCREMENTAL_VACUUM_FROM {
+        return Ok(false);
+    }
+    if auto_vacuum_mode(conn)? == 2 {
+        return Ok(true);
+    }
+    conn.busy_timeout(VACUUM_BUSY)?;
+    let done = conn.execute_batch("PRAGMA auto_vacuum = INCREMENTAL; VACUUM;");
+    conn.busy_timeout(BUSY_TIMEOUT)?;
+    match done {
+        Ok(()) => Ok(auto_vacuum_mode(conn)? == 2),
+        Err(e) if is_busy(&e) => Ok(false),
+        Err(e) => Err(e),
+    }
+}
+
+/// How long the one-time `VACUUM` waits for other connections.
+const VACUUM_BUSY: Duration = Duration::from_millis(250);
+
+/// `PRAGMA auto_vacuum`: 0 none, 1 full, 2 incremental.
+pub(crate) fn auto_vacuum_mode(conn: &Connection) -> rusqlite::Result<i64> {
+    conn.pragma_query_value(None, "auto_vacuum", |r| r.get(0))
 }
 
 struct StepFailure {

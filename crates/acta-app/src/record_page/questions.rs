@@ -130,6 +130,7 @@ pub(super) struct QuestionUi {
 }
 
 impl RecordPage {
+    #[cfg(windows)]
     pub(super) fn questions_menu_open(&self) -> bool {
         self.q.menu.is_some()
             || self.q.date.is_some()

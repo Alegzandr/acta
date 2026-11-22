@@ -7,6 +7,7 @@
 //! transaction is held between calls. List calls return summaries and pages
 //! (ADR 0005); bodies are read one record at a time.
 
+mod attachments;
 mod exchange;
 mod folders;
 mod kb;
@@ -19,10 +20,14 @@ mod seen;
 mod timeline;
 mod trash;
 
+pub use attachments::{
+    AttachSource, AttachmentReader, CHUNK_BYTES, FileTotals, LARGE_FILE_BYTES, MAX_FILE_BYTES,
+    MAX_FILES_PER_OWNER, NAME_MAX, Purged, clean_name,
+};
 pub use exchange::{
     ExportFile, FILE_EXTENSION, FORMAT_NAME, FORMAT_VERSION, ImportCounts, ImportReport,
-    MAX_IMPORT_BYTES, XContact, XEntry, XEpic, XFolder, XKb, XNote, XProfile, XProject, XQuestion,
-    XReport, XRevision, XStamp, XTopic,
+    MAX_IMPORT_BYTES, XAttachment, XBlob, XContact, XEntry, XEpic, XFolder, XKb, XNote, XProfile,
+    XProject, XQuestion, XReport, XRevision, XStamp, XTopic,
 };
 pub use folders::{AUTO_MEMORY_PREFIX, FolderResolution, VisibleFolder, VisibleFolders};
 pub use kb::{KbCounts, KbEdit, KbFilter, KbRevisionSummary, KbUpdate, NewKb};
@@ -178,16 +183,40 @@ impl Store {
         snapshots::take(&self.conn, &self.data_dir, kind)
     }
 
-    /// Takes the daily snapshot if none was taken today (UTC). The app calls
+    /// Takes the daily snapshot if none was taken today (UTC), then purges
+    /// attachments whose trash time is over (ADR 0012, 4). The app calls
     /// this on a background thread after start and once a day; hooks and the
     /// CLI do not, so they stay fast.
-    pub fn snapshot_if_due(&self) -> Result<Option<Snapshot>> {
+    pub fn snapshot_if_due(&mut self) -> Result<Option<Snapshot>> {
+        // The one-time switch to incremental auto-vacuum after the schema 6
+        // upgrade: here, so only the app runs it (see
+        // [`Store::enable_incremental_vacuum`]).
+        if self.writable {
+            self.enable_incremental_vacuum()?;
+        }
         let all = snapshots::list(&self.data_dir)?;
-        if snapshots::daily_due(&all, crate::time::now_ms()) {
-            self.snapshot(SnapshotKind::Daily).map(Some)
+        let now = crate::time::now_ms();
+        if snapshots::daily_due(&all, now) {
+            let snap = self.snapshot(SnapshotKind::Daily)?;
+            if self.writable {
+                self.purge_attachments(now)?;
+            }
+            Ok(Some(snap))
         } else {
             Ok(None)
         }
+    }
+
+    /// Switches a database upgraded to schema 6 to incremental
+    /// auto-vacuum with one `VACUUM` (ADR 0012, 4). The app's background
+    /// maintenance and `acta setup` call it; it gives up at once when
+    /// another connection is busy (`Ok(false)`), to be tried later.
+    pub fn enable_incremental_vacuum(&mut self) -> Result<bool> {
+        self.check_writable()?;
+        if !self.conn.is_autocommit() {
+            return Ok(false);
+        }
+        Ok(db::enable_incremental_vacuum(&self.conn)?)
     }
 
     pub fn snapshots(&self) -> Result<Vec<Snapshot>> {
@@ -497,6 +526,8 @@ pub(crate) mod test_support {
     }
 }
 
+#[cfg(test)]
+mod attachments_tests;
 #[cfg(test)]
 mod questions_tests;
 #[cfg(test)]
