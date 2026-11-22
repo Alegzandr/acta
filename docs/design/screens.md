@@ -1209,3 +1209,27 @@ Annotations: widths in effective px; on screen everything is 1.5 times larger. T
 ```
 
 Annotations: the Zoom stepper's minus is disabled at 90%, its plus at the largest step the window can take (4.9); French "Zoom", "Tout le contenu de la fenêtre.", value "150 %".
+
+### 8.36 Tools follow the page (layout.md 4.5.1)
+
+Topic T-42 with two sessions, then the same window after opening topic T-51, which has none.
+
+```
+ page area (topic T-42)                      | Terminal  Chat  Agent browser                [+][.][-] | 28 area header
+                                             | Topic T-42 Embed the terminal · in embed-terminal [f v] | context: owner first
+                                             |--------------------------------------------------------|
+                                             | [b Claude 1 x] [b Claude 2]                             | 28 instance strip (2+)
+                                             |--------------------------------------------------------|
+                                             | > claude                                                |
+                                             |   ...                                                   |
+
+ page area (topic T-51)                      | Terminal  Chat  Agent browser                [+][.][-] |
+                                             | Topic T-51 Scrollback                                   |
+                                             |--------------------------------------------------------|
+                                             |   No Claude Code on this topic                          | type.heading
+                                             |   Starts in embed-terminal with what this topic knows.  |
+                                             |   [Start Claude Code here]                              | primary, focused
+```
+
+Annotations: `b` is `bot` 14 in the session's state colour. T-42's sessions keep running after the switch; T-42's tree row keeps its `bot` glyph, and the status bar still counts them. "Show terminal" in the Sessions view or on T-42's page line opens T-42 and shows them. The Chat and Agent browser tabs behave the same way. Claude Code (no project) is its own view (`terminal` icon, bottom panel by default), the same on every page: header "Claude Code (no project)", context "In your home folder, without Acta's context".
+

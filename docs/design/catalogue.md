@@ -1452,3 +1452,37 @@ From the user's rule of 2026-11-22 (components-records.md 5, Who writes what; da
 | `file.as_answer` | Answer to {id} | Réponse à {id} |
 | `capture.answer_chip` | Answer to {id} | Réponse à {id} |
 | `inbox.answers` | answers {id} | répond à {id} |
+
+### 10.4.17 Keys of page-bound tools and Claude Code (no project)
+
+From the user's decisions of 2026-11-22 (layout.md 4.5.1, data.md 11 request 27). Pending until implemented. `{level}` is the `level.*` word ("Topic", "Epic", "Project"; in French « Sujet », « Epic », « Projet »), `{id}` the short id, `{title}` the record's title as written, `{folder}` a folder's name, `{n}` the instance number.
+
+**Replaced** when it lands: `cmd.restart_terminal` ("Restart terminal here") by `cmd.claude_restart`; the terminal header's "Restart here" by `tool.restart_in` alone.
+
+| Key | English | French |
+|---|---|---|
+| `tool.owner` | {level} {id} {title} | {level} {id} {title} |
+| `tool.claude_n` | Claude {n} | Claude {n} |
+| `tool.chat_n` | Chat {n} | Chat {n} |
+| `tool.browser_n` | Browser {n} | Navigateur {n} |
+| `tool.browser_for` | Browser for Claude {n} | Navigateur de Claude {n} |
+| `tool.driven_by` | driven by Claude {n} | piloté par Claude {n} |
+| `tool.claude_start` | Start Claude Code here | Démarrer Claude Code ici |
+| `tool.claude_new` | New Claude Code session here | Nouvelle session Claude Code ici |
+| `tool.claude_none` | No Claude Code on this {level_lower} | Pas de Claude Code sur ce {level_lower} · Pas de Claude Code sur cet {level_lower} |
+| `tool.claude_none_body` | Starts in {folder} with what this {level_lower} knows. | Démarre dans {folder} avec ce que sait ce {level_lower}. |
+| `tool.no_owner` | Claude Code belongs to a project, an epic or a topic. Open one to start it or see its sessions. | Claude Code appartient à un projet, un epic ou un sujet. Ouvrez-en un pour le démarrer ou voir ses sessions. |
+| `tool.chat_new` | New chat here | Nouveau chat ici |
+| `tool.browser_new` | New browser here | Nouveau navigateur ici |
+| `tool.restart_in` | Restart in {folder} | Redémarrer dans {folder} |
+| `tool.limit` | {n} is the most on one page. | {n} au maximum sur une même page. |
+| `tool.free` | Claude Code (no project) | Claude Code (sans projet) |
+| `tool.free_context` | In your home folder, without Acta's context | Dans votre dossier personnel, sans le contexte d'Acta |
+| `tool.free_title` | Claude Code without a project | Claude Code sans projet |
+| `tool.free_body` | For work that needs no project: it starts in your home folder and knows nothing about Acta. | Pour un travail sans projet : il démarre dans votre dossier personnel et ne sait rien d'Acta. |
+| `tool.free_start` | Start | Démarrer |
+| `tool.free_new` | New Claude Code (no project) | Nouveau Claude Code (sans projet) |
+| `cmd.claude_restart` | Restart Claude Code | Redémarrer Claude Code |
+| `chat.clear_all_body` | This deletes the cookies and site data of every chat from this computer. Your conversations stay in your Claude account. | Cela supprime de cet ordinateur les cookies et données de site de tous les chats. Vos conversations restent dans votre compte Claude. |
+
+`{level_lower}` is the level word in lower case ("topic", « sujet »); the French form picks "cet" before "epic" (« cet epic »). The commands "Start Claude Code here", "New chat here" and "New browser here" use the `tool.*` labels above as their palette text.

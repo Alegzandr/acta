@@ -112,6 +112,12 @@ Run against every screen, in dark and in light, in English and in French. One fa
 - [ ] An unfolded page looks exactly as before; a folded section is one header line with its chevron and count; nothing moves when a chevron appears; Claude Code writing inside a folded section shows the dot on its header.
 - [ ] Collapse all and Expand all keep the reader's place; a fold follows the page kind across records and survives a restart; `preferences.json` holds only fixed fold keys and the zoom percent.
 
+**Tools and pages** (layout.md 4.5.1; run with sessions on a topic, its epic and its project, a chat on each, and Claude Code (no project) running)
+- [ ] The Terminal, Chat and Agent browser views show only the current page's instances; navigating never stops, restarts or moves one; every header names its owner first.
+- [ ] Every owning page offers "Start Claude Code here" in one key; a page that owns nothing says so and offers Claude Code (no project).
+- [ ] A session on another page is visible only as signals (tree glyph, status bar, Sessions view, page line) and "Show terminal" opens its own page.
+- [ ] Claude Code (no project) is in the home folder, has no Acta argument, uses the `terminal` icon and its own view, and is never listed as a page's session.
+
 **Behaviour**
 - [ ] Feedback on the next frame; nothing in the "never animates" list animates; budgets in 6.3 hold with 10,000 topics.
 - [ ] Writes are optimistic; failure restores state and keeps the user's text.

@@ -13,7 +13,7 @@ Implemented in M8; the catalogue rows of this section are in 10.4.
 #### 4.8.1 Vocabulary
 
 - An **area** is a region of the window that holds things. There are four: the **left sidebar**, the **right sidebar**, the **bottom panel** and the **page area**. Areas never move; what is in them does. (VS Code's "primary side bar", "secondary side bar", "panel" and "editor area".)
-- A **view** is a movable unit that keeps running when hidden: Projects (the tree), Inbox, Knowledge, Terminal, Chat and Agent browser. A view is in exactly one place at a time, or hidden; it is never duplicated.
+- A **view** is a movable unit that keeps running when hidden: Projects (the tree), Inbox, Knowledge, Terminal, Chat, Agent browser, Claude Code sessions and Claude Code (no project). Terminal, Chat and Agent browser show the instances of the current page (layout.md 4.5.1): the view is one place in the layout, its content follows the page. A view is in exactly one place at a time, or hidden; it is never duplicated.
 - A **group** is a set of tabs inside an area, one of them active. A side area or the bottom panel holds one or two groups; the page area holds one to three.
 - A **page** is what 4.2 already calls a page (topic, epic, project, document, settings, trash, shortcuts). Pages live only in the page area. Inbox and Knowledge are both: a page by default, a view once moved out of the page area (4.8.3).
 
@@ -44,6 +44,7 @@ User-facing words, in both languages, are exactly the catalogue's: "left sidebar
 | Terminal | `terminal` | `square-terminal` | Right sidebar, first tab | 400 x 160 | One session per project, unchanged (4.5). Moving never restarts it; the grid reflows to the new size. |
 | Chat | `chat` | `message-circle` | Right sidebar, second tab | 400 x 240 | Windows only (ADR 0009). A native web view (4.8.9). Moving never reloads it. |
 | Agent browser | `agent_browser` | `globe` | Right sidebar, third tab | 400 x 240 | Windows only (ADR 0010). A native web view (4.8.9), parked rather than hidden when off screen (components-app.md 5, Agent browser). Moving never reloads it. |
+| Claude Code (no project) | `free_claude` | `terminal` | Bottom panel, hidden | 400 x 160 | Plain Claude Code in the home folder, belonging to no page (layout.md 4.5.1). |
 | Claude Code sessions | `sessions` | `bot` | Bottom panel, hidden | 280 x 120 | The live Claude Code sessions (components-app.md 5, Claude Code sessions). Hidden on a new install; the status bar's Claude Code item shows it. |
 
 **What a view looks like where it lands.**
@@ -207,7 +208,7 @@ The layout is saved per window in `preferences.json` (4.7) under one `layout` ke
 The defaults are 4.2's workbench, unchanged for someone who never moves anything:
 - Left sidebar shown, 260, Projects alone.
 - Right sidebar hidden, 648, Terminal, Chat and Agent browser as tabs (the last two on Windows), Terminal active. It is hidden on a new install because showing the terminal starts a shell and showing the chat creates a web view; both wait for the user (4.5, 5).
-- Bottom panel hidden, 320, empty.
+- Bottom panel hidden, 320, holding Claude Code (no project) and Claude Code sessions, both hidden.
 - Page area: one group. Inbox and Knowledge are pages.
 
 **Reset layout** puts every area, view, size and split back to these defaults in one step, in one frame. It keeps the open tabs (gathered into one group, in group order, the focused group's active tab staying active), every terminal session, the chat's page and sign-in, the theme and everything else in the file. It is undoable and toasts "Layout reset." with Undo. Reached from the Layout menu, the palette, the move toast, and Settings > Appearance: a row "Layout", description "Puts every view and panel back where it was on a new install. You can undo it right after.", control a secondary button "Reset layout".
