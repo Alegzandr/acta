@@ -17,6 +17,11 @@
   <a href="LICENSE">MIT licence</a>
 </p>
 
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/screenshot-light.png">
+  <img src="docs/images/screenshot-dark.png" alt="Acta showing a topic: the project tree on the left; on the page, its status, the current state written by Claude Code, linked knowledge and the timeline">
+</picture>
+
 ## Why
 
 When you run several projects at once, the work is rarely the hard part. What costs
