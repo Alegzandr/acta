@@ -2,7 +2,8 @@
 //! the serde names, so the database, the export file and agent output agree.
 
 use crate::model::{
-    Author, ChangeKind, CommitMode, EntryKind, EventKind, KbKind, Level, QuestionStatus, Status,
+    Author, ChangeKind, CommitMode, EntryKind, EventKind, KbKind, KbLinkKind, KbLogEvent,
+    KbPairKind, KbPairState, KbState, Level, QuestionStatus, Status,
 };
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, ValueRef};
 
@@ -73,6 +74,34 @@ text_enum!(ChangeKind {
     AppendedSection => "appended_section",
     Moved => "moved",
     Restored => "restored",
+    Verified => "verified",
+    Superseded => "superseded",
+    Retired => "retired",
+    MadeLive => "made_live",
+    Merged => "merged",
+});
+text_enum!(KbState { Live => "live", Superseded => "superseded", Retired => "retired" });
+text_enum!(KbPairKind { Duplicate => "duplicate", Conflict => "conflict" });
+text_enum!(KbPairState { Open => "open", Distinct => "distinct", Resolved => "resolved" });
+text_enum!(KbLogEvent {
+    DuplicateWarning => "duplicate_warning",
+    ConflictWarning => "conflict_warning",
+    RelatedNote => "related_note",
+    Superseded => "superseded",
+    Fixed => "fixed",
+    KeptBoth => "kept_both",
+    Abandoned => "abandoned",
+    StaleRefused => "stale_refused",
+    AutoMerged => "auto_merged",
+});
+text_enum!(KbLinkKind {
+    Topic => "topic",
+    Entry => "entry",
+    Question => "question",
+    Note => "note",
+    Kb => "kb",
+    Commit => "commit",
+    File => "file",
 });
 
 /// A due day is stored as its ISO text (schema V4 checks the shape).
@@ -131,6 +160,15 @@ mod tests {
             ChangeKind::ReplacedSection,
             ChangeKind::ReplacedSection.as_str(),
         );
+        check(ChangeKind::MadeLive, ChangeKind::MadeLive.as_str());
+        check(ChangeKind::Verified, ChangeKind::Verified.as_str());
+        for k in [KbState::Live, KbState::Superseded, KbState::Retired] {
+            check(k, k.as_str());
+        }
+        check(KbPairKind::Duplicate, KbPairKind::Duplicate.as_str());
+        check(KbPairState::Distinct, KbPairState::Distinct.as_str());
+        check(KbLinkKind::Commit, KbLinkKind::Commit.as_str());
+        check(KbLogEvent::KeptBoth, KbLogEvent::KeptBoth.as_str());
         assert_eq!(Status::parse("Doing"), None);
     }
 }

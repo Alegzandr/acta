@@ -27,7 +27,7 @@ pub const IDLE_DAYS: i64 = 7;
 pub const INBOX_DAYS: i64 = 7;
 /// The "Last 7 days" window, today included.
 pub const WEEK_DAYS: i64 = 7;
-/// Days without an update before a memory is called stale.
+/// Days since its last verification before a memory is called stale.
 pub const STALE_MEMORY_DAYS: i64 = 90;
 
 /// What an Overview is about.
@@ -181,10 +181,14 @@ const RECENT_SQL: &str = "SELECT e.topic_id, e.kind FROM entries e
 const INBOX_SQL: &str = "SELECT n.id, n.created_at FROM notes n
     WHERE n.project_id = ?1 AND n.deleted_at IS NULL AND n.filed_at IS NULL
     ORDER BY n.created_at, n.id";
-/// Memories of a project updated before a cutoff, oldest first.
-const STALE_SQL: &str = "SELECT k.id, k.updated_at FROM kb_entries k
-    WHERE k.project_id = ?1 AND k.deleted_at IS NULL AND k.kind = 'memory' AND k.updated_at < ?2
-    ORDER BY k.updated_at, k.id";
+/// Live memories of a project last verified before a cutoff, oldest
+/// first (ADR 0015, 1: a move or a title edit does not make a memory
+/// fresh). A row an older build wrote has no verified date: its update
+/// stands in. The condition repeats `kb_verified`'s own.
+const STALE_SQL: &str = "SELECT k.id, coalesce(k.verified_at, k.updated_at) FROM kb_entries k
+    WHERE k.project_id = ?1 AND k.kind = 'memory' AND k.deleted_at IS NULL AND k.state = 'live'
+      AND coalesce(k.verified_at, k.updated_at) < ?2
+    ORDER BY 2, k.id";
 /// The newest live entry of any topic of a project.
 const LAST_ACTIVITY_SQL: &str = "SELECT max((SELECT e.created_at FROM entries e
           WHERE e.topic_id = t.id AND e.deleted_at IS NULL
@@ -560,7 +564,7 @@ pub(crate) const QUERIES: &[(&str, &str)] = &[
     (ACTIVE_SQL, "entries_live"),
     (RECENT_SQL, "entries_recent"),
     (INBOX_SQL, "notes_project"),
-    (STALE_SQL, "kb_project"),
+    (STALE_SQL, "kb_verified"),
     (LAST_ACTIVITY_SQL, "entries_live"),
     (LAST_ACTIVITY_EPIC_SQL, "entries_live"),
 ];
@@ -852,7 +856,7 @@ mod tests {
             // Midnight, the first instant of that local day.
             set(
                 s,
-                "UPDATE kb_entries SET updated_at = ?2 WHERE id = ?1",
+                "UPDATE kb_entries SET updated_at = ?2, verified_at = ?2 WHERE id = ?1",
                 params![k.0, ZONE.midnight(today().add_days(-days))],
             );
             if title == "deleted" {
