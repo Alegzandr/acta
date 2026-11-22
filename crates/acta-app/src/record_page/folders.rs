@@ -168,6 +168,14 @@ impl RecordPage {
                     }
                 }
                 "escape" => self.folder_ui.switcher = None,
+                // Type-ahead by name (components.md 5, Context menu).
+                typed if typed.chars().count() == 1 => {
+                    let groups = self.switch_groups(folders, locale);
+                    match folders_view::type_ahead(&groups, at, typed) {
+                        Some(i) => self.folder_ui.switcher = Some(i),
+                        None => return false,
+                    }
+                }
                 _ => return false,
             }
             let _ = window;
@@ -2167,7 +2175,98 @@ impl RecordPage {
                     ),
             );
         }
+        if let Some(also) = folders.also.get(&f.id) {
+            row = row.child(self.render_also(&row_id, also, locale, t, cx));
+        }
         row.into_any_element()
+    }
+
+    /// "Also attached to topic Scrollback." under an own folder that
+    /// another topic (or epic) of the project has too, the other's name a
+    /// link; the tooltip says where a session started there outside Acta
+    /// opens (components-folders.md 5, Same folder on two topics).
+    fn render_also(
+        &self,
+        row_id: &SharedString,
+        also: &crate::record::Also,
+        locale: Locale,
+        t: &Tokens,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let route = |o: Owner| match o {
+            Owner::Project(id) => Route::Project(id),
+            Owner::Epic(id) => Route::Epic(id),
+            Owner::Topic(id) => Route::Topic(id),
+        };
+        let level = crate::questions_page::owner_label(locale, also.level.0, &also.level.1);
+        let tip = tr(locale, Key::FoldersAlsoTip, &[("level", Arg::Text(&level))]);
+        let sentence: AnyElement = match also.others.as_slice() {
+            [(owner, name)] => {
+                let key = match owner {
+                    Owner::Epic(_) => Key::FoldersAlsoEpic,
+                    _ => Key::FoldersAlsoTopic,
+                };
+                let (before, after) = crate::question_view::around_name(locale, key, name);
+                let to = route(*owner);
+                div()
+                    .flex()
+                    .flex_row()
+                    .flex_wrap()
+                    .child(before)
+                    .child(
+                        crate::question_view::name_link(
+                            SharedString::from(format!("{row_id}-also")),
+                            name,
+                            false,
+                            locale,
+                            t,
+                        )
+                        .on_click(cx.listener(move |_, _, _, cx| {
+                            cx.stop_propagation();
+                            cx.emit(PageEvent::Open(to));
+                        })),
+                    )
+                    .child(after)
+                    .into_any_element()
+            }
+            others => {
+                let name = |i: usize| others.get(i).map_or("", |(_, n)| n.as_str());
+                div()
+                    .child(tr(
+                        locale,
+                        Key::FoldersAlsoMore,
+                        &[
+                            ("a", Arg::Text(name(0))),
+                            ("b", Arg::Text(name(1))),
+                            ("n", Arg::Count(others.len().saturating_sub(2) as u64)),
+                        ],
+                    ))
+                    .into_any_element()
+            }
+        };
+        div()
+            .id(SharedString::from(format!("{row_id}-also-line")))
+            .flex()
+            .flex_row()
+            .items_start()
+            .gap(px(6.))
+            .pl(px(48.))
+            .pt(px(2.))
+            .tooltip(ui::tip(tip))
+            .child(
+                div()
+                    .pt(px(1.))
+                    .child(icon(Icon::Info, 14., t.text_secondary)),
+            )
+            .child(
+                type_scale::SMALL
+                    .el()
+                    .flex_1()
+                    .min_w_0()
+                    .text_color(t.text_secondary)
+                    .child(sentence),
+            )
+            .into_any_element()
     }
 
     fn render_row_menu(

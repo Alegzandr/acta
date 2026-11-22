@@ -1646,6 +1646,8 @@ pub struct Viewer {
     /// Images: fitted, or at 100%.
     fit: bool,
     scroll: ScrollHandle,
+    /// At 100%, the image dragged by the pointer: where it last was.
+    grab: Option<Point<Pixels>>,
     focus: FocusHandle,
     _load: Task<()>,
 }
@@ -1673,6 +1675,7 @@ impl Viewer {
             content: Content::Loading,
             fit: true,
             scroll: ScrollHandle::new(),
+            grab: None,
             focus,
             _load: Task::ready(()),
         };
@@ -1780,9 +1783,20 @@ impl Viewer {
     fn pan(&mut self, dx: f32, dy: f32) {
         let o = self.scroll.offset();
         let max = self.scroll.max_offset();
-        let x = (o.x - px(dx)).clamp(-max.x, px(0.));
-        let y = (o.y - px(dy)).clamp(-max.y, px(0.));
-        self.scroll.set_offset(Point { x, y });
+        let (x, y) = attach::panned(
+            (f32::from(o.x), f32::from(o.y)),
+            (f32::from(max.x), f32::from(max.y)),
+            (dx, dy),
+        );
+        self.scroll.set_offset(Point { x: px(x), y: px(y) });
+    }
+
+    /// At 100%, the pointer drags the image: it follows the pointer.
+    fn drag_to(&mut self, at: Point<Pixels>, cx: &mut Context<Self>) {
+        let Some(from) = self.grab else { return };
+        self.grab = Some(at);
+        self.pan(f32::from(from.x - at.x), f32::from(from.y - at.y));
+        cx.notify();
     }
 }
 
@@ -1943,7 +1957,37 @@ impl Render for Viewer {
                     .bg(t.bg_sunken)
                     .rounded_b(px(RADIUS_XL - 1.))
                     .when(!fit, |this| {
-                        this.overflow_scroll().track_scroll(&self.scroll)
+                        // At 100% the pointer drags the image (the wheel
+                        // still scrolls it).
+                        let grabbing = self.grab.is_some();
+                        this.overflow_scroll()
+                            .track_scroll(&self.scroll)
+                            .cursor(if grabbing {
+                                gpui_kit::CursorStyle::ClosedHand
+                            } else {
+                                gpui_kit::CursorStyle::OpenHand
+                            })
+                            .on_mouse_down(
+                                gpui_kit::MouseButton::Left,
+                                cx.listener(|v, e: &gpui_kit::MouseDownEvent, _, cx| {
+                                    v.grab = Some(e.position);
+                                    cx.notify();
+                                }),
+                            )
+                            .on_mouse_move(cx.listener(|v, e: &gpui_kit::MouseMoveEvent, _, cx| {
+                                if e.pressed_button == Some(gpui_kit::MouseButton::Left) {
+                                    v.drag_to(e.position, cx);
+                                } else if v.grab.take().is_some() {
+                                    cx.notify();
+                                }
+                            }))
+                            .on_mouse_up(
+                                gpui_kit::MouseButton::Left,
+                                cx.listener(|v, _, _, cx| {
+                                    v.grab = None;
+                                    cx.notify();
+                                }),
+                            )
                     })
                     .child(
                         div()
