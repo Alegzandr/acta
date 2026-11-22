@@ -22,7 +22,7 @@ mod trash;
 
 pub use attachments::{
     AttachSource, AttachmentReader, CHUNK_BYTES, FileTotals, LARGE_FILE_BYTES, MAX_FILE_BYTES,
-    MAX_FILES_PER_OWNER, NAME_MAX, Purged, clean_name,
+    MAX_FILES_PER_OWNER, NAME_MAX, Purged, Staged, clean_name,
 };
 pub use exchange::{
     ExportFile, FILE_EXTENSION, FORMAT_NAME, FORMAT_VERSION, ImportCounts, ImportReport,

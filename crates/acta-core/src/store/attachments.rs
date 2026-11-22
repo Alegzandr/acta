@@ -19,7 +19,8 @@ use super::{STAMP_COLS, Store, new_uuid, stamp};
 use crate::error::{Error, Result};
 use crate::files;
 use crate::model::{
-    AttachOwner, Attachment, AttachmentId, Author, EntryId, EpicId, NoteId, ProjectId, TopicId,
+    AttachOwner, Attachment, AttachmentId, Author, EntryId, EpicId, FileKind, NoteId, ProjectId,
+    TopicId,
 };
 use crate::time::now_ms;
 use rusqlite::{Connection, OptionalExtension, params};
@@ -193,6 +194,36 @@ pub fn clean_name(name: &str) -> String {
     let keep = NAME_MAX - ext.chars().count() - 1;
     let stem: String = t.chars().take(keep).collect();
     format!("{stem}…{ext}")
+}
+
+/// A file stored ahead of its row: an editor's file before the note or
+/// entry it goes with is saved (components-attachments.md 5, While
+/// adding). New content is a pending blob, which no purge touches for an
+/// hour; content Acta already held is only named. [`Store::attach_staged`]
+/// gives it its row; [`Store::discard_staged`] drops what is still pending.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Staged {
+    hash: String,
+    size: u64,
+    kind: FileKind,
+    pixels: Option<(u32, u32)>,
+    /// The pending blob this staging wrote (`None` when the content was
+    /// already stored).
+    blob: Option<i64>,
+}
+
+impl Staged {
+    pub fn size(&self) -> u64 {
+        self.size
+    }
+
+    pub fn kind(&self) -> FileKind {
+        self.kind
+    }
+
+    pub fn pixels(&self) -> Option<(u32, u32)> {
+        self.pixels
+    }
 }
 
 /// The first pass over a file: its hash, size, first bytes, and for an
@@ -566,6 +597,171 @@ impl Store {
             }
         }
         Err(changed())
+    }
+
+    /// Reads and stores a file without giving it an owner yet (an editor's
+    /// file while the note or entry is still being written). Same checks
+    /// as [`Store::attach`] but the count, which [`Store::attach_staged`]
+    /// makes; `progress(done, total)` after each stored chunk.
+    pub fn stage(
+        &mut self,
+        source: &AttachSource,
+        progress: &mut dyn FnMut(u64, u64),
+    ) -> Result<Staged> {
+        self.check_writable()?;
+        let size = source.len()?;
+        if size > MAX_FILE_BYTES {
+            return Err(too_large(size));
+        }
+        let scan = scan(source)?;
+        let stored: Option<(String, Option<i64>, Option<i64>)> = self
+            .conn
+            .query_row(
+                "SELECT media_type, width, height FROM attachment_blobs
+                 WHERE hash = ?1 AND complete = 1",
+                [&scan.hash],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()?;
+        let staged = match stored {
+            Some((media, w, h)) => Staged {
+                hash: scan.hash.clone(),
+                size: scan.size,
+                kind: files::kind_of(&media),
+                pixels: w.zip(h).map(|(w, h)| (w as u32, h as u32)),
+                blob: None,
+            },
+            None => {
+                let (media, info) = describe(&scan);
+                let blob = self.store_pending(source, &scan, progress)?;
+                Staged {
+                    hash: scan.hash.clone(),
+                    size: scan.size,
+                    kind: files::kind_of(media),
+                    pixels: info.map(|i| (i.width, i.height)),
+                    blob: Some(blob),
+                }
+            }
+        };
+        progress(scan.size, scan.size);
+        Ok(staged)
+    }
+
+    /// Gives a staged file its row on `owner`, as `name`, in one
+    /// transaction with the blob it names: the stored content with its
+    /// hash if there is one (a pending blob of this staging is then
+    /// dropped), else the pending blob, completed here. Refused with
+    /// [`Error::TooManyFiles`] when the owner holds 20, and as a changed
+    /// file when the pending blob is gone (purged after an hour unsaved).
+    pub fn attach_staged(
+        &mut self,
+        owner: AttachOwner,
+        name: &str,
+        staged: &Staged,
+        author: Author,
+    ) -> Result<Attachment> {
+        self.check_writable()?;
+        let name = clean_name(name);
+        let tx = self.write()?;
+        let project = owner_project(&tx, owner)?;
+        if live_count(&tx, owner)? >= MAX_FILES_PER_OWNER {
+            return Err(Error::TooManyFiles {
+                limit: MAX_FILES_PER_OWNER,
+            });
+        }
+        let ours = match staged.blob {
+            Some(b) => tx
+                .query_row(
+                    "SELECT id FROM attachment_blobs WHERE id = ?1 AND complete = 0",
+                    [b],
+                    |r| r.get::<_, i64>(0),
+                )
+                .optional()?,
+            None => None,
+        };
+        let blob = match (complete_blob(&tx, &staged.hash)?, ours) {
+            (Some(theirs), Some(ours)) => {
+                drop_blob(&tx, ours)?;
+                theirs
+            }
+            (Some(theirs), None) => theirs,
+            (None, Some(ours)) => {
+                tx.execute(
+                    "UPDATE attachment_blobs SET hash = ?2, complete = 1 WHERE id = ?1",
+                    params![ours, staged.hash],
+                )?;
+                ours
+            }
+            (None, None) => return Err(changed()),
+        };
+        let id = insert_row(&tx, owner, project, blob, &name, author)?;
+        let a = read_attachment_row(&tx, id)?;
+        tx.commit()?;
+        Ok(a)
+    }
+
+    /// Drops the pending blob of a staged file that will not be saved (the
+    /// editor was cancelled). A blob that was completed meanwhile, or that
+    /// the file only named, is left alone.
+    pub fn discard_staged(&mut self, staged: &Staged) -> Result<()> {
+        let Some(blob) = staged.blob else {
+            return Ok(());
+        };
+        let tx = self.write()?;
+        let pending: Option<i64> = tx
+            .query_row(
+                "SELECT id FROM attachment_blobs WHERE id = ?1 AND complete = 0",
+                [blob],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if pending.is_some() {
+            drop_blob(&tx, blob)?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// The thumbnail stored with a staged image (the editor's tile before
+    /// the note is saved).
+    pub fn staged_thumbnail(&self, staged: &Staged) -> Result<Option<Vec<u8>>> {
+        let by_blob = match staged.blob {
+            Some(b) => self
+                .conn
+                .query_row(
+                    "SELECT thumbnail FROM attachment_blobs WHERE id = ?1",
+                    [b],
+                    |r| r.get::<_, Option<Vec<u8>>>(0),
+                )
+                .optional()?
+                .flatten(),
+            None => None,
+        };
+        if by_blob.is_some() {
+            return Ok(by_blob);
+        }
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT thumbnail FROM attachment_blobs WHERE hash = ?1 AND complete = 1",
+                [&staged.hash],
+                |r| r.get::<_, Option<Vec<u8>>>(0),
+            )
+            .optional()?
+            .flatten())
+    }
+
+    /// The owner of an attachment, live or in the trash (the Trash row's
+    /// place).
+    pub fn attachment_owner(&self, id: AttachmentId) -> Result<AttachOwner> {
+        self.conn
+            .query_row(
+                "SELECT note_id, entry_id, topic_id, epic_id FROM attachments WHERE id = ?1",
+                [id.0],
+                |r| owner_at(r, 0),
+            )
+            .optional()?
+            .ok_or_else(|| Error::NotFound(id.to_string()))
     }
 
     /// The row, in one transaction with the blob it names: the stored blob
