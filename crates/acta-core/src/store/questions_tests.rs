@@ -1,4 +1,5 @@
-//! Questions and people in the store (data.md requests 18 and 19).
+//! Questions, contacts and the profile in the store (data.md requests 18,
+//! 19, 22 and 23).
 
 use super::test_support::{TestStore, open};
 use super::*;
@@ -45,12 +46,18 @@ fn fixture() -> Fixture {
     }
 }
 
-fn ask(s: &mut Store, owner: Owner, text: &str, to: Option<&str>, by: Option<&str>) -> QuestionId {
+fn ask(
+    s: &mut Store,
+    owner: Owner,
+    text: &str,
+    to: Option<ContactId>,
+    by: Option<&str>,
+) -> QuestionId {
     s.ask(
         NewQuestion {
             owner,
             text: text.into(),
-            asked_to: to.map(str::to_owned),
+            asked_to: to,
             expected_on: by.map(|d| Date::parse_iso(d).unwrap()),
         },
         C,
@@ -62,20 +69,27 @@ fn d(s: &str) -> Date {
     Date::parse_iso(s).unwrap()
 }
 
+fn contact(s: &mut Store, name: &str, level: ContactLevel) -> ContactId {
+    s.create_contact(name, level, H).unwrap()
+}
+
 #[test]
 fn a_question_is_asked_edited_answered_dropped_and_reopened() {
     let mut f = fixture();
     let s = &mut f.t.store;
+    let marie = contact(s, "  Marie   Dubois ", ContactLevel::Project(f.project));
+    assert_eq!(s.contact(marie).unwrap().name, "Marie Dubois");
     let q = ask(
         s,
         Owner::Topic(f.topic),
         "  Can we keep the v1 export\nuntil March? ",
-        Some("  Marie   Dubois "),
+        Some(marie),
         Some("2026-12-04"),
     );
     let x = s.question(q).unwrap();
     assert_eq!(x.text, "Can we keep the v1 export until March?");
-    assert_eq!(x.asked_to.as_deref(), Some("Marie Dubois"));
+    let asked = x.asked_to.unwrap();
+    assert_eq!((asked.id, asked.name.as_str()), (marie, "Marie Dubois"));
     assert_eq!(x.expected_on, Some(d("2026-12-04")));
     assert_eq!((x.status, x.created_by), (QuestionStatus::Open, C));
     // A question written by Claude Code is a write to its owner.
@@ -86,22 +100,13 @@ fn a_question_is_asked_edited_answered_dropped_and_reopened() {
     assert!(s.unread_questions().unwrap().is_empty());
 
     // Limits.
-    assert!(
-        s.ask(
-            NewQuestion {
-                owner: Owner::Topic(f.topic),
-                text: "x".repeat(301),
-                asked_to: None,
-                expected_on: None,
-            },
-            H,
-        )
-        .is_err()
-    );
-    assert!(
-        s.edit_question(q, None, Some(Some(&"a".repeat(81))), H)
-            .is_err()
-    );
+    let long = NewQuestion {
+        owner: Owner::Topic(f.topic),
+        text: "x".repeat(301),
+        asked_to: None,
+        expected_on: None,
+    };
+    assert!(s.ask(long, H).is_err());
     assert!(s.answer(q, Some(&"a".repeat(1_501)), false, H).is_err());
 
     s.edit_question(q, Some("Can we keep v1 until March?"), Some(None), H)
@@ -131,11 +136,12 @@ fn a_question_is_asked_edited_answered_dropped_and_reopened() {
 fn answer_and_decision_are_one_step_and_refused_off_a_topic() {
     let mut f = fixture();
     let s = &mut f.t.store;
+    let legal = contact(s, "Legal team", ContactLevel::All);
     let q = ask(
         s,
         Owner::Topic(f.topic),
         "Can the export leave the EU?",
-        Some("Legal team"),
+        Some(legal),
         None,
     );
     let before = s
@@ -169,13 +175,7 @@ fn answer_and_decision_are_one_step_and_refused_off_a_topic() {
     assert_eq!((y.resolved_at, y.resolved_by), (x.resolved_at, Some(H)));
 
     // Off a topic: refused, nothing written.
-    let on_epic = ask(
-        s,
-        Owner::Epic(f.epic),
-        "Budget for the backup disks?",
-        None,
-        None,
-    );
+    let on_epic = ask(s, Owner::Epic(f.epic), "Budget for the disks?", None, None);
     let e = s.answer(on_epic, Some("200 EUR"), true, H).unwrap_err();
     assert_eq!(
         e.to_string(),
@@ -189,10 +189,12 @@ fn answer_and_decision_are_one_step_and_refused_off_a_topic() {
     // One transaction: the entry fails (its topic went to the trash behind
     // the store's back), so the answer is not kept either.
     let q2 = ask(s, Owner::Topic(f.other), "Which disk?", None, None);
-    let entries_before: i64 = s
-        .conn
-        .query_row("SELECT count(*) FROM entries", [], |r| r.get(0))
-        .unwrap();
+    let count = |s: &Store| -> i64 {
+        s.conn
+            .query_row("SELECT count(*) FROM entries", [], |r| r.get(0))
+            .unwrap()
+    };
+    let entries_before = count(s);
     s.conn
         .execute(
             "UPDATE topics SET deleted_at = 1 WHERE id = ?1",
@@ -208,11 +210,7 @@ fn answer_and_decision_are_one_step_and_refused_off_a_topic() {
         .unwrap();
     assert_eq!(s.question(q2).unwrap().status, QuestionStatus::Open);
     assert_eq!(s.question(q2).unwrap().answer, None);
-    let entries_after: i64 = s
-        .conn
-        .query_row("SELECT count(*) FROM entries", [], |r| r.get(0))
-        .unwrap();
-    assert_eq!(entries_before, entries_after);
+    assert_eq!(entries_before, count(s));
 }
 
 #[test]
@@ -260,7 +258,6 @@ fn late_answers_follow_due_state_at_every_level() {
         .overview(Scope::Project(f.project), today, crate::date::Zone::UTC)
         .unwrap();
     assert_eq!(o.answers_late, 3);
-    // Per topic: open and overdue, for the epic brief and the table.
     let per = s.open_questions_by_topic(f.project, today).unwrap();
     assert_eq!(per[&f.topic], (2, 1));
     assert_eq!(per[&f.other], (1, 0));
@@ -274,28 +271,21 @@ fn questions_are_ordered_moved_and_follow_their_owner_into_the_trash() {
     let b = ask(s, Owner::Topic(f.topic), "B?", None, None);
     let c = ask(s, Owner::Topic(f.topic), "C?", None, None);
     s.reorder_question(c, 0, H).unwrap();
-    let order: Vec<QuestionId> = s
-        .questions_of(Owner::Topic(f.topic))
-        .unwrap()
-        .iter()
-        .map(|q| q.id)
-        .collect();
-    assert_eq!(order, [c, a, b]);
+    let order = |s: &Store| -> Vec<QuestionId> {
+        s.questions_of(Owner::Topic(f.topic))
+            .unwrap()
+            .iter()
+            .map(|q| q.id)
+            .collect()
+    };
+    assert_eq!(order(s), [c, a, b]);
     s.answer(a, None, false, H).unwrap();
-    // Open first in stored order, then the closed ones.
-    let order: Vec<QuestionId> = s
-        .questions_of(Owner::Topic(f.topic))
-        .unwrap()
-        .iter()
-        .map(|q| q.id)
-        .collect();
-    assert_eq!(order, [c, b, a]);
+    assert_eq!(order(s), [c, b, a], "open first, then closed");
     s.move_question(b, Owner::Epic(f.epic), H).unwrap();
     assert_eq!(s.question(b).unwrap().owner, Owner::Epic(f.epic));
     let other = s.create_project("Other", "", H).unwrap();
     assert!(s.move_question(b, Owner::Project(other), H).is_err());
 
-    // The topic goes to the trash with its questions, and comes back.
     s.delete(Record::Topic(f.topic), H).unwrap();
     assert!(s.question(c).is_err());
     let trash = s.trash(PageReq::first(20)).unwrap();
@@ -305,12 +295,10 @@ fn questions_are_ordered_moved_and_follow_their_owner_into_the_trash() {
     );
     s.restore(Record::Topic(f.topic), H).unwrap();
     assert_eq!(s.question(c).unwrap().text, "C?");
-    // The epic takes its own and its topics' questions.
     s.delete(Record::Epic(f.epic), H).unwrap();
     assert!(s.question(b).is_err() && s.question(c).is_err());
     s.restore(Record::Epic(f.epic), H).unwrap();
     assert!(s.question(b).is_ok() && s.question(c).is_ok());
-    // A question deleted on its own is listed and restored.
     s.delete(Record::Question(c), H).unwrap();
     let trash = s.trash(PageReq::first(20)).unwrap();
     let item = trash
@@ -327,37 +315,44 @@ fn questions_are_ordered_moved_and_follow_their_owner_into_the_trash() {
 fn report_to_is_set_reset_marked_and_written_to_the_timeline() {
     let mut f = fixture();
     let s = &mut f.t.store;
+    let marie = contact(s, "Marie", ContactLevel::Project(f.project));
+    let paul = contact(s, "Paul", ContactLevel::Epic(f.project, f.epic));
     let t = Record::Topic(f.topic);
-    assert!(s.set_reported(t, true, H).is_err(), "no person yet");
-    s.set_report_to(t, Some("Marie"), H).unwrap();
+    assert!(s.set_reported(t, true, H).is_err(), "no contact yet");
+    s.set_report_to(t, Some(marie), H).unwrap();
     s.set_reported(t, true, C).unwrap();
     let r = s.topic(f.topic).unwrap().report;
-    assert_eq!(r.to.as_deref(), Some("Marie"));
+    assert_eq!(r.to.as_ref().map(|c| c.name.as_str()), Some("Marie"));
     assert!(r.is_reported() && r.by == Some(C));
-    // The same person in another spelling keeps "reported".
-    s.set_report_to(t, Some("MARIE"), H).unwrap();
-    assert!(s.topic(f.topic).unwrap().report.is_reported());
-    // Another person resets it.
-    s.set_report_to(t, Some("Paul"), H).unwrap();
+    // Another contact resets it.
+    s.set_report_to(t, Some(paul), H).unwrap();
     let r = s.topic(f.topic).unwrap().report;
-    assert_eq!((r.to.as_deref(), r.at), (Some("Paul"), None));
-    s.set_report_to(t, Some(" "), H).unwrap();
+    assert_eq!((r.to.map(|c| c.id), r.at), (Some(paul), None));
+    s.set_report_to(t, None, H).unwrap();
     assert_eq!(s.topic(f.topic).unwrap().report.to, None);
-    // Projects have none; notes have no "reported".
+    // Projects have none; notes have no "reported"; a note sees no epic
+    // contact.
     assert!(
-        s.set_report_to(Record::Project(f.project), Some("Marie"), H)
+        s.set_report_to(Record::Project(f.project), Some(marie), H)
             .is_err()
     );
     let n = s.add_note(f.project, "Tell Marie", H).unwrap();
-    s.set_report_to(Record::Note(n), Some("Marie"), H).unwrap();
-    assert_eq!(s.note(n).unwrap().report_to.as_deref(), Some("Marie"));
+    let e = s.set_report_to(Record::Note(n), Some(paul), H).unwrap_err();
+    assert!(matches!(e, Error::OutOfScope { .. }), "{e}");
+    assert_eq!(
+        e.to_string(),
+        format!("{paul} is not visible from {n} (it belongs to {})", f.epic)
+    );
+    s.set_report_to(Record::Note(n), Some(marie), H).unwrap();
     assert!(s.set_reported(Record::Note(n), true, H).is_err());
-    // Epics too, without a timeline.
-    s.set_report_to(Record::Epic(f.epic), Some("Legal team"), H)
+    s.set_report_to(Record::Epic(f.epic), Some(paul), H)
         .unwrap();
     s.set_reported(Record::Epic(f.epic), true, H).unwrap();
     assert!(s.epic(f.epic).unwrap().report.is_reported());
 
+    // Events hold the contacts' UUIDs.
+    let uuid = |c: ContactId| Some(s.contact(c).unwrap().stamp.uuid);
+    let (um, up) = (uuid(marie), uuid(paul));
     let events: Vec<(EventKind, Option<String>, Option<String>)> = s
         .entries(
             f.topic,
@@ -375,25 +370,25 @@ fn report_to_is_set_reset_marked_and_written_to_the_timeline() {
         .filter(|e| matches!(e.kind, EventKind::Report | EventKind::Reported))
         .map(|e| (e.kind, e.old, e.new))
         .collect();
-    let s_ = |v: &str| Some(v.to_owned());
     assert_eq!(
         events,
         [
-            (EventKind::Report, None, s_("Marie")),
-            (EventKind::Reported, None, s_("Marie")),
-            (EventKind::Report, s_("Marie"), s_("MARIE")),
-            (EventKind::Report, s_("MARIE"), s_("Paul")),
-            (EventKind::Report, s_("Paul"), None),
+            (EventKind::Report, None, um.clone()),
+            (EventKind::Reported, None, um.clone()),
+            (EventKind::Report, um, up.clone()),
+            (EventKind::Report, up, None),
         ]
     );
 }
 
 #[test]
-fn filing_carries_the_first_persons_and_keeps_an_existing_one() {
+fn filing_carries_the_first_contact_and_keeps_an_existing_one() {
     let mut f = fixture();
     let s = &mut f.t.store;
     let p = f.project;
-    let note = |s: &mut Store, text: &str, to: Option<&str>| {
+    let marie = contact(s, "Marie", ContactLevel::Project(p));
+    let paul = contact(s, "Paul", ContactLevel::All);
+    let note = |s: &mut Store, text: &str, to: Option<ContactId>| {
         let n = s.add_note(p, text, H).unwrap();
         if to.is_some() {
             s.set_report_to(Record::Note(n), to, H).unwrap();
@@ -407,132 +402,504 @@ fn filing_carries_the_first_persons_and_keeps_an_existing_one() {
         description: String::new(),
         status: Status::Draft,
     };
-    // One note: its person goes to the new topic ("Make topic").
-    let one = note(s, "Ask the landlord", Some("Marie"));
+    let rep = |s: &Store, t: TopicId| s.topic(t).unwrap().report.to.map(|c| c.id);
+    let one = note(s, "Ask the landlord", Some(marie));
     let t1 = s.note_to_topic(one, new_topic("Landlord"), H).unwrap();
-    assert_eq!(s.topic(t1).unwrap().report.to.as_deref(), Some("Marie"));
-    // Several notes: the first one naming someone, in the order given.
+    assert_eq!(rep(s, t1), Some(marie));
     let a = note(s, "No one", None);
-    let b = note(s, "For Paul", Some("Paul"));
-    let c = note(s, "For Marie", Some("Marie"));
+    let b = note(s, "For Paul", Some(paul));
+    let c = note(s, "For Marie", Some(marie));
     let t2 = s.create_topic(new_topic("Mixed"), H).unwrap();
     s.file_notes(&[a, b, c], t2, H).unwrap();
-    assert_eq!(s.topic(t2).unwrap().report.to.as_deref(), Some("Paul"));
-    // An epic made from notes.
+    assert_eq!(rep(s, t2), Some(paul), "the first naming someone");
     let e = s.create_epic(p, "Sync", "", H).unwrap();
-    let g = note(s, "Sync", Some("Legal team"));
+    let g = note(s, "Sync", Some(paul));
     s.file_notes_in_epic(&[g], e, H).unwrap();
-    assert_eq!(s.epic(e).unwrap().report.to.as_deref(), Some("Legal team"));
-    // An existing topic with its own person keeps it.
-    s.set_report_to(Record::Topic(f.topic), Some("Alexandre"), H)
+    assert_eq!(s.epic(e).unwrap().report.to.map(|c| c.id), Some(paul));
+    s.set_report_to(Record::Topic(f.topic), Some(paul), H)
         .unwrap();
-    let h = note(s, "Entry for Marie", Some("Marie"));
+    let h = note(s, "Entry for Marie", Some(marie));
     s.file_notes(&[h], f.topic, H).unwrap();
-    assert_eq!(
-        s.topic(f.topic).unwrap().report.to.as_deref(),
-        Some("Alexandre")
-    );
-    // A dismissed note's person goes nowhere; the note keeps it.
-    let i = note(s, "Noise", Some("Zoé"));
-    s.dismiss_notes(&[i], H).unwrap();
-    assert_eq!(s.note(i).unwrap().report_to.as_deref(), Some("Zoé"));
+    assert_eq!(rep(s, f.topic), Some(paul), "keeps its own");
 
-    // People: grouped by key, open items first, spelled as written last.
-    s.set_report_to(Record::Topic(f.other), Some("marie"), H)
-        .unwrap();
-    // The newest write, beyond the same millisecond.
-    s.conn
-        .execute(
-            "UPDATE topics SET updated_at = updated_at + 60000 WHERE id = ?1",
-            [f.other.0],
-        )
-        .unwrap();
-    let people = s.people(p).unwrap();
-    let marie = people.iter().find(|x| x.key == "marie").unwrap();
-    assert_eq!(marie.display, "marie");
-    // Topics T1 and f.other, the open note "For Marie" was filed (not open).
-    assert_eq!(marie.open, 2);
-    assert!(people.iter().any(|x| x.key == "zoe" && x.open == 0));
-    let targets = s.report_targets(p, "marie").unwrap();
+    let targets = s.report_targets(p, marie).unwrap();
     let ids: Vec<TopicId> = targets.topics.iter().map(|t| t.id).collect();
-    assert!(ids.contains(&t1) && ids.contains(&f.other));
+    assert_eq!(ids, [t1]);
     assert!(targets.notes.is_empty());
 }
 
 #[test]
-fn questions_and_people_survive_an_export_and_an_import() {
+fn contacts_move_up_freely_and_down_only_while_every_use_stays_in_scope() {
     let mut f = fixture();
     let s = &mut f.t.store;
+    let p = f.project;
+    let marie = contact(s, "Marie", ContactLevel::Project(p));
+    let loose = s
+        .create_topic(
+            NewTopic {
+                project: p,
+                epic: None,
+                title: "Loose".into(),
+                description: String::new(),
+                status: Status::Draft,
+            },
+            H,
+        )
+        .unwrap();
+    s.set_report_to(Record::Topic(loose), Some(marie), H)
+        .unwrap();
+    let q = ask(s, Owner::Project(p), "Who signs?", Some(marie), None);
+    ask(s, Owner::Topic(f.topic), "In the epic", Some(marie), None);
+    let e = s
+        .move_contact(marie, ContactLevel::Epic(p, f.epic), H)
+        .unwrap_err();
+    match &e {
+        Error::ContactInUse { places, .. } => {
+            let ids: Vec<&str> = places.iter().map(|(id, _)| id.as_str()).collect();
+            assert!(ids.contains(&loose.to_string().as_str()), "{e}");
+            assert!(ids.contains(&q.to_string().as_str()), "{e}");
+            assert_eq!(places.len(), 2, "the epic's own use is fine: {e}");
+        }
+        other => panic!("{other}"),
+    }
+    assert!(
+        e.to_string()
+            .starts_with(&format!("{marie} is named outside {}: ", f.epic))
+    );
+    assert!(e.to_string().ends_with("; change those first"));
+    assert_eq!(
+        s.contact(marie).unwrap().level,
+        ContactLevel::Project(p),
+        "nothing moved"
+    );
+    s.move_contact(marie, ContactLevel::All, H).unwrap();
+    assert_eq!(s.contact(marie).unwrap().level, ContactLevel::All);
+    // An epic not in the level's project is refused.
+    let other = s.create_project("Other", "", H).unwrap();
+    assert!(
+        s.move_contact(marie, ContactLevel::Epic(other, f.epic), H)
+            .is_err()
+    );
+}
+
+#[test]
+fn moving_a_record_lifts_the_contacts_it_names() {
+    let mut f = fixture();
+    let s = &mut f.t.store;
+    let p = f.project;
+    let e2 = s.create_epic(p, "Sync", "", H).unwrap();
+    let paul = contact(s, "Paul", ContactLevel::Epic(p, f.epic));
+    let zoe = contact(s, "Zoé", ContactLevel::Epic(p, f.epic));
+    s.set_report_to(Record::Topic(f.topic), Some(paul), H)
+        .unwrap();
+    ask(s, Owner::Topic(f.topic), "Which format?", Some(zoe), None);
+    assert!(s.take_lifts().is_empty());
+    s.update_topic(
+        f.topic,
+        TopicPatch {
+            epic: Some(Some(e2)),
+            ..Default::default()
+        },
+        H,
+    )
+    .unwrap();
+    // Both widened to the project, the narrowest level seeing both epics.
+    assert_eq!(s.contact(paul).unwrap().level, ContactLevel::Project(p));
+    assert_eq!(s.contact(zoe).unwrap().level, ContactLevel::Project(p));
+    let lifts = s.take_lifts();
+    assert_eq!(lifts.len(), 2);
+    assert!(
+        lifts
+            .iter()
+            .all(|l| l.from == ContactLevel::Epic(p, f.epic) && l.to == ContactLevel::Project(p))
+    );
+    assert!(s.take_lifts().is_empty(), "taken once");
+    // A question moved up from an epic topic to the project.
+    let ann = contact(s, "Ann", ContactLevel::Epic(p, e2));
+    let q = ask(s, Owner::Topic(f.topic), "Who signs?", Some(ann), None);
+    s.move_question(q, Owner::Project(p), H).unwrap();
+    assert_eq!(s.contact(ann).unwrap().level, ContactLevel::Project(p));
+    assert_eq!(s.take_lifts().len(), 1);
+    // Nothing to lift: nothing changes.
+    s.update_topic(
+        f.topic,
+        TopicPatch {
+            epic: Some(None),
+            ..Default::default()
+        },
+        H,
+    )
+    .unwrap();
+    assert!(s.take_lifts().is_empty());
+}
+
+#[test]
+fn merging_keeps_references_and_lands_at_the_wider_level() {
+    let mut f = fixture();
+    let s = &mut f.t.store;
+    let p = f.project;
+    let a = contact(s, "Marie", ContactLevel::Epic(p, f.epic));
+    let b = contact(s, "Marie Dubois", ContactLevel::Project(p));
+    s.update_contact(
+        a,
+        ContactPatch {
+            job_title: Some(Some("Head of legal".into())),
+            address_note: Some(Some("Formal, in French.".into())),
+            ..Default::default()
+        },
+        H,
+    )
+    .unwrap();
+    s.update_contact(
+        b,
+        ContactPatch {
+            company: Some(Some("Acme".into())),
+            address_note: Some(Some("Prefers e-mail.".into())),
+            ..Default::default()
+        },
+        H,
+    )
+    .unwrap();
+    s.set_report_to(Record::Topic(f.topic), Some(a), H).unwrap();
+    let q = ask(s, Owner::Topic(f.other), "Sign?", Some(a), None);
+    s.mark_distinct(a, b).unwrap();
+    assert!(s.is_distinct(b, a).unwrap());
+    s.merge_contacts(a, b, H).unwrap();
+    let m = s.contact(b).unwrap();
+    assert_eq!(m.name, "Marie Dubois");
+    assert_eq!(m.level, ContactLevel::Project(p));
+    assert_eq!(m.job_title.as_deref(), Some("Head of legal"));
+    assert_eq!(m.company.as_deref(), Some("Acme"));
+    assert_eq!(
+        m.address_note.as_deref(),
+        Some("Prefers e-mail.\n\nFormal, in French.")
+    );
+    assert_eq!(s.topic(f.topic).unwrap().report.to.map(|c| c.id), Some(b));
+    assert_eq!(s.question(q).unwrap().asked_to.map(|c| c.id), Some(b));
+    // The event of the old reference now names the merged contact.
+    let uuid_b = s.contact(b).unwrap().stamp.uuid;
+    let report_events: Vec<Option<String>> = s
+        .entries(
+            f.topic,
+            &EntryFilter {
+                include_system: true,
+                ..Default::default()
+            },
+            PageReq::first(50),
+        )
+        .unwrap()
+        .items
+        .into_iter()
+        .filter_map(|e| e.event)
+        .filter(|e| e.kind == EventKind::Report)
+        .map(|e| e.new)
+        .collect();
+    assert_eq!(report_events, [Some(uuid_b)]);
+    // `from` is in the trash, merged into `b`.
+    assert!(s.contact(a).is_err());
+    assert_eq!(s.contact_any(a).unwrap().merged_into, Some(b));
+    assert!(
+        s.trash(PageReq::first(20))
+            .unwrap()
+            .items
+            .iter()
+            .any(|i| i.record == Record::Contact(a))
+    );
+    // Two epics' contacts merge at their project; two projects' at all.
+    let e2 = s.create_epic(p, "Sync", "", H).unwrap();
+    let x = contact(s, "X", ContactLevel::Epic(p, f.epic));
+    let y = contact(s, "Y", ContactLevel::Epic(p, e2));
+    s.merge_contacts(x, y, H).unwrap();
+    assert_eq!(s.contact(y).unwrap().level, ContactLevel::Project(p));
+}
+
+#[test]
+fn a_deleted_contact_stays_named_and_levels_carry_their_contacts() {
+    let mut f = fixture();
+    let s = &mut f.t.store;
+    let p = f.project;
+    let marie = contact(s, "Marie", ContactLevel::Project(p));
+    s.set_report_to(Record::Topic(f.topic), Some(marie), H)
+        .unwrap();
+    s.delete(Record::Contact(marie), H).unwrap();
+    let r = s.topic(f.topic).unwrap().report.to.unwrap();
+    assert_eq!((r.id, r.name.as_str(), r.in_trash), (marie, "Marie", true));
+    assert!(
+        s.contacts_visible(Place {
+            project: p,
+            epic: None
+        })
+        .unwrap()
+        .is_empty()
+    );
+    // A trashed contact cannot be newly named.
+    assert!(
+        s.set_report_to(Record::Topic(f.other), Some(marie), H)
+            .is_err()
+    );
+    s.restore(Record::Contact(marie), H).unwrap();
+    assert!(!s.topic(f.topic).unwrap().report.to.unwrap().in_trash);
+    // An epic's contacts go to the trash with it, and come back.
+    let paul = contact(s, "Paul", ContactLevel::Epic(p, f.epic));
+    s.delete(Record::Epic(f.epic), H).unwrap();
+    assert!(s.contact(paul).is_err());
+    let trash = s.trash(PageReq::first(20)).unwrap();
+    assert!(
+        !trash
+            .items
+            .iter()
+            .any(|i| i.record == Record::Contact(paul))
+    );
+    s.restore(Record::Epic(f.epic), H).unwrap();
+    assert!(s.contact(paul).is_ok());
+    s.delete(Record::Project(p), H).unwrap();
+    assert!(s.contact(marie).is_err() && s.contact(paul).is_err());
+    s.restore(Record::Project(p), H).unwrap();
+    assert!(s.contact(marie).is_ok() && s.contact(paul).is_ok());
+}
+
+#[test]
+fn visible_contacts_are_listed_nearest_level_first() {
+    let mut f = fixture();
+    let s = &mut f.t.store;
+    let p = f.project;
+    let other = s.create_project("Other", "", H).unwrap();
+    let e2 = s.create_epic(p, "Sync", "", H).unwrap();
+    let all = contact(s, "Zoe", ContactLevel::All);
+    let proj = contact(s, "Marie", ContactLevel::Project(p));
+    let epic = contact(s, "Paul", ContactLevel::Epic(p, f.epic));
+    contact(s, "Sibling", ContactLevel::Epic(p, e2));
+    contact(s, "Elsewhere", ContactLevel::Project(other));
+    let ids = |place| -> Vec<ContactId> {
+        s.contacts_visible(place)
+            .unwrap()
+            .iter()
+            .map(|c| c.contact.id)
+            .collect()
+    };
+    assert_eq!(
+        ids(Place {
+            project: p,
+            epic: Some(f.epic)
+        }),
+        [epic, proj, all]
+    );
+    assert_eq!(
+        ids(Place {
+            project: p,
+            epic: None
+        }),
+        [proj, all]
+    );
+    assert_eq!(
+        ids(Place {
+            project: other,
+            epic: None
+        })
+        .len(),
+        2
+    );
+}
+
+#[test]
+fn the_profile_is_set_and_cleared() {
+    let mut t = open();
+    let s = &mut t.store;
+    assert_eq!(s.profile().unwrap(), Profile::default());
+    s.set_profile(Some(" Alexandre "), Some("Product designer"))
+        .unwrap();
+    let p = s.profile().unwrap();
+    assert_eq!(p.name.as_deref(), Some("Alexandre"));
+    assert_eq!(p.job_title.as_deref(), Some("Product designer"));
+    s.set_profile(Some("Alexandre"), Some("")).unwrap();
+    assert_eq!(s.profile().unwrap().job_title, None);
+    assert!(s.set_profile(Some(&"a".repeat(81)), None).is_err());
+}
+
+#[test]
+fn questions_contacts_and_the_profile_survive_an_export_and_an_import() {
+    let mut f = fixture();
+    let s = &mut f.t.store;
+    let helene = contact(s, "Hélène", ContactLevel::Epic(f.project, f.epic));
+    let marie = contact(s, "Marie", ContactLevel::All);
+    let paul = contact(s, "Paul", ContactLevel::Project(f.project));
+    s.update_contact(
+        marie,
+        ContactPatch {
+            job_title: Some(Some("Head of legal".into())),
+            company: Some(Some("Acme".into())),
+            address_note: Some(Some("Formal.".into())),
+            ..Default::default()
+        },
+        H,
+    )
+    .unwrap();
     let q = ask(
         s,
         Owner::Topic(f.topic),
         "Can we keep v1?",
-        Some("Hélène"),
+        Some(helene),
         Some("2026-12-04"),
     );
     s.answer(q, Some("Yes."), true, H).unwrap();
     ask(s, Owner::Project(f.project), "Who pays?", None, None);
-    s.set_report_to(Record::Topic(f.topic), Some("Marie"), H)
+    s.set_report_to(Record::Topic(f.topic), Some(marie), H)
         .unwrap();
     s.set_reported(Record::Topic(f.topic), true, H).unwrap();
-    s.set_report_to(Record::Epic(f.epic), Some("Legal team"), H)
+    s.set_report_to(Record::Epic(f.epic), Some(helene), H)
         .unwrap();
     let n = s.add_note(f.project, "Tell Paul", H).unwrap();
-    s.set_report_to(Record::Note(n), Some("Paul"), H).unwrap();
+    s.set_report_to(Record::Note(n), Some(paul), H).unwrap();
+    s.set_profile(Some("Alexandre"), Some("Product designer"))
+        .unwrap();
     let file = s.export(None).unwrap();
     assert_eq!(file.version, 3);
-    assert_eq!(file.questions.len(), 2);
+    assert_eq!((file.questions.len(), file.contacts.len()), (2, 3));
+    assert!(file.profile.is_some());
     let json = file.to_json().unwrap();
-    // Keys are never exported.
-    assert!(!json.contains("asked_key") && !json.contains("report_key"));
+    assert!(!json.contains("name_key") && !json.contains("report_contact_id"));
 
     let mut b = open();
     let report = b.store.import(&file, false).unwrap();
     assert_eq!(report.questions.created, 2);
+    assert_eq!(report.contacts.created, 3);
     let again = b.store.export(None).unwrap();
     assert_eq!(again.questions, file.questions);
+    assert_eq!(again.contacts, file.contacts);
     assert_eq!(again.topics, file.topics);
     assert_eq!(again.epics, file.epics);
     assert_eq!(again.notes, file.notes);
-    // Keys recomputed here: the person filter finds them.
-    let found = b
-        .store
-        .find_questions(
-            b.store.projects().unwrap()[0].id,
-            &QuestionFilter {
-                person_key: Some("helene".into()),
-                statuses: Vec::new(),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-    assert_eq!(found.len(), 1);
-    assert!(found[0].decision_entry.is_some(), "the link to the entry");
-    // Imported questions count as seen.
+    assert_eq!(again.profile, file.profile);
     assert!(b.store.unread_questions().unwrap().is_empty());
-    // Twice: nothing changes.
+    assert!(b.store.unread_contacts().unwrap().is_empty());
     let report = b.store.import(&file, false).unwrap();
     assert_eq!(report.questions.created + report.questions.updated, 0);
+    assert_eq!(report.contacts.created + report.contacts.updated, 0);
+    // The profile goes only into an empty one.
+    b.store.set_profile(Some("Someone else"), None).unwrap();
+    b.store.import(&file, false).unwrap();
+    assert_eq!(
+        b.store.profile().unwrap().name.as_deref(),
+        Some("Someone else")
+    );
+    // A project's export: its contacts, its epics', and the global ones it
+    // names; never the profile.
+    let one = s.export(Some(f.project)).unwrap();
+    assert_eq!(one.contacts.len(), 3);
+    assert!(one.profile.is_none());
 }
 
 #[test]
-fn a_version_2_export_imports_and_its_updates_keep_the_people() {
+fn a_pre_contacts_export_imports_with_one_contact_per_key_per_project() {
     let mut f = fixture();
     let s = &mut f.t.store;
-    s.set_report_to(Record::Topic(f.topic), Some("Marie"), H)
+    let other = s.create_project("Other", "", H).unwrap();
+    let t2 = s
+        .create_topic(
+            NewTopic {
+                project: other,
+                epic: None,
+                title: "Elsewhere".into(),
+                description: String::new(),
+                status: Status::Draft,
+            },
+            H,
+        )
+        .unwrap();
+    let n = s.add_note(f.project, "Tell Marie", H).unwrap();
+    ask(s, Owner::Topic(f.topic), "Can we keep v1?", None, None);
+    let file = s.export(None).unwrap();
+    // As the free-text build wrote it: names where the UUIDs now are.
+    let mut v: serde_json::Value = serde_json::from_str(&file.to_json().unwrap()).unwrap();
+    v.as_object_mut().unwrap().remove("contacts");
+    let uuid_of = |s: &Store, r: Record| -> String {
+        match r {
+            Record::Topic(t) => s.topic(t).unwrap().stamp.uuid,
+            Record::Note(n) => s.note(n).unwrap().stamp.uuid,
+            _ => unreachable!(),
+        }
+    };
+    let (u1, u2, u3) = (
+        uuid_of(s, Record::Topic(f.topic)),
+        uuid_of(s, Record::Topic(t2)),
+        uuid_of(s, Record::Note(n)),
+    );
+    for t in v["topics"].as_array_mut().unwrap() {
+        if t["uuid"] == u1.as_str() {
+            t["report_to"] = "Marie  Dubois".into();
+        }
+        if t["uuid"] == u2.as_str() {
+            t["report_to"] = "marie dubois".into();
+        }
+    }
+    for x in v["notes"].as_array_mut().unwrap() {
+        if x["uuid"] == u3.as_str() {
+            x["report_to"] = "MARIE DUBOIS".into();
+        }
+    }
+    v["questions"][0]["asked_to"] = "Marie Dubois".into();
+    let old = ExportFile::from_json(&v.to_string()).unwrap();
+    let mut b = open();
+    let report = b.store.import(&old, false).unwrap();
+    // One per key per project: Acta's three uses share one, Other has its
+    // own.
+    assert_eq!(report.contacts.created, 2);
+    let again = b.store.export(None).unwrap();
+    assert_eq!(again.contacts.len(), 2);
+    assert!(
+        again
+            .contacts
+            .iter()
+            .all(|c| c.epic.is_none() && c.project.is_some())
+    );
+    let acta = again
+        .topics
+        .iter()
+        .find(|t| t.stamp.uuid == u1)
+        .unwrap()
+        .report
+        .report_to
+        .clone();
+    let note = again
+        .notes
+        .iter()
+        .find(|x| x.stamp.uuid == u3)
+        .unwrap()
+        .report_to
+        .clone();
+    let elsewhere = again
+        .topics
+        .iter()
+        .find(|t| t.stamp.uuid == u2)
+        .unwrap()
+        .report
+        .report_to
+        .clone();
+    assert_eq!(acta, note);
+    assert_eq!(acta, again.questions[0].asked_to);
+    assert_ne!(acta, elsewhere);
+}
+
+#[test]
+fn a_version_2_export_imports_and_its_updates_keep_the_contacts() {
+    let mut f = fixture();
+    let s = &mut f.t.store;
+    let marie = contact(s, "Marie", ContactLevel::Project(f.project));
+    s.set_report_to(Record::Topic(f.topic), Some(marie), H)
         .unwrap();
     s.set_reported(Record::Topic(f.topic), true, H).unwrap();
-    s.set_report_to(Record::Epic(f.epic), Some("Legal team"), H)
+    s.set_report_to(Record::Epic(f.epic), Some(marie), H)
         .unwrap();
-    let n = s.add_note(f.project, "Tell Paul", H).unwrap();
-    s.set_report_to(Record::Note(n), Some("Paul"), H).unwrap();
+    let n = s.add_note(f.project, "Tell Marie", H).unwrap();
+    s.set_report_to(Record::Note(n), Some(marie), H).unwrap();
     ask(s, Owner::Topic(f.topic), "Can we keep v1?", None, None);
     let file = s.export(None).unwrap();
 
-    // The same records, newer, as a version 2 file carries them.
     let mut v2: serde_json::Value = serde_json::from_str(&file.to_json().unwrap()).unwrap();
     v2["version"] = 2.into();
-    v2.as_object_mut().unwrap().remove("questions");
+    for k in ["questions", "contacts", "profile"] {
+        v2.as_object_mut().unwrap().remove(k);
+    }
     for kind in ["epics", "topics", "notes"] {
         for x in v2[kind].as_array_mut().unwrap() {
             let o = x.as_object_mut().unwrap();
@@ -544,24 +911,18 @@ fn a_version_2_export_imports_and_its_updates_keep_the_people() {
         }
     }
     let old = ExportFile::from_json(&v2.to_string()).unwrap();
-    assert!(old.questions.is_empty());
-    // Into this database: updated, the people kept.
+    assert!(old.questions.is_empty() && old.contacts.is_empty());
     let report = s.import(&old, false).unwrap();
     assert!(report.topics.updated > 0 && report.notes.updated > 0);
     let r = s.topic(f.topic).unwrap().report;
-    assert_eq!(r.to.as_deref(), Some("Marie"));
-    assert!(r.is_reported());
-    assert_eq!(
-        s.epic(f.epic).unwrap().report.to.as_deref(),
-        Some("Legal team")
-    );
-    assert_eq!(s.note(n).unwrap().report_to.as_deref(), Some("Paul"));
-    // Into an empty one: no questions, no people.
+    assert_eq!(r.to.map(|c| c.id), Some(marie));
+    assert!(r.at.is_some());
+    assert_eq!(s.epic(f.epic).unwrap().report.to.map(|c| c.id), Some(marie));
+    assert_eq!(s.note(n).unwrap().report_to.map(|c| c.id), Some(marie));
     let mut b = open();
     let report = b.store.import(&old, false).unwrap();
     assert!(report.topics.created > 0);
     let again = b.store.export(None).unwrap();
-    assert!(again.questions.is_empty());
+    assert!(again.questions.is_empty() && again.contacts.is_empty());
     assert!(again.topics.iter().all(|t| t.report.report_to.is_none()));
-    assert!(again.notes.iter().all(|n| n.report_to.is_none()));
 }

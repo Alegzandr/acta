@@ -20,8 +20,9 @@ mod timeline;
 mod trash;
 
 pub use exchange::{
-    ExportFile, FILE_EXTENSION, FORMAT_NAME, FORMAT_VERSION, ImportCounts, ImportReport, XEntry,
-    XEpic, XFolder, XKb, XNote, XProject, XQuestion, XRevision, XStamp, XTopic,
+    ExportFile, FILE_EXTENSION, FORMAT_NAME, FORMAT_VERSION, ImportCounts, ImportReport, XContact,
+    XEntry, XEpic, XFolder, XKb, XNote, XProfile, XProject, XQuestion, XReport, XRevision, XStamp,
+    XTopic,
 };
 pub use folders::{AUTO_MEMORY_PREFIX, FolderResolution, VisibleFolder, VisibleFolders};
 pub use kb::{KbCounts, KbEdit, KbFilter, KbRevisionSummary, KbUpdate, NewKb};
@@ -29,7 +30,9 @@ pub use overview::{
     IDLE_DAYS, INBOX_DAYS, Overview, OverviewEpic, OverviewFilter, OverviewItem, STALE_MEMORY_DAYS,
     Scope, WEEK_DAYS,
 };
-pub use people::ReportTargets;
+pub use people::{
+    ADDRESS_MAX, ContactPatch, ContactSummary, DETAIL_MAX, ReportTargets, level_name,
+};
 pub use questions::{ANSWER_MAX, NewQuestion, QUESTION_MAX, QuestionFilter, decision_body};
 pub use records::{EpicPatch, NewTopic, ProjectPatch, TopicFilter, TopicPatch};
 pub use search::{SNIPPET_CLOSE, SNIPPET_OPEN, SearchHit, SearchKind, SearchQuery};
@@ -75,6 +78,8 @@ pub struct Store {
     writable: bool,
     /// Set when the last rewrite of the hooks' pre-check file failed.
     link_index_failed: std::cell::Cell<bool>,
+    /// Contacts lifted by moves since the last [`Store::take_lifts`].
+    lifts: std::cell::RefCell<Vec<crate::model::Lift>>,
 }
 
 /// `meta` key raised by the second release of a two-step destructive change
@@ -117,6 +122,7 @@ impl Store {
             opened,
             writable,
             link_index_failed: std::cell::Cell::new(false),
+            lifts: std::cell::RefCell::new(Vec::new()),
         })
     }
 

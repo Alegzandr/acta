@@ -6,15 +6,14 @@
 //! question records who created, answered or dropped it, and the Decision
 //! entry is the deliberate way to put an answer in the timeline.
 
-use super::people::person_arg;
-use super::{STAMP_COLS, Scope, Store, new_uuid, owner_at, stamp};
+use super::people::{check_ref, contact_ref, lift_for, owner_place};
+use super::{Scope, Store, new_uuid, owner_at, stamp};
 use crate::date::{Date, DueState, due_state};
 use crate::error::{Error, Result};
 use crate::model::{
-    Author, Entry, EntryId, EntryKind, EpicId, Owner, ProjectId, Question, QuestionId,
-    QuestionStatus, TopicId,
+    Author, ContactId, Entry, EntryId, EntryKind, EpicId, Owner, ProjectId, Question, QuestionId,
+    QuestionStatus, Record, TopicId,
 };
-use crate::person::person_key;
 use crate::time::now_ms;
 use rusqlite::{OptionalExtension, params};
 use std::collections::HashMap;
@@ -29,7 +28,7 @@ pub const ANSWER_MAX: usize = 1_500;
 pub struct NewQuestion {
     pub owner: Owner,
     pub text: String,
-    pub asked_to: Option<String>,
+    pub asked_to: Option<ContactId>,
     pub expected_on: Option<Date>,
 }
 
@@ -45,13 +44,16 @@ pub struct QuestionFilter {
     pub owner: Option<Owner>,
     /// Only questions whose answer date is before this day.
     pub expected_before: Option<Date>,
-    /// Only questions asked to this person ([`person_key`] of the name).
-    pub person_key: Option<String>,
+    /// Only questions asked to this contact.
+    pub contact: Option<ContactId>,
 }
 
-const QUESTION_COLS: &str =
-    "id, project_id, epic_id, topic_id, text, asked_to, expected_on, status,
-    answer, resolved_at, resolved_by, decision_entry_id, position, created_by";
+/// The columns [`question_row`] reads, on the alias `q`.
+const QUESTION_COLS: &str = "q.id, q.project_id, q.epic_id, q.topic_id, q.text, q.asked_contact_id,
+    (SELECT c.name FROM contacts c WHERE c.id = q.asked_contact_id),
+    (SELECT c.deleted_at IS NOT NULL FROM contacts c WHERE c.id = q.asked_contact_id),
+    q.expected_on, q.status, q.answer, q.resolved_at, q.resolved_by, q.decision_entry_id, q.position,
+    q.created_by, q.uuid, q.created_at, q.updated_at, q.updated_by, q.deleted_at, q.deleted_by";
 
 fn question_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Question> {
     Ok(Question {
@@ -59,23 +61,23 @@ fn question_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Question> {
         project: ProjectId(r.get(1)?),
         owner: owner_at(r, 1)?,
         text: r.get(4)?,
-        asked_to: r.get(5)?,
-        expected_on: r.get(6)?,
-        status: r.get(7)?,
-        answer: r.get(8)?,
-        resolved_at: r.get(9)?,
-        resolved_by: r.get(10)?,
-        decision_entry: r.get::<_, Option<i64>>(11)?.map(EntryId),
-        position: r.get(12)?,
-        created_by: r.get(13)?,
-        stamp: stamp(r, 14)?,
+        asked_to: contact_ref(r, 5)?,
+        expected_on: r.get(8)?,
+        status: r.get(9)?,
+        answer: r.get(10)?,
+        resolved_at: r.get(11)?,
+        resolved_by: r.get(12)?,
+        decision_entry: r.get::<_, Option<i64>>(13)?.map(EntryId),
+        position: r.get(14)?,
+        created_by: r.get(15)?,
+        stamp: stamp(r, 16)?,
     })
 }
 
 pub(crate) fn read_question(conn: &rusqlite::Connection, id: QuestionId) -> Result<Question> {
     conn.query_row(
         &format!(
-            "SELECT {QUESTION_COLS}, {STAMP_COLS} FROM questions WHERE id = ?1 AND deleted_at IS NULL"
+            "SELECT {QUESTION_COLS} FROM questions q WHERE q.id = ?1 AND q.deleted_at IS NULL"
         ),
         [id.0],
         question_row,
@@ -166,24 +168,26 @@ impl Store {
     /// Adds a question at the end of its owner's list.
     pub fn ask(&mut self, new: NewQuestion, author: Author) -> Result<QuestionId> {
         let text = question_text(&new.text)?;
-        let asked = person_arg(new.asked_to.as_deref())?;
+        let asked = new.asked_to;
         check_day(new.expected_on)?;
         let tx = self.write()?;
         let (project, epic, topic) = owner_cols(&tx, new.owner)?;
+        if let Some(c) = asked {
+            check_ref(&tx, c, owner_place(&tx, new.owner)?, &new.owner.to_string())?;
+        }
         let position = next_position(&tx, new.owner)?;
         let now = now_ms();
         tx.execute(
-            "INSERT INTO questions (uuid, project_id, epic_id, topic_id, text, asked_to, asked_key, expected_on,
+            "INSERT INTO questions (uuid, project_id, epic_id, topic_id, text, asked_contact_id, expected_on,
                                     status, position, created_by, created_at, updated_at, updated_by)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'open', ?9, ?10, ?11, ?11, ?10)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'open', ?8, ?9, ?10, ?10, ?9)",
             params![
                 new_uuid(),
                 project,
                 epic,
                 topic,
                 text,
-                asked,
-                asked.as_deref().map(person_key),
+                asked.map(|c| c.0),
                 new.expected_on,
                 position,
                 author,
@@ -204,10 +208,13 @@ impl Store {
     /// closed ones, newest closed first.
     pub fn questions_of(&self, owner: Owner) -> Result<Vec<Question>> {
         let mut stmt = self.conn.prepare(&format!(
-            "SELECT {QUESTION_COLS}, {STAMP_COLS} FROM questions
-             WHERE {} AND deleted_at IS NULL
-             ORDER BY status <> 'open', CASE WHEN status = 'open' THEN position ELSE -resolved_at END, id",
+            "SELECT {QUESTION_COLS} FROM questions q
+             WHERE {} AND q.deleted_at IS NULL
+             ORDER BY q.status <> 'open', CASE WHEN q.status = 'open' THEN q.position ELSE -q.resolved_at END, q.id",
             super::owner_condition(owner)
+                .replace("project_id", "q.project_id")
+                .replace("epic_id", "q.epic_id")
+                .replace("topic_id", "q.topic_id")
         ))?;
         let rows = stmt.query_map([], question_row)?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
@@ -254,25 +261,15 @@ impl Store {
                 args.len()
             ));
         }
-        if let Some(k) = &filter.person_key {
-            args.push(k.clone().into());
-            cond.push(format!("q.asked_key = ?{}", args.len()));
+        if let Some(c) = filter.contact {
+            args.push(c.0.into());
+            cond.push(format!("q.asked_contact_id = ?{}", args.len()));
         }
         let sql = format!(
-            "SELECT {}, {} FROM questions q
+            "SELECT {QUESTION_COLS} FROM questions q
              WHERE {}
              ORDER BY q.expected_on IS NULL, q.expected_on, q.topic_id IS NOT NULL, q.epic_id IS NOT NULL,
                       coalesce(q.topic_id, q.epic_id, 0), q.position, q.id",
-            QUESTION_COLS
-                .split(',')
-                .map(|c| format!("q.{}", c.trim()))
-                .collect::<Vec<_>>()
-                .join(", "),
-            STAMP_COLS
-                .split(',')
-                .map(|c| format!("q.{}", c.trim()))
-                .collect::<Vec<_>>()
-                .join(", "),
             cond.join(" AND ")
         );
         let mut stmt = self.conn.prepare(&sql)?;
@@ -333,33 +330,26 @@ impl Store {
         &mut self,
         id: QuestionId,
         text: Option<&str>,
-        asked_to: Option<Option<&str>>,
+        asked_to: Option<Option<ContactId>>,
         author: Author,
     ) -> Result<()> {
         let text = text.map(question_text).transpose()?;
-        let asked = match asked_to {
-            None => None,
-            Some(p) => Some(person_arg(p)?),
-        };
         let tx = self.write()?;
         let cur = read_question(&tx, id)?;
         let text = text.unwrap_or(cur.text.clone());
-        let asked = asked.unwrap_or(cur.asked_to.clone());
-        if text == cur.text && asked == cur.asked_to {
+        let was = cur.asked_to.as_ref().map(|c| c.id);
+        let asked = asked_to.unwrap_or(was);
+        if text == cur.text && asked == was {
             return Ok(());
+        }
+        if let Some(c) = asked.filter(|c| Some(*c) != was) {
+            check_ref(&tx, c, owner_place(&tx, cur.owner)?, &id.to_string())?;
         }
         let now = now_ms();
         tx.execute(
-            "UPDATE questions SET text = ?2, asked_to = ?3, asked_key = ?4, updated_at = ?5, updated_by = ?6
+            "UPDATE questions SET text = ?2, asked_contact_id = ?3, updated_at = ?4, updated_by = ?5
              WHERE id = ?1",
-            params![
-                id.0,
-                text,
-                asked,
-                asked.as_deref().map(person_key),
-                now,
-                author
-            ],
+            params![id.0, text, asked.map(|c| c.0), now, author],
         )?;
         touch_owner(&tx, cur.owner, author, now)?;
         tx.commit()?;
@@ -517,7 +507,10 @@ impl Store {
         )?;
         touch_owner(&tx, cur.owner, author, now)?;
         touch_owner(&tx, to, author, now)?;
+        // The contact asked follows: lifted when the new owner cannot see it.
+        let lifts = lift_for(&tx, Record::Question(id), author, now)?;
         tx.commit()?;
+        self.lifts.borrow_mut().extend(lifts);
         Ok(())
     }
 

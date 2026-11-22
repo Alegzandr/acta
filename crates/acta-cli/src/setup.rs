@@ -1050,7 +1050,8 @@ mod tests {
         };
         assert!(section("Questions for others") < 12);
         assert_eq!(section("Reporting back"), 4);
-        assert!(text.contains("never invent one"));
+        assert!(section("People") <= 6);
+        assert!(text.contains("Never invent one"));
     }
 
     #[test]

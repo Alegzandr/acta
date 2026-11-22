@@ -9,7 +9,7 @@ use rusqlite::params;
 
 use super::Store;
 use crate::Result;
-use crate::model::{KbId, Owner, ProjectId, QuestionId, Record, TopicId};
+use crate::model::{ContactId, KbId, Owner, ProjectId, QuestionId, Record, TopicId};
 use crate::time::now_ms;
 
 /// What Claude Code wrote last and this installation has not shown since.
@@ -45,16 +45,23 @@ impl Store {
     /// up to date costs no commit), or for kinds without markers. Returns
     /// whether a marker was written.
     pub fn mark_seen(&mut self, record: Record) -> Result<bool> {
-        if let Record::Question(q) = record {
-            // Questions keep their markers apart (schema 5): the
-            // `read_markers` kinds are fixed by a check.
+        let other = match record {
+            Record::Question(q) => Some(("question", "questions", q.0)),
+            Record::Contact(c) => Some(("contact", "contacts", c.0)),
+            _ => None,
+        };
+        if let Some((kind, table, id)) = other {
+            // Questions and contacts keep their markers apart (schema 5):
+            // the `read_markers` kinds are fixed by a check.
             let tx = self.write()?;
             let n = tx.execute(
-                "INSERT INTO question_markers (question_id, last_seen_at)
-                 SELECT id, MAX(updated_at, ?2) FROM questions WHERE id = ?1
-                 ON CONFLICT (question_id) DO UPDATE SET last_seen_at = excluded.last_seen_at
-                 WHERE question_markers.last_seen_at < (SELECT updated_at FROM questions WHERE id = ?1)",
-                params![q.0, now_ms()],
+                &format!(
+                    "INSERT INTO record_markers (kind, record_id, last_seen_at)
+                     SELECT ?1, id, MAX(updated_at, ?3) FROM {table} WHERE id = ?2
+                     ON CONFLICT (kind, record_id) DO UPDATE SET last_seen_at = excluded.last_seen_at
+                     WHERE record_markers.last_seen_at < (SELECT updated_at FROM {table} WHERE id = ?2)"
+                ),
+                params![kind, id, now_ms()],
             )?;
             tx.commit()?;
             return Ok(n > 0);
@@ -110,12 +117,26 @@ impl Store {
     pub fn unread_questions(&self) -> Result<Vec<(QuestionId, Owner)>> {
         let mut stmt = self.conn.prepare(
             "SELECT q.id, q.project_id, q.epic_id, q.topic_id FROM questions q
-             LEFT JOIN question_markers m ON m.question_id = q.id
+             LEFT JOIN record_markers m ON m.kind = 'question' AND m.record_id = q.id
              WHERE q.deleted_at IS NULL AND q.updated_by = 'claude'
                AND (m.last_seen_at IS NULL OR q.updated_at > m.last_seen_at)
              ORDER BY q.id",
         )?;
         let rows = stmt.query_map([], |r| Ok((QuestionId(r.get(0)?), super::owner_at(r, 1)?)))?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Live contacts Claude Code wrote last and this installation has not
+    /// shown since (the unread dot of the Contacts page).
+    pub fn unread_contacts(&self) -> Result<Vec<ContactId>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT c.id FROM contacts c
+             LEFT JOIN record_markers m ON m.kind = 'contact' AND m.record_id = c.id
+             WHERE c.deleted_at IS NULL AND c.updated_by = 'claude'
+               AND (m.last_seen_at IS NULL OR c.updated_at > m.last_seen_at)
+             ORDER BY c.id",
+        )?;
+        let rows = stmt.query_map([], |r| Ok(ContactId(r.get(0)?)))?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 }

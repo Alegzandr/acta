@@ -1078,7 +1078,7 @@ fn due_dates_set_found_and_cleared_over_stdio() {
     let v: Value = serde_json::from_str(out.trim()).unwrap();
     assert_eq!(
         v,
-        json!({"id": "T-2", "due": "2000-02-01", "overdue": true, "reported_at": null, "report_to": null})
+        json!({"id": "T-2", "due": "2000-02-01", "overdue": true, "reported_at": null, "report_to": null, "report_contact": null})
     );
     let (ok, out, err) = cli(&data, &repo, &["find", "--due", "overdue", "--json"], "");
     assert!(ok, "{out}{err}");
@@ -1360,12 +1360,14 @@ fn folders_list_active_and_the_briefing_lines() {
     );
 }
 
-/// Questions and Report to (data.md requests 18 and 19) as Claude Code
-/// drives them: ask, find by person, answer with a logged decision and
-/// read the entry back, set and mark a Report to; then the CLI, with the
-/// person and the text on stdin only.
+/// Questions, contacts and Report to (data.md requests 18, 19 and 22) as
+/// Claude Code drives them: a name that is not a contact is refused and
+/// creates nothing, a contact is created by name, asked, found by person,
+/// the answer logged as a decision and read back, a Report to set and
+/// marked; the profile in the briefing; then the CLI, with every name and
+/// text on stdin only.
 #[test]
-fn questions_and_report_to_over_stdio() {
+fn questions_contacts_and_report_to_over_stdio() {
     let tmp = tempfile::tempdir().unwrap();
     let data = tmp.path().join("data");
     let repo = tmp.path().join("repo");
@@ -1380,23 +1382,38 @@ fn questions_and_report_to_over_stdio() {
         "Export format",
     );
     assert!(ok && out.starts_with("ok T-1"), "{out}{err}");
-    // A note naming someone, from stdin as JSON.
+    // A contact from the CLI, its name on stdin; a note naming it.
+    let (ok, out, err) = cli(&data, &repo, &["create", "contact"], "Hélène");
+    assert!(ok && out.trim() == "ok C-1 Hélène (P-1)", "{out}{err}");
     let (ok, out, err) = cli(
         &data,
         &repo,
-        &["create", "note"],
-        r#"{"title": "Tell Hélène when the format is settled", "report_to": "Hélène"}"#,
+        &["create", "note", "--json"],
+        r#"{"title": "Tell Hélène when the format is settled", "report_to": "helene"}"#,
     );
     assert!(ok && out.trim() == "ok N-1", "{out}{err}");
 
     let mut m = Mcp::start(&data, &repo, false);
+    let question = json!({"kind": "question", "title": "Can we keep the v1 export format until March?",
+                          "asked_to": "Marie", "owner": "T-1", "due": "2000-01-03"});
+    // An unknown name is refused and creates nothing.
+    let (err, text) = m.call("create", json!({"items": [question.clone()]}));
+    assert!(err, "{text}");
+    assert!(
+        text.starts_with("item 1: no contact \"Marie\" here"),
+        "{text}"
+    );
+    let (_, contacts) = m.call("find", json!({"kind": "contact"}));
+    assert!(!contacts.contains("Marie"), "{contacts}");
+    // The user confirms someone new: the contact, then the question.
+    let mut with_new = question.clone();
+    with_new["asked_to"] = json!("@1");
     let (err, ack) = m.call(
         "create",
-        json!({"items": [{"kind": "question", "title": "Can we keep the v1 export format until March?",
-                           "asked_to": "Marie", "owner": "T-1", "due": "2000-01-03"}]}),
+        json!({"items": [{"kind": "contact", "title": "Marie"}, with_new]}),
     );
     assert!(
-        !err && ack.starts_with("ok Q-1 (T-1) · asked Marie · by 2000-01-03 ("),
+        !err && ack.starts_with("ok C-2 Marie (P-1) · Q-1 (T-1) · asked C-2 · by 2000-01-03 ("),
         "{ack}"
     );
     assert!(chars(&ack) <= 320);
@@ -1407,8 +1424,9 @@ fn questions_and_report_to_over_stdio() {
     assert!(!err && ack == "ok Q-2 (E-1)", "{ack}");
 
     // Found by person, by key: case and accents do not matter.
-    let (err, found) = m.call("find", json!({"person": "marie"}));
+    let (err, found) = m.call("find", json!({"person": "MARIE"}));
     assert!(!err && chars(&found) <= 2_000, "{found}");
+    assert!(found.contains("\nC-2 Marie · P-1\n"), "{found}");
     assert!(
         found
             .lines()
@@ -1417,12 +1435,11 @@ fn questions_and_report_to_over_stdio() {
     );
     let (_, near) = m.call("find", json!({"person": "mari"}));
     assert!(
-        near.contains("no one named \"mari\" · people: Marie"),
+        near.contains("no contact \"mari\" here · near: C-2 Marie"),
         "{near}"
     );
-    let (_, found) = m.call("find", json!({"person": "helene", "kind": "note"}));
+    let (_, found) = m.call("find", json!({"person": "C-1", "kind": "note"}));
     assert!(found.contains("N-1 note  Tell Hélène"), "{found}");
-    // The brief and the Attention line carry it.
     let (_, topic) = m.call("brief", json!({"id": "T-1"}));
     assert!(topic.contains("Questions 1 open, 1 overdue:"), "{topic}");
     assert!(topic.contains("\nQ-1 Marie · overdue "), "{topic}");
@@ -1453,14 +1470,12 @@ fn questions_and_report_to_over_stdio() {
         "{entry}"
     );
     assert!(
-        entry.contains("> Can we keep the v1 export format until March?"),
+        entry.contains("> Can we keep the v1 export format until March?")
+            && entry.contains("Yes, until 31 March."),
         "{entry}"
     );
-    assert!(entry.contains("Yes, until 31 March."), "{entry}");
-    let (_, answered) = m.call("find", json!({"kind": "question", "status": "answered"}));
-    assert!(answered.contains(" -> Yes, until 31 March."), "{answered}");
 
-    // Report to: set, done not reported, marked.
+    // Report to: set, done not reported, marked; a contact moved.
     let (err, text) = m.call("update", json!({"id": "P-1", "report_to": "Marie"}));
     assert!(err && text == "projects have no report_to", "{text}");
     let (err, ack) = m.call(
@@ -1468,25 +1483,61 @@ fn questions_and_report_to_over_stdio() {
         json!({"id": "T-1", "report_to": "Marie", "status": "done"}),
     );
     assert!(
-        !err && ack == "ok T-1 updated: status · report to Marie",
+        !err && ack == "ok T-1 updated: status · report to C-2",
         "{ack}"
     );
-    let (_, found) = m.call("find", json!({"person": "Marie"}));
+    let (_, found) = m.call("find", json!({"person": "C-2"}));
     assert!(found.contains("· report Marie (not yet)"), "{found}");
     let (err, ack) = m.call("update", json!({"id": "T-1", "reported": true}));
-    assert!(!err && ack.starts_with("ok T-1 · reported\n"), "{ack}");
-    assert!(ack.contains("\nto Marie\n"), "{ack}");
+    assert!(!err && ack == "ok T-1 · reported to C-2", "{ack}");
+    let (err, text) = m.call("update", json!({"id": "C-1", "level": "E-1"}));
+    assert!(err, "{text}");
+    assert_eq!(
+        text,
+        "C-1 is named outside E-1: N-1 (report_to); change those first"
+    );
+    let (err, ack) = m.call("update", json!({"id": "C-2", "level": "all"}));
+    assert!(!err && ack == "ok C-2 · level all", "{ack}");
     let (_, topic) = m.call("brief", json!({"id": "T-1"}));
     assert!(topic.contains("· reported to Marie"), "{topic}");
+    drop(m);
+
+    // The profile reaches the briefing (set here as the app would).
+    {
+        // The key file the debug build keeps in the dev data directory:
+        // never the keychain.
+        use acta_core::keys::{KEY_FILE, KeyFile, KeyStores};
+        let keys = KeyStores(vec![std::sync::Arc::new(KeyFile::new(data.join(KEY_FILE)))]);
+        let mut store = acta_core::Store::open(&acta_core::StoreConfig {
+            data_dir: data.clone(),
+            keys,
+        })
+        .unwrap();
+        store
+            .set_profile(Some("Alexandre"), Some("Product designer"))
+            .unwrap();
+    }
+    let mut m = Mcp::start(&data, &repo, false);
     let (_, hook) = m.call("hook", json!({"event": "compact", "session": "e2e-q"}));
     let v: Value = serde_json::from_str(&hook).unwrap();
     let ctx = v["hookSpecificOutput"]["additionalContext"]
         .as_str()
         .unwrap();
     assert!(chars(ctx) <= 1_200, "{ctx}");
+    assert!(
+        ctx.contains("\nUser: Alexandre, Product designer\n"),
+        "{ctx}"
+    );
     drop(m);
 
-    // The CLI: text and person on stdin only.
+    // The CLI: names and text on stdin only.
+    let (ok, out, err) = cli(
+        &data,
+        &repo,
+        &["create", "contact", "--level", "E-1"],
+        "Legal team",
+    );
+    assert!(ok && out.trim() == "ok C-3 Legal team (E-1)", "{out}{err}");
     let (ok, out, err) = cli(
         &data,
         &repo,
@@ -1497,11 +1548,12 @@ fn questions_and_report_to_over_stdio() {
             "T-1",
             "--due",
             "2099-12-04",
+            "--json",
         ],
-        r#"{"title": "Which disk vendor?", "asked_to": "Legal team"}"#,
+        r#"{"title": "Which disk vendor?", "asked_to": "legal TEAM"}"#,
     );
     assert!(
-        ok && out.starts_with("ok Q-3 (T-1) · asked Legal team · by 2099-12-04"),
+        ok && out.starts_with("ok Q-3 (T-1) · asked C-3 · by 2099-12-04"),
         "{out}{err}"
     );
     let (ok, out, err) = cli(&data, &repo, &["create", "question"], "Who pays?");
@@ -1537,16 +1589,17 @@ fn questions_and_report_to_over_stdio() {
         &["update", "E-1", "--field", "report_to"],
         "Legal team",
     );
-    assert!(
-        ok && out.trim() == "ok E-1 · report to Legal team",
-        "{out}{err}"
-    );
+    assert!(ok && out.trim() == "ok E-1 · report to C-3", "{out}{err}");
     let (ok, out, err) = cli(&data, &repo, &["update", "T-1", "--reported", "false"], "");
     assert!(ok && out.trim() == "ok T-1 · not reported", "{out}{err}");
+    let (ok, out, err) = cli(&data, &repo, &["update", "C-3", "--level", "P-1"], "");
+    assert!(ok && out.trim() == "ok C-3 · level P-1", "{out}{err}");
     let (ok, out, err) = cli(&data, &repo, &["find", "--person", "-"], "legal TEAM");
     assert!(ok && out.contains("E-1 epic  Export"), "{out}{err}");
     let (ok, out, err) = cli(&data, &repo, &["find", "--person", "Marie"], "");
     assert!(!ok && err.contains("--person -"), "{out}{err}");
+    let (ok, out, err) = cli(&data, &repo, &["find", "--kind", "contact"], "");
+    assert!(ok && out.contains("C-3 Legal team · P-1"), "{out}{err}");
     let (ok, out, err) = cli(
         &data,
         &repo,
@@ -1560,6 +1613,7 @@ fn questions_and_report_to_over_stdio() {
     let q1 = hits.iter().find(|h| h["id"] == "Q-1").unwrap();
     assert_eq!(q1["status"], "answered");
     assert_eq!(q1["asked_to"], "Marie");
+    assert_eq!(q1["asked_contact"], "C-2");
     assert_eq!(q1["answer"], "Yes, until 31 March.");
     assert_eq!(q1["owner"], "T-1");
     let (ok, out, err) = cli(

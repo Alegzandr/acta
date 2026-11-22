@@ -173,9 +173,12 @@ enum Command {
         /// A question answered on a topic: also log the answer as a decision
         #[arg(long)]
         log_decision: bool,
-        /// A topic or an epic was reported to its person (true or false)
+        /// A topic or an epic was reported to its contact (true or false)
         #[arg(long, value_name = "BOOL")]
         reported: Option<bool>,
+        /// A contact's level: all, P-n or E-n
+        #[arg(long)]
+        level: Option<String>,
         /// Print the record's fields as JSON
         #[arg(long)]
         json: bool,
@@ -218,7 +221,7 @@ enum Command {
     /// file notes into a topic's timeline (entry); dismiss notes; or apply a
     /// triage plan (plan: create parameters as JSON on stdin)
     Create {
-        /// topic, epic, note, question, entry, dismiss or plan
+        /// topic, epic, note, question, contact, entry, dismiss or plan
         kind: String,
         /// E-n for a new topic
         #[arg(long)]
@@ -233,6 +236,13 @@ enum Command {
         /// A question's owner: T-n, E-n or P-n (default: the focus)
         #[arg(long, value_name = "ID")]
         owner: Option<String>,
+        /// A contact's level: all, P-n or E-n (default: the project)
+        #[arg(long)]
+        level: Option<String>,
+        /// stdin is one JSON object with the item's fields (title,
+        /// description, asked_to, report_to) instead of text
+        #[arg(long)]
+        json: bool,
         /// Comma-separated note ids to file into the new item, or to dismiss
         #[arg(long, value_delimiter = ',')]
         from_notes: Vec<String>,
@@ -793,6 +803,7 @@ fn run_on(store: &mut acta_core::Store, command: Command) -> Result<String, Stri
             due,
             log_decision,
             reported,
+            level,
             json,
             field,
             text,
@@ -804,6 +815,7 @@ fn run_on(store: &mut acta_core::Store, command: Command) -> Result<String, Stri
                 due,
                 log_decision: log_decision.then_some(true),
                 reported,
+                level,
                 ..UpdateArgs::default()
             };
             if let Some(f) = field {
@@ -884,6 +896,8 @@ fn run_on(store: &mut acta_core::Store, command: Command) -> Result<String, Stri
             topic,
             due,
             owner,
+            level,
+            json,
             from_notes,
             text,
         } => {
@@ -912,18 +926,16 @@ fn run_on(store: &mut acta_core::Store, command: Command) -> Result<String, Stri
                 _ => {
                     let t = read_text(&text)?;
                     let t = t.trim();
-                    let question = kind.trim().eq_ignore_ascii_case("question");
-                    // One JSON object carries the person (user text never
-                    // comes from an argument); otherwise the first line is
-                    // the title. A question is all of its text.
-                    // Text that starts with a brace but is not such an
-                    // object stays text (a note may hold code).
-                    let parsed = t
-                        .starts_with('{')
-                        .then(|| serde_json::from_str::<TextFields>(t).ok())
-                        .flatten();
-                    let fields = if let Some(f) = parsed {
-                        f
+                    // A question or a contact is all of its text.
+                    let question = ["question", "contact"]
+                        .iter()
+                        .any(|k| kind.trim().eq_ignore_ascii_case(k));
+                    // With --json, one JSON object carries the person (user
+                    // text never comes from an argument); otherwise the
+                    // first line is the title. A question is all its text.
+                    let fields = if json {
+                        serde_json::from_str::<TextFields>(t)
+                            .map_err(|e| format!("--json takes one JSON object: {e}"))?
                     } else if question {
                         TextFields {
                             title: Some(t.to_owned()),
@@ -949,6 +961,7 @@ fn run_on(store: &mut acta_core::Store, command: Command) -> Result<String, Stri
                             asked_to: fields.asked_to,
                             owner,
                             report_to: fields.report_to,
+                            level,
                         }],
                         dismiss: None,
                     })

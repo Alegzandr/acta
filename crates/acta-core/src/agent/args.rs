@@ -63,7 +63,7 @@ pub struct LogArgs {
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
 pub struct UpdateArgs {
-    /// T-n, E-n, N-n or Q-n; P-n for due only.
+    /// T, E, N, Q or C-n; P-n for due only.
     pub id: String,
     pub title: Option<String>,
     pub description: Option<String>,
@@ -74,27 +74,28 @@ pub struct UpdateArgs {
     pub epic: Option<String>,
     /// YYYY-MM-DD, or "" to clear.
     pub due: Option<String>,
-    /// Q: person asked.
+    /// Q: C-n or name.
     pub asked_to: Option<String>,
-    /// Q: what they answered.
     pub answer: Option<String>,
-    /// Q on a topic: also log the answer as a decision.
+    /// Q: also log as a decision.
     pub log_decision: Option<bool>,
-    /// T, E, N: who to report back to.
+    /// C-n or name.
     pub report_to: Option<String>,
-    /// T, E: the user says it was reported.
+    /// The user says it was reported.
     pub reported: Option<bool>,
+    /// C: all, P-n or E-n.
+    pub level: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
 pub struct FindArgs {
     pub query: Option<String>,
-    /// topic, epic, note, entry or question.
+    /// topic, epic, note, entry, question or contact.
     pub kind: Option<String>,
     /// A status, or open (default), closed, all.
     pub status: Option<String>,
     pub epic: Option<String>,
-    /// Everything open naming this person.
+    /// C-n or name.
     pub person: Option<String>,
     /// overdue or week.
     pub due: Option<String>,
@@ -105,27 +106,29 @@ pub struct FindArgs {
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
 pub struct CreateItem {
-    /// topic, epic, note, entry or question.
+    /// topic, epic, note, entry, question or contact.
     pub kind: String,
-    /// Title; a note's text; the question.
+    /// Title, note text, question or name.
     #[serde(default)]
     pub title: String,
     /// Default with from_notes: their text.
     pub description: Option<String>,
-    /// Epic of a new topic: E-n, or @k for epic item k of this call.
+    /// E-n, or @k: epic item k of this call.
     pub epic: Option<String>,
     /// T-n, for entry.
     pub topic: Option<String>,
     /// N-ids filed into this item.
     pub from_notes: Option<Vec<String>>,
-    /// topic, epic, question: YYYY-MM-DD.
+    /// YYYY-MM-DD.
     pub due: Option<String>,
-    /// question: the person asked.
+    /// C-n, name or @k.
     pub asked_to: Option<String>,
-    /// question: T-n, E-n or P-n.
+    /// T-n, E-n or P-n.
     pub owner: Option<String>,
-    /// note, topic, epic: who to report back to.
+    /// C-n, name or @k.
     pub report_to: Option<String>,
+    /// all, P-n or E-n.
+    pub level: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]

@@ -10,8 +10,8 @@
 use super::Store;
 use crate::error::{Error, Result};
 use crate::model::{
-    Author, EntryId, EpicId, EventKind, FolderId, KbId, NoteId, Page, PageReq, ProjectId,
-    QuestionId, Record, TopicId,
+    Author, ContactId, EntryId, EpicId, EventKind, FolderId, KbId, NoteId, Page, PageReq,
+    ProjectId, QuestionId, Record, TopicId,
 };
 use crate::time::{MS_PER_DAY, now_ms};
 use rusqlite::{OptionalExtension, params};
@@ -46,6 +46,7 @@ fn cascade(record: Record) -> Vec<(&'static str, String)> {
             "kb_entries",
             "folders",
             "questions",
+            "contacts",
         ]
         .iter()
         .map(|t| {
@@ -75,6 +76,8 @@ fn cascade(record: Record) -> Vec<(&'static str, String)> {
                     "questions",
                     format!("epic_id = {id} OR topic_id IN ({topics})"),
                 ),
+                // An epic's contacts go with it (data.md request 22).
+                ("contacts", format!("epic_id = {id}")),
             ]
         }
         Record::Topic(TopicId(id)) => vec![
@@ -89,6 +92,7 @@ fn cascade(record: Record) -> Vec<(&'static str, String)> {
         Record::Kb(KbId(id)) => vec![("kb_entries", format!("id = {id}"))],
         Record::Folder(FolderId(id)) => vec![("folders", format!("id = {id}"))],
         Record::Question(QuestionId(id)) => vec![("questions", format!("id = {id}"))],
+        Record::Contact(ContactId(id)) => vec![("contacts", format!("id = {id}"))],
     }
 }
 
@@ -102,6 +106,7 @@ fn table_of(record: Record) -> (&'static str, i64) {
         Record::Kb(id) => ("kb_entries", id.0),
         Record::Folder(id) => ("folders", id.0),
         Record::Question(id) => ("questions", id.0),
+        Record::Contact(id) => ("contacts", id.0),
     }
 }
 
@@ -142,6 +147,10 @@ fn parent_of(
         )?,
         Record::Question(id) => one(
             "SELECT project_id, epic_id, topic_id FROM questions WHERE id = ?1",
+            id.0,
+        )?,
+        Record::Contact(id) => one(
+            "SELECT project_id, epic_id, NULL FROM contacts WHERE id = ?1",
             id.0,
         )?,
     };
@@ -271,6 +280,12 @@ impl Store {
              LEFT JOIN topics t ON t.id = x.topic_id
              WHERE x.deleted_at IS NOT NULL AND (CASE WHEN x.topic_id IS NOT NULL THEN coalesce(t.deleted_batch, CAST(t.deleted_at AS TEXT))
                    WHEN x.epic_id IS NOT NULL THEN coalesce(e.deleted_batch, CAST(e.deleted_at AS TEXT)) ELSE coalesce(p.deleted_batch, CAST(p.deleted_at AS TEXT)) END) IS NOT coalesce(x.deleted_batch, CAST(x.deleted_at AS TEXT))
+            UNION ALL
+            SELECT 'contact', x.id, coalesce(x.project_id, 0), x.name, x.deleted_at, x.deleted_by FROM contacts x
+             LEFT JOIN projects p ON p.id = x.project_id LEFT JOIN epics e ON e.id = x.epic_id
+             WHERE x.deleted_at IS NOT NULL AND (CASE WHEN x.epic_id IS NOT NULL THEN coalesce(e.deleted_batch, CAST(e.deleted_at AS TEXT))
+                   WHEN x.project_id IS NOT NULL THEN coalesce(p.deleted_batch, CAST(p.deleted_at AS TEXT)) END)
+                   IS NOT coalesce(x.deleted_batch, CAST(x.deleted_at AS TEXT))
             ORDER BY 5 DESC, 1, 2 DESC";
         let mut stmt = self.conn.prepare(sql)?;
         let all: Vec<TrashItem> = stmt
@@ -285,6 +300,7 @@ impl Store {
                     "note" => Record::Note(NoteId(id)),
                     "kb" => Record::Kb(KbId(id)),
                     "question" => Record::Question(QuestionId(id)),
+                    "contact" => Record::Contact(ContactId(id)),
                     _ => Record::Folder(FolderId(id)),
                 };
                 let deleted_at: i64 = r.get(4)?;

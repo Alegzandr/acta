@@ -45,6 +45,7 @@ id_type!(NoteId, "N");
 id_type!(KbId, "K");
 id_type!(FolderId, "F");
 id_type!(QuestionId, "Q");
+id_type!(ContactId, "C");
 
 /// Who made a write. Over MCP, and when `CLAUDECODE=1`, it is Claude Code.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -114,11 +115,11 @@ pub enum EventKind {
     /// The due date changed: old and new are `YYYY-MM-DD`, absent for no
     /// date (data.md request 16).
     Due,
-    /// The Report to person changed: old and new are the person as
-    /// written, absent for none (data.md request 19).
+    /// The Report to contact changed: old and new are contact UUIDs,
+    /// absent for none (data.md requests 19 and 22).
     Report,
-    /// Marked reported (new is the person) or not reported (old is the
-    /// person) (data.md request 19).
+    /// Marked reported (new is the contact's UUID) or not reported (old
+    /// is) (data.md request 19).
     Reported,
 }
 
@@ -170,6 +171,7 @@ pub enum Record {
     Kb(KbId),
     Folder(FolderId),
     Question(QuestionId),
+    Contact(ContactId),
 }
 
 impl fmt::Display for Record {
@@ -183,6 +185,7 @@ impl fmt::Display for Record {
             Record::Kb(id) => id.fmt(f),
             Record::Folder(id) => id.fmt(f),
             Record::Question(id) => id.fmt(f),
+            Record::Contact(id) => id.fmt(f),
         }
     }
 }
@@ -269,8 +272,8 @@ pub struct Topic {
 /// (data.md request 19). Default: no one.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Report {
-    /// The person as written (1 to 80 chars, see [`crate::person`]).
-    pub to: Option<String>,
+    /// The contact (data.md request 22).
+    pub to: Option<ContactRef>,
     /// When it was marked reported; reset when the person changes.
     pub at: Option<i64>,
     pub by: Option<Author>,
@@ -295,8 +298,8 @@ pub struct TopicSummary {
     pub due_on: Option<Date>,
     pub updated_at: i64,
     pub updated_by: Author,
-    /// The Report to person, if any (request 19).
-    pub report_to: Option<String>,
+    /// The Report to contact, if any (requests 19 and 22).
+    pub report_to: Option<ContactRef>,
     pub reported: bool,
 }
 
@@ -308,7 +311,7 @@ pub struct EpicSummary {
     pub progress: Progress,
     pub due_on: Option<Date>,
     pub updated_at: i64,
-    pub report_to: Option<String>,
+    pub report_to: Option<ContactRef>,
     pub reported: bool,
 }
 
@@ -385,7 +388,7 @@ pub struct Note {
     /// Who filed or dismissed it; `None` for notes filed before it was kept.
     pub filed_by: Option<Author>,
     /// Who it must be reported back to (request 19); filing carries it.
-    pub report_to: Option<String>,
+    pub report_to: Option<ContactRef>,
     pub stamp: Stamp,
 }
 
@@ -432,8 +435,8 @@ pub struct Question {
     pub owner: Owner,
     /// 1 to 300 chars, one paragraph.
     pub text: String,
-    /// The person asked (request 19), as written.
-    pub asked_to: Option<String>,
+    /// The contact asked (requests 19 and 22).
+    pub asked_to: Option<ContactRef>,
     /// The day the answer is expected.
     pub expected_on: Option<Date>,
     pub status: QuestionStatus,
@@ -456,19 +459,192 @@ impl Question {
     }
 }
 
-/// One person of a project: computed from the person values, never stored
-/// (request 19).
+/// A reference to a contact as a record shows it: the name drawn now.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Person {
-    /// [`crate::person::person_key`] of the name.
-    pub key: String,
-    /// The spelling most recently written in the project.
-    pub display: String,
-    /// Open questions asked to them, open notes naming them, topics and
-    /// epics not reported and not Dropped.
-    pub open: i64,
-    /// The newest write naming them.
-    pub last_used: i64,
+pub struct ContactRef {
+    pub id: ContactId,
+    pub name: String,
+    /// The contact is in the trash: still named, never offered.
+    pub in_trash: bool,
+}
+
+/// Where a contact lives (data.md request 22): all projects, a project,
+/// or an epic of a project. It is visible there and below.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ContactLevel {
+    All,
+    Project(ProjectId),
+    Epic(ProjectId, EpicId),
+}
+
+impl ContactLevel {
+    pub fn project(self) -> Option<ProjectId> {
+        match self {
+            ContactLevel::All => None,
+            ContactLevel::Project(p) | ContactLevel::Epic(p, _) => Some(p),
+        }
+    }
+
+    pub fn epic(self) -> Option<EpicId> {
+        match self {
+            ContactLevel::Epic(_, e) => Some(e),
+            _ => None,
+        }
+    }
+
+    /// 0 for an epic, 1 for a project, 2 for all projects: nearest first.
+    pub fn width(self) -> u8 {
+        match self {
+            ContactLevel::Epic(..) => 0,
+            ContactLevel::Project(_) => 1,
+            ContactLevel::All => 2,
+        }
+    }
+
+    /// The narrowest level that sees everything both levels see.
+    pub fn join(self, other: ContactLevel) -> ContactLevel {
+        use ContactLevel::*;
+        if self == other {
+            return self;
+        }
+        match (self.project(), other.project()) {
+            (Some(p), Some(q)) if p == q => Project(p),
+            _ => All,
+        }
+    }
+
+    /// The narrowest level that sees `place`: its epic, else its project.
+    pub fn of_place(place: Place) -> ContactLevel {
+        match place.epic {
+            Some(e) => ContactLevel::Epic(place.project, e),
+            None => ContactLevel::Project(place.project),
+        }
+    }
+}
+
+impl fmt::Display for ContactLevel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ContactLevel::All => f.write_str("all"),
+            ContactLevel::Project(p) => p.fmt(f),
+            ContactLevel::Epic(_, e) => e.fmt(f),
+        }
+    }
+}
+
+/// Where a record sits, for contact visibility: its project, and the epic
+/// it is in or is (a topic's epic, the epic itself; none for a note or a
+/// project).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Place {
+    pub project: ProjectId,
+    pub epic: Option<EpicId>,
+}
+
+/// Whether a contact at `level` can be named from `place` (data.md
+/// request 22): it is global, or in the place's project with no epic, or
+/// in the place's epic. One pure function for the picker, the store and
+/// the agent.
+pub fn visible(level: ContactLevel, place: Place) -> bool {
+    match level {
+        ContactLevel::All => true,
+        ContactLevel::Project(p) => p == place.project,
+        ContactLevel::Epic(p, e) => p == place.project && place.epic == Some(e),
+    }
+}
+
+/// A person work is asked of or reported to (data.md request 22).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Contact {
+    pub id: ContactId,
+    /// 1 to 80 chars, cleaned by [`crate::person::clean`].
+    pub name: String,
+    pub job_title: Option<String>,
+    pub company: Option<String>,
+    /// How to address them: plain text.
+    pub address_note: Option<String>,
+    pub level: ContactLevel,
+    pub created_by: Author,
+    /// The contact this one was merged into (its trash row).
+    pub merged_into: Option<ContactId>,
+    pub stamp: Stamp,
+}
+
+/// One place a contact is named: a live record and the field.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ContactUse {
+    pub record: Record,
+    pub place: Place,
+    /// The record's title, or a question's text.
+    pub title: String,
+    /// `report_to` or `asked`.
+    pub field: &'static str,
+}
+
+/// A contact lifted to a wider level so a moved record still sees it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Lift {
+    pub contact: ContactId,
+    pub from: ContactLevel,
+    pub to: ContactLevel,
+    /// The moved record that needed it.
+    pub record: Record,
+}
+
+/// The human's own name and job title (data.md request 23).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Profile {
+    pub name: Option<String>,
+    pub job_title: Option<String>,
+}
+
+#[cfg(test)]
+mod contact_tests {
+    use super::*;
+
+    #[test]
+    fn visibility_follows_the_level_and_below() {
+        let (p, q) = (ProjectId(1), ProjectId(2));
+        let (e, f) = (EpicId(1), EpicId(2));
+        let topic_in_e = Place {
+            project: p,
+            epic: Some(e),
+        };
+        let loose = Place {
+            project: p,
+            epic: None,
+        };
+        let other = Place {
+            project: q,
+            epic: None,
+        };
+        let table = [
+            (ContactLevel::All, topic_in_e, true),
+            (ContactLevel::All, other, true),
+            (ContactLevel::Project(p), topic_in_e, true),
+            (ContactLevel::Project(p), loose, true),
+            (ContactLevel::Project(p), other, false),
+            (ContactLevel::Epic(p, e), topic_in_e, true),
+            (ContactLevel::Epic(p, e), loose, false),
+            (ContactLevel::Epic(p, f), topic_in_e, false),
+            (ContactLevel::Epic(p, e), other, false),
+        ];
+        for (level, place, expected) in table {
+            assert_eq!(visible(level, place), expected, "{level} from {place:?}");
+        }
+        assert_eq!(
+            ContactLevel::Epic(p, e).join(ContactLevel::Epic(p, f)),
+            ContactLevel::Project(p)
+        );
+        assert_eq!(
+            ContactLevel::Epic(p, e).join(ContactLevel::Project(q)),
+            ContactLevel::All
+        );
+        assert_eq!(
+            ContactLevel::Epic(p, e).join(ContactLevel::Epic(p, e)),
+            ContactLevel::Epic(p, e)
+        );
+    }
 }
 
 /// A knowledge entry without its body: what lists show (ADR 0005 `kb`).

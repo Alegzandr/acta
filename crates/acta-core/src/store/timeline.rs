@@ -53,7 +53,9 @@ fn entry_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Entry> {
 }
 
 pub(super) const NOTE_COLS: &str =
-    "id, project_id, text, author, filed_topic_id, filed_at, filed_epic_id, filed_by, report_to";
+    "id, project_id, text, author, filed_topic_id, filed_at, filed_epic_id, filed_by, report_contact_id,
+    (SELECT c.name FROM contacts c WHERE c.id = report_contact_id),
+    (SELECT c.deleted_at IS NOT NULL FROM contacts c WHERE c.id = report_contact_id)";
 
 pub(super) fn note_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Note> {
     Ok(Note {
@@ -65,8 +67,8 @@ pub(super) fn note_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Note> {
         filed_at: r.get(5)?,
         filed_epic: r.get::<_, Option<i64>>(6)?.map(EpicId),
         filed_by: r.get(7)?,
-        report_to: r.get(8)?,
-        stamp: stamp(r, 9)?,
+        report_to: super::people::contact_ref(r, 8)?,
+        stamp: stamp(r, 11)?,
     })
 }
 
@@ -131,6 +133,7 @@ impl Store {
                 status: new.status,
                 ..TopicPatch::default()
             };
+            // A log changes no epic: nothing is lifted.
             apply_topic_patch(&tx, &cur, patch, author, now)?;
         } else {
             touch_topic(&tx, topic, author, now)?;
@@ -500,7 +503,7 @@ fn set_fate(
     Ok(())
 }
 
-fn read_note(conn: &rusqlite::Connection, id: NoteId) -> Result<Note> {
+pub(crate) fn read_note(conn: &rusqlite::Connection, id: NoteId) -> Result<Note> {
     conn.query_row(
         &format!(
             "SELECT {NOTE_COLS}, {STAMP_COLS} FROM notes WHERE id = ?1 AND deleted_at IS NULL"
