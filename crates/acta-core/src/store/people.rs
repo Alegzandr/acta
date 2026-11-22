@@ -243,6 +243,93 @@ pub(crate) fn lift_for(
     Ok(lifts)
 }
 
+/// The contact that holds a contact's uses now: itself, or the end of its
+/// `merged_into` chain (bounded, so a cycle in a file cannot loop).
+pub(crate) fn follow_merges(tx: &rusqlite::Connection, id: i64) -> Result<i64> {
+    let mut cur = id;
+    for _ in 0..32 {
+        let next: Option<i64> = tx
+            .query_row(
+                "SELECT merged_into FROM contacts WHERE id = ?1",
+                [cur],
+                |r| r.get(0),
+            )
+            .optional()?
+            .flatten();
+        match next {
+            Some(n) if n != cur => cur = n,
+            _ => return Ok(cur),
+        }
+    }
+    Ok(cur)
+}
+
+/// Points every reference to a merged contact at the end of its chain
+/// (after an import brought a merge made elsewhere).
+pub(crate) fn repoint_merged(tx: &rusqlite::Connection) -> Result<()> {
+    let merged: Vec<i64> = {
+        let mut stmt = tx.prepare("SELECT id FROM contacts WHERE merged_into IS NOT NULL")?;
+        stmt.query_map([], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?
+    };
+    for id in merged {
+        let to = follow_merges(tx, id)?;
+        if to == id {
+            continue;
+        }
+        tx.execute(
+            "UPDATE questions SET asked_contact_id = ?2 WHERE asked_contact_id = ?1",
+            params![id, to],
+        )?;
+        for table in ["topics", "epics", "notes"] {
+            tx.execute(
+                &format!("UPDATE {table} SET report_contact_id = ?2 WHERE report_contact_id = ?1"),
+                params![id, to],
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Lifts every contact named from outside its scope by a live record
+/// (after a restore or an import put records back where a contact cannot
+/// be seen). Returns the lifts.
+pub(crate) fn lift_out_of_scope(
+    tx: &rusqlite::Connection,
+    author: Author,
+    now: i64,
+) -> Result<Vec<Lift>> {
+    let refs: Vec<(String, i64, i64)> = {
+        let mut stmt = tx.prepare(
+            "SELECT 'question', id, asked_contact_id FROM questions
+               WHERE deleted_at IS NULL AND asked_contact_id IS NOT NULL
+             UNION ALL SELECT 'topic', id, report_contact_id FROM topics
+               WHERE deleted_at IS NULL AND report_contact_id IS NOT NULL
+             UNION ALL SELECT 'epic', id, report_contact_id FROM epics
+               WHERE deleted_at IS NULL AND report_contact_id IS NOT NULL
+             UNION ALL SELECT 'note', id, report_contact_id FROM notes
+               WHERE deleted_at IS NULL AND report_contact_id IS NOT NULL",
+        )?;
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+            .collect::<rusqlite::Result<_>>()?
+    };
+    let mut lifts = Vec::new();
+    for (kind, id, c) in refs {
+        let record = match kind.as_str() {
+            "question" => Record::Question(QuestionId(id)),
+            "topic" => Record::Topic(TopicId(id)),
+            "epic" => Record::Epic(EpicId(id)),
+            _ => Record::Note(NoteId(id)),
+        };
+        // A record whose parent is in the trash is not live here.
+        let Ok(place) = place_of(tx, record) else {
+            continue;
+        };
+        lifts.extend(lift(tx, ContactId(c), place, record, author, now)?);
+    }
+    Ok(lifts)
+}
+
 /// The table and local id of a record that can carry a Report to.
 fn report_table(record: Record) -> Result<(&'static str, i64)> {
     match record {
@@ -660,24 +747,31 @@ impl Store {
                 author
             ],
         )?;
+        // Every rewritten record is stamped, so an export carries the
+        // merge to another machine and its import takes the new reference.
         tx.execute(
-            "UPDATE questions SET asked_contact_id = ?2 WHERE asked_contact_id = ?1",
-            params![from.0, into.0],
+            "UPDATE questions SET asked_contact_id = ?2, updated_at = ?3, updated_by = ?4
+             WHERE asked_contact_id = ?1",
+            params![from.0, into.0, now, author],
         )?;
         for table in ["topics", "epics", "notes"] {
             tx.execute(
-                &format!("UPDATE {table} SET report_contact_id = ?2 WHERE report_contact_id = ?1"),
-                params![from.0, into.0],
+                &format!(
+                    "UPDATE {table} SET report_contact_id = ?2, updated_at = ?3, updated_by = ?4
+                     WHERE report_contact_id = ?1"
+                ),
+                params![from.0, into.0, now, author],
             )?;
         }
         for col in ["old_value", "new_value"] {
             tx.execute(
                 &format!(
-                    "UPDATE entries SET {col} = (SELECT uuid FROM contacts WHERE id = ?2)
+                    "UPDATE entries SET {col} = (SELECT uuid FROM contacts WHERE id = ?2),
+                            updated_at = ?3, updated_by = ?4
                      WHERE kind = 'system' AND event IN ('report', 'reported')
                        AND {col} = (SELECT uuid FROM contacts WHERE id = ?1)"
                 ),
-                params![from.0, into.0],
+                params![from.0, into.0, now, author],
             )?;
         }
         tx.execute(

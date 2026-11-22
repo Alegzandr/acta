@@ -926,3 +926,180 @@ fn a_version_2_export_imports_and_its_updates_keep_the_contacts() {
     assert!(again.questions.is_empty() && again.contacts.is_empty());
     assert!(again.topics.iter().all(|t| t.report.report_to.is_none()));
 }
+
+#[test]
+fn a_merge_stamps_what_it_rewrites_and_travels_to_another_database() {
+    let mut f = fixture();
+    let p = f.project;
+    let s = &mut f.t.store;
+    let x = contact(s, "Marie", ContactLevel::Project(p));
+    let y = contact(s, "Marie Dubois", ContactLevel::Project(p));
+    s.set_report_to(Record::Topic(f.topic), Some(x), H).unwrap();
+    // Machine B has the same data, and a note of its own naming X.
+    let mut b = open();
+    b.store.import(&s.export(None).unwrap(), false).unwrap();
+    let x_uuid = s.contact(x).unwrap().stamp.uuid;
+    let bx = b
+        .store
+        .contacts_visible(Place {
+            project: b.store.projects().unwrap()[0].id,
+            epic: None,
+        })
+        .unwrap()
+        .into_iter()
+        .find(|c| c.contact.stamp.uuid == x_uuid)
+        .unwrap()
+        .contact
+        .id;
+    let bp = b.store.projects().unwrap()[0].id;
+    let note = b.store.add_note(bp, "Tell Marie", H).unwrap();
+    b.store
+        .set_report_to(Record::Note(note), Some(bx), H)
+        .unwrap();
+
+    // Merged on A by Claude Code: the topic is stamped with the merge.
+    let before = s.topic(f.topic).unwrap().stamp.updated_at;
+    s.merge_contacts(x, y, C).unwrap();
+    let t = s.topic(f.topic).unwrap();
+    assert_eq!(t.stamp.updated_by, C);
+    assert!(t.stamp.updated_at >= before);
+
+    // B imports A's export: the topic follows, and B's own note too.
+    b.store.import(&s.export(None).unwrap(), false).unwrap();
+    let y_uuid = s.contact(y).unwrap().stamp.uuid;
+    fn named(s: &Store, r: Option<ContactRef>) -> String {
+        s.contact_any(r.unwrap().id).unwrap().stamp.uuid
+    }
+    let bt = b
+        .store
+        .topics(&TopicFilter::default(), PageReq::first(10))
+        .unwrap()
+        .items
+        .into_iter()
+        .find(|t| t.title == "Export format")
+        .unwrap()
+        .id;
+    assert_eq!(
+        named(&b.store, b.store.topic(bt).unwrap().report.to),
+        y_uuid
+    );
+    assert_eq!(
+        named(&b.store, b.store.note(note).unwrap().report_to),
+        y_uuid
+    );
+    // A reference the file still makes to X resolves to Y.
+    let mut again = s.export(None).unwrap();
+    let topic_uuid = s.topic(f.topic).unwrap().stamp.uuid;
+    for t in &mut again.topics {
+        if t.stamp.uuid == topic_uuid {
+            t.report.report_to = Some(x_uuid.clone());
+            t.stamp.updated_at += 60_000;
+        }
+    }
+    b.store.import(&again, false).unwrap();
+    assert_eq!(
+        named(&b.store, b.store.topic(bt).unwrap().report.to),
+        y_uuid
+    );
+    // Restoring the merged contact is refused.
+    let e = s.restore(Record::Contact(x), H).unwrap_err();
+    assert_eq!(
+        e.to_string(),
+        format!("{x} was merged into {y}; its uses are there")
+    );
+}
+
+#[test]
+fn a_restored_record_lifts_a_contact_moved_while_it_was_in_the_trash() {
+    let mut f = fixture();
+    let p = f.project;
+    let s = &mut f.t.store;
+    let e2 = s.create_epic(p, "Sync", "", H).unwrap();
+    let paul = contact(s, "Paul", ContactLevel::Epic(p, f.epic));
+    s.set_report_to(Record::Topic(f.topic), Some(paul), H)
+        .unwrap();
+    s.delete(Record::Topic(f.topic), H).unwrap();
+    // Its only live use is gone: the contact may move to another epic.
+    s.move_contact(paul, ContactLevel::Epic(p, e2), H).unwrap();
+    assert!(s.take_lifts().is_empty());
+    s.restore(Record::Topic(f.topic), H).unwrap();
+    assert_eq!(s.contact(paul).unwrap().level, ContactLevel::Project(p));
+    let lifts = s.take_lifts();
+    assert_eq!(lifts.len(), 1);
+    assert_eq!(lifts[0].record, Record::Topic(f.topic));
+}
+
+#[test]
+fn an_import_lifts_references_out_of_scope_and_counts_them() {
+    let mut f = fixture();
+    let p = f.project;
+    let s = &mut f.t.store;
+    let e2 = s.create_epic(p, "Sync", "", H).unwrap();
+    let paul = contact(s, "Paul", ContactLevel::Epic(p, f.epic));
+    s.set_report_to(Record::Topic(f.topic), Some(paul), H)
+        .unwrap();
+    let mut file = s.export(None).unwrap();
+    // The file puts Paul in the other epic: the topic would lose sight.
+    let e2_uuid = s.epic(e2).unwrap().stamp.uuid;
+    for c in &mut file.contacts {
+        c.epic = Some(e2_uuid.clone());
+    }
+    let mut b = open();
+    let report = b.store.import(&file, false).unwrap();
+    assert_eq!(report.lifted, 1);
+    let c = b
+        .store
+        .contacts_visible(Place {
+            project: b.store.projects().unwrap()[0].id,
+            epic: None,
+        })
+        .unwrap();
+    assert_eq!(c.len(), 1);
+    assert!(matches!(c[0].contact.level, ContactLevel::Project(_)));
+}
+
+#[test]
+fn a_claude_import_keeps_local_details_and_stamps_what_it_creates() {
+    let mut f = fixture();
+    let p = f.project;
+    let s = &mut f.t.store;
+    let marie = contact(s, "Marie", ContactLevel::Project(p));
+    s.update_contact(
+        marie,
+        ContactPatch {
+            job_title: Some(Some("Head of legal".into())),
+            ..Default::default()
+        },
+        H,
+    )
+    .unwrap();
+    let mut file = s.export(None).unwrap();
+    for c in &mut file.contacts {
+        c.name = "Somebody else".into();
+        c.job_title = Some("Intern".into());
+        c.stamp.updated_at += 60_000;
+    }
+    // A new contact in the file, claiming to be the human's.
+    let mut extra = file.contacts[0].clone();
+    extra.stamp.uuid = "0190c0de-0000-7000-8000-000000000001".into();
+    extra.name = "Paul".into();
+    extra.created_by = H;
+    extra.stamp.updated_by = H;
+    file.contacts.push(extra);
+    s.import_by(&file, false, C).unwrap();
+    let m = s.contact(marie).unwrap();
+    assert_eq!(m.name, "Marie");
+    assert_eq!(m.job_title.as_deref(), Some("Head of legal"));
+    let paul = s
+        .contacts_visible(Place {
+            project: p,
+            epic: None,
+        })
+        .unwrap()
+        .into_iter()
+        .find(|c| c.contact.name == "Paul")
+        .unwrap()
+        .contact;
+    assert_eq!(paul.created_by, C);
+    assert_eq!(paul.stamp.updated_by, C);
+}

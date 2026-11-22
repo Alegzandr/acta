@@ -298,7 +298,7 @@ impl Agent<'_> {
             }
             return Ok(Some(id));
         }
-        let shown = render::clip(&render::one_line(t), 40);
+        let shown = render::defuse(&render::clip(&render::one_line(t), 40));
         if render::chars(t) > crate::person::MAX_CHARS {
             return Err(render::over_limit(
                 "a person",

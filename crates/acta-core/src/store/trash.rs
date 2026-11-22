@@ -210,6 +210,21 @@ impl Store {
         let Some(batch) = batch else {
             return Ok(());
         };
+        // A merged contact's uses went to the contact it was merged into:
+        // restoring it would bring back a duplicate that names nothing.
+        if let Record::Contact(c) = record {
+            let into: Option<i64> = tx.query_row(
+                "SELECT merged_into FROM contacts WHERE id = ?1",
+                [c.0],
+                |r| r.get(0),
+            )?;
+            if let Some(into) = into {
+                return Err(Error::Invalid(format!(
+                    "{record} was merged into {}; its uses are there",
+                    ContactId(into)
+                )));
+            }
+        }
         if let Some((ptable, pid, name)) = parent_of(&tx, record)? {
             let parent_deleted: Option<i64> = tx.query_row(
                 &format!("SELECT deleted_at FROM {ptable} WHERE id = ?1"),
@@ -234,7 +249,11 @@ impl Store {
         if let Record::Topic(t) = record {
             super::timeline::system_event(&tx, t, EventKind::Restored, None, None, author, now)?;
         }
+        // A contact moved while these records were in the trash may no
+        // longer be visible from them: widen it, as a move would.
+        let lifts = super::people::lift_out_of_scope(&tx, author, now)?;
         tx.commit()?;
+        self.lifts.borrow_mut().extend(lifts);
         let _ = self.refresh_link_index();
         Ok(())
     }

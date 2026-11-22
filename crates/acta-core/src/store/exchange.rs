@@ -386,6 +386,8 @@ pub struct ImportReport {
     pub folders_refused: i64,
     pub questions: ImportCounts,
     pub contacts: ImportCounts,
+    /// Contacts widened so every imported reference stays in scope.
+    pub lifted: i64,
 }
 
 impl ImportReport {
@@ -829,14 +831,17 @@ fn seen_marker(tx: &rusqlite::Connection, kind: &str, id: i64, at: i64) -> Resul
     Ok(())
 }
 
-/// A contact reference from a file: a contact UUID, or (a file written
+/// A contact reference from a file: a contact UUID (followed through
+/// merges to the contact that holds its uses now), or (a file written
 /// before contacts) a name, which resolves by key among the project's own
-/// contacts and otherwise creates one at the project level, as the human.
+/// contacts and otherwise creates one at the project level, by the
+/// importing author.
 fn contact_id(
     tx: &rusqlite::Connection,
     text: &Option<String>,
     project: i64,
     created: &mut i64,
+    author: Author,
 ) -> Result<Option<i64>> {
     let Some(t) = text.as_deref() else {
         return Ok(None);
@@ -844,8 +849,8 @@ fn contact_id(
     let known: Option<i64> = tx
         .query_row("SELECT id FROM contacts WHERE uuid = ?1", [t], |r| r.get(0))
         .optional()?;
-    if known.is_some() {
-        return Ok(known);
+    if let Some(id) = known {
+        return Ok(Some(super::people::follow_merges(tx, id)?));
     }
     if uuid::Uuid::parse_str(t).is_ok() {
         return Err(Error::Invalid(format!(
@@ -870,8 +875,8 @@ fn contact_id(
     let now = crate::time::now_ms();
     tx.execute(
         "INSERT INTO contacts (uuid, project_id, name, name_key, created_by, created_at, updated_at, updated_by)
-         VALUES (?1, ?2, ?3, ?4, 'human', ?5, ?5, 'human')",
-        params![super::new_uuid(), project, name, key, now],
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, ?5)",
+        params![super::new_uuid(), project, name, key, author, now],
     )?;
     *created += 1;
     Ok(Some(tx.last_insert_rowid()))
@@ -885,8 +890,9 @@ fn write_report(
     project: i64,
     r: &XReport,
     created: &mut i64,
+    author: Author,
 ) -> Result<()> {
-    let to = contact_id(tx, &r.report_to, project, created)?;
+    let to = contact_id(tx, &r.report_to, project, created, author)?;
     let (at, by) = if to.is_some() {
         (r.reported_at, r.reported_by)
     } else {
@@ -1120,6 +1126,13 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile, author: Author) -> Result<Im
             .flatten()
             .ok_or_else(|| Error::Invalid(format!("{} has an invalid name", s.uuid)))?;
         let key = crate::person::person_key(&name);
+        // A contact Claude Code brings in is stamped as its own: a file
+        // cannot make it pass for the human's.
+        let created_by = if by_claude {
+            Author::Claude
+        } else {
+            x.created_by
+        };
         match action {
             Action::Insert => {
                 tx.execute(
@@ -1127,20 +1140,30 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile, author: Author) -> Result<Im
                                            created_by, created_at, updated_at, updated_by, deleted_at, deleted_by)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
                     params![s.uuid, project, epic, name, key, x.job_title, x.company, x.address_note,
-                            x.created_by, s.created_at, s.updated_at, s.updated_by, s.deleted_at, s.deleted_by],
+                            created_by, s.created_at, s.updated_at,
+                            if by_claude { Author::Claude } else { s.updated_by },
+                            s.deleted_at, s.deleted_by],
                 )?;
                 seen_marker(tx, "contact", tx.last_insert_rowid(), s.updated_at)?;
             }
             Action::Update(l) => {
                 let (d, db) = merged_deleted(&l, s);
+                // The name and details are the human's: an import by Claude
+                // Code keeps the local ones (as it keeps commit modes).
                 tx.execute(
-                    "UPDATE contacts SET project_id = ?2, epic_id = ?3, name = ?4, name_key = ?5, job_title = ?6,
-                            company = ?7, address_note = ?8, updated_at = ?9, updated_by = ?10,
+                    "UPDATE contacts SET project_id = ?2, epic_id = ?3,
+                            name = CASE WHEN ?13 THEN name ELSE ?4 END,
+                            name_key = CASE WHEN ?13 THEN name_key ELSE ?5 END,
+                            job_title = CASE WHEN ?13 THEN job_title ELSE ?6 END,
+                            company = CASE WHEN ?13 THEN company ELSE ?7 END,
+                            address_note = CASE WHEN ?13 THEN address_note ELSE ?8 END,
+                            updated_at = ?9, updated_by = ?10,
                             deleted_at = ?11, deleted_by = ?12,
                             deleted_batch = CASE WHEN deleted_at IS ?11 THEN deleted_batch ELSE NULL END
                      WHERE id = ?1",
                     params![l.id, project, epic, name, key, x.job_title, x.company, x.address_note,
-                            s.updated_at, s.updated_by, d, db],
+                            s.updated_at, if by_claude { Author::Claude } else { s.updated_by }, d, db,
+                            by_claude],
                 )?;
                 seen_marker(tx, "contact", l.id, s.updated_at)?;
             }
@@ -1156,7 +1179,7 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile, author: Author) -> Result<Im
         }
     }
     for (id, project, r) in epic_reports {
-        write_report(tx, "epics", id, project, r, &mut contacts_made)?;
+        write_report(tx, "epics", id, project, r, &mut contacts_made, author)?;
     }
 
     for x in &f.topics {
@@ -1177,7 +1200,15 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile, author: Author) -> Result<Im
                             s.created_at, s.updated_at, s.updated_by, s.deleted_at, s.deleted_by],
                 )?;
                 let id = tx.last_insert_rowid();
-                write_report(tx, "topics", id, project, &x.report, &mut contacts_made)?;
+                write_report(
+                    tx,
+                    "topics",
+                    id,
+                    project,
+                    &x.report,
+                    &mut contacts_made,
+                    author,
+                )?;
                 pointers.push(("topics", id, x.active_folder.as_deref()));
                 seen_on_import(tx, "topic", id, s.updated_at)?;
             }
@@ -1195,7 +1226,15 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile, author: Author) -> Result<Im
                             s.updated_at, s.updated_by, d, db, old_format],
                 )?;
                 if !no_people {
-                    write_report(tx, "topics", l.id, project, &x.report, &mut contacts_made)?;
+                    write_report(
+                        tx,
+                        "topics",
+                        l.id,
+                        project,
+                        &x.report,
+                        &mut contacts_made,
+                        author,
+                    )?;
                 }
                 pointers.push(("topics", l.id, x.active_folder.as_deref()));
                 seen_on_import(tx, "topic", l.id, s.updated_at)?;
@@ -1284,7 +1323,7 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile, author: Author) -> Result<Im
                     ],
                 )?;
                 let id = tx.last_insert_rowid();
-                let to = contact_id(tx, &x.report_to, project, &mut contacts_made)?;
+                let to = contact_id(tx, &x.report_to, project, &mut contacts_made, author)?;
                 tx.execute(
                     "UPDATE notes SET report_contact_id = ?2 WHERE id = ?1",
                     params![id, to],
@@ -1300,7 +1339,7 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile, author: Author) -> Result<Im
                     params![l.id, x.text, filed, x.filed_at, s.updated_at, s.updated_by, d, db, filed_epic, x.filed_by],
                 )?;
                 if !no_people {
-                    let to = contact_id(tx, &x.report_to, project, &mut contacts_made)?;
+                    let to = contact_id(tx, &x.report_to, project, &mut contacts_made, author)?;
                     tx.execute(
                         "UPDATE notes SET report_contact_id = ?2 WHERE id = ?1",
                         params![l.id, to],
@@ -1473,7 +1512,7 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile, author: Author) -> Result<Im
                 .optional()?,
             None => None,
         };
-        let asked = contact_id(tx, &x.asked_to, project, &mut contacts_made)?;
+        let asked = contact_id(tx, &x.asked_to, project, &mut contacts_made, author)?;
         let expected = due(&s.uuid, &x.expected_on)?;
         let (epic, topic) = if topic.is_some() {
             (None, topic)
@@ -1513,6 +1552,11 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile, author: Author) -> Result<Im
     }
 
     rep.contacts.created += contacts_made;
+    // Records of this database that still name a contact the file merged
+    // away now name the one that holds its uses; and every reference the
+    // merge left out of its contact's scope lifts that contact.
+    super::people::repoint_merged(tx)?;
+    rep.lifted = super::people::lift_out_of_scope(tx, author, crate::time::now_ms())?.len() as i64;
     // The profile goes only into an empty one: it is this installation's.
     if let Some(p) = &f.profile {
         let empty: bool = tx.query_row(
