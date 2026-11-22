@@ -111,6 +111,10 @@ The user's ruling of 2026-11-22 (a click restored; nothing could be deleted for 
 - [ ] Store (integration-engineer): `trash_purge(ids)` and `trash_purge_all()` in one transaction with the blob sweep of ADR 0012, 4; contacts still named and ids restored meanwhile skipped. Tests: a project purged with its content and files; a blob shared with a live note survives; a named contact is skipped; the report's counts; nothing reachable from MCP or the agent CLI.
 - [ ] UI (gpui-engineer): click selects, `Mod`/`Shift` multi-selection and keys, the always-present toolbar, Restore of a selection as one undo step, the two confirmations, palette commands, catalogue 10.4.14. Captures in both themes and languages.
 
+## Agent browser developer tools
+The user's request of 2026-11-22. Specified on `product-designer/zoom-collapse` (components-app.md 5, ADR 0010 amendment, catalogue 10.4.15).
+- [ ] (gpui-engineer) `AreDevToolsEnabled = true` on the agent view only, "Open developer tools" in its menu, `F12` kept from the page, palette command; the chat stays off. Test: the chat view's settings have DevTools off and the agent view's on; no `DevToolsActivePort` appears in either profile after opening DevTools (checked by the existing refusal check).
+
 ## Settled with the user
 - 2026-11-21: working in Acta must mean the fewest logins possible and Claude Code having, as directly as possible, everything it needs: Acta embeds what Claude Code uses (terminal, browser, chat) in the most practical way; it targets Claude Code on a subscription, not the API. Sessions persist so each login happens once.
 - 2026-11-20: design direction is inspired by Obsidian, Notion and JetBrains IDEs: a workbench (tree, document-like pages, tool windows for the terminal and the chat panel, search everywhere). A "Project Ledger" direction (parchment, serif, engravings) was briefed and withdrawn by the user the same day; do not revive it. Kept from that brief as functional requirements: Light / Dark / System setting, UI in English (default) and French from a central string table. DESIGN.md is being revised on `product-designer/workbench`.

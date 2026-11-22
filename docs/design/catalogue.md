@@ -1429,3 +1429,12 @@ New with the user's ruling of 2026-11-22 (components-app.md 5, Trash page; data.
 | `cmd.trash_restore` | Restore selected | Restaurer la sélection |
 | `cmd.trash_delete` | Delete selected permanently... | Supprimer définitivement la sélection... |
 | `cmd.trash_empty` | Empty trash... | Vider la corbeille... |
+
+### 10.4.15 Keys of the agent browser's developer tools
+
+New with the user's request of 2026-11-22 (components-app.md 5, Agent browser). Pending: into 10.4 after the `browser.*` keys when implemented.
+
+| Key | English | French |
+|---|---|---|
+| `browser.devtools` | Open developer tools | Ouvrir les outils de développement |
+| `cmd.browser_devtools` | Agent browser: Open developer tools | Navigateur de l'agent : ouvrir les outils de développement |
