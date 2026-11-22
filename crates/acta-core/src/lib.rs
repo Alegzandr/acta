@@ -18,6 +18,7 @@ pub mod link_index;
 pub mod markdown;
 pub mod model;
 pub mod paths;
+pub mod prereqs;
 pub mod presence;
 pub mod process;
 pub mod schema;

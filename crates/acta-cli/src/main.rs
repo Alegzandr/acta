@@ -13,6 +13,7 @@ mod hook;
 mod link;
 mod mcp;
 mod open;
+mod ready;
 mod setup;
 mod statusline;
 
@@ -89,6 +90,10 @@ enum Command {
         /// the sessions it starts); nothing in Claude Code is changed
         #[arg(long, conflicts_with_all = ["check", "remove"])]
         files_only: bool,
+        /// With --check: leave out the Ready for Claude Code rows (claude,
+        /// signed in, git, gh), which run each tool; for a cheap re-check
+        #[arg(long, requires = "check")]
+        no_prereqs: bool,
         /// Structured output
         #[arg(long)]
         json: bool,
@@ -429,12 +434,22 @@ fn run(command: Command) -> ExitCode {
             no_allow,
             no_statusline,
             files_only,
+            no_prereqs,
             json,
         } => {
             if files_only {
                 run_plugin_files(&opener, json)
             } else {
-                run_setup(&opener, check, remove, no_allow, no_statusline, json)
+                let prereqs = check && !no_prereqs;
+                run_setup(
+                    &opener,
+                    check,
+                    prereqs,
+                    remove,
+                    no_allow,
+                    no_statusline,
+                    json,
+                )
             }
         }
         Command::Statusline => {
@@ -493,6 +508,7 @@ fn run_plugin_files(opener: &Opener, json: bool) -> ExitCode {
 fn run_setup(
     opener: &Opener,
     check: bool,
+    prereqs: bool,
     remove: bool,
     no_allow: bool,
     no_statusline: bool,
@@ -529,8 +545,12 @@ fn run_setup(
         eprintln!("Cannot find the acta executable.");
         return ExitCode::FAILURE;
     };
+    let (machine, dev_search) = ready::machine();
+    let is_file = acta_core::prereqs::locate::is_file;
+    let program = acta_core::prereqs::locate(machine.os, "claude", &machine.dirs, is_file);
     let claude = setup::RealClaude {
         config_dir: claude_env,
+        program,
     };
     let s = setup::Setup {
         plugin_root: data_dir.join("claude"),
@@ -539,7 +559,20 @@ fn run_setup(
         claude: &claude,
     };
     let mut steps = if check {
-        s.check()
+        // Ready for Claude Code first (ADR 0013, section 5). The search
+        // override keeps the process PATH for what it runs.
+        let exec = if dev_search {
+            acta_core::prereqs::SystemExec::default()
+        } else {
+            acta_core::prereqs::SystemExec::current()
+        };
+        let mut rows = if prereqs {
+            ready::check(&machine, &is_file, &exec)
+        } else {
+            Vec::new()
+        };
+        rows.extend(s.check());
+        rows
     } else if remove {
         s.remove()
     } else {
@@ -582,11 +615,7 @@ fn link_index_step(opener: &Opener) -> setup::Step {
         },
         Some(Err(e)) => (false, e),
     };
-    setup::Step {
-        name: "link index",
-        ok,
-        detail,
-    }
+    setup::Step::new("link index", ok, detail)
 }
 
 /// `setup --remove`: the linked folders where `acta link` turned Claude
@@ -596,26 +625,23 @@ fn auto_memory_step(opener: &Opener) -> Option<setup::Step> {
     let (restored, kept) = match link::restore_all_auto_memory(&mut store) {
         Ok(counts) => counts,
         Err(e) => {
-            return Some(setup::Step {
-                name: "auto memory",
-                ok: false,
-                detail: format!("cannot restore: {e}"),
-            });
+            return Some(setup::Step::new(
+                "auto memory",
+                false,
+                format!("cannot restore: {e}"),
+            ));
         }
     };
     if restored == 0 && kept == 0 {
         return None;
     }
-    Some(setup::Step {
-        name: "auto memory",
-        ok: true,
-        detail: match kept {
-            0 => format!("back on in {restored} folder(s)"),
-            _ => format!(
-                "back on in {restored} folder(s); {kept} left as they were (changed since, or not on this computer)"
-            ),
-        },
-    })
+    let detail = match kept {
+        0 => format!("back on in {restored} folder(s)"),
+        _ => format!(
+            "back on in {restored} folder(s); {kept} left as they were (changed since, or not on this computer)"
+        ),
+    };
+    Some(setup::Step::new("auto memory", true, detail))
 }
 
 fn launch() -> Launch {
@@ -1123,6 +1149,7 @@ mod tests {
             vec!["acta", "mcp"],
             vec!["acta", "hook", "session-start"],
             vec!["acta", "setup", "--check", "--json"],
+            vec!["acta", "setup", "--check", "--no-prereqs", "--json"],
             vec!["acta", "setup", "--undo"],
             vec!["acta", "link", "--topic", "T-3", "--add"],
             vec!["acta", "brief", "T-1", "--focus"],

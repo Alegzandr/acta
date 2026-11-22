@@ -23,8 +23,8 @@ pub const ALLOW_RULE: &str = "mcp__plugin_acta_acta__*";
 pub const BROWSER_ALLOW_RULE: &str = "mcp__plugin_acta_browser__*";
 /// Every rule setup adds, in order.
 pub const ALLOW_RULES: [&str; 2] = [ALLOW_RULE, BROWSER_ALLOW_RULE];
-/// How a failure to start the `claude` CLI begins: the check reports
-/// Claude Code as not found rather than as a setup step to do.
+/// How a failure to start the `claude` CLI begins (the `claude` row of
+/// Ready for Claude Code then says why and how to install it).
 const NOT_RUN: &str = "cannot run claude";
 /// How long one call to the `claude` CLI may take.
 const CLAUDE_LIMIT: std::time::Duration = std::time::Duration::from_secs(60);
@@ -52,12 +52,21 @@ pub trait ClaudeCli {
 
 pub struct RealClaude {
     pub config_dir: Option<PathBuf>,
+    /// `claude` as the shared resolver found it (ADR 0013); `None` tries
+    /// the bare name.
+    pub program: Option<PathBuf>,
 }
 
 impl ClaudeCli for RealClaude {
     fn run(&self, args: &[&str]) -> Result<String, String> {
-        let mut cmd = std::process::Command::new(claude_program());
-        cmd.args(args);
+        let program = self
+            .program
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("claude"));
+        // A `.cmd` shim runs through cmd with every word quoted; one whose
+        // words cmd could misread is not run.
+        let mut cmd = acta_core::prereqs::detect::command_for(&program, args)
+            .ok_or_else(|| format!("{NOT_RUN}: its path or arguments hold cmd metacharacters"))?;
         if let Some(d) = &self.config_dir {
             cmd.env("CLAUDE_CONFIG_DIR", d);
         }
@@ -74,24 +83,6 @@ impl ClaudeCli for RealClaude {
     }
 }
 
-/// `claude` is an npm shim (`claude.cmd`) or a native `claude.exe` on
-/// Windows; `Command` does not resolve `.cmd`, so look for it on `PATH`.
-fn claude_program() -> PathBuf {
-    if cfg!(windows)
-        && let Some(path) = std::env::var_os("PATH")
-    {
-        for dir in std::env::split_paths(&path) {
-            for name in ["claude.exe", "claude.cmd"] {
-                let p = dir.join(name);
-                if p.is_file() {
-                    return p;
-                }
-            }
-        }
-    }
-    PathBuf::from("claude")
-}
-
 pub struct Setup<'a> {
     /// `<data dir>/claude`: the marketplace root.
     pub plugin_root: PathBuf,
@@ -102,19 +93,48 @@ pub struct Setup<'a> {
     pub claude: &'a dyn ClaudeCli,
 }
 
+/// One line of `acta setup`. `ok` is whether it lets the check pass: an
+/// optional or recommended row that is missing is still `ok`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Step {
     pub name: &'static str,
     pub ok: bool,
     pub detail: String,
+    /// The rows of Ready for Claude Code (ADR 0013, section 5).
+    pub prereq: Option<Prereq>,
+}
+
+/// What `--json` adds to a Ready for Claude Code row.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Prereq {
+    /// `ok`, `missing`, `outdated`, `optional` or `unknown`.
+    pub state: &'static str,
+    pub version: Option<String>,
+    /// `native`, `winget`, `homebrew`, `npm`, `system`, `unknown`.
+    pub kind: Option<&'static str>,
+    /// The exact command Acta would run, as argv.
+    pub command: Option<Vec<String>>,
+    /// The tool was found on this computer, whatever its version (`None`
+    /// for the sign-in): the app shows an outdated Claude Code as found.
+    pub found: Option<bool>,
 }
 
 impl Step {
-    fn new(name: &'static str, ok: bool, detail: impl Into<String>) -> Step {
+    pub fn new(name: &'static str, ok: bool, detail: impl Into<String>) -> Step {
         Step {
             name,
             ok,
             detail: detail.into(),
+            prereq: None,
+        }
+    }
+
+    /// The state column: a row's own state, else `ok` or `todo`.
+    pub fn state(&self) -> &'static str {
+        match &self.prereq {
+            Some(p) => p.state,
+            None if self.ok => "ok",
+            None => "todo",
         }
     }
 }
@@ -123,20 +143,25 @@ pub fn render_steps(steps: &[Step], json_out: bool) -> String {
     if json_out {
         let items: Vec<Value> = steps
             .iter()
-            .map(|s| json!({"step": s.name, "ok": s.ok, "detail": s.detail}))
+            .map(|s| {
+                let mut v = json!({"step": s.name, "ok": s.ok, "detail": s.detail});
+                if let Some(p) = &s.prereq {
+                    v["state"] = json!(p.state);
+                    v["version"] = json!(p.version);
+                    v["kind"] = json!(p.kind);
+                    v["command"] = json!(p.command);
+                    if let Some(found) = p.found {
+                        v["found"] = json!(found);
+                    }
+                }
+                v
+            })
             .collect();
         return json!({"ok": steps.iter().all(|s| s.ok), "steps": items}).to_string();
     }
     steps
         .iter()
-        .map(|s| {
-            format!(
-                "{:<5} {:<13} {}",
-                if s.ok { "ok" } else { "todo" },
-                s.name,
-                s.detail
-            )
-        })
+        .map(|s| format!("{:<12} {:<9} {}", s.name, s.state(), s.detail))
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -465,17 +490,9 @@ impl Setup<'_> {
         let exe_ok = self.exe.is_file();
         let files_ok = self.files_current();
         let market = self.marketplace_state();
-        let found = !matches!(&market, Err(e) if e.starts_with(NOT_RUN));
+        // Claude Code itself is the `claude` row of Ready for Claude Code
+        // (ADR 0013), added before these steps by the caller.
         let mut steps = vec![
-            Step::new(
-                "claude",
-                found,
-                if found {
-                    "found"
-                } else {
-                    "not found: install Claude Code"
-                },
-            ),
             Step::new(
                 "executable",
                 exe_ok,
@@ -1239,7 +1256,8 @@ mod tests {
         assert!(check.iter().find(|x| x.name == "status line").unwrap().ok);
         let json_out: Value = serde_json::from_str(&render_steps(&check, true)).unwrap();
         assert_eq!(json_out["ok"], false);
-        assert_eq!(json_out["steps"].as_array().unwrap().len(), 7);
+        // The `claude` row comes from Ready for Claude Code, not from here.
+        assert_eq!(json_out["steps"].as_array().unwrap().len(), 6);
     }
 
     #[test]
@@ -1403,7 +1421,7 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_claude_command_is_reported_as_not_found() {
+    fn a_missing_claude_command_fails_the_registration_steps() {
         struct NoClaude;
         impl ClaudeCli for NoClaude {
             fn run(&self, _: &[&str]) -> Result<String, String> {
@@ -1413,10 +1431,42 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let s = setup(tmp.path(), &NoClaude);
         let check = s.check();
-        assert_eq!(check[0].name, "claude");
-        assert!(!check[0].ok);
-        let fake = FakeClaude::default();
-        assert!(setup(tmp.path(), &fake).check()[0].ok);
+        // Claude Code is the `claude` row of Ready for Claude Code now.
+        assert!(check.iter().all(|x| x.name != "claude"));
+        let market = check.iter().find(|x| x.name == "marketplace").unwrap();
+        assert!(
+            !market.ok && market.detail.starts_with(NOT_RUN),
+            "{market:?}"
+        );
+    }
+
+    /// `acta setup --remove` never uninstalls Claude Code, Git or the
+    /// GitHub CLI (ADR 0013, section 4): no package manager's removal
+    /// appears in setup's code. The words are joined here so this test
+    /// does not find itself.
+    #[test]
+    fn remove_references_no_uninstall_of_the_tools() {
+        let code = include_str!("setup.rs");
+        let managers = [
+            "winget", "brew", "npm", "apt-get", "apt", "dnf", "pacman", "zypper", "apk",
+        ];
+        let verbs = ["uninstall", "remove", "-R", "del", "erase"];
+        for m in managers {
+            for v in verbs {
+                let words = format!("\"{m}\", \"{v}\"");
+                let line = format!("{m} {v}");
+                assert!(!code.contains(&words) && !code.contains(&line), "{line}");
+            }
+        }
+        // Package names, split so the list does not match itself.
+        for (a, b) in [
+            ("claude", "-code"),
+            ("Git", ".Git"),
+            ("GitHub", ".cli"),
+            ("Anthropic", ".ClaudeCode"),
+        ] {
+            assert!(!code.contains(&format!("\"{a}{b}\"")), "{a}{b}");
+        }
     }
 
     #[test]
