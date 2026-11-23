@@ -415,6 +415,20 @@ pub fn notice(
     message: impl Into<SharedString>,
     tokens: &Tokens,
 ) -> Div {
+    notice_frame(glyph, tokens).child(
+        type_scale::UI
+            .el()
+            .flex_1()
+            .min_w_0()
+            .py(px(4.))
+            .text_color(tokens.text_primary)
+            .child(message.into()),
+    )
+}
+
+/// The notice's frame and icon, for a message the caller builds (one with
+/// a link inside it, or several lines).
+pub fn notice_frame(glyph: Option<(Icon, Hsla)>, tokens: &Tokens) -> Div {
     div()
         .flex()
         .flex_row()
@@ -438,15 +452,6 @@ pub fn notice(
                 .items_center()
                 .child(icon(glyph, 16., color))
         }))
-        .child(
-            type_scale::UI
-                .el()
-                .flex_1()
-                .min_w_0()
-                .py(px(4.))
-                .text_color(tokens.text_primary)
-                .child(message.into()),
-        )
 }
 
 /// The checkbox of components.md 5: 16, `radius.xs`, `border.strong`;

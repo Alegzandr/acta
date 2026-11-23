@@ -986,6 +986,61 @@ impl Shell {
     }
 
     #[cfg(debug_assertions)]
+    /// The memory-quality surfaces of `dev_overlay`.
+    fn dev_kbq(&mut self, which: &str, window: &mut Window, cx: &mut Context<Self>) {
+        use crate::kb_model::Chip;
+        let project = self.bench().and_then(|b| b.active_project);
+        let page = self.bench().map(|b| match &b.page {
+            PageView::Doc(p) => (Some(p.clone()), None),
+            PageView::Knowledge(p) => (None, Some(p.clone())),
+            _ => (None, None),
+        });
+        let (doc, kb) = page.unwrap_or((None, None));
+        match which {
+            "kbq-to-check" | "kbq-to-check-all" | "kbq-inactive" | "kbq-to-check-verify" => {
+                let Some(project) = project else { return };
+                let (chip, kind) = match which {
+                    "kbq-inactive" => (Chip::Inactive, None),
+                    "kbq-to-check-all" => (Chip::ToCheck, None),
+                    _ => (Chip::ToCheck, Some(KbKind::Memory)),
+                };
+                self.open_kb_chip(project, chip, kind, window, cx);
+                if which == "kbq-to-check-verify" {
+                    cx.spawn_in(window, async move |shell, cx| {
+                        cx.background_executor()
+                            .timer(Duration::from_millis(1500))
+                            .await;
+                        let _ = shell.update_in(cx, |shell, _, cx| {
+                            if let Some(bench) = shell.bench()
+                                && let PageView::Knowledge(p) = &bench.page
+                            {
+                                p.update(cx, |p, cx| p.dev_verify_first(cx));
+                            }
+                        });
+                    })
+                    .detach();
+                }
+            }
+            "kbq-unfold" => {
+                if let Some(kb) = kb {
+                    kb.update(cx, |p, cx| p.dev_unfold_first(cx));
+                }
+            }
+            "kbq-history" => {
+                if let Some(doc) = doc {
+                    doc.update(cx, |p, cx| p.dev_history(cx));
+                }
+            }
+            "kbq-merge" | "kbq-merge-undo" => {
+                if let Some(doc) = doc {
+                    doc.update(cx, |p, cx| p.dev_merge(cx));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    #[cfg(debug_assertions)]
     /// The due date and Overview surfaces of `dev_overlay`.
     fn dev_due(&mut self, which: &str, window: &mut Window, cx: &mut Context<Self>) {
         let input = std::env::var("ACTA_DEV_DUE_INPUT").unwrap_or_default();
@@ -1336,6 +1391,32 @@ impl Shell {
             }
             Ok("export") => self.open_export(window, cx),
             Ok("snapshots") => self.open_snapshots(window, cx),
+            // Memory quality (components-knowledge.md 5), once the page
+            // has loaded: the knowledge page with a chip, an unfolded
+            // memory, the history, a merge from the notice (and its undo).
+            #[cfg(debug_assertions)]
+            Ok(which) if which.starts_with("kbq-") => {
+                let which = which.to_owned();
+                cx.spawn_in(window, async move |shell, cx| {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(1500))
+                        .await;
+                    let _ =
+                        shell.update_in(cx, |shell, window, cx| shell.dev_kbq(&which, window, cx));
+                    if which.ends_with("-undo") {
+                        cx.background_executor()
+                            .timer(Duration::from_millis(4000))
+                            .await;
+                        let _ = shell.update_in(cx, |shell, _, cx| {
+                            if let Some(bench) = shell.bench() {
+                                let (ws, project) = (bench.ws.clone(), bench.active_project);
+                                ws.update(cx, |ws, cx| ws.undo_active(project, cx));
+                            }
+                        });
+                    }
+                })
+                .detach();
+            }
             // Files (components-attachments.md 5): see `dev_attach`.
             #[cfg(debug_assertions)]
             Ok(which) if which.starts_with("attach-") => {
@@ -1869,7 +1950,10 @@ impl Shell {
             PageEvent::Confirm(confirm) => {
                 self.open_dialog(DialogKind::Confirm(confirm.clone()), window, cx)
             }
-            PageEvent::StaleMemories(project) => self.open_stale_memories(*project, window, cx),
+            PageEvent::KbChip(project, chip, kind) => {
+                self.open_kb_chip(*project, *chip, *kind, window, cx)
+            }
+            PageEvent::EditKb(id) => self.edit_kb(*id, window, cx),
             PageEvent::LateAnswers(scope) => self.open_late_answers(*scope, window, cx),
         }
     }
@@ -1950,11 +2034,14 @@ impl Shell {
         self.navigate(Route::Questions(scope), true, window, cx);
     }
 
-    /// The Overview's memory line: the knowledge page, Kind Memories, with
-    /// the chip "Not updated for 90 days".
-    pub(super) fn open_stale_memories(
+    /// The knowledge page with a chip (components-knowledge.md 5): "To
+    /// check" from the Overview's memory line (Kind: Memories) or the
+    /// palette (every kind), "Superseded and retired" from the palette.
+    pub(super) fn open_kb_chip(
         &mut self,
         project: ProjectId,
+        chip: crate::kb_model::Chip,
+        kind: Option<KbKind>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1963,7 +2050,7 @@ impl Shell {
         }
         let Some(bench) = self.bench() else { return };
         let (ws, tab) = (bench.ws.clone(), bench.current);
-        let page = cx.new(|cx| KnowledgePage::new_stale(ws, project, window, cx));
+        let page = cx.new(|cx| KnowledgePage::new_chip(ws, project, chip, kind, window, cx));
         let sub = Self::page_events(&page, tab, window, cx);
         if let Some(bench) = self.bench() {
             bench.page = PageView::Knowledge(page);
@@ -2510,6 +2597,97 @@ impl Shell {
                     .is_some_and(|e| d.phase(e, cx) != crate::voice::view::Phase::Off)
             }),
             dictating: crate::voice::get(cx).is_some_and(|d| d.read(cx).running()),
+            kb: self.kb_target(window, cx),
+            kb_scanning: bench.ws.read(cx).kb_scanning,
+        }
+    }
+
+    /// The knowledge entry the memory-quality commands act on: the focused
+    /// row, else the open entry (interaction.md 6.1).
+    fn kb_target(&self, window: &Window, cx: &App) -> Option<commands::FocusedKb> {
+        let Content::Workbench(bench) = &self.content else {
+            return None;
+        };
+        match &bench.page {
+            PageView::Knowledge(page) => page.read(cx).kb_context(window),
+            PageView::Record(page) => page.read(cx).kb_context(window),
+            PageView::Doc(page) => page.read(cx).kb_context(),
+            _ => None,
+        }
+    }
+
+    /// Run a memory-quality command on [`Self::kb_target`].
+    fn kb_command(&mut self, command: Command, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(k) = self.kb_target(window, cx) else {
+            return;
+        };
+        let Some(bench) = self.bench() else { return };
+        let ws = bench.ws.clone();
+        let page = match &bench.page {
+            PageView::Knowledge(p) => Some(PageView::Knowledge(p.clone())),
+            PageView::Record(p) => Some(PageView::Record(p.clone())),
+            PageView::Doc(p) => Some(PageView::Doc(p.clone())),
+            _ => None,
+        };
+        let owner = Some(k.owner);
+        let kind = if k.memory {
+            KbKind::Memory
+        } else {
+            KbKind::Document
+        };
+        match command {
+            // The page hides the mark at once; the write follows.
+            Command::KbVerify => match page {
+                Some(PageView::Knowledge(p)) => p.update(cx, |p, cx| p.verify_row(k.id, cx)),
+                Some(PageView::Record(p)) => p.update(cx, |p, cx| p.verify_kb(k.id, cx)),
+                Some(PageView::Doc(p)) => p.update(cx, |p, cx| p.verify(cx)),
+                _ => crate::kbq_ui::verify(&ws, k.id, owner, cx),
+            },
+            Command::KbRetire => crate::kbq_ui::retire(&ws, k.id, kind, owner, cx),
+            Command::KbMakeLive => crate::kbq_ui::make_live(&ws, k.id, owner, cx),
+            Command::KbKeepBoth(a, b) => {
+                let pair = if k.conflict == Some(b) {
+                    acta_core::model::KbPairKind::Conflict
+                } else {
+                    acta_core::model::KbPairKind::Duplicate
+                };
+                crate::kbq_ui::keep_both(&ws, a, b, pair, owner, cx)
+            }
+            Command::KbReplace(old) => crate::kbq_ui::replace(&ws, k.id, old, owner, cx),
+            Command::KbMerge => {
+                let task = crate::kbq_ui::merge_candidates(&ws, k.id, cx);
+                let locale = settings::locale(cx);
+                cx.spawn_in(window, async move |shell, cx| {
+                    let Ok(candidates) = task.await else {
+                        return;
+                    };
+                    let _ = shell.update_in(cx, |shell, window, cx| {
+                        let weak = cx.entity().downgrade();
+                        let on_merged: crate::kbq_ui::OnMerged =
+                            std::rc::Rc::new(move |id, window, cx| {
+                                let _ = weak.update(cx, |s, cx| s.edit_kb(id, window, cx));
+                            });
+                        let (picker, on_pick) = crate::kbq_ui::merge_picker(
+                            locale, &ws, k.id, owner, candidates, on_merged,
+                        );
+                        shell.open_picker(picker, on_pick, window, cx);
+                    });
+                })
+                .detach();
+            }
+            _ => {}
+        }
+    }
+
+    /// A merge's survivor opens in its editor so the person can tidy the
+    /// joined text (components-knowledge.md 5, Merge).
+    pub(super) fn edit_kb(&mut self, id: KbId, window: &mut Window, cx: &mut Context<Self>) {
+        self.navigate(Route::Kb(id), true, window, cx);
+        if let Some(bench) = self.bench()
+            && let PageView::Doc(page) = &bench.page
+            && page.read(cx).id == Some(id)
+        {
+            page.update(cx, |page, cx| page.edit_when_loaded(cx));
         }
     }
 
@@ -2735,7 +2913,33 @@ impl Shell {
                     bench.ws.update(cx, |ws, cx| ws.set_due(owner, None, cx));
                 }
             }
+            // "Show knowledge to check": every kind (the Overview's line
+            // adds Kind: Memories).
+            Command::Show(acta_core::store::OverviewFilter::StaleMemories) => {
+                if let Some(project) = self.bench().and_then(|b| b.active_project) {
+                    self.open_kb_chip(project, crate::kb_model::Chip::ToCheck, None, window, cx);
+                }
+            }
             Command::Show(filter) => self.show_overview_list(filter, window, cx),
+            Command::ShowInactive => {
+                if let Some(project) = self.bench().and_then(|b| b.active_project) {
+                    self.open_kb_chip(project, crate::kb_model::Chip::Inactive, None, window, cx);
+                }
+            }
+            Command::KbFindDuplicates => {
+                if let Some(bench) = self.bench()
+                    && let Some(project) = bench.active_project
+                {
+                    let ws = bench.ws.clone();
+                    crate::kbq_ui::find_duplicates(&ws, project, cx);
+                }
+            }
+            Command::KbVerify
+            | Command::KbRetire
+            | Command::KbMakeLive
+            | Command::KbMerge
+            | Command::KbKeepBoth(..)
+            | Command::KbReplace(_) => self.kb_command(command, window, cx),
             Command::QuestionNew => {
                 self.with_record(cx, |page, window, cx| page.new_question(window, cx), window)
             }
@@ -5278,6 +5482,26 @@ impl Shell {
                         // The parent folder with the file selected, never the file.
                         .on_click(move |_, _, cx| cx.reveal_path(&path))
                         .into_any_element(),
+                        crate::workspace::ToastAction::ShowToCheck(project) => ui::button(
+                            "toast-show",
+                            text(locale, Key::KbScanShow),
+                            Variant::Ghost,
+                            false,
+                            &t,
+                        )
+                        .on_click(cx.listener(move |shell, _, window, cx| {
+                            if let Some(bench) = shell.bench() {
+                                bench.toast = None;
+                            }
+                            shell.open_kb_chip(
+                                project,
+                                crate::kb_model::Chip::ToCheck,
+                                None,
+                                window,
+                                cx,
+                            );
+                        }))
+                        .into_any_element(),
                         crate::workspace::ToastAction::RetrySave(file, path) => ui::button(
                             "toast-retry",
                             text(locale, Key::CommonRetry),
@@ -5526,7 +5750,8 @@ fn seed_if_asked(store: &mut acta_core::Store) {
             || seed == "due"
             || seed == "folders"
             || seed == "questions"
-            || seed == "attachments")
+            || seed == "attachments"
+            || seed == "quality")
         && let Some(dir) = crate::launch_dir()
         && let Err(err) = match seed.as_str() {
             "bare" => crate::dev_seed::bare(store, &dir),
@@ -5539,6 +5764,8 @@ fn seed_if_asked(store: &mut acta_core::Store) {
             "questions" => crate::dev_seed::questions(store, &dir),
             #[cfg(debug_assertions)]
             "attachments" => crate::dev_seed::attachments(store, &dir),
+            #[cfg(debug_assertions)]
+            "quality" => crate::dev_seed::quality(store, &dir),
             _ => crate::dev_seed::seed(store, &dir),
         }
     {

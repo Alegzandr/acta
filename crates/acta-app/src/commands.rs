@@ -3,7 +3,7 @@
 //! the catalogue and its direct shortcut, shown so the palette teaches the
 //! keyboard.
 
-use acta_core::model::Status;
+use acta_core::model::{KbId, Owner, Status};
 use acta_core::store::OverviewFilter;
 
 use crate::i18n::{Arg, Key, KeyName, Locale, text, tr};
@@ -40,6 +40,20 @@ pub enum Command {
     /// "Overview: Show more" / "Overview: Show less".
     OverviewMore,
     OverviewLess,
+    /// Memory quality (interaction.md 6.1), on the focused knowledge row,
+    /// else the open entry: "Mark as still true", "Mark as no longer
+    /// true", "Make live again", "Merge into...", "Keep both K-4 and K-9",
+    /// "Replace K-9 with this".
+    KbVerify,
+    KbRetire,
+    KbMakeLive,
+    KbMerge,
+    KbKeepBoth(KbId, KbId),
+    KbReplace(KbId),
+    /// On the active project: "Show superseded and retired", "Find
+    /// duplicate memories" ("Show knowledge to check" is a `Show`).
+    ShowInactive,
+    KbFindDuplicates,
     /// Questions and Report to (interaction.md 6.1).
     QuestionNew,
     QuestionsOpen,
@@ -222,6 +236,23 @@ pub struct Context {
     pub dictate: bool,
     /// A take is running.
     pub dictating: bool,
+    /// The knowledge entry the memory-quality commands act on.
+    pub kb: Option<FocusedKb>,
+    /// "Find duplicate memories" is running.
+    pub kb_scanning: bool,
+}
+
+/// The knowledge entry under the keyboard (a focused row), else the open
+/// one: what memory-quality commands it offers (interaction.md 6.1).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FocusedKb {
+    pub id: KbId,
+    pub owner: Owner,
+    pub memory: bool,
+    pub live: bool,
+    /// Its open conflict and duplicate pairs, if any.
+    pub conflict: Option<KbId>,
+    pub duplicate: Option<KbId>,
 }
 
 /// What the open page's folders allow (interaction.md 6.1).
@@ -300,6 +331,26 @@ impl Command {
         if ctx.has_project {
             out.extend(SHOW.map(Command::Show));
             out.push(Command::ShowQuestionsLate);
+            out.push(Command::ShowInactive);
+            if !ctx.kb_scanning {
+                out.push(Command::KbFindDuplicates);
+            }
+        }
+        if let Some(k) = ctx.kb {
+            if k.live {
+                out.extend([Command::KbVerify, Command::KbRetire]);
+                if k.memory {
+                    out.push(Command::KbMerge);
+                }
+                if let Some(other) = k.conflict {
+                    out.extend([Command::KbKeepBoth(k.id, other), Command::KbReplace(other)]);
+                }
+                if let Some(other) = k.duplicate {
+                    out.push(Command::KbKeepBoth(k.id, other));
+                }
+            } else {
+                out.push(Command::KbMakeLive);
+            }
         }
         if ctx.on_record {
             out.push(Command::QuestionNew);
@@ -497,6 +548,27 @@ impl Command {
     pub fn label(self, locale: Locale) -> String {
         use crate::theme::ThemeSetting;
         let key = match self {
+            Command::KbKeepBoth(a, b) => {
+                let (a, b) = (a.min(b).to_string(), a.max(b).to_string());
+                return tr(
+                    locale,
+                    Key::CmdKbKeepBoth,
+                    &[("a", Arg::Text(&a)), ("b", Arg::Text(&b))],
+                );
+            }
+            Command::KbReplace(id) => {
+                return tr(
+                    locale,
+                    Key::CmdKbReplace,
+                    &[("id", Arg::Text(&id.to_string()))],
+                );
+            }
+            Command::KbVerify => Key::CmdKbVerify,
+            Command::KbRetire => Key::CmdKbRetire,
+            Command::KbMakeLive => Key::CmdKbMakeLive,
+            Command::KbMerge => Key::CmdKbMerge,
+            Command::ShowInactive => Key::CmdShowInactive,
+            Command::KbFindDuplicates => Key::CmdKbFindDuplicates,
             Command::GoTopic => Key::CmdGoTopic,
             Command::SwitchProject => Key::CmdSwitchProject,
             Command::NewTopic => Key::CmdNewTopic,
@@ -592,7 +664,7 @@ impl Command {
                 OverviewFilter::Done => Key::CmdShowDoneWeek,
                 OverviewFilter::Decided => Key::CmdShowDecidedWeek,
                 OverviewFilter::Created => Key::CmdShowCreatedWeek,
-                OverviewFilter::StaleMemories => Key::CmdShowStaleMemories,
+                OverviewFilter::StaleMemories => Key::CmdShowToCheck,
                 // Overdue keeps the table's segment, the inbox "Go to
                 // inbox": never listed (SHOW).
                 OverviewFilter::Overdue | OverviewFilter::Inbox => Key::CmdGoInbox,
@@ -709,6 +781,7 @@ impl Command {
             Command::Back => vec![alt, "\u{2190}"],
             Command::Forward => vec![alt, "\u{2192}"],
             Command::SetStatus(_) => vec!["S"],
+            Command::KbVerify => vec!["V"],
             Command::SetDue => vec!["D"],
             Command::QuestionNew => vec!["Q"],
             Command::ReportSet => vec!["R"],

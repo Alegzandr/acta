@@ -497,9 +497,9 @@ catalogue! {
         en: p("{n} complete epic", "{n} complete epics"),
         fr: p("{n} epic terminé", "{n} epics terminés"),
     }
-    OverviewMemories "overview.memories" {
-        en: p("{n} memory not updated for 90 days", "{n} memories not updated for 90 days"),
-        fr: p("{n} mémoire non mise à jour depuis 90 jours", "{n} mémoires non mises à jour depuis 90 jours"),
+    OverviewToCheck "overview.to_check" {
+        en: p("{n} memory to check", "{n} memories to check"),
+        fr: p("{n} mémoire à vérifier", "{n} mémoires à vérifier"),
     }
     OverviewQuestionsLate "overview.questions_late" {
         en: p("{n} question past its answer date", "{n} questions past their answer date"),
@@ -741,9 +741,13 @@ catalogue! {
         en: t("Created in the last 7 days"),
         fr: t("Créés ces 7 derniers jours"),
     }
-    FilterStaleMemories "filter.stale_memories" {
-        en: t("Not updated for 90 days"),
-        fr: t("Non mises à jour depuis 90 jours"),
+    FilterToCheck "filter.to_check" {
+        en: t("To check"),
+        fr: t("À vérifier"),
+    }
+    FilterInactive "filter.inactive" {
+        en: t("Superseded and retired"),
+        fr: t("Remplacés et obsolètes"),
     }
     FilterClear "filter.clear" {
         en: t("Clear filter"),
@@ -1389,6 +1393,250 @@ catalogue! {
         en: t("Nothing in this project mentions \"{query}\"."),
         fr: t("Rien dans ce projet ne mentionne «\u{202f}{query}\u{202f}»."),
     }
+    KbInactiveRow "kb.inactive_row" {
+        en: t("{n} superseded or retired"),
+        fr: p("{n} élément remplacé ou obsolète", "{n} éléments remplacés ou obsolètes"),
+    }
+    KbToCheckEmpty "kb.to_check_empty" {
+        en: t("Nothing to check."),
+        fr: t("Rien à vérifier."),
+    }
+    KbInactiveEmpty "kb.inactive_empty" {
+        en: t("Nothing is superseded or retired."),
+        fr: t("Aucun élément remplacé ou obsolète."),
+    }
+    KbReasonConflict "kb.reason.conflict" {
+        en: t("May contradict {id}"),
+        fr: t("Contredit peut-être {id}"),
+    }
+    KbReasonDuplicate "kb.reason.duplicate" {
+        en: t("Possible duplicate of {id}"),
+        fr: t("Doublon possible de {id}"),
+    }
+    KbReasonFileGone "kb.reason.file_gone" {
+        en: t("{file} was deleted or moved"),
+        fr: t("{file} a été supprimé ou déplacé"),
+    }
+    KbReasonFileGoneMore "kb.reason.file_gone_more" {
+        en: p("{file} and {n} more file were deleted or moved", "{file} and {n} more files were deleted or moved"),
+        fr: p("{file} et {n} autre fichier ont été supprimés ou déplacés", "{file} et {n} autres fichiers ont été supprimés ou déplacés"),
+    }
+    KbReasonFileChanged "kb.reason.file_changed" {
+        en: t("{file} changed since it was checked"),
+        fr: t("{file} a changé depuis la dernière vérification"),
+    }
+    KbReasonFileChangedMore "kb.reason.file_changed_more" {
+        en: p("{file} and {n} more file changed since they were checked", "{file} and {n} more files changed since they were checked"),
+        fr: p("{file} et {n} autre fichier ont changé depuis la dernière vérification", "{file} et {n} autres fichiers ont changé depuis la dernière vérification"),
+    }
+    KbReasonBranchGone "kb.reason.branch_gone" {
+        en: t("Branch {branch} no longer exists"),
+        fr: t("La branche {branch} n\u{2019}existe plus"),
+    }
+    KbReasonBranchMerged "kb.reason.branch_merged" {
+        en: t("Branch {branch} was merged"),
+        fr: t("La branche {branch} a été fusionnée"),
+    }
+    KbReasonFolderRemoved "kb.reason.folder_removed" {
+        en: t("Its folder was removed from Acta"),
+        fr: t("Son dossier a été retiré d\u{2019}Acta"),
+    }
+    KbReasonTopicDone "kb.reason.topic_done" {
+        en: t("Its topic is done"),
+        fr: t("Son sujet est terminé"),
+    }
+    KbReasonTopicDropped "kb.reason.topic_dropped" {
+        en: t("Its topic was dropped"),
+        fr: t("Son sujet a été abandonné"),
+    }
+    KbReasonOld "kb.reason.old" {
+        en: t("Not checked for {days} days"),
+        fr: t("Non vérifiée depuis {days} jours"),
+    }
+    KbVerify "kb.verify" {
+        en: t("Mark as still true"),
+        fr: t("Marquer comme toujours valable"),
+    }
+    KbRetire "kb.retire" {
+        en: t("Mark as no longer true"),
+        fr: t("Marquer comme obsolète"),
+    }
+    KbRetiredToastDocument "kb.retired_toast.document" {
+        en: t("Marked as no longer true."),
+        fr: t("Marqué comme obsolète."),
+    }
+    KbRetiredToastMemory "kb.retired_toast.memory" {
+        en: t("Marked as no longer true."),
+        fr: t("Marquée comme obsolète."),
+    }
+    KbMakeLive "kb.make_live" {
+        en: t("Make live again"),
+        fr: t("Rétablir"),
+    }
+    KbNoticeSupersededDocument "kb.notice.superseded.document" {
+        en: t("Superseded by {title} on {date}."),
+        fr: t("Remplacé le {date} par {title}."),
+    }
+    KbNoticeSupersededMemory "kb.notice.superseded.memory" {
+        en: t("Superseded by {title} on {date}."),
+        fr: t("Remplacée le {date} par {title}."),
+    }
+    KbNoticeRetiredDocument "kb.notice.retired.document" {
+        en: t("Retired by {author} on {date}."),
+        fr: t("Rendu obsolète le {date} par {author}."),
+    }
+    KbNoticeRetiredMemory "kb.notice.retired.memory" {
+        en: t("Retired by {author} on {date}."),
+        fr: t("Rendue obsolète le {date} par {author}."),
+    }
+    KbNoticeConflict "kb.notice.conflict" {
+        en: t("May contradict {id}."),
+        fr: t("Contredit peut-être {id}."),
+    }
+    KbNoticeDuplicate "kb.notice.duplicate" {
+        en: t("Possible duplicate of {id}."),
+        fr: t("Doublon possible de {id}."),
+    }
+    KbThisReplaces "kb.this_replaces" {
+        en: t("This replaces it"),
+        fr: t("Celle-ci la remplace"),
+    }
+    KbReplacedToast "kb.replaced_toast" {
+        en: t("{id} is now superseded by this."),
+        fr: t("{id} est désormais remplacée par celle-ci."),
+    }
+    KbMergeIntoId "kb.merge_into_id" {
+        en: t("Merge into {id}"),
+        fr: t("Fusionner dans {id}"),
+    }
+    KbMergeHere "kb.merge_here" {
+        en: t("Merge {id} into this"),
+        fr: t("Fusionner {id} dans celle-ci"),
+    }
+    KbMergeInto "kb.merge_into" {
+        en: t("Merge into\u{2026}"),
+        fr: t("Fusionner dans\u{2026}"),
+    }
+    KbMerged "kb.merged" {
+        en: t("Merged into {id}."),
+        fr: t("Fusionnée dans {id}."),
+    }
+    KbPropBranch "kb.prop.branch" {
+        en: t("Branch"),
+        fr: t("Branche"),
+    }
+    KbPropSources "kb.prop.sources" {
+        en: t("Sources"),
+        fr: t("Sources"),
+    }
+    KbBranchMerged "kb.branch.merged" {
+        en: t("merged"),
+        fr: t("fusionnée"),
+    }
+    KbBranchGone "kb.branch.gone" {
+        en: t("no longer exists"),
+        fr: t("n\u{2019}existe plus"),
+    }
+    KbBranchTip "kb.branch.tip" {
+        en: t("True only on this branch, in {folder}."),
+        fr: t("Valable seulement sur cette branche, dans {folder}."),
+    }
+    KbSourceEntry "kb.source.entry" {
+        en: t("{topic}, entry of {date}"),
+        fr: t("{topic}, entrée du {date}"),
+    }
+    KbSourceMissing "kb.source.missing" {
+        en: t("A record not in this database"),
+        fr: t("Un élément absent de cette base"),
+    }
+    KbSourceCommit "kb.source.commit" {
+        en: t("Commit {sha}"),
+        fr: t("Commit {sha}"),
+    }
+    KbSourceCopyCommit "kb.source.copy_commit" {
+        en: t("Copy commit id"),
+        fr: t("Copier l\u{2019}identifiant du commit"),
+    }
+    KbSourceCopyPath "kb.source.copy_path" {
+        en: t("{folder} · Copy path"),
+        fr: t("{folder} · Copier le chemin"),
+    }
+    KbSourceChanged "kb.source.changed" {
+        en: t("changed since checked"),
+        fr: t("modifié depuis la vérification"),
+    }
+    KbSourceGone "kb.source.gone" {
+        en: t("deleted or moved"),
+        fr: t("supprimé ou déplacé"),
+    }
+    KbProvFrom "kb.prov.from" {
+        en: t("From topic {id}"),
+        fr: t("Depuis le sujet {id}"),
+    }
+    KbProvBranch "kb.prov.branch" {
+        en: t("On branch {branch}"),
+        fr: t("Sur la branche {branch}"),
+    }
+    KbProvCheckedDocument "kb.prov.checked.document" {
+        en: t("Checked {when} by {author}"),
+        fr: t("Vérifié {when} par {author}"),
+    }
+    KbProvCheckedMemory "kb.prov.checked.memory" {
+        en: t("Checked {when} by {author}"),
+        fr: t("Vérifiée {when} par {author}"),
+    }
+    KbSessionOn "kb.session.on" {
+        en: t("A Claude Code session on {topic}"),
+        fr: t("Une session Claude Code sur {topic}"),
+    }
+    KbSessionAny "kb.session.any" {
+        en: t("A Claude Code session"),
+        fr: t("Une session Claude Code"),
+    }
+    KbSessionBranch "kb.session.branch" {
+        en: t("Branch {branch}"),
+        fr: t("Branche {branch}"),
+    }
+    KbAlsoOpenMemory "kb.also_open.memory" {
+        en: t("Claude Code is working with this memory on {topic}"),
+        fr: t("Claude Code travaille avec cette mémoire sur {topic}"),
+    }
+    KbAlsoOpenDocument "kb.also_open.document" {
+        en: t("Claude Code is working with this document on {topic}"),
+        fr: t("Claude Code travaille avec ce document sur {topic}"),
+    }
+    KbAlsoOpenMemoryAny "kb.also_open.memory_any" {
+        en: t("Claude Code is working with this memory"),
+        fr: t("Claude Code travaille avec cette mémoire"),
+    }
+    KbAlsoOpenDocumentAny "kb.also_open.document_any" {
+        en: t("Claude Code is working with this document"),
+        fr: t("Claude Code travaille avec ce document"),
+    }
+    KbAlsoOpenRead "kb.also_open.read" {
+        en: t("Last read {when}"),
+        fr: t("Dernière lecture {when}"),
+    }
+    KbAlsoOpenWrote "kb.also_open.wrote" {
+        en: t("Last changed {when}"),
+        fr: t("Dernière modification {when}"),
+    }
+    KbSaveMerged "kb.save_merged" {
+        en: t("Saved. Claude Code\u{2019}s changes to other sections are kept."),
+        fr: t("Enregistré. Les modifications de Claude Code dans les autres sections sont conservées."),
+    }
+    KbScanFound "kb.scan_found" {
+        en: p("Found {n} possible duplicate.", "Found {n} possible duplicates."),
+        fr: p("{n} doublon possible trouvé.", "{n} doublons possibles trouvés."),
+    }
+    KbScanShow "kb.scan_show" {
+        en: t("Show"),
+        fr: t("Afficher"),
+    }
+    KbScanNone "kb.scan_none" {
+        en: t("No possible duplicates found."),
+        fr: t("Aucun doublon possible trouvé."),
+    }
     QuestionsNew "questions.new" {
         en: t("New question"),
         fr: t("Nouvelle question"),
@@ -1876,6 +2124,50 @@ catalogue! {
     HistoryCreatedMemory "history.created.memory" {
         en: t("Created"),
         fr: t("Créée"),
+    }
+    HistoryVerifiedDocument "history.verified.document" {
+        en: t("Marked as still true"),
+        fr: t("Marqué comme toujours valable"),
+    }
+    HistoryVerifiedMemory "history.verified.memory" {
+        en: t("Marked as still true"),
+        fr: t("Marquée comme toujours valable"),
+    }
+    HistorySupersededDocument "history.superseded.document" {
+        en: t("Superseded by {id}"),
+        fr: t("Remplacé par {id}"),
+    }
+    HistorySupersededMemory "history.superseded.memory" {
+        en: t("Superseded by {id}"),
+        fr: t("Remplacée par {id}"),
+    }
+    HistoryRetiredDocument "history.retired.document" {
+        en: t("Retired"),
+        fr: t("Rendu obsolète"),
+    }
+    HistoryRetiredMemory "history.retired.memory" {
+        en: t("Retired"),
+        fr: t("Rendue obsolète"),
+    }
+    HistoryRetiredReasonDocument "history.retired_reason.document" {
+        en: t("Retired: {reason}"),
+        fr: t("Rendu obsolète\u{a0}: {reason}"),
+    }
+    HistoryRetiredReasonMemory "history.retired_reason.memory" {
+        en: t("Retired: {reason}"),
+        fr: t("Rendue obsolète\u{a0}: {reason}"),
+    }
+    HistoryMadeLiveDocument "history.made_live.document" {
+        en: t("Made live again"),
+        fr: t("Rétabli"),
+    }
+    HistoryMadeLiveMemory "history.made_live.memory" {
+        en: t("Made live again"),
+        fr: t("Rétablie"),
+    }
+    HistoryMerged "history.merged" {
+        en: t("Merged {id} into this"),
+        fr: t("Fusion de {id}"),
     }
     FoldersTitle "folders.title" {
         en: t("Working folders"),
@@ -2761,9 +3053,13 @@ catalogue! {
         en: t("Show topics created in the last 7 days"),
         fr: t("Afficher les sujets créés ces 7 derniers jours"),
     }
-    CmdShowStaleMemories "cmd.show_stale_memories" {
-        en: t("Show memories not updated for 90 days"),
-        fr: t("Afficher les mémoires non mises à jour depuis 90 jours"),
+    CmdShowToCheck "cmd.show_to_check" {
+        en: t("Show knowledge to check"),
+        fr: t("Afficher les connaissances à vérifier"),
+    }
+    CmdShowInactive "cmd.show_inactive" {
+        en: t("Show superseded and retired"),
+        fr: t("Afficher les éléments remplacés et obsolètes"),
     }
     CmdShowQuestionsLate "cmd.show_questions_late" {
         en: t("Show questions past their answer date"),
@@ -3100,6 +3396,34 @@ catalogue! {
     CmdKbToDocument "cmd.kb_to_document" {
         en: t("Change kind to document"),
         fr: t("Convertir en document"),
+    }
+    CmdKbVerify "cmd.kb_verify" {
+        en: t("Mark as still true"),
+        fr: t("Marquer comme toujours valable"),
+    }
+    CmdKbRetire "cmd.kb_retire" {
+        en: t("Mark as no longer true"),
+        fr: t("Marquer comme obsolète"),
+    }
+    CmdKbMakeLive "cmd.kb_make_live" {
+        en: t("Make live again"),
+        fr: t("Rétablir"),
+    }
+    CmdKbMerge "cmd.kb_merge" {
+        en: t("Merge into\u{2026}"),
+        fr: t("Fusionner dans\u{2026}"),
+    }
+    CmdKbKeepBoth "cmd.kb_keep_both" {
+        en: t("Keep both {a} and {b}"),
+        fr: t("Garder les deux\u{a0}: {a} et {b}"),
+    }
+    CmdKbReplace "cmd.kb_replace" {
+        en: t("Replace {id} with this"),
+        fr: t("Remplacer {id} par celle-ci"),
+    }
+    CmdKbFindDuplicates "cmd.kb_find_duplicates" {
+        en: t("Find duplicate memories"),
+        fr: t("Trouver les mémoires en double"),
     }
     CmdGoHeading "cmd.go_heading" {
         en: t("Go to heading\u{2026}"),

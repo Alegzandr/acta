@@ -16,8 +16,9 @@ use std::time::Duration;
 
 use acta_core::folder_identity::{self, Known, Monitor};
 use acta_core::model::{
-    Author, CommitMode, ContactId, ContactLevel, EpicId, FolderId, KbId, Lift, Note, NoteId, Owner,
-    ProjectId, ProjectTree, QuestionId, Record, Status, TopicId,
+    Author, CommitMode, ContactId, ContactLevel, EpicId, FolderId, KbId, KbPairKind, KbPairState,
+    KbState, Lift, Note, NoteId, Owner, ProjectId, ProjectTree, QuestionId, Record, Status,
+    TopicId,
 };
 use acta_core::store::{EpicPatch, ProjectPatch, TopicPatch, Unread};
 use acta_core::{ChangeWatcher, Store};
@@ -41,7 +42,7 @@ const UNDO_DEPTH: usize = 100;
 /// compares the current value with `expect` inside the write transaction:
 /// if anything else changed it since, Claude Code included, the step is
 /// skipped, so undo never reverts someone else's write.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Undo {
     /// The record was deleted: restore it (expects it in the trash).
     Restore(Record),
@@ -189,8 +190,71 @@ pub enum Undo {
         before: Box<acta_core::model::Contact>,
         uses: Vec<Record>,
     },
+    /// Mark as still true (ADR 0015, 1): the verified date and file
+    /// records before; the revision stays in history.
+    KbVerify(Box<acta_core::store::KbVerifyTrace>),
+    /// A verify taken back: vouch again, with the file records it made.
+    KbReverify {
+        id: KbId,
+        rev: i64,
+        blobs: Vec<(i64, Option<String>)>,
+    },
+    /// Mark as no longer true, Make live again, or "This replaces it" (the
+    /// other entry's supersede): its state before.
+    KbState(Box<acta_core::store::KbStateTrace>),
+    /// A state change taken back: make it again.
+    KbRestate {
+        id: KbId,
+        rev: i64,
+        to: KbState,
+        by: Option<KbId>,
+    },
+    /// "Keep both": the pair's state before.
+    KbPair {
+        a: KbId,
+        b: KbId,
+        kind: KbPairKind,
+        back: KbPairState,
+        expect: KbPairState,
+    },
+    /// A merge of two memories: the store's unmerge.
+    KbMerge(Box<acta_core::store::KbMergeTrace>),
+    /// An unmerge taken back: merge again.
+    KbRemerge {
+        survivor: KbId,
+        other: KbId,
+    },
     /// Several steps taken back as one, all or none.
     Many(Vec<Undo>),
+}
+
+/// The state of the pair of `a` and `b` of `kind` (open when none was
+/// recorded).
+pub fn kb_pair_state(
+    store: &Store,
+    a: KbId,
+    b: KbId,
+    kind: KbPairKind,
+) -> acta_core::Result<KbPairState> {
+    Ok(store
+        .kb_pairs_of(a)?
+        .into_iter()
+        .find(|p| p.kind == kind && p.other(a) == b)
+        .map_or(KbPairState::Open, |p| p.state))
+}
+
+/// The blob ids an entry's sources hold now, for the links of `ids`.
+fn kb_blobs_now(
+    store: &Store,
+    id: KbId,
+    ids: &[(i64, Option<String>)],
+) -> acta_core::Result<Vec<(i64, Option<String>)>> {
+    Ok(store
+        .kb_links(id)?
+        .into_iter()
+        .filter(|l| ids.iter().any(|(link, _)| *link == l.id))
+        .map(|l| (l.id, l.blob))
+        .collect())
 }
 
 /// Who a record reports to and whether it was marked reported.
@@ -351,6 +415,21 @@ impl Undo {
                     )
             }
             Undo::Merge { from, .. } => is_live(store, Record::Contact(*from))?,
+            Undo::KbVerify(trace) => store.kb_entry(trace.id)?.rev == trace.rev,
+            Undo::KbReverify { id, rev, .. } => {
+                let e = store.kb_entry(*id)?;
+                e.rev == *rev && e.state == KbState::Live
+            }
+            Undo::KbState(trace) => store.kb_entry(trace.id)?.rev == trace.rev,
+            Undo::KbRestate { id, rev, .. } => store.kb_entry(*id)?.rev == *rev,
+            Undo::KbPair {
+                a, b, kind, expect, ..
+            } => kb_pair_state(store, *a, *b, *kind)? == *expect,
+            Undo::KbMerge(trace) => store.kb_can_unmerge(trace)?,
+            Undo::KbRemerge { survivor, other } => {
+                store.kb_entry(*survivor)?.state == KbState::Live
+                    && store.kb_entry(*other)?.state == KbState::Live
+            }
             Undo::Unfile(id) => !store.note(*id)?.is_open(),
             Undo::Refile(before) => store.note(before.id)?.is_open(),
             Undo::Many(all) => {
@@ -631,6 +710,73 @@ impl Undo {
                     trace,
                 }
             }
+            Undo::KbVerify(trace) => {
+                let blobs = kb_blobs_now(store, trace.id, &trace.blobs)?;
+                store.kb_unverify(trace)?;
+                Undo::KbReverify {
+                    id: trace.id,
+                    rev: trace.rev,
+                    blobs,
+                }
+            }
+            Undo::KbReverify { id, rev, blobs } => {
+                let ctx = acta_core::store::KbWriteCtx::default();
+                Undo::KbVerify(Box::new(store.kb_verify(
+                    *id,
+                    Some(*rev),
+                    blobs,
+                    &ctx,
+                    me,
+                )?))
+            }
+            Undo::KbState(trace) => {
+                let now = store.kb_entry(trace.id)?;
+                let rev = store.kb_revert_state(trace, me)?;
+                Undo::KbRestate {
+                    id: trace.id,
+                    rev,
+                    to: now.state,
+                    by: now.superseded_by,
+                }
+            }
+            Undo::KbRestate { id, to, by, .. } => {
+                let ctx = acta_core::store::KbWriteCtx::default();
+                let trace = match (to, by) {
+                    (KbState::Retired, _) => store.kb_retire(*id, None, "", &ctx, me)?,
+                    (KbState::Superseded, Some(by)) => store
+                        .kb_replace_with(*by, &[*id], me)?
+                        .pop()
+                        .ok_or_else(|| acta_core::Error::Invalid(format!("{id} not superseded")))?,
+                    _ => store.kb_make_live(*id, me)?,
+                };
+                Undo::KbState(Box::new(trace))
+            }
+            Undo::KbPair {
+                a,
+                b,
+                kind,
+                back,
+                expect,
+            } => {
+                store.kb_set_pair_state(*a, *b, *kind, *back, me)?;
+                Undo::KbPair {
+                    a: *a,
+                    b: *b,
+                    kind: *kind,
+                    back: *expect,
+                    expect: *back,
+                }
+            }
+            Undo::KbMerge(trace) => {
+                store.kb_unmerge(trace, me)?;
+                Undo::KbRemerge {
+                    survivor: trace.survivor,
+                    other: trace.other,
+                }
+            }
+            Undo::KbRemerge { survivor, other } => {
+                Undo::KbMerge(Box::new(store.kb_merge(*survivor, *other, me)?))
+            }
             Undo::Unfile(id) => {
                 let filed = store.note(*id)?;
                 store.unfile_note(*id, me)?;
@@ -755,6 +901,9 @@ pub enum ToastAction {
     Reveal(std::path::PathBuf),
     /// Retry: Save as to the same path again.
     RetrySave(Box<acta_core::model::Attachment>, std::path::PathBuf),
+    /// "Show" after "Find duplicate memories": the knowledge base page with
+    /// the chip "To check".
+    ShowToCheck(ProjectId),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -809,6 +958,11 @@ pub enum FolderRef {
 
 pub struct Workspace {
     pub db: Db,
+    /// Git reads for knowledge flags (ADR 0015, 1), cached per folder and
+    /// `HEAD`; used off the UI thread only.
+    pub kb_git: Arc<Mutex<acta_core::agent::kbq::GitCache>>,
+    /// "Find duplicate memories" is running (the command is not listed).
+    pub kb_scanning: bool,
     pub bulk: Option<BulkOffer>,
     pub projects: Vec<ProjectTree>,
     /// How many live contacts exist: the sidebar's Contacts row shows only
@@ -915,6 +1069,8 @@ impl Workspace {
             redo: HashMap::new(),
             actions: HashMap::new(),
             undoing: false,
+            kb_git: Arc::default(),
+            kb_scanning: false,
             _reload: Task::ready(()),
             _watch: watch,
             _snapshots: snapshots,
@@ -1675,10 +1831,20 @@ impl Workspace {
     }
 
     pub fn toast(&mut self, message: String, kind: ToastKind, cx: &mut Context<Self>) {
+        self.toast_with(message, kind, None, cx);
+    }
+
+    pub fn toast_with(
+        &mut self,
+        message: String,
+        kind: ToastKind,
+        action: Option<ToastAction>,
+        cx: &mut Context<Self>,
+    ) {
         cx.emit(WorkspaceEvent::Toast(Toast {
             message,
             kind,
-            action: None,
+            action,
         }));
     }
 
