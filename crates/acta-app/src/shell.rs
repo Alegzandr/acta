@@ -1286,6 +1286,36 @@ impl Shell {
             ) => self.dev_ready(which, window, cx),
             Ok("capture") => self.open_capture(window, cx),
             Ok("terminal") => self.view_action(ViewId::Terminal, ViewAction::Show, window, cx),
+            // Claude Code (no project), shown with nothing started.
+            Ok("free-claude") => {
+                self.change_layout(None, window, cx, |l| {
+                    l.show_view(ViewId::FreeClaude).is_some()
+                });
+            }
+            // Two browsers opened by the human on the current page, once it
+            // has loaded: the instance strip (layout.md 4.5.1).
+            #[cfg(windows)]
+            Ok("browsers") => {
+                self.change_layout(None, window, cx, |l| {
+                    l.show_view(ViewId::AgentBrowser).is_some()
+                });
+                cx.spawn_in(window, async move |shell, cx| {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(1500))
+                        .await;
+                    let _ = shell.update_in(cx, |shell, window, cx| {
+                        shell.sync_tool_owner(window, cx);
+                        if let Some(bench) = shell.bench() {
+                            let browser = bench.browser.clone();
+                            browser.update(cx, |b, cx| {
+                                b.open_new(window, cx);
+                                b.open_new(window, cx);
+                            });
+                        }
+                    });
+                })
+                .detach();
+            }
             // Shown without taking the keyboard, for captures.
             #[cfg(windows)]
             Ok("chat") => {

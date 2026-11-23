@@ -492,10 +492,9 @@ impl TerminalDock {
             return;
         };
         let task = self.ws.read(cx).db.run(cx, move |store| {
-            let visible = store.visible_folders(owner)?;
-            Ok(visible
-                .active()
-                .map(|f| (f.folder.name.clone(), f.folder.path.clone())))
+            // The names as the folder list shows them.
+            let folders = crate::record::load_folders(store, owner)?;
+            Ok(folders.active().map(|f| (f.name.clone(), f.path.clone())))
         });
         self._folder = Some(cx.spawn(async move |dock, cx| {
             let Ok(folder) = task.await else { return };
