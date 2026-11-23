@@ -5,6 +5,8 @@
 mod attach;
 mod attach_ui;
 #[cfg(windows)]
+mod browser_dock;
+#[cfg(windows)]
 mod browser_host;
 #[cfg(windows)]
 mod browser_panel;
@@ -67,6 +69,8 @@ mod table;
 mod terminal_dock;
 mod theme;
 mod titlebar;
+mod tool_strip;
+mod tools_model;
 mod trash_page;
 mod tree;
 mod type_scale;

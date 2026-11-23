@@ -2333,10 +2333,6 @@ catalogue! {
         en: t("project {name}"),
         fr: t("projet {name}"),
     }
-    TerminalRestartHere "terminal.restart_here" {
-        en: t("Restart here"),
-        fr: t("Redémarrer ici"),
-    }
     TerminalEnded "terminal.ended" {
         en: t("Session ended. {keys} to restart."),
         fr: t("Session terminée. {keys} pour relancer."),
@@ -2420,10 +2416,6 @@ catalogue! {
     TerminalRunningIn "terminal.running_in" {
         en: t("(running in {name})"),
         fr: t("(lancé dans {name})"),
-    }
-    TerminalRestartIn "terminal.restart_in" {
-        en: t("Restart in {name}"),
-        fr: t("Redémarrer dans {name}"),
     }
     TerminalCloseTitle "terminal.close.title" {
         en: t("Close the terminal?"),
@@ -2968,10 +2960,6 @@ catalogue! {
     CmdToggleBottom "cmd.toggle_bottom" {
         en: t("Toggle bottom panel"),
         fr: t("Afficher ou masquer le panneau du bas"),
-    }
-    CmdRestartTerminal "cmd.restart_terminal" {
-        en: t("Restart terminal here"),
-        fr: t("Redémarrer le terminal ici"),
     }
     CmdViewShow "cmd.view_show" {
         en: t("{view}: Show"),
@@ -4424,6 +4412,106 @@ catalogue! {
     BrowserPipeFailed "browser.pipe.failed" {
         en: t("Claude Code cannot reach this browser. Restart Acta; the log says why."),
         fr: t("Claude Code ne peut pas joindre ce navigateur. Redémarrez Acta\u{202f}; le journal indique pourquoi."),
+    }
+    BrowserDevtools "browser.devtools" {
+        en: t("Open developer tools"),
+        fr: t("Ouvrir les outils de développement"),
+    }
+    CmdBrowserDevtools "cmd.browser_devtools" {
+        en: t("Agent browser: Open developer tools"),
+        fr: t("Navigateur de l\u{2019}agent\u{a0}: ouvrir les outils de développement"),
+    }
+    ToolOwner "tool.owner" {
+        en: t("{level} {id} {title}"),
+        fr: t("{level} {id} {title}"),
+    }
+    ToolClaudeN "tool.claude_n" {
+        en: t("Claude {n}"),
+        fr: t("Claude {n}"),
+    }
+    ToolChatN "tool.chat_n" {
+        en: t("Chat {n}"),
+        fr: t("Chat {n}"),
+    }
+    ToolBrowserN "tool.browser_n" {
+        en: t("Browser {n}"),
+        fr: t("Navigateur {n}"),
+    }
+    ToolBrowserFor "tool.browser_for" {
+        en: t("Browser for Claude {n}"),
+        fr: t("Navigateur de Claude {n}"),
+    }
+    ToolDrivenBy "tool.driven_by" {
+        en: t("driven by Claude {n}"),
+        fr: t("piloté par Claude {n}"),
+    }
+    ToolClaudeStart "tool.claude_start" {
+        en: t("Start Claude Code here"),
+        fr: t("Démarrer Claude Code ici"),
+    }
+    ToolClaudeNew "tool.claude_new" {
+        en: t("New Claude Code session here"),
+        fr: t("Nouvelle session Claude Code ici"),
+    }
+    ToolClaudeNone "tool.claude_none" {
+        en: t("No Claude Code on this {level_lower}"),
+        fr: p_by("level_lower", "Pas de Claude Code sur ce {level_lower}", "Pas de Claude Code sur cet {level_lower}"),
+    }
+    ToolClaudeNoneBody "tool.claude_none_body" {
+        en: t("Starts in {folder} with what this {level_lower} knows."),
+        fr: t("Démarre dans {folder} avec ce que sait ce {level_lower}."),
+    }
+    ToolNoOwner "tool.no_owner" {
+        en: t("Claude Code belongs to a project, an epic or a topic. Open one to start it or see its sessions."),
+        fr: t("Claude Code appartient à un projet, un epic ou un sujet. Ouvrez-en un pour le démarrer ou voir ses sessions."),
+    }
+    ToolChatNew "tool.chat_new" {
+        en: t("New chat here"),
+        fr: t("Nouveau chat ici"),
+    }
+    ToolBrowserNew "tool.browser_new" {
+        en: t("New browser here"),
+        fr: t("Nouveau navigateur ici"),
+    }
+    ToolRestartIn "tool.restart_in" {
+        en: t("Restart in {folder}"),
+        fr: t("Redémarrer dans {folder}"),
+    }
+    ToolLimit "tool.limit" {
+        en: t("{n} is the most on one page."),
+        fr: t("{n} au maximum sur une même page."),
+    }
+    ToolFree "tool.free" {
+        en: t("Claude Code (no project)"),
+        fr: t("Claude Code (sans projet)"),
+    }
+    ToolFreeContext "tool.free_context" {
+        en: t("In your home folder, without Acta\u{2019}s context"),
+        fr: t("Dans votre dossier personnel, sans le contexte d\u{2019}Acta"),
+    }
+    ToolFreeTitle "tool.free_title" {
+        en: t("Claude Code without a project"),
+        fr: t("Claude Code sans projet"),
+    }
+    ToolFreeBody "tool.free_body" {
+        en: t("For work that needs no project: it starts in your home folder and knows nothing about Acta."),
+        fr: t("Pour un travail sans projet\u{a0}: il démarre dans votre dossier personnel et ne sait rien d\u{2019}Acta."),
+    }
+    ToolFreeStart "tool.free_start" {
+        en: t("Start"),
+        fr: t("Démarrer"),
+    }
+    ToolFreeNew "tool.free_new" {
+        en: t("New Claude Code (no project)"),
+        fr: t("Nouveau Claude Code (sans projet)"),
+    }
+    CmdClaudeRestart "cmd.claude_restart" {
+        en: t("Restart Claude Code"),
+        fr: t("Redémarrer Claude Code"),
+    }
+    ChatClearAllBody "chat.clear_all_body" {
+        en: t("This deletes the cookies and site data of every chat from this computer. Your conversations stay in your Claude account."),
+        fr: t("Cela supprime de cet ordinateur les cookies et données de site de tous les chats. Vos conversations restent dans votre compte Claude."),
     }
     TerminalClaude "terminal.claude" {
         en: t("Claude"),

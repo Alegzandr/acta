@@ -58,8 +58,9 @@ pub enum PageEvent {
     /// The page learned which project it belongs to (a document opened by
     /// id): the active project follows it.
     Located(acta_core::model::ProjectId),
-    /// "Show terminal" on the Claude Code line: the project's terminal.
-    ShowTerminal(acta_core::model::ProjectId),
+    /// "Show terminal" on the Claude Code line: the page's own session
+    /// (layout.md 4.5.1).
+    ShowTerminal(Owner),
     /// Show the palette as a picker of these rows; the chosen one is
     /// handed to the page's callback.
     Pick(crate::palette::Picker, crate::palette::OnPick),
@@ -3256,7 +3257,12 @@ impl RecordPage {
             .unwrap_or_default();
         let in_acta = on.iter().find_map(|s| {
             let token = s.launch.as_deref()?;
-            terminals.iter().find(|(t, _)| t == token).map(|(_, p)| *p)
+            terminals
+                .iter()
+                .find(|a| a.token == token)
+                .map(|a| a.key.holder)
+                .filter(|h| *h == crate::tools_model::Holder::Page(self.owner))
+                .map(|_| self.owner)
         });
         Some(
             div()
@@ -3281,7 +3287,7 @@ impl RecordPage {
                         .tooltip(ui::tip(tip))
                         .child(crate::sessions::here_text(locale, here)),
                 )
-                .when_some(in_acta, |this, project| {
+                .when_some(in_acta, |this, owner| {
                     this.child(
                         ui::button(
                             "claude-show-terminal",
@@ -3292,9 +3298,7 @@ impl RecordPage {
                         )
                         .h(px(24.))
                         .on_click(
-                            cx.listener(move |_, _, _, cx| {
-                                cx.emit(PageEvent::ShowTerminal(project))
-                            }),
+                            cx.listener(move |_, _, _, cx| cx.emit(PageEvent::ShowTerminal(owner))),
                         ),
                     )
                 })

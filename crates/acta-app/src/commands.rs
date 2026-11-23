@@ -88,7 +88,15 @@ pub enum Command {
     LayoutReset,
     #[cfg(windows)]
     ChatSignOut,
-    RestartTerminal,
+    /// "Restart Claude Code": the session in view (layout.md 4.5.1).
+    ClaudeRestart,
+    /// "Start Claude Code here" (``Ctrl+Shift+` ``).
+    ClaudeStart,
+    /// "New Claude Code (no project)".
+    FreeNew,
+    /// "Agent browser: Open developer tools" (components-app.md 5).
+    #[cfg(windows)]
+    BrowserDevtools,
     TerminalLarger,
     TerminalSmaller,
     SetFolder,
@@ -220,8 +228,23 @@ pub struct Context {
     pub on_contact: bool,
     /// An editor that offers dictation has, or last had, the focus.
     pub dictate: bool,
+    /// The page-bound tools (layout.md 4.5.1).
+    pub tools: ToolCommands,
     /// A take is running.
     pub dictating: bool,
+}
+
+/// The page-bound tool commands that apply now (layout.md 4.5.1).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ToolCommands {
+    /// The page owns tools and is below the session limit.
+    pub claude_start: bool,
+    /// A session of this page is in view.
+    pub claude_restart: bool,
+    /// Claude Code (no project) is below its limit.
+    pub free_new: bool,
+    /// The agent browser is shown with a page in it.
+    pub browser_devtools: bool,
 }
 
 /// What the open page's folders allow (interaction.md 6.1).
@@ -388,10 +411,25 @@ impl Command {
             out.extend([
                 Command::SetFolder,
                 Command::ToggleTerminal,
-                Command::RestartTerminal,
                 Command::TerminalLarger,
                 Command::TerminalSmaller,
             ]);
+        }
+        // layout.md 4.5.1: a page that owns tools starts Claude Code here;
+        // the "New" commands leave the list at the limit.
+        let tools = ctx.tools;
+        out.extend(
+            [
+                (tools.claude_start, Command::ClaudeStart),
+                (tools.claude_restart, Command::ClaudeRestart),
+                (tools.free_new, Command::FreeNew),
+            ]
+            .into_iter()
+            .filter_map(|(on, c)| on.then_some(c)),
+        );
+        #[cfg(windows)]
+        if tools.browser_devtools {
+            out.push(Command::BrowserDevtools);
         }
         // components-app.md 5: on macOS and Linux there is no panel, only
         // the link.
@@ -550,7 +588,11 @@ impl Command {
             Command::ChatBrowser => Key::ChatBrowser,
             #[cfg(windows)]
             Command::ChatSignOut => Key::ChatSignout,
-            Command::RestartTerminal => Key::CmdRestartTerminal,
+            Command::ClaudeRestart => Key::CmdClaudeRestart,
+            Command::ClaudeStart => Key::ToolClaudeStart,
+            Command::FreeNew => Key::ToolFreeNew,
+            #[cfg(windows)]
+            Command::BrowserDevtools => Key::CmdBrowserDevtools,
             Command::TerminalLarger => Key::CmdTerminalLarger,
             Command::TerminalSmaller => Key::CmdTerminalSmaller,
             Command::SetFolder => Key::FoldersSet,

@@ -83,6 +83,23 @@ pub struct Hello {
     /// The session driving the browser, as the header shows it: the focus
     /// topic or epic id (`T-42`), when there is one.
     pub session: Option<String>,
+    /// The page the session belongs to (`T-42`, `E-3`, `P-1`): its
+    /// browsers are the only ones it reaches (layout.md 4.5.1).
+    pub page: Option<String>,
+    /// `ACTA_LAUNCH`: the Acta terminal that started the session, which
+    /// names its browser ("Browser for Claude 2").
+    pub launch: Option<String>,
+}
+
+impl Hello {
+    /// Who the session is, for "its own" browser: its launch token, else
+    /// its connection.
+    pub fn identity(&self, connection: u64) -> String {
+        match &self.launch {
+            Some(token) => format!("launch:{token}"),
+            None => format!("conn:{connection}"),
+        }
+    }
 }
 
 /// Server side: `Ok(hello)` once the client proved the key and the server
@@ -109,11 +126,17 @@ pub fn server_handshake<R: Read, W: Write>(
     }
     c.send(&json!({ "mac": auth::server_mac(key, &s, &cn) }))
         .map_err(|e| e.to_string())?;
-    let session = hello["session"]
-        .as_str()
-        .map(|s| crate::policy::clip(s.trim(), 24))
-        .filter(|s| !s.is_empty());
-    Ok(Hello { session })
+    let field = |name: &str, max: usize| {
+        hello[name]
+            .as_str()
+            .map(|s| crate::policy::clip(s.trim(), max))
+            .filter(|s| !s.is_empty())
+    };
+    Ok(Hello {
+        session: field("session", 24),
+        page: field("page", 24),
+        launch: field("launch", 64),
+    })
 }
 
 /// Client side: Ok when the server proved the key too.
@@ -139,6 +162,8 @@ pub fn client_handshake<R: Read, W: Write>(
         "nonce": auth::hex(&cn),
         "mac": auth::client_mac(key, &s, &cn),
         "session": hello.session,
+        "page": hello.page,
+        "launch": hello.launch,
     }))
     .map_err(|e| e.to_string())?;
     let r: Value = c

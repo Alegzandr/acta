@@ -37,6 +37,15 @@ pub fn profile_dir() -> Option<PathBuf> {
     Some(data_dir(Os::CURRENT, &BaseDirs::from_env())?.join("agent-browser"))
 }
 
+/// "Open developer tools" (components-app.md 5): the system's DevTools
+/// window for the page in view; a second call brings it to the front.
+pub fn open_devtools(webview: &ICoreWebView2) {
+    // SAFETY: a COM call on the live web view, on the UI thread.
+    if let Err(e) = unsafe { webview.OpenDevToolsWindow() } {
+        crate::log::line(&format!("browser: developer tools not opened: {e}"));
+    }
+}
+
 /// One DevTools Protocol call; `reply` runs on the UI thread with the JSON
 /// result or a one-line error.
 pub fn call(
@@ -172,7 +181,10 @@ pub fn install(
     unsafe {
         let settings = webview.Settings()?;
         settings.SetAreDefaultScriptDialogsEnabled(false)?;
-        settings.SetAreDevToolsEnabled(false)?;
+        // The DevTools window, for the human only (ADR 0010, 3, amended
+        // 2026-11-22): an in-process window, never a port; no pipe
+        // operation opens or reads it. The chat keeps it off.
+        settings.SetAreDevToolsEnabled(true)?;
     }
     let sink = events.clone();
     let dialog_handler = ScriptDialogOpeningEventHandler::create(Box::new(move |_, args| {

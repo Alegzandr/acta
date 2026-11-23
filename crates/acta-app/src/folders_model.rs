@@ -284,42 +284,6 @@ pub fn overlaps(dir: &str, folder: &str) -> bool {
         || folder_path::contains(Os::CURRENT, folder, dir).is_some()
 }
 
-/// What the terminal header offers when the session is on something else
-/// (layout.md 4.5, Mismatch).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Mismatch {
-    None,
-    /// Only the session page's active folder changed: "Restart in <name>".
-    RestartIn(String),
-    /// Started from another page, or the commit mode of its folder changed.
-    RestartHere,
-}
-
-/// The mismatch of a running session: `other_page` when it was started
-/// from another page than the active one; `running_in` the folder it runs
-/// in; `page_active` its page's active folder now (path, name);
-/// `mode_changed` when the commit settings of the folder it runs in
-/// changed since it started.
-pub fn mismatch(
-    other_page: bool,
-    running_in: &str,
-    page_active: Option<(&str, &str)>,
-    mode_changed: bool,
-) -> Mismatch {
-    if other_page {
-        return Mismatch::RestartHere;
-    }
-    if let Some((path, name)) = page_active
-        && !folder_path::same(Os::CURRENT, path, running_in)
-    {
-        return Mismatch::RestartIn(name.to_owned());
-    }
-    if mode_changed {
-        return Mismatch::RestartHere;
-    }
-    Mismatch::None
-}
-
 /// The roots of a relocation: `D:\work\acta` located at
 /// `C:\Users\Alexandre\dev\acta` gives `D:\work` and `C:\Users\Alexandre\dev`
 /// (the longest common trailing segments are dropped). `None` when nothing
@@ -513,26 +477,6 @@ mod tests {
         let line = git_line(Some(&detached), Some(&status), CommitMode::Manual).unwrap();
         assert!(line.detached);
         assert_eq!(branch_text(Locale::En, &line), "detached at a1b2c3d");
-    }
-
-    #[test]
-    fn the_header_offers_restart_in_or_here_by_what_changed() {
-        let here = "/dev/acta-wt/embed";
-        let other = Some(("/dev/acta-docs", "acta-docs"));
-        let same = Some((here, "embed"));
-        assert_eq!(mismatch(false, here, same, false), Mismatch::None);
-        assert_eq!(
-            mismatch(false, here, other, false),
-            Mismatch::RestartIn("acta-docs".into()),
-            "only the page's active folder changed"
-        );
-        assert_eq!(
-            mismatch(false, here, same, true),
-            Mismatch::RestartHere,
-            "the commit mode changed: its instruction is out of date"
-        );
-        assert_eq!(mismatch(true, here, other, false), Mismatch::RestartHere);
-        assert_eq!(mismatch(true, here, same, false), Mismatch::RestartHere);
     }
 
     fn git(dir: &Path, args: &[&str]) {

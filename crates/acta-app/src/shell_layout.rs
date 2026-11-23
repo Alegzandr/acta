@@ -317,6 +317,7 @@ pub(crate) fn view_name(view: ViewId) -> Key {
         ViewId::Chat => Key::ChatTitle,
         ViewId::AgentBrowser => Key::ViewAgentBrowser,
         ViewId::Sessions => Key::ViewSessions,
+        ViewId::FreeClaude => Key::ToolFree,
     }
 }
 
@@ -329,6 +330,7 @@ pub(crate) fn view_icon(view: ViewId) -> Icon {
         ViewId::Chat => Icon::MessageCircle,
         ViewId::AgentBrowser => Icon::Globe,
         ViewId::Sessions => Icon::Bot,
+        ViewId::FreeClaude => Icon::Terminal,
     }
 }
 
@@ -339,11 +341,8 @@ pub(crate) fn view_icon(view: ViewId) -> Icon {
 fn view_busy(bench: &super::Bench, view: ViewId, cx: &App) -> bool {
     match view {
         #[cfg(windows)]
-        ViewId::AgentBrowser => bench.browser.read(cx).busy(),
-        ViewId::Terminal => bench.active_project.is_some_and(|p| {
-            bench.dock.read(cx).session_state(p, cx)
-                == Some(acta_core::presence::SessionState::Waiting)
-        }),
+        ViewId::AgentBrowser => bench.browser.read(cx).busy(cx),
+        ViewId::Terminal => bench.dock.read(cx).any_waiting(cx),
         _ => false,
     }
 }
@@ -404,6 +403,7 @@ pub(crate) fn view_keys(
         ViewId::Knowledge => vec![m, "L"],
         ViewId::Terminal => vec![KeyName::Ctrl.label(locale, macos), "`"],
         ViewId::Chat => vec![m, shift, "H"],
+        ViewId::FreeClaude => vec![m, KeyName::Alt.label(locale, macos), "J"],
         // No key of its own (interaction.md 6.1): the toggle, the palette.
         ViewId::AgentBrowser | ViewId::Sessions => Vec::new(),
     }
@@ -609,18 +609,10 @@ impl Shell {
     /// The terminal starts the first time it becomes visible; the Inbox and
     /// Knowledge views exist while they are placed, for the active project.
     fn sync_tool_views(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let origin = self.origin(cx);
+        // Showing the Terminal view starts nothing: a page with no session
+        // shows "Start Claude Code here" (layout.md 4.5.1).
         let Some(bench) = self.bench() else { return };
-        let terminal = bench.layout.is_visible(ViewId::Terminal);
-        if terminal && !bench.ui.terminal_shown {
-            if let Some(origin) = origin {
-                let dock = bench.dock.clone();
-                dock.update(cx, |dock, cx| dock.show(origin, window, cx));
-                bench.ui.terminal_shown = true;
-            }
-        } else if !terminal {
-            bench.ui.terminal_shown = false;
-        }
+        bench.ui.terminal_shown = bench.layout.is_visible(ViewId::Terminal);
         self.sync_page_kind_views(window, cx);
     }
 
@@ -681,6 +673,7 @@ impl Shell {
         Some(match view {
             ViewId::Projects => bench.tree_focus.clone(),
             ViewId::Terminal => bench.dock.read(cx).focus_handle(cx),
+            ViewId::FreeClaude => bench.free_dock.read(cx).focus_handle(cx),
             ViewId::Sessions => bench.sessions.read(cx).focus_handle(cx),
             #[cfg(windows)]
             ViewId::Chat => bench.chat.read(cx).focus_handle(cx),
@@ -1918,7 +1911,7 @@ impl Shell {
                     if on_screen {
                         chat.show(window, cx)
                     } else {
-                        chat.hide(cx)
+                        chat.hide(window, cx)
                     }
                 });
             }
@@ -2101,7 +2094,7 @@ impl Shell {
             // room is the group's width less the padding and the buttons.
             // The view's own buttons, its menu, and the area's `minus`.
             let own = match active {
-                ViewId::Terminal => 1,
+                ViewId::Terminal | ViewId::FreeClaude => 2,
                 ViewId::Chat | ViewId::AgentBrowser => 2,
                 _ => 0,
             };
@@ -2196,7 +2189,7 @@ impl Shell {
         // the folded chevron.
         let available = {
             let own = match active {
-                ViewId::Terminal => 1,
+                ViewId::Terminal | ViewId::FreeClaude => 2,
                 ViewId::Chat | ViewId::AgentBrowser => 2,
                 _ => 0,
             };
@@ -2474,14 +2467,12 @@ impl Shell {
                 let dock = bench.dock.clone();
                 dock.update(cx, |dock, cx| dock.header_context(available, cx))
             }
+            ViewId::FreeClaude => {
+                let dock = bench.free_dock.clone();
+                dock.update(cx, |dock, cx| dock.header_context(available, cx))
+            }
             #[cfg(windows)]
-            ViewId::Chat => Some(
-                type_scale::SMALL
-                    .el()
-                    .text_color(t.text_tertiary)
-                    .child("claude.ai")
-                    .into_any_element(),
-            ),
+            ViewId::Chat => bench.chat.read(cx).header_context(cx),
             #[cfg(windows)]
             ViewId::AgentBrowser => bench.browser.read(cx).header_context(cx),
             ViewId::Sessions => bench.sessions.read(cx).header_context(cx),
@@ -2522,6 +2513,10 @@ impl Shell {
                 let dock = bench.dock.clone();
                 Some(dock.update(cx, |dock, cx| dock.header_buttons(cx)))
             }
+            ViewId::FreeClaude => {
+                let dock = bench.free_dock.clone();
+                Some(dock.update(cx, |dock, cx| dock.header_buttons(cx)))
+            }
             #[cfg(windows)]
             ViewId::Chat => {
                 let can_split = bench.layout.can_split_off(ViewId::Chat);
@@ -2559,6 +2554,7 @@ impl Shell {
                 self.projects_view(window, cx)
             }
             ViewId::Terminal => bench.dock.clone().into_any_element(),
+            ViewId::FreeClaude => bench.free_dock.clone().into_any_element(),
             ViewId::Sessions => bench.sessions.clone().into_any_element(),
             #[cfg(windows)]
             ViewId::Chat => bench.chat.clone().into_any_element(),
@@ -3589,7 +3585,7 @@ impl Shell {
         match event {
             PageEvent::Open(route) => self.navigate(*route, true, window, cx),
             PageEvent::NewKb(draft) => self.new_kb_draft(*draft, window, cx),
-            PageEvent::ShowTerminal(project) => self.show_session_terminal(*project, window, cx),
+            PageEvent::ShowTerminal(owner) => self.show_page_sessions(*owner, window, cx),
             PageEvent::Pick(picker, on_pick) => {
                 self.open_picker(picker.clone(), on_pick.clone(), window, cx)
             }
