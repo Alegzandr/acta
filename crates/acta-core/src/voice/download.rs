@@ -433,6 +433,21 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// The hex SHA-256 of everything `r` yields (sha2 0.11 hashers are no
+/// longer `io::Write`, so no `io::copy`).
+fn sha256_hex(mut r: impl Read) -> io::Result<String> {
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; CHUNK];
+    loop {
+        match r.read(&mut buf) {
+            Ok(0) => return Ok(hex(&hasher.finalize())),
+            Ok(n) => hasher.update(&buf[..n]),
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
+        }
+    }
+}
+
 fn sync_dir(_dir: &Path) {
     #[cfg(unix)]
     if let Ok(d) = File::open(_dir) {
@@ -480,14 +495,12 @@ pub fn check_model(dir: &Path, expected: Expected<'_>) -> ModelState {
     if recorded.is_some() && recorded == stamp(&path).ok() {
         return ModelState::Ready(path);
     }
-    let Ok(mut f) = File::open(&path) else {
+    let Ok(f) = File::open(&path) else {
         return ModelState::Damaged;
     };
-    let mut hasher = Sha256::new();
-    if io::copy(&mut f, &mut hasher).is_err() || hex(&hasher.finalize()) != expected.sha256 {
+    if sha256_hex(f).ok().as_deref() != Some(expected.sha256) {
         return ModelState::Damaged;
     }
-    drop(f);
     let _ = record(dir, expected.file);
     ModelState::Ready(path)
 }
@@ -770,6 +783,19 @@ mod tests {
             all.sort();
             all
         }
+    }
+
+    /// Known answers (FIPS 180-2): the empty input and "abc", across reads.
+    #[test]
+    fn sha256_hex_is_sha_256() {
+        assert_eq!(
+            sha256_hex(&b""[..]).unwrap(),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+        assert_eq!(
+            sha256_hex(&b"abc"[..]).unwrap(),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
     }
 
     #[test]

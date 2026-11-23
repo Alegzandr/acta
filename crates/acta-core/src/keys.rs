@@ -44,8 +44,8 @@ impl Key {
     /// `HMAC-SHA256(self, label)`: a secret for another purpose that reveals
     /// nothing of the key.
     pub fn derive(&self, label: &[u8]) -> Zeroizing<[u8; 32]> {
-        use hmac::{Hmac, Mac};
-        let mut mac = <Hmac<sha2::Sha256> as Mac>::new_from_slice(&self.0)
+        use hmac::{Hmac, KeyInit, Mac};
+        let mut mac = <Hmac<sha2::Sha256> as KeyInit>::new_from_slice(&self.0)
             .expect("HMAC takes a key of any length");
         mac.update(label);
         Zeroizing::new(mac.finalize().into_bytes().into())
@@ -317,6 +317,22 @@ mod tests {
             *Key::from_bytes([8; 32]).derive(b"acta agent-browser ipc v1")
         );
         assert_ne!(&a[..], &[7u8; 32][..]);
+    }
+
+    /// Known answer, computed with an independent HMAC-SHA256: a crate
+    /// upgrade must never change the secrets derived from a stored key.
+    #[test]
+    fn derive_is_hmac_sha256_of_the_label() {
+        let key = Key::from_bytes([7; 32]);
+        let hex: String = key
+            .derive(b"acta agent-browser ipc v1")
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        assert_eq!(
+            hex,
+            "8377a154c994913b00a76a8a786052aa317cb5333c9feca05328e6d637ef508b"
+        );
     }
 
     #[test]
