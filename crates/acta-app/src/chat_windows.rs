@@ -50,7 +50,7 @@ fn down(key: u16) -> bool {
     (unsafe { GetKeyState(i32::from(key)) } as u16 & 0x8000) != 0
 }
 
-pub fn install(web: &wry::WebView, signals: Sender<Signal>) -> windows::core::Result<Hooks> {
+pub fn install(web: &wry::WebView, signals: Sender<Signal>) -> windows_core::Result<Hooks> {
     let controller = web.controller();
     let webview = web.webview();
     let (mut keys, mut focus, mut navigation) = (0i64, 0i64, 0i64);
@@ -98,7 +98,7 @@ pub fn install(web: &wry::WebView, signals: Sender<Signal>) -> windows::core::Re
 
     let navigation_handler = NavigationCompletedEventHandler::create(Box::new(move |_, args| {
         let Some(args) = args else { return Ok(()) };
-        let mut success = windows::core::BOOL::default();
+        let mut success = windows_core::BOOL::default();
         let mut error = COREWEBVIEW2_WEB_ERROR_STATUS::default();
         // SAFETY: out-parameters of the event's own arguments.
         unsafe {

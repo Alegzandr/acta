@@ -113,7 +113,7 @@ dependencies = [
  "velopack",
  "webview2-com",
  "whisper-rs",
- "windows 0.61.3",
+ "windows-core 0.61.2",
  "windows-sys 0.61.2",
  "winreg",
  "winresource",
@@ -131,7 +131,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.1",
  "url",
- "windows 0.61.3",
+ "windows 0.62.2",
 ]
 
 [[package]]

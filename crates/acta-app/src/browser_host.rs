@@ -28,7 +28,7 @@ use webview2_com::{
     NavigationStartingEventHandler, PermissionRequestedEventHandler,
     ScriptDialogOpeningEventHandler, take_pwstr,
 };
-use windows::core::{HSTRING, Interface as _, PWSTR};
+use windows_core::{HSTRING, Interface as _, PWSTR};
 
 /// `<data dir>/agent-browser`: its own user data folder, hence its own
 /// browser process, never the chat's (ADR 0010, decision 2).
@@ -140,7 +140,7 @@ pub fn install(
     webview: &ICoreWebView2,
     events: Arc<Events>,
     allowed: Arc<dyn Fn(&str) -> bool + Send + Sync>,
-) -> windows::core::Result<Hooks> {
+) -> windows_core::Result<Hooks> {
     let mut receivers = Vec::new();
     for name in SUBSCRIBED {
         let sink = events.clone();

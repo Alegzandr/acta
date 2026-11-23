@@ -79,7 +79,10 @@ async-channel = "2"
 # The WebView2 controller events wry does not expose: accelerator keys routed to
 # Acta, focus, and failed navigations (chat_windows.rs). Same versions as lb-wry's.
 webview2-com = "=0.38.2"
-windows = "0.61"
+# The COM types (HSTRING, PWSTR, BOOL, Result, Interface) at that boundary: they must be
+# the windows-core webview2-com is built on (0.61 for 0.38), not the `windows` crate the
+# rest of the workspace uses, or the types do not match. Bumped with webview2-com.
+windows-core = "0.61"
 # The agent browser (ADR 0010): its operations, policy and pipe (its key is
 # wiped from memory with `zeroize`, a dependency above).
 acta-browser = { path = "../acta-browser" }
