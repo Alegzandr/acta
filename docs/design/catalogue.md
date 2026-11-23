@@ -669,7 +669,6 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `terminal.on_topic` | {id} {name} | {id} {name} |
 | `terminal.on_epic` | {id} {name} | {id} {name} |
 | `terminal.on_project` | project {name} | projet {name} |
-| `terminal.restart_here` | Restart here | Redémarrer ici |
 | `terminal.ended` | Session ended. {keys} to restart. | Session terminée. {keys} pour relancer. |
 | `terminal.ended_once` | Session ended. | Session terminée. |
 | `terminal.ask.title` | Where should Claude Code start? | Où Claude Code doit-il démarrer ? |
@@ -691,7 +690,6 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `terminal.missing.body.project` | Claude Code was not started: the active folder of project {name} is not on this computer. | Claude Code n'a pas été lancé : le dossier actif du projet {name} n'est pas sur cet ordinateur. |
 | `terminal.missing.other` | Or start in another folder: | Ou démarrer dans un autre dossier : |
 | `terminal.running_in` | (running in {name}) | (lancé dans {name}) |
-| `terminal.restart_in` | Restart in {name} | Redémarrer dans {name} |
 | `terminal.close.title` | Close the terminal? | Fermer le terminal ? |
 | `terminal.close.body` | Claude Code is still running in it. | Claude Code y est encore en cours d'exécution. |
 | `terminal.close.confirm` | Close terminal | Fermer le terminal |
@@ -829,7 +827,6 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `cmd.toggle_chat` | Toggle chat | Afficher ou masquer le chat |
 | `cmd.toggle_right` | Toggle right sidebar | Afficher ou masquer la barre latérale droite |
 | `cmd.toggle_bottom` | Toggle bottom panel | Afficher ou masquer le panneau du bas |
-| `cmd.restart_terminal` | Restart terminal here | Redémarrer le terminal ici |
 | `cmd.view_show` | {view}: Show | {view} : afficher |
 | `cmd.view_hide` | {view}: Hide | {view} : masquer |
 | `cmd.view_left` | {view}: Move to left sidebar | {view} : déplacer dans la barre latérale gauche |
@@ -1200,6 +1197,31 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `browser.failed.title` | The browser could not be started | Le navigateur n'a pas pu être démarré |
 | `browser.pipe.taken` | Claude Code cannot reach this browser: another copy of Acta, or another program, already serves it. Close it and restart Acta. | Claude Code ne peut pas joindre ce navigateur : une autre copie d'Acta, ou un autre programme, le sert déjà. Fermez-le et redémarrez Acta. |
 | `browser.pipe.failed` | Claude Code cannot reach this browser. Restart Acta; the log says why. | Claude Code ne peut pas joindre ce navigateur. Redémarrez Acta ; le journal indique pourquoi. |
+| `browser.devtools` | Open developer tools | Ouvrir les outils de développement |
+| `cmd.browser_devtools` | Agent browser: Open developer tools | Navigateur de l'agent : ouvrir les outils de développement |
+| `tool.owner` | {level} {id} {title} | {level} {id} {title} |
+| `tool.claude_n` | Claude {n} | Claude {n} |
+| `tool.chat_n` | Chat {n} | Chat {n} |
+| `tool.browser_n` | Browser {n} | Navigateur {n} |
+| `tool.browser_for` | Browser for Claude {n} | Navigateur de Claude {n} |
+| `tool.driven_by` | driven by Claude {n} | piloté par Claude {n} |
+| `tool.claude_start` | Start Claude Code here | Démarrer Claude Code ici |
+| `tool.claude_new` | New Claude Code session here | Nouvelle session Claude Code ici |
+| `tool.claude_none` | No Claude Code on this {level_lower} | Pas de Claude Code sur ce {level_lower} · Pas de Claude Code sur cet {level_lower} |
+| `tool.claude_none_body` | Starts in {folder} with what this {level_lower} knows. | Démarre dans {folder} avec ce que sait ce {level_lower}. |
+| `tool.no_owner` | Claude Code belongs to a project, an epic or a topic. Open one to start it or see its sessions. | Claude Code appartient à un projet, un epic ou un sujet. Ouvrez-en un pour le démarrer ou voir ses sessions. |
+| `tool.chat_new` | New chat here | Nouveau chat ici |
+| `tool.browser_new` | New browser here | Nouveau navigateur ici |
+| `tool.restart_in` | Restart in {folder} | Redémarrer dans {folder} |
+| `tool.limit` | {n} is the most on one page. | {n} au maximum sur une même page. |
+| `tool.free` | Claude Code (no project) | Claude Code (sans projet) |
+| `tool.free_context` | In your home folder, without Acta's context | Dans votre dossier personnel, sans le contexte d'Acta |
+| `tool.free_title` | Claude Code without a project | Claude Code sans projet |
+| `tool.free_body` | For work that needs no project: it starts in your home folder and knows nothing about Acta. | Pour un travail sans projet : il démarre dans votre dossier personnel et ne sait rien d'Acta. |
+| `tool.free_start` | Start | Démarrer |
+| `tool.free_new` | New Claude Code (no project) | Nouveau Claude Code (sans projet) |
+| `cmd.claude_restart` | Restart Claude Code | Redémarrer Claude Code |
+| `chat.clear_all_body` | This deletes the cookies and site data of every chat from this computer. Your conversations stay in your Claude account. | Cela supprime de cet ordinateur les cookies et données de site de tous les chats. Vos conversations restent dans votre compte Claude. |
 | `terminal.claude` | Claude | Claude |
 | `terminal.waiting` | waiting for you | vous attend |
 | `view.sessions` | Claude Code sessions | Sessions Claude Code |
@@ -1431,7 +1453,7 @@ New with the user's ruling of 2026-11-22 (components-app.md 5, Trash page; data.
 
 ### 10.4.15 Keys of the agent browser's developer tools
 
-New with the user's request of 2026-11-22 (components-app.md 5, Agent browser). Pending: into 10.4 after the `browser.*` keys when implemented.
+New with the user's request of 2026-11-22 (components-app.md 5, Agent browser). **Moved into 10.4** after the `browser.*` keys (branch `gpui-engineer/page-sessions`).
 
 | Key | English | French |
 |---|---|---|
@@ -1454,7 +1476,7 @@ From the user's rule of 2026-11-22 (components-records.md 5, Who writes what; da
 
 ### 10.4.17 Keys of page-bound tools and Claude Code (no project)
 
-From the user's decisions of 2026-11-22 (layout.md 4.5.1, data.md 11 request 27). Pending until implemented. `{level}` is the `level.*` word ("Topic", "Epic", "Project"; in French « Sujet », « Epic », « Projet »), `{id}` the short id, `{title}` the record's title as written, `{folder}` a folder's name, `{n}` the instance number.
+From the user's decisions of 2026-11-22 (layout.md 4.5.1, data.md 11 request 27). **Moved into 10.4** after `cmd.browser_devtools` (branch `gpui-engineer/page-sessions`); `terminal.restart_here`, `terminal.restart_in` and `cmd.restart_terminal` were removed. `tool.claude_none` is a two-form key in French, chosen by elision (one: « ce », other: « cet »). `{level}` is the `level.*` word ("Topic", "Epic", "Project"; in French « Sujet », « Epic », « Projet »), `{id}` the short id, `{title}` the record's title as written, `{folder}` a folder's name, `{n}` the instance number.
 
 **Replaced** when it lands: `cmd.restart_terminal` ("Restart terminal here") by `cmd.claude_restart`; the terminal header's "Restart here" by `tool.restart_in` alone.
 

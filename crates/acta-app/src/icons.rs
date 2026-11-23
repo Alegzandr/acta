@@ -79,6 +79,7 @@ icons! {
     Search => "search",
     Settings => "settings",
     SquareTerminal => "square-terminal",
+    Terminal => "terminal",
     Trash2 => "trash-2",
     ExternalLink => "external-link",
     ListTree => "list-tree",

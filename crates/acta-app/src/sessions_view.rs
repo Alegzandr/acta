@@ -2,7 +2,7 @@
 //! every live Claude Code session, its focus, state and last activity, with
 //! the actions Acta can take on the ones running in its own terminal.
 
-use acta_core::model::{Owner, ProjectId};
+use acta_core::model::Owner;
 use acta_core::presence::LiveSession;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
@@ -15,6 +15,7 @@ use crate::i18n::{Arg, Key, text, tr};
 use crate::icons::{Icon, icon};
 use crate::settings;
 use crate::theme::Tokens;
+use crate::tools_model::InstanceKey;
 use crate::type_scale;
 use crate::ui;
 use crate::workspace::Workspace;
@@ -22,10 +23,11 @@ use crate::workspace::Workspace;
 pub enum SessionsEvent {
     /// Open the page of the session's focus.
     Open(Owner),
-    /// Show the terminal running the session (a session in Acta).
-    ShowTerminal(ProjectId),
+    /// Show the terminal running the session (a session in Acta): its own
+    /// page opens and shows it (layout.md 4.5.1).
+    ShowTerminal(InstanceKey),
     /// End the terminal's process.
-    End(ProjectId),
+    End(InstanceKey),
 }
 
 pub struct SessionsView {
@@ -102,14 +104,24 @@ impl SessionsView {
         &self,
         index: usize,
         s: &LiveSession,
-        in_acta: Option<ProjectId>,
+        in_acta: Option<&InActa>,
         t: &Tokens,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let locale = settings::locale(cx);
         let owner = crate::sessions::place(s);
         let name = title_of(self.ws.read(cx), owner).unwrap_or_default();
-        let label = crate::terminal_dock::focus_label(locale, owner, &name);
+        let mut label = crate::terminal_dock::focus_label(locale, owner, &name);
+        // The instance, when its page has several ("T-12 ... · Claude 2").
+        if let Some(a) = in_acta.filter(|a| a.several) {
+            label.push_str(" \u{b7} ");
+            label.push_str(&tr(
+                locale,
+                Key::ToolClaudeN,
+                &[("n", Arg::Count(u64::from(a.key.n)))],
+            ));
+        }
+        let in_acta = in_acta.map(|a| a.key);
         let color = crate::sessions::state_color(s.state, t);
         let selected = index == self.selected;
         let id = SharedString::from(format!("session-row-{index}"));
@@ -170,7 +182,7 @@ impl SessionsView {
                             .child(crate::sessions::detail(locale, s, true)),
                     ),
             )
-            .when_some(in_acta, |this, project| {
+            .when_some(in_acta, |this, key| {
                 this.child(
                     div()
                         .flex()
@@ -193,7 +205,7 @@ impl SessionsView {
                             .on_click(cx.listener(
                                 move |_, _, _, cx| {
                                     cx.stop_propagation();
-                                    cx.emit(SessionsEvent::ShowTerminal(project));
+                                    cx.emit(SessionsEvent::ShowTerminal(key));
                                 },
                             )),
                         )
@@ -211,7 +223,7 @@ impl SessionsView {
                             .on_click(cx.listener(
                                 move |_, _, _, cx| {
                                     cx.stop_propagation();
-                                    cx.emit(SessionsEvent::End(project));
+                                    cx.emit(SessionsEvent::End(key));
                                 },
                             )),
                         ),
@@ -248,7 +260,7 @@ impl Render for SessionsView {
                     let in_acta = s
                         .launch
                         .as_deref()
-                        .and_then(|tok| terminals.iter().find(|(t, _)| t == tok).map(|(_, p)| *p));
+                        .and_then(|tok| terminals.iter().find(|a| a.token == tok));
                     self.row(i, s, in_acta, &t, cx)
                 })
                 .collect()
@@ -278,10 +290,33 @@ impl Render for SessionsView {
     }
 }
 
-/// The launch tokens of the terminals running now, with their project,
-/// set by the shell from the dock each frame (the view never reads the
-/// dock itself).
+/// The launch tokens of the terminals running now, with their instance,
+/// set by the terminal dock (the view never reads the dock itself).
 #[derive(Default)]
-pub struct TerminalTokens(pub Vec<(String, ProjectId)>);
+pub struct TerminalTokens(pub Vec<InActa>);
+
+/// The page of every Acta terminal session by launch token, shared with
+/// the agent browser's pipe threads (a session reaches its own page's
+/// browsers, layout.md 4.5.1). Written by the terminal dock.
+#[derive(Clone, Default)]
+pub struct LaunchPages(
+    pub std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, Owner>>>,
+);
+
+impl gpui_kit::Global for LaunchPages {}
+
+/// The shared map, created on first use.
+pub fn launch_pages(cx: &mut App) -> LaunchPages {
+    cx.default_global::<LaunchPages>().clone()
+}
+
+/// A session in Acta's terminal: its launch token, its instance, and
+/// whether its page has several (the row then names it).
+#[derive(Clone, Debug)]
+pub struct InActa {
+    pub token: String,
+    pub key: InstanceKey,
+    pub several: bool,
+}
 
 impl gpui_kit::Global for TerminalTokens {}
