@@ -206,6 +206,7 @@ jobs:
             export CARGO_TARGET_DIR=C:/t
             cargo build --release --locked
             mkdir -p target
+            rm -rf "target/$TARGET"
             powershell -NoProfile -Command "New-Item -ItemType Junction -Path target/$TARGET -Target C:/t | Out-Null"
           else
             cargo build --release --locked --target "$TARGET"
