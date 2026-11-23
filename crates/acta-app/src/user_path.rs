@@ -229,7 +229,7 @@ mod registry {
             return Ok(false);
         };
         let value = RegValue {
-            bytes: encode(&updated),
+            bytes: encode(&updated).into(),
             vtype,
         };
         key.set_raw_value(target.name, &value)?;
@@ -440,10 +440,17 @@ pub(crate) mod tests {
                 let (key, _) = RegKey::predef(HKEY_CURRENT_USER)
                     .create_subkey(&self.subkey)
                     .unwrap();
-                key.set_raw_value(NAME, &RegValue { bytes, vtype }).unwrap();
+                key.set_raw_value(
+                    NAME,
+                    &RegValue {
+                        bytes: bytes.into(),
+                        vtype,
+                    },
+                )
+                .unwrap();
             }
 
-            pub(crate) fn get(&self) -> Option<RegValue> {
+            pub(crate) fn get(&self) -> Option<RegValue<'static>> {
                 RegKey::predef(HKEY_CURRENT_USER)
                     .open_subkey(&self.subkey)
                     .unwrap()
@@ -559,7 +566,10 @@ pub(crate) mod tests {
 
             assert_eq!(err.kind(), ErrorKind::InvalidData);
             let value = scratch.get().unwrap();
-            assert_eq!((value.vtype, value.bytes), (RegType::REG_DWORD, bytes));
+            assert_eq!(
+                (value.vtype, value.bytes.into_owned()),
+                (RegType::REG_DWORD, bytes)
+            );
         }
 
         #[test]

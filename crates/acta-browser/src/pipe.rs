@@ -107,8 +107,8 @@ fn tag(data_dir: &Path) -> String {
 /// name is observed; squatting it then is a denial of service, never
 /// impersonation (the first-instance flag and the key handshake).
 pub fn pipe_name(sid: &str, key: &[u8; 32], data_dir: &Path) -> String {
-    use hmac::{Hmac, Mac};
-    let mut m = <Hmac<Sha256> as Mac>::new_from_slice(key).expect("HMAC takes any key length");
+    use hmac::{Hmac, KeyInit, Mac};
+    let mut m = <Hmac<Sha256> as KeyInit>::new_from_slice(key).expect("HMAC takes any key length");
     m.update(b"pipe name v1");
     m.update(data_dir.to_string_lossy().to_lowercase().as_bytes());
     let tag = crate::auth::hex(&m.finalize().into_bytes()[..8]);
@@ -563,6 +563,22 @@ mod tests {
         let tag = ours.rsplit('-').next().unwrap();
         assert_eq!(tag.len(), 16);
         assert!(tag.bytes().all(|b| b.is_ascii_hexdigit()));
+    }
+
+    /// Known answers, computed independently: the pipe and mutex names must
+    /// not change between builds, or the app and `acta mcp browser` of
+    /// different versions stop finding each other.
+    #[test]
+    fn names_are_stable() {
+        let dir = Path::new(r"C:\Users\Alexandre\AppData\Local\Acta");
+        assert_eq!(
+            pipe_name("S-1-5-21-1", &[7u8; 32], dir),
+            r"\\.\pipe\acta-S-1-5-21-1-browser-0dee4a42f0115968"
+        );
+        assert_eq!(
+            mutex_name("S-1-5-21-1", dir),
+            r"Local\acta-S-1-5-21-1-app-93476423"
+        );
     }
 
     /// Security audit: a client that connects and closes before the server

@@ -66,7 +66,7 @@ objc2-speech = "0.3.2"
 whisper-rs = { version = "0.16", features = ["vulkan"] }
 
 [target.'cfg(windows)'.dependencies]
-winreg = "0.55"
+winreg = "0.56"
 # The chat panel (ADR 0009): the system web view, Windows only for now (macOS and
 # Linux get the link). Exact pins, bumped together with gpui-kit; gpui-webview builds
 # on Longbridge's wry fork.
@@ -79,7 +79,10 @@ async-channel = "2"
 # The WebView2 controller events wry does not expose: accelerator keys routed to
 # Acta, focus, and failed navigations (chat_windows.rs). Same versions as lb-wry's.
 webview2-com = "=0.38.2"
-windows = "0.61"
+# The COM types (HSTRING, PWSTR, BOOL, Result, Interface) at that boundary: they must be
+# the windows-core webview2-com is built on (0.61 for 0.38), not the `windows` crate the
+# rest of the workspace uses, or the types do not match. Bumped with webview2-com.
+windows-core = "0.61"
 # The agent browser (ADR 0010): its operations, policy and pipe (its key is
 # wiped from memory with `zeroize`, a dependency above).
 acta-browser = { path = "../acta-browser" }
@@ -101,4 +104,4 @@ tempfile = "3"
 [build-dependencies]
 winresource = "0.1.34"
 # The packaged Silero VAD's hash, checked at build time (build.rs).
-sha2 = "0.10"
+sha2 = "0.11"
