@@ -100,6 +100,27 @@ pub fn choosable(groups: &[SwitchGroup]) -> Vec<Option<FolderId>> {
         .collect()
 }
 
+/// Type-ahead in the switcher's menu (components.md 5, Context menu): the
+/// next folder after `from` (an index of [`choosable`]) whose name starts
+/// with `typed`, ignoring case, wrapping around; `None` when no folder
+/// does.
+pub fn type_ahead(groups: &[SwitchGroup], from: usize, typed: &str) -> Option<usize> {
+    let typed = typed.to_lowercase();
+    if typed.is_empty() {
+        return None;
+    }
+    let names: Vec<String> = groups
+        .iter()
+        .flat_map(|g| g.entries.iter())
+        .filter(|e| !e.missing)
+        .map(|e| e.name.to_lowercase())
+        .collect();
+    let n = names.len();
+    (1..=n)
+        .map(|step| (from + step) % n)
+        .find(|&i| names[i].starts_with(&typed))
+}
+
 type Act<V> = Rc<dyn Fn(&mut V, &mut Window, &mut Context<V>)>;
 type Choose<V> = Rc<dyn Fn(&mut V, FolderId, &mut Window, &mut Context<V>)>;
 
@@ -285,4 +306,39 @@ pub fn count(locale: Locale, n: usize, t: &Tokens) -> Div {
         .text_color(t.text_tertiary)
         .font_features(type_scale::tabular())
         .child(format!("+{}", number(locale, n as u64)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(id: i64, name: &str, missing: bool) -> SwitchEntry {
+        SwitchEntry {
+            id: FolderId(id),
+            icon: Icon::FolderOpen,
+            name: name.to_owned(),
+            active: false,
+            missing,
+        }
+    }
+
+    #[test]
+    fn type_ahead_finds_the_next_name_and_wraps() {
+        let groups = vec![
+            SwitchGroup {
+                label: "This topic".into(),
+                entries: vec![entry(1, "acta", false), entry(2, "Docs", false)],
+            },
+            SwitchGroup {
+                label: "From project Acta".into(),
+                entries: vec![entry(3, "gone", true), entry(4, "acta-docs", false)],
+            },
+        ];
+        // The menu's indexes skip folders not found ("gone").
+        assert_eq!(type_ahead(&groups, 0, "a"), Some(2));
+        assert_eq!(type_ahead(&groups, 2, "a"), Some(0));
+        assert_eq!(type_ahead(&groups, 0, "D"), Some(1));
+        assert_eq!(type_ahead(&groups, 0, "g"), None);
+        assert_eq!(type_ahead(&groups, 0, ""), None);
+    }
 }

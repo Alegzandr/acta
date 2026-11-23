@@ -199,12 +199,17 @@ jobs:
           # ggml-vulkan's nested CMake build overruns Windows' 260-character
           # paths under the workspace: build in a short directory and link it
           # back as ./target so packaging finds target/<triple>/release.
+          # ggml-vulkan's nested shader-generator build also fails when cargo
+          # cross-targets (--target) on Windows, so the Windows build is a
+          # native one, linked back as target/<triple> for packaging.
           if [ "$RUNNER_OS" = Windows ]; then
             export CARGO_TARGET_DIR=C:/t
-          fi
-          cargo build --release --locked --target "$TARGET"
-          if [ "$RUNNER_OS" = Windows ] && [ ! -e target ]; then
-            powershell -NoProfile -Command "New-Item -ItemType Junction -Path target -Target C:/t | Out-Null"
+            cargo build --release --locked
+            mkdir -p target
+            rm -rf "target/$TARGET"
+            powershell -NoProfile -Command "New-Item -ItemType Junction -Path target/$TARGET -Target C:/t | Out-Null"
+          else
+            cargo build --release --locked --target "$TARGET"
           fi
       # The packaging scripts put this directory into every package.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2

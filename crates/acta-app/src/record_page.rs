@@ -82,6 +82,9 @@ pub enum PageEvent {
     /// The Overview's late answers: the Questions page of this scope with
     /// Overdue selected.
     LateAnswers(Owner),
+    /// "Logged as a decision": the topic opens with that entry focused
+    /// (components-questions.md 5, Meta line).
+    OpenEntry(TopicId, EntryId),
 }
 
 gpui_kit::actions!(
@@ -175,6 +178,15 @@ pub struct RecordPage {
     table_due: Option<TableDue>,
     /// The Questions section and the Report to row.
     q: questions::QuestionUi,
+    /// The blocks `Up` / `Down` step through (interaction.md 6.1), in the
+    /// order last drawn, and their focus handles.
+    block_order: Vec<record::Block>,
+    block_focus: std::collections::HashMap<record::Block, FocusHandle>,
+    /// A block to bring into view once laid out (stepped to, or the entry
+    /// "Logged as a decision" opened).
+    reveal_block: std::rc::Rc<std::cell::Cell<Option<record::Block>>>,
+    /// An entry to focus once the timeline is loaded.
+    pending_entry: Option<EntryId>,
     _load: Task<()>,
     _subs: Vec<Subscription>,
 }
@@ -296,6 +308,10 @@ impl RecordPage {
             row_ids: Default::default(),
             table_due: None,
             q: questions::QuestionUi::default(),
+            block_order: Vec::new(),
+            block_focus: Default::default(),
+            reveal_block: Default::default(),
+            pending_entry: None,
             _load: Task::ready(()),
             _subs: subs,
         };
@@ -1051,6 +1067,128 @@ impl RecordPage {
 
     // ---- keys ----
 
+    // ---- blocks (interaction.md 6.1) ----
+
+    /// "Logged as a decision": the entry is focused and brought into view,
+    /// now or once the timeline is loaded. An entry the timeline does not
+    /// show (another filter) shows it with every type first.
+    pub fn focus_entry(&mut self, entry: EntryId, window: &mut Window, cx: &mut Context<Self>) {
+        let block = record::Block::Entry(entry);
+        let loaded = self
+            .data
+            .as_ref()
+            .is_some_and(|d| d.entries.iter().any(|e| e.id == entry));
+        if loaded && self.block_order.contains(&block) {
+            self.focus_block(block, window, cx);
+            return;
+        }
+        if self.data.is_some() && self.filter != EntryFilterKind::All {
+            self.filter = EntryFilterKind::All;
+            self.reload(cx);
+        }
+        self.pending_entry = Some(entry);
+        cx.notify();
+    }
+
+    /// The handle of a block, made the first time it is drawn.
+    fn block_handle(&mut self, block: record::Block, cx: &mut Context<Self>) -> FocusHandle {
+        self.block_focus
+            .entry(block)
+            .or_insert_with(|| cx.focus_handle())
+            .clone()
+    }
+
+    /// The block with the keyboard.
+    fn focused_block(&self, window: &Window) -> Option<record::Block> {
+        self.block_order.iter().copied().find(|b| {
+            self.block_focus
+                .get(b)
+                .is_some_and(|h| h.is_focused(window))
+        })
+    }
+
+    /// Focus a block and scroll it into view by the least amount.
+    pub(super) fn focus_block(
+        &mut self,
+        block: record::Block,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let handle = self.block_handle(block, cx);
+        window.focus(&handle, cx);
+        self.reveal_block.set(Some(block));
+        cx.notify();
+    }
+
+    /// A block's element: its focus handle, the ring for the keyboard, and
+    /// the measure that brings it into view once stepped to.
+    /// The handles are made before drawing, in `render`.
+    pub(super) fn block_el(
+        &self,
+        block: record::Block,
+        el: gpui_kit::Stateful<gpui_kit::Div>,
+        t: &Tokens,
+    ) -> gpui_kit::Stateful<gpui_kit::Div> {
+        let handle = self.block_focus.get(&block).cloned();
+        let reveal = std::rc::Rc::clone(&self.reveal_block);
+        let scroll = self.scroll.clone();
+        ui::focusable(el, t, false)
+            .when_some(handle, |this, h| this.track_focus(&h))
+            .relative()
+            .child(ui::measure(move |bounds, window| {
+                if reveal.get() == Some(block) {
+                    reveal.set(None);
+                    ui::scroll_into_view(&scroll, bounds, ui::Reveal::Whole);
+                    window.refresh();
+                }
+            }))
+    }
+
+    /// `Up` / `Down` between blocks, `Enter` into the focused one. Whether
+    /// the key was taken.
+    fn block_keys(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let k = &event.keystroke;
+        if k.modifiers.modified() {
+            return false;
+        }
+        let at = self.focused_block(window);
+        let on_page = self.focus.is_focused(window);
+        match k.key.as_str() {
+            "up" | "down" if at.is_some() || on_page => {
+                if let Some(to) = record::step_block(&self.block_order, at, k.key == "up") {
+                    self.focus_block(to, window, cx);
+                }
+            }
+            "enter" => match at {
+                Some(record::Block::Title) => self.edit_title(window, cx),
+                Some(record::Block::State) => self.open_editor(false, window, cx),
+                Some(record::Block::Description) => self.open_editor(true, window, cx),
+                Some(record::Block::Questions) => self.enter_questions(window, cx),
+                Some(record::Block::Folders) => self.enter_folders(window, cx),
+                Some(record::Block::Entry(id)) => {
+                    let entry = self
+                        .data
+                        .as_ref()
+                        .and_then(|d| d.entries.iter().find(|e| e.id == id).cloned());
+                    match entry {
+                        Some(entry) => self.start_entry_edit(entry, window, cx),
+                        None => return false,
+                    }
+                }
+                None => return false,
+            },
+            _ => return false,
+        }
+        cx.stop_propagation();
+        cx.notify();
+        true
+    }
+
     fn on_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(menu) = self.entry_menu.as_mut() {
             if event.keystroke.modifiers.modified() {
@@ -1072,6 +1210,19 @@ impl RecordPage {
             return;
         }
         if self.folder_keys(event, window, cx) {
+            return;
+        }
+        if event.keystroke.key == "escape" && self.cancel_q_drag(cx) {
+            cx.stop_propagation();
+            return;
+        }
+        if self.status_menu.is_none()
+            && self.focused_block(window) == Some(record::Block::Folders)
+            && self.folder_row_keys(event, window, cx)
+        {
+            return;
+        }
+        if self.status_menu.is_none() && self.block_keys(event, window, cx) {
             return;
         }
         let Some(highlight) = self.status_menu else {
@@ -1157,13 +1308,15 @@ impl RecordPage {
                 .child(ui::role_input(Input::new(state), type_scale::TITLE))
                 .into_any_element();
         }
-        type_scale::TITLE
+        let title = type_scale::TITLE
             .el()
             .id("page-title")
             .text_color(t.text_primary)
             .cursor_text()
+            .rounded(px(RADIUS_SM))
             .on_click(cx.listener(|page, _, window, cx| page.edit_title(window, cx)))
-            .child(data.title.clone())
+            .child(data.title.clone());
+        self.block_el(record::Block::Title, title, t)
             .into_any_element()
     }
 
@@ -1539,7 +1692,7 @@ impl RecordPage {
                 markdown_view::short("state-body", state, t).into_any_element()
             }
         };
-        div()
+        let el = div()
             .id("current-state")
             .flex()
             .flex_col()
@@ -1565,7 +1718,11 @@ impl RecordPage {
                         meta.map(|m| type_scale::SMALL.el().text_color(t.text_tertiary).child(m)),
                     ),
             )
-            .child(body)
+            .child(body);
+        if self.state_edit.is_some() {
+            return el.into_any_element();
+        }
+        self.block_el(record::Block::State, el, t)
             .into_any_element()
     }
 
@@ -1610,7 +1767,7 @@ impl RecordPage {
         } else {
             markdown_view::short("description-body", data.description.clone(), t).into_any_element()
         };
-        div()
+        let el = div()
             .id("description")
             .flex()
             .flex_col()
@@ -1628,7 +1785,11 @@ impl RecordPage {
                     .child(ui::section_header(text(locale, Key::SectionDescription), t)),
             )
             .child(body)
-            .children(strip.map(|s| div().mt(px(4.)).child(s)))
+            .children(strip.map(|s| div().mt(px(4.)).child(s)));
+        if self.description_edit.is_some() {
+            return el.into_any_element();
+        }
+        self.block_el(record::Block::Description, el, t)
             .into_any_element()
     }
 
@@ -2181,7 +2342,20 @@ impl RecordPage {
             .child(header)
             .child(body);
         let entry_for_keys = entry.clone();
+        let block = record::Block::Entry(entry.id);
+        let handle = self.block_focus.get(&block).cloned();
+        let reveal = std::rc::Rc::clone(&self.reveal_block);
+        let scroll = self.scroll.clone();
         ui::focusable(div().id(("entry-row", index)), t, false)
+            .when_some(handle, |this, h| this.track_focus(&h))
+            .relative()
+            .child(ui::measure(move |bounds, window| {
+                if reveal.get() == Some(block) {
+                    reveal.set(None);
+                    ui::scroll_into_view(&scroll, bounds, ui::Reveal::Whole);
+                    window.refresh();
+                }
+            }))
             .on_key_down(cx.listener(move |page, event: &KeyDownEvent, window, cx| {
                 // Shift+F10 or the context-menu key: the entry menu.
                 let k = &event.keystroke;
@@ -3638,6 +3812,8 @@ fn editor_box_with(
         .line_height(px(type_scale::READING.line()));
     if let Some(tray) = tray {
         textarea = textarea.on_paste(crate::attach_ui::on_paste(tray));
+        // The palette's "Attach files..." finds this editor's tray.
+        crate::attach_ui::pair(editor, tray, cx);
     }
     let strip = tray.and_then(|tray| tray.update(cx, |tray, cx| tray.render_strip(cx)));
     let button = tray.map(|tray| crate::attach_ui::attach_button("editor", tray, cx));
@@ -3717,6 +3893,26 @@ impl Render for RecordPage {
         let rows = self.data.as_ref().map_or(0, |d| d.all_topics().len());
         while self.row_focus.len() < rows {
             self.row_focus.push(cx.focus_handle());
+        }
+        // The blocks `Up` / `Down` step through, in reading order, each
+        // with its handle (made here: drawing takes `&self` in places).
+        self.folder_handles(cx);
+        if let Some(data) = &self.data {
+            let shown = record::timeline_entries(&data.entries);
+            let folders = data.folders.active().is_some();
+            self.block_order = record::blocks(self.topic().is_some(), folders, &shown);
+            for block in self.block_order.clone() {
+                self.block_handle(block, cx);
+            }
+            // "Logged as a decision" opened this page: its entry, once shown.
+            if let Some(entry) = self.pending_entry
+                && self.block_order.contains(&record::Block::Entry(entry))
+            {
+                self.pending_entry = None;
+                cx.on_next_frame(window, move |page, window, cx| {
+                    page.focus_block(record::Block::Entry(entry), window, cx)
+                });
+            }
         }
         let mut column = ui::column();
         if self.gone {

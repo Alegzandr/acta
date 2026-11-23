@@ -223,6 +223,37 @@ impl ContactPicker {
         cx.notify();
     }
 
+    /// A store refusal (the contact `name` moved out of the record's sight
+    /// meanwhile): the field is restored to no contact and the inline
+    /// error says so under it, until the next keystroke
+    /// (components-contacts.md 5, Errors). The list loads again, so the
+    /// contact no longer shows.
+    pub fn refuse(
+        &mut self,
+        name: &str,
+        place: Place,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let locale = settings::locale(cx);
+        self.set_value(Value::None, window, cx);
+        self.error = Some(refusal(locale, name));
+        let task = self
+            .ws
+            .read(cx)
+            .db
+            .run(cx, move |store| store.contacts_visible(place));
+        self._load = cx.spawn(async move |picker, cx| {
+            if let Ok(visible) = task.await {
+                let _ = picker.update(cx, |picker, cx| {
+                    picker.visible = visible;
+                    cx.notify();
+                });
+            }
+        });
+        cx.notify();
+    }
+
     #[cfg(debug_assertions)]
     /// Debug builds' captures: `text` as if typed, the list open.
     pub fn dev_type(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
@@ -612,5 +643,26 @@ impl Render for ContactPicker {
             Mode::Popover => root = root.children(list),
         }
         root
+    }
+}
+
+/// The inline error of a store refusal: "Marie is no longer visible here.
+/// Choose again." (`contact.out_of_scope`).
+pub fn refusal(locale: crate::i18n::Locale, name: &str) -> String {
+    tr(locale, Key::ContactOutOfScope, &[("name", Arg::Text(name))])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::i18n::Locale;
+
+    #[test]
+    fn a_refusal_names_the_contact_in_both_languages() {
+        assert_eq!(
+            refusal(Locale::En, "Marie"),
+            "Marie is no longer visible here. Choose again."
+        );
+        assert!(refusal(Locale::Fr, "Marie").contains("Marie"));
     }
 }

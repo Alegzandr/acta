@@ -122,6 +122,16 @@ pub enum Undo {
         back: Owner,
         expect: Owner,
     },
+    /// A topic dragged to a place in another epic (or out of any): its
+    /// epic and its index among that epic's topics, as one step.
+    TopicPlace {
+        id: TopicId,
+        back: (Option<EpicId>, usize),
+        expect: (Option<EpicId>, usize),
+        /// Contacts the drop lifted (name, level now): undoing the drop
+        /// leaves them at that level and says so.
+        kept: Vec<(String, acta_core::model::ContactLevel)>,
+    },
     /// A record moved among its siblings.
     Reorder {
         record: Record,
@@ -379,6 +389,12 @@ impl Undo {
             Undo::KbRevision { id, expect, .. } => store.kb_entry(*id)?.rev == *expect,
             Undo::KbOwner { id, expect, .. } => store.kb_entry(*id)?.owner == *expect,
             Undo::Reorder { record, expect, .. } => store.order_index(*record)? == *expect,
+            Undo::TopicPlace { id, expect, .. } => {
+                (
+                    store.topic(*id)?.epic,
+                    store.order_index(Record::Topic(*id))?,
+                ) == *expect
+            }
             Undo::Entry { id, expect, .. } => {
                 let e = store.entry(*id)?;
                 (e.text, e.kind) == *expect
@@ -603,6 +619,17 @@ impl Undo {
                     id: *id,
                     back: *expect,
                     expect: store.kb_entry(*id)?.owner,
+                }
+            }
+            Undo::TopicPlace {
+                id, back, expect, ..
+            } => {
+                put_topic(store, *id, *back, me)?;
+                Undo::TopicPlace {
+                    id: *id,
+                    back: *expect,
+                    expect: topic_place(store, *id)?,
+                    kept: Vec::new(),
                 }
             }
             Undo::Reorder {
@@ -935,6 +962,10 @@ pub enum WorkspaceEvent {
 pub enum WriteError {
     /// A knowledge entry changed since it was read (another writer).
     Stale,
+    /// A contact the write names is not visible from its record (moved
+    /// meanwhile): no toast, the picker that chose it says so under the
+    /// field (components-contacts.md 5, Errors).
+    OutOfScope,
     /// Anything else; a toast already said so.
     Failed,
 }
@@ -1251,6 +1282,40 @@ impl Workspace {
         failure: Key,
         f: impl FnOnce(&mut Store) -> acta_core::Result<R> + Send + 'static,
     ) -> Task<Result<R, WriteError>> {
+        self.write_with(cx, failure, false, f)
+    }
+
+    /// [`Workspace::write`] for a write naming a contact chosen in a
+    /// picker: a contact out of the record's sight is answered with
+    /// [`WriteError::OutOfScope`] and no toast, the picker showing the
+    /// inline error instead (components-contacts.md 5, Errors).
+    pub fn write_picked<R: Send + 'static>(
+        &mut self,
+        cx: &mut Context<Self>,
+        f: impl FnOnce(&mut Store) -> acta_core::Result<R> + Send + 'static,
+    ) -> Task<Result<R, WriteError>> {
+        self.write_with(cx, Key::ErrorSave, true, f)
+    }
+
+    /// [`Workspace::write_undoable`] for a write naming a picked contact
+    /// (see [`Workspace::write_picked`]).
+    pub fn write_undoable_picked<R: Send + 'static>(
+        &mut self,
+        cx: &mut Context<Self>,
+        project: Option<ProjectId>,
+        f: impl FnOnce(&mut Store) -> acta_core::Result<(Undo, R)> + Send + 'static,
+    ) -> Task<Result<R, WriteError>> {
+        let task = self.write_picked(cx, move |store| store.atomically(f));
+        self.push_undo(task, project, None, cx)
+    }
+
+    fn write_with<R: Send + 'static>(
+        &mut self,
+        cx: &mut Context<Self>,
+        failure: Key,
+        quiet_scope: bool,
+        f: impl FnOnce(&mut Store) -> acta_core::Result<R> + Send + 'static,
+    ) -> Task<Result<R, WriteError>> {
         let task = self.db.run(cx, f);
         cx.spawn(async move |this, cx| {
             let result = task.await;
@@ -1259,6 +1324,9 @@ impl Workspace {
                 match result {
                     Ok(value) => Ok(value),
                     Err(acta_core::Error::StaleRevision { .. }) => Err(WriteError::Stale),
+                    Err(acta_core::Error::OutOfScope { .. }) if quiet_scope => {
+                        Err(WriteError::OutOfScope)
+                    }
                     // An editor's file a purge took meanwhile says so.
                     Err(acta_core::Error::StagedGone) => {
                         ws.toast_error(Key::AttachGone, cx);
@@ -1569,6 +1637,47 @@ impl Workspace {
         })
     }
 
+    /// A topic dropped in another epic (or out of any) at `index` among
+    /// that epic's topics (components.md 5, Tree row, Drag to reorder):
+    /// one write, one undo step, no toast; contacts the move lifts say so
+    /// as `M` does.
+    pub fn place_topic(
+        &mut self,
+        id: TopicId,
+        epic: Option<EpicId>,
+        index: usize,
+        cx: &mut Context<Self>,
+    ) {
+        let project = self.project_of(Owner::Topic(id));
+        let task = self.write_undoable(cx, project, None, move |store| {
+            let back = topic_place(store, id)?;
+            store.take_lifts();
+            put_topic(store, id, (epic, index), Author::Human)?;
+            // The lifts are not taken back with the drop: their undo
+            // toast says the contacts stay where they are now.
+            let lifts = store.take_lifts();
+            let mut kept = Vec::new();
+            let mut lifted = Vec::new();
+            for l in lifts {
+                let name = store.contact(l.contact)?.name;
+                kept.push((name.clone(), l.to));
+                lifted.push(Lifted {
+                    name,
+                    to: l.to,
+                    record: store.topic(id)?.title,
+                });
+            }
+            let moved = Undo::TopicPlace {
+                id,
+                back,
+                expect: topic_place(store, id)?,
+                kept,
+            };
+            Ok((moved, lifted))
+        });
+        self.toast_lifts(task, cx);
+    }
+
     /// Move a record among its siblings, undoably.
     pub fn reorder(
         &mut self,
@@ -1771,6 +1880,15 @@ impl Workspace {
                     return;
                 };
                 ws.sync_folder_paths(touched, cx);
+                // A drag that lifted contacts went back; they stay.
+                if !redo && let Undo::TopicPlace { kept, .. } = &step {
+                    let locale = crate::settings::locale(cx);
+                    for (name, at) in kept {
+                        let message =
+                            crate::contacts_model::lift_kept(locale, name, *at, &ws.projects);
+                        ws.toast(message, ToastKind::Done, cx);
+                    }
+                }
                 let (from, to) = if redo {
                     (&mut ws.redo, &mut ws.undo)
                 } else {
@@ -1862,6 +1980,32 @@ pub struct Lifted {
     pub name: String,
     pub to: ContactLevel,
     pub record: String,
+}
+
+/// A topic's epic and its index among that epic's topics.
+pub fn topic_place(store: &Store, id: TopicId) -> acta_core::Result<(Option<EpicId>, usize)> {
+    Ok((store.topic(id)?.epic, store.order_index(Record::Topic(id))?))
+}
+
+/// Put a topic in `epic` at `index` among its topics: a move to the end of
+/// that epic when it changes, then the reorder.
+fn put_topic(
+    store: &mut Store,
+    id: TopicId,
+    (epic, index): (Option<EpicId>, usize),
+    author: Author,
+) -> acta_core::Result<()> {
+    if store.topic(id)?.epic != epic {
+        store.update_topic(
+            id,
+            TopicPatch {
+                epic: Some(epic),
+                ..TopicPatch::default()
+            },
+            author,
+        )?;
+    }
+    store.reorder(Record::Topic(id), index, author)
 }
 
 /// Inside a move's transaction, after the move: the lifts it made, as
@@ -2628,6 +2772,71 @@ mod tests {
         };
         assert!(step.apply(store).unwrap().is_some());
         assert_eq!(store.order_index(Record::Topic(a)).unwrap(), 0);
+    }
+
+    #[test]
+    fn a_topic_dropped_in_another_epic_goes_back_to_its_place_in_one_step() {
+        let mut temp = temp_store();
+        let store = &mut temp.store;
+        let (project, a) = topic(store);
+        let new = |store: &mut Store, title: &str, epic| {
+            store
+                .create_topic(
+                    NewTopic {
+                        project,
+                        epic,
+                        title: title.into(),
+                        description: String::new(),
+                        status: Status::Planned,
+                    },
+                    Author::Human,
+                )
+                .unwrap()
+        };
+        let b = new(store, "B", None);
+        let epic = store
+            .create_epic(project, "Terminal", "", Author::Human)
+            .unwrap();
+        let x = new(store, "X", Some(epic));
+        let y = new(store, "Y", Some(epic));
+        // A (first of the loose topics) dropped between X and Y.
+        let back = topic_place(store, a).unwrap();
+        assert_eq!(back, (None, 0));
+        put_topic(store, a, (Some(epic), 1), Author::Human).unwrap();
+        let order = |store: &Store, e| -> Vec<TopicId> {
+            store
+                .tree(project)
+                .unwrap()
+                .epics
+                .iter()
+                .find(|(x, _)| Some(x.id) == e)
+                .map(|(_, ts)| ts.iter().map(|t| t.id).collect())
+                .unwrap_or_else(|| {
+                    store
+                        .tree(project)
+                        .unwrap()
+                        .loose_topics
+                        .iter()
+                        .map(|t| t.id)
+                        .collect()
+                })
+        };
+        assert_eq!(order(store, Some(epic)), vec![x, a, y]);
+        let step = Undo::TopicPlace {
+            id: a,
+            back,
+            expect: topic_place(store, a).unwrap(),
+            kept: Vec::new(),
+        };
+        let redo = step.apply(store).unwrap().expect("unchanged since");
+        assert_eq!(order(store, None), vec![a, b]);
+        assert_eq!(order(store, Some(epic)), vec![x, y]);
+        // The redo puts it back between X and Y.
+        assert!(redo.apply(store).unwrap().is_some());
+        assert_eq!(order(store, Some(epic)), vec![x, a, y]);
+        // Moved since by someone else: the step is refused.
+        store.reorder(Record::Topic(a), 0, Author::Claude).unwrap();
+        assert!(step.apply(store).unwrap().is_none());
     }
 
     #[test]

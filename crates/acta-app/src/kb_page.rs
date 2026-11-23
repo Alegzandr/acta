@@ -1733,7 +1733,7 @@ impl DocPage {
                             window.focus(&page.focus, cx);
                         }
                         Err(WriteError::Stale) => page.load_conflict(window, cx),
-                        Err(WriteError::Failed) => {}
+                        Err(WriteError::Failed | WriteError::OutOfScope) => {}
                     }
                     cx.notify();
                 });
@@ -1877,7 +1877,7 @@ impl DocPage {
                         window.focus(&page.focus, cx);
                     }
                     Err(WriteError::Stale) => page.load_conflict(window, cx),
-                    Err(WriteError::Failed) => {}
+                    Err(WriteError::Failed | WriteError::OutOfScope) => {}
                 }
                 cx.notify();
             });
