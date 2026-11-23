@@ -1537,6 +1537,12 @@ impl DocPage {
     }
 
     #[cfg(debug_assertions)]
+    /// Captures: `Esc` in the editor.
+    pub fn dev_cancel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.cancel(window, cx);
+    }
+
+    #[cfg(debug_assertions)]
     /// Captures: the history, its newest revision selected.
     pub fn dev_history(&mut self, cx: &mut Context<Self>) {
         self.mode = Mode::History;
@@ -1660,6 +1666,9 @@ impl DocPage {
         self.title = None;
         self.summary = None;
         self.body = None;
+        // Changes made while the editor was open (an undo, Claude Code)
+        // were not loaded under it (interaction.md 6.5 rule 4).
+        self.reload(cx);
         window.focus(&self.focus, cx);
         cx.notify();
     }

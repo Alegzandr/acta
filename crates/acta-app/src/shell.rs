@@ -1413,6 +1413,18 @@ impl Shell {
                                 ws.update(cx, |ws, cx| ws.undo_active(project, cx));
                             }
                         });
+                        // Then `Esc`, as the person would: the editor
+                        // closes on the text the store now holds.
+                        cx.background_executor()
+                            .timer(Duration::from_millis(1500))
+                            .await;
+                        let _ = shell.update_in(cx, |shell, window, cx| {
+                            if let Some(bench) = shell.bench()
+                                && let PageView::Doc(p) = &bench.page
+                            {
+                                p.update(cx, |p, cx| p.dev_cancel(window, cx));
+                            }
+                        });
                     }
                 })
                 .detach();
