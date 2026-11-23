@@ -3,10 +3,11 @@
 //! tab each under the area header, the active one selected, a 16 trailing
 //! slot on every tab for the `x` shown on hover and on the active one.
 
+use crate::zoom::px;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, Div, InteractiveElement, IntoElement, ParentElement, SharedString, Stateful,
-    Styled, div, px,
+    Styled, div,
 };
 
 use crate::icons::Icon;
@@ -26,7 +27,7 @@ pub fn strip(tabs: Vec<AnyElement>, t: &Tokens) -> AnyElement {
         .h(px(28.))
         .px(px(8.))
         .bg(t.bg_sunken)
-        .border_b_1()
+        .border_b(px(1.))
         .border_color(t.border_subtle)
         .children(tabs)
         .into_any_element()

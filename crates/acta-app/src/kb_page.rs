@@ -2,6 +2,7 @@
 //! with its editor and history (docs/design/components-knowledge.md 5;
 //! screens.md 8.7, 8.10).
 
+use crate::zoom::px;
 use acta_core::model::{
     Author, ChangeKind, KbEntry, KbId, KbKind, KbSummary, Level, Owner, PageReq, ProjectId, Record,
 };
@@ -13,7 +14,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, ParentElement, Render, StatefulInteractiveElement, Styled,
-    Subscription, Task, Window, div, px,
+    Subscription, Task, Window, div,
 };
 
 use crate::diff::{self, Change};
@@ -1037,7 +1038,7 @@ impl Render for KnowledgePage {
                 .px(px(8.))
                 .rounded(px(RADIUS_SM))
                 .bg(t.bg_raised)
-                .border_1()
+                .border(px(1.))
                 .border_color(t.border_strong)
                 .child(icon(Icon::Search, 16., t.text_tertiary))
                 .child(
@@ -2506,7 +2507,7 @@ impl Render for DocPage {
                             .mb(px(16.))
                             .p(px(12.))
                             .rounded(px(crate::theme::RADIUS_LG))
-                            .border_1()
+                            .border(px(1.))
                             .border_color(t.border_subtle)
                             .child(markdown_view::document(
                                 "conflict-theirs-body",
@@ -2524,7 +2525,7 @@ impl Render for DocPage {
                         .child(
                             type_scale::TITLE
                                 .el()
-                                .border_b_1()
+                                .border_b(px(1.))
                                 .border_color(t.border_strong)
                                 .child(ui::role_input(Input::new(title), type_scale::TITLE)),
                         )
@@ -2882,7 +2883,7 @@ impl Render for DocPage {
                 .h(px(44.))
                 .px(px(16.))
                 .bg(t.bg_base)
-                .border_t_1()
+                .border_t(px(1.))
                 .border_color(t.border_subtle)
                 .child(
                     type_scale::SMALL

@@ -18,9 +18,10 @@ use acta_core::model::{
 };
 use acta_core::store::{KbFilter, KbLinkTarget, KbRevisionSummary, KbWriteCtx};
 
+use crate::zoom::px;
 use gpui_kit::{
     AnyElement, App, Context, Entity, EventEmitter, InteractiveElement, IntoElement, ParentElement,
-    StatefulInteractiveElement, Styled, Task, Window, div, px,
+    StatefulInteractiveElement, Styled, Task, Window, div,
 };
 
 use crate::i18n::{Arg, Key, Locale, text, tr};

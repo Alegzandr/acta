@@ -15,6 +15,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
+use crate::zoom::px;
 use acta_core::launch_plan::{LaunchPlan, LeftOut, PlanFolder, launch_plan};
 use acta_core::model::{Author, FolderId, Owner, ProjectId, Record};
 use acta_core::presence::SessionState;
@@ -25,7 +26,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, ParentElement, PathPromptOptions, Render,
-    StatefulInteractiveElement, Styled, Subscription, Window, div, px,
+    StatefulInteractiveElement, Styled, Subscription, Window, div,
 };
 
 use crate::folders_model as fm;
@@ -2535,7 +2536,7 @@ fn checkbox(checked: bool, t: &Tokens) -> gpui_kit::Div {
                 .child(icon(Icon::Check, 12., t.text_on_accent))
         })
         .when(!checked, |this| {
-            this.border_1().border_color(t.border_strong)
+            this.border(px(1.)).border_color(t.border_strong)
         })
 }
 

@@ -18,6 +18,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
+use crate::zoom::px;
 use acta_browser::events::{Events, Notice};
 use acta_browser::ops::{Activity, Handoff, Host, STOPPED};
 use acta_browser::policy::{Policy, origin_of};
@@ -27,7 +28,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, ParentElement, Render, StatefulInteractiveElement, Styled,
-    Subscription, Task, Window, anchored, deferred, div, point, px,
+    Subscription, Task, Window, anchored, deferred, div, point,
 };
 use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2;
 use wry::WebViewExtWindows as _;
@@ -991,7 +992,7 @@ impl BrowserPanel {
                                 .py(px(4.))
                                 .whitespace_nowrap()
                                 .bg(t.bg_overlay)
-                                .border_1()
+                                .border(px(1.))
                                 .border_color(t.border_default)
                                 .rounded(px(crate::theme::RADIUS_MD))
                                 .shadow(vec![t.shadow_overlay()])
@@ -1183,7 +1184,7 @@ impl BrowserPanel {
                     .items_center()
                     .rounded(px(RADIUS_SM))
                     .bg(t.bg_raised)
-                    .border_1()
+                    .border(px(1.))
                     .border_color(t.border_strong)
                     .child(
                         Input::new(&self.address)

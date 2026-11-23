@@ -15,6 +15,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
+use crate::zoom::px;
 use acta_browser::server::{BrowserOf, Pages, Server};
 use acta_core::model::{EpicId, Owner, ProjectId, TopicId};
 use async_channel::Sender;
@@ -22,7 +23,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, ParentElement, Render, StatefulInteractiveElement, Styled,
-    Subscription, Task, Window, div, px,
+    Subscription, Task, Window, div,
 };
 use zeroize::Zeroizing;
 
