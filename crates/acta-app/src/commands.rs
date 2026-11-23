@@ -124,6 +124,15 @@ pub enum Command {
     Theme(crate::theme::ThemeSetting),
     TextSize(crate::type_scale::TextSize),
     ReadingWidth(crate::ui::ReadingWidth),
+    /// Zoom (layout.md 4.9): in, out, back to 100%, or straight to a step.
+    ZoomIn,
+    ZoomOut,
+    ZoomReset,
+    ZoomTo(u16),
+    /// The trash page's toolbar (components-app.md 5, Trash page).
+    TrashRestore,
+    TrashDelete,
+    TrashEmpty,
     Language(Locale),
     /// The Claude Code settings (components-app.md 5): each one's value.
     Claude(ClaudeSetting, bool),
@@ -270,6 +279,13 @@ pub struct Context {
     pub dictate: bool,
     /// A take is running.
     pub dictating: bool,
+    /// The applied zoom and the largest step the work area holds
+    /// (layout.md 4.9); 0 when unknown (read as 100 and 200).
+    pub zoom: u16,
+    pub zoom_max: u16,
+    /// The trash page is open: whether rows are selected, and whether
+    /// the trash has anything.
+    pub trash: Option<(bool, bool)>,
 }
 
 /// What the open page's folders allow (interaction.md 6.1).
@@ -551,10 +567,16 @@ impl Command {
             out.push(Command::LayoutUndo);
         }
         out.push(Command::LayoutReset);
+        out.extend([Command::Export, Command::Import, Command::Trash]);
+        if let Some((selected, any)) = ctx.trash {
+            if selected {
+                out.extend([Command::TrashRestore, Command::TrashDelete]);
+            }
+            if any {
+                out.push(Command::TrashEmpty);
+            }
+        }
         out.extend([
-            Command::Export,
-            Command::Import,
-            Command::Trash,
             Command::Snapshot,
             Command::Settings,
             Command::VoiceSettings,
@@ -565,6 +587,7 @@ impl Command {
         ]);
         out.extend(crate::type_scale::TextSize::ALL.map(Command::TextSize));
         out.extend(crate::ui::ReadingWidth::ALL.map(Command::ReadingWidth));
+        out.extend(zoom_commands(ctx.zoom, ctx.zoom_max));
         out.extend([Command::Language(Locale::En), Command::Language(Locale::Fr)]);
         for setting in [ClaudeSetting::Resume, ClaudeSetting::Usage] {
             out.extend([
@@ -669,6 +692,12 @@ impl Command {
             Command::Export => Key::CmdExport,
             Command::Import => Key::CmdImport,
             Command::Trash => Key::CmdTrash,
+            Command::TrashRestore => Key::CmdTrashRestore,
+            Command::TrashDelete => Key::CmdTrashDelete,
+            Command::TrashEmpty => Key::CmdTrashEmpty,
+            Command::ZoomIn => Key::CmdZoomIn,
+            Command::ZoomOut => Key::CmdZoomOut,
+            Command::ZoomReset => Key::CmdZoomReset,
             Command::Snapshot => Key::CmdSnapshot,
             Command::Settings => Key::CmdSettings,
             Command::Shortcuts => Key::CmdShortcuts,
@@ -757,6 +786,10 @@ impl Command {
                     &[("value", Arg::Text(&value))],
                 );
             }
+            Command::ZoomTo(step) => {
+                let value = crate::i18n::percent(locale, u64::from(step));
+                return tr(locale, Key::CmdZoomTo, &[("value", Arg::Text(&value))]);
+            }
             Command::Language(target) => {
                 return tr(
                     locale,
@@ -805,6 +838,11 @@ impl Command {
             Command::TerminalSmaller if macos => vec![m, shift, "-"],
             Command::TerminalLarger => vec![KeyName::Ctrl.label(locale, macos), alt, "="],
             Command::TerminalSmaller => vec![KeyName::Ctrl.label(locale, macos), alt, "-"],
+            Command::ZoomIn => vec![m, "="],
+            Command::ZoomOut => vec![m, "-"],
+            Command::ZoomReset => vec![m, "0"],
+            Command::TrashRestore => vec!["R"],
+            Command::TrashDelete => vec![KeyName::Delete.label(locale, macos)],
             Command::Undo => vec![m, "Z"],
             Command::Redo => vec![m, shift, "Z"],
             Command::GoHeading => vec![m, shift, "O"],
@@ -838,6 +876,36 @@ impl Command {
             _ => vec![],
         }
     }
+}
+
+/// The zoom commands of layout.md 4.9: "Zoom out" not at the floor,
+/// "Zoom in" not at the largest step that fits, "Reset zoom" not at 100%,
+/// and "Zoom: 150%" for each step that fits.
+pub fn zoom_commands(applied: u16, max: u16) -> Vec<Command> {
+    use crate::zoom::{DEFAULT, STEPS};
+    let applied = if applied == 0 { DEFAULT } else { applied };
+    let max = if max == 0 {
+        STEPS[STEPS.len() - 1]
+    } else {
+        max
+    };
+    let mut out = Vec::new();
+    if applied < max {
+        out.push(Command::ZoomIn);
+    }
+    if applied > STEPS[0] {
+        out.push(Command::ZoomOut);
+    }
+    if applied != DEFAULT {
+        out.push(Command::ZoomReset);
+    }
+    out.extend(
+        STEPS
+            .iter()
+            .filter(|s| **s <= max)
+            .map(|s| Command::ZoomTo(*s)),
+    );
+    out
 }
 
 /// The name of a Text size value, in Settings and in the palette.
@@ -1197,6 +1265,25 @@ mod tests {
         assert_eq!(
             Command::ToggleChat.shortcut(Locale::En, false),
             ["Ctrl", "Shift", "H"]
+        );
+    }
+
+    #[test]
+    fn zoom_commands_hide_what_does_nothing() {
+        let c = zoom_commands(100, 150);
+        assert!(c.contains(&Command::ZoomIn));
+        assert!(c.contains(&Command::ZoomOut));
+        assert!(!c.contains(&Command::ZoomReset));
+        assert!(!c.contains(&Command::ZoomTo(175)));
+        assert!(c.contains(&Command::ZoomTo(150)));
+        let c = zoom_commands(150, 150);
+        assert!(!c.contains(&Command::ZoomIn));
+        assert!(c.contains(&Command::ZoomReset));
+        let c = zoom_commands(90, 200);
+        assert!(!c.contains(&Command::ZoomOut));
+        assert_eq!(
+            Command::ZoomTo(150).label(Locale::Fr),
+            "Zoom\u{a0}: 150\u{202f}%"
         );
     }
 }

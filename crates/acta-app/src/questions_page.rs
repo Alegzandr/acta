@@ -6,6 +6,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::zoom::px;
 use acta_core::date::Date;
 use acta_core::model::{
     Author, EpicId, Owner, Place, ProjectId, Question, QuestionId, Record, TopicId,
@@ -16,7 +17,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, KeyDownEvent, ParentElement, Render,
-    StatefulInteractiveElement, Styled, Subscription, Task, Window, div, px,
+    StatefulInteractiveElement, Styled, Subscription, Task, Window, div,
 };
 
 use crate::contact_picker::{ContactPicker, Mode, PickerEvent, Value};
@@ -534,7 +535,7 @@ impl QuestionsPage {
                                     .px(px(8.))
                                     .rounded(px(RADIUS_SM))
                                     .bg(t.bg_raised)
-                                    .border_1()
+                                    .border(px(1.))
                                     .border_color(t.border_default)
                                     .flex()
                                     .flex_row()
@@ -821,10 +822,10 @@ impl Render for QuestionsPage {
                 Filter::Closed => text(locale, Key::QuestionsNoneClosed),
             };
             column = column.child(
-                type_scale::READING
+                type_scale::UI
                     .el()
                     .mt(px(16.))
-                    .text_color(t.text_secondary)
+                    .text_color(t.text_tertiary)
                     .child(empty),
             );
         }

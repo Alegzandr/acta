@@ -3,12 +3,13 @@
 //! note in that project's inbox and closes, with no toast; `Esc` closes and
 //! keeps the draft. It never navigates away from what was being read.
 
+use crate::zoom::px;
 use acta_core::model::{AttachOwner, Place, ProjectId};
 use gpui_kit::component::input::{Escape, IndentInline, InputEvent, Textarea, TextareaState};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AppContext, Context, Entity, EventEmitter, Focusable, InteractiveElement, IntoElement,
-    ParentElement, Render, StatefulInteractiveElement, Styled, Subscription, Window, div, px,
+    ParentElement, Render, StatefulInteractiveElement, Styled, Subscription, Window, div,
 };
 
 use crate::attach_ui::{self, Tray};
@@ -229,7 +230,7 @@ impl Render for Capture {
             .gap(px(8.))
             .p(px(12.))
             .bg(t.bg_overlay)
-            .border_1()
+            .border(px(1.))
             .border_color(t.border_default)
             .rounded(px(RADIUS_XL))
             .shadow(vec![t.shadow_overlay()])

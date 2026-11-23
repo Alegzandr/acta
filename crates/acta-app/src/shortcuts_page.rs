@@ -9,10 +9,11 @@
 //! lists and the tree, editors). Keys that do nothing yet are left out,
 //! except the area keys the spec lists as reserved.
 
+use crate::zoom::px;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::{
     AppContext, Context, Entity, EventEmitter, IntoElement, ParentElement, Render, Styled,
-    Subscription, Window, div, px,
+    Subscription, Window, div,
 };
 
 use crate::commands::Command;
@@ -221,7 +222,7 @@ impl Render for ShortcutsPage {
                     .items_center()
                     .rounded(px(RADIUS_SM))
                     .bg(t.bg_raised)
-                    .border_1()
+                    .border(px(1.))
                     .border_color(t.border_strong)
                     .child(
                         Input::new(&self.filter)
@@ -271,10 +272,10 @@ impl Render for ShortcutsPage {
         }
         if !any {
             column = column.child(
-                type_scale::READING
+                type_scale::UI
                     .el()
                     .mt(px(24.))
-                    .text_color(t.text_secondary)
+                    .text_color(t.text_tertiary)
                     .child(tr(
                         locale,
                         Key::ShortcutsNone,

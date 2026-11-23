@@ -157,6 +157,10 @@ catalogue! {
         en: p("{n} topic", "{n} topics"),
         fr: p("{n} sujet", "{n} sujets"),
     }
+    CountItems "count.items" {
+        en: p("{n} item", "{n} items"),
+        fr: p("{n} élément", "{n} éléments"),
+    }
     CountNotes "count.notes" {
         en: p("{n} note", "{n} notes"),
         fr: p("{n} note", "{n} notes"),
@@ -2949,6 +2953,22 @@ catalogue! {
         en: t("Reading width: {value}"),
         fr: t("Largeur de lecture\u{a0}: {value}"),
     }
+    CmdZoomIn "cmd.zoom_in" {
+        en: t("Zoom in"),
+        fr: t("Zoom avant"),
+    }
+    CmdZoomOut "cmd.zoom_out" {
+        en: t("Zoom out"),
+        fr: t("Zoom arrière"),
+    }
+    CmdZoomReset "cmd.zoom_reset" {
+        en: t("Reset zoom"),
+        fr: t("Réinitialiser le zoom"),
+    }
+    CmdZoomTo "cmd.zoom_to" {
+        en: t("Zoom: {value}"),
+        fr: t("Zoom\u{a0}: {value}"),
+    }
     CmdLanguage "cmd.language" {
         en: t("Language: {value}"),
         fr: t("Langue\u{a0}: {value}"),
@@ -3613,6 +3633,14 @@ catalogue! {
         en: t("What you and Claude Code write is never translated."),
         fr: t("Ce que vous et Claude Code écrivez n\u{2019}est jamais traduit."),
     }
+    SettingsZoom "settings.zoom" {
+        en: t("Zoom"),
+        fr: t("Zoom"),
+    }
+    SettingsZoomHint "settings.zoom.hint" {
+        en: t("Everything in the window."),
+        fr: t("Tout le contenu de la fenêtre."),
+    }
     SettingsTextSize "settings.text_size" {
         en: t("Text size"),
         fr: t("Taille du texte"),
@@ -3857,6 +3885,18 @@ catalogue! {
         en: t("Claude Code: not installed"),
         fr: t("Claude Code\u{a0}: non installé"),
     }
+    ZoomStatus "zoom.status" {
+        en: t("Zoom {value}"),
+        fr: t("Zoom {value}"),
+    }
+    ZoomStatusTip "zoom.status.tip" {
+        en: t("Reset to 100%"),
+        fr: t("Revenir à 100\u{202f}%"),
+    }
+    ZoomLimited "zoom.limited" {
+        en: t("You chose {chosen}. {applied} is the most this window can show."),
+        fr: t("Vous avez choisi {chosen}. Cette fenêtre ne peut pas afficher plus de {applied}."),
+    }
     StatusClaudeSignedOut "status.claude.signed_out" {
         en: t("Claude Code: not signed in"),
         fr: t("Claude Code\u{a0}: non connecté"),
@@ -4076,6 +4116,62 @@ catalogue! {
     TrashKeptNamed "trash.kept_named" {
         en: p("Kept: still named in {n} place", "Kept: still named in {n} places"),
         fr: p("Conservé : encore cité à {n} endroit", "Conservé : encore cité à {n} endroits"),
+    }
+    TrashSelected "trash.selected" {
+        en: t("{n} selected"),
+        fr: p("{n} sélectionné", "{n} sélectionnés"),
+    }
+    TrashDeleteSelected "trash.delete_selected" {
+        en: t("Delete permanently\u{2026}"),
+        fr: t("Supprimer définitivement\u{2026}"),
+    }
+    TrashEmptyAll "trash.empty_all" {
+        en: t("Empty trash\u{2026}"),
+        fr: t("Vider la corbeille\u{2026}"),
+    }
+    TrashRestoredN "trash.restored_n" {
+        en: p("{n} item restored.", "{n} items restored."),
+        fr: p("{n} élément restauré.", "{n} éléments restaurés."),
+    }
+    TrashConfirmTitle "trash.confirm_title" {
+        en: p("Delete {n} item permanently?", "Delete {n} items permanently?"),
+        fr: p("Supprimer définitivement {n} élément\u{202f}?", "Supprimer définitivement {n} éléments\u{202f}?"),
+    }
+    TrashConfirmEmptyTitle "trash.confirm_empty_title" {
+        en: t("Empty the trash?"),
+        fr: t("Vider la corbeille\u{202f}?"),
+    }
+    TrashConfirmBody "trash.confirm_body" {
+        en: t("They are removed from Acta\u{2019}s database now and cannot be restored. Snapshots made before today still hold them until they are replaced."),
+        fr: t("Ils sont retirés dès maintenant de la base de données d\u{2019}Acta et ne pourront pas être restaurés. Les sauvegardes faites avant aujourd\u{2019}hui les conservent jusqu\u{2019}à leur remplacement."),
+    }
+    TrashConfirmProject "trash.confirm_project" {
+        en: p("{n} project with {content}", "{n} projects with {content}"),
+        fr: p("{n} projet avec {content}", "{n} projets avec {content}"),
+    }
+    TrashConfirmDelete "trash.confirm_delete" {
+        en: t("Delete permanently"),
+        fr: t("Supprimer définitivement"),
+    }
+    TrashDeleteFailed "trash.delete_failed" {
+        en: t("Could not delete. The database is busy; try again."),
+        fr: t("Suppression impossible. La base de données est occupée\u{202f}; réessayez."),
+    }
+    TrashKeptTip "trash.kept_tip" {
+        en: t("Still named in Acta, so it cannot be deleted."),
+        fr: t("Encore cité dans Acta\u{a0}: il ne peut pas être supprimé."),
+    }
+    CmdTrashRestore "cmd.trash_restore" {
+        en: t("Restore selected"),
+        fr: t("Restaurer la sélection"),
+    }
+    CmdTrashDelete "cmd.trash_delete" {
+        en: t("Delete selected permanently\u{2026}"),
+        fr: t("Supprimer définitivement la sélection\u{2026}"),
+    }
+    CmdTrashEmpty "cmd.trash_empty" {
+        en: t("Empty trash\u{2026}"),
+        fr: t("Vider la corbeille\u{2026}"),
     }
     SnapshotDaily "snapshot.daily" {
         en: t("Daily"),

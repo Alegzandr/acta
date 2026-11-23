@@ -5,11 +5,12 @@
 
 use std::time::Instant;
 
+use crate::zoom::px;
 use gpui_kit::component::input::TextareaState;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, Div, Entity, InteractiveElement as _, IntoElement as _, MouseButton,
-    ParentElement as _, StatefulInteractiveElement as _, Styled as _, div, px,
+    ParentElement as _, StatefulInteractiveElement as _, Styled as _, div,
 };
 
 use super::Mic;

@@ -11,6 +11,7 @@
 
 use std::path::PathBuf;
 
+use crate::zoom::{self, px};
 use acta_core::date::{Date, DueState, due_state};
 use acta_core::model::{
     AttachOwner, Author, Entry, EntryId, EntryKind, KbId, KbKind, KbSummary, Owner, Record, Status,
@@ -22,7 +23,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, AppContext, ClipboardItem, Context, Entity, EventEmitter, FocusHandle,
     Focusable, InteractiveElement, IntoElement, KeyDownEvent, ParentElement, PathPromptOptions,
-    Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Task, Window, div, px,
+    Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Task, Window, div,
 };
 
 use crate::due::{self, Outcome, Tone};
@@ -1267,7 +1268,7 @@ impl RecordPage {
             // input's default while editing).
             return type_scale::TITLE
                 .el()
-                .border_b_1()
+                .border_b(px(1.))
                 .border_color(t.border_strong)
                 .on_action(
                     cx.listener(|page, _: &Escape, window, cx| page.cancel_title(window, cx)),
@@ -1367,9 +1368,11 @@ impl RecordPage {
         ));
         let labels: Vec<&str> = rows.iter().map(|(l, _)| l.as_str()).collect();
         let width = ui::label_width(&labels, cx);
-        // The add chips: on one line under the last row, only while the
-        // pointer is over the block or the picker they open is open, so the
-        // page never moves under a reader who is not pointing at it.
+        // The add chips (components-records.md 5): only while the pointer
+        // is over the block (its band included) or the picker they open is
+        // open, drawn in the 24 band under the meta line, which is empty at
+        // rest: they never move the page (components.md 5, revealed
+        // controls).
         let report_chip = !matches!(self.owner, Owner::Project(_)) && data.report.to.is_none();
         let wanted = self.props_hover
             || self.due_picker.is_some()
@@ -1392,8 +1395,8 @@ impl RecordPage {
                 rows.into_iter()
                     .map(|(label, value)| ui::property(label, width, value, t)),
             )
-            .children(chips)
             .child(self.render_meta(data, locale, t, cx))
+            .child(add_band(chips, width))
             .into_any_element()
     }
 
@@ -1435,7 +1438,7 @@ impl RecordPage {
             .flex_row()
             .items_center()
             .gap(px(8.))
-            .h(px(28.))
+            .h(px(24.))
             .when(due, |this| this.child(chip).children(picker))
             .when(report, |this| {
                 this.child(self.render_report_chip(locale, t, cx))
@@ -1650,7 +1653,7 @@ impl RecordPage {
         } else {
             let state = topic.map(|t| t.state.clone()).unwrap_or_default();
             if state.trim().is_empty() {
-                type_scale::READING
+                type_scale::UI
                     .el()
                     .text_color(t.text_tertiary)
                     .child(text(locale, Key::StatePlaceholder))
@@ -1668,7 +1671,7 @@ impl RecordPage {
             .p(px(16.))
             .rounded(px(RADIUS_LG))
             .bg(t.bg_raised)
-            .border_1()
+            .border(px(1.))
             .border_color(t.border_subtle)
             .when(self.state_edit.is_none(), |this| {
                 this.cursor_text().on_click(
@@ -1726,7 +1729,7 @@ impl RecordPage {
                 Owner::Epic(_) => Key::DescriptionPlaceholderEpic,
                 Owner::Project(_) => Key::DescriptionPlaceholderProject,
             };
-            type_scale::READING
+            type_scale::UI
                 .el()
                 .text_color(t.text_tertiary)
                 .child(text(locale, placeholder))
@@ -2028,9 +2031,9 @@ impl RecordPage {
         // system events alone is empty too.
         if shown.iter().all(|e| e.kind == EntryKind::System) {
             list = list.child(
-                type_scale::READING
+                type_scale::UI
                     .el()
-                    .text_color(t.text_secondary)
+                    .text_color(t.text_tertiary)
                     .child(text(locale, Key::TimelineEmpty)),
             );
         }
@@ -2272,7 +2275,7 @@ impl RecordPage {
                     })
                     .py(px(12.))
                     .rounded(px(RADIUS_LG))
-                    .border_1()
+                    .border(px(1.))
                     .border_color(t.border_default)
             })
             .child(ui::author_mark(entry.author, human, t))
@@ -2417,7 +2420,7 @@ impl RecordPage {
             .mx(px(-8.))
             .mt(px(8.))
             .text_color(t.text_tertiary)
-            .border_b_1()
+            .border_b(px(1.))
             .border_color(t.border_subtle)
             .child(header_cell(
                 "th-status",
@@ -2717,7 +2720,7 @@ impl RecordPage {
             .relative()
             .min_h(px(self.table_floor))
             .child(ui::measure(move |bounds, _| {
-                height.set(f32::from(bounds.size.height));
+                height.set(zoom::eff(bounds.size.height));
             }));
         div()
             .id("topic-table")
@@ -3266,11 +3269,11 @@ impl RecordPage {
                     .child(text(locale, Key::TopicEmptyHeading)),
             )
             .child(
-                type_scale::READING
+                type_scale::UI
                     .el()
                     .mt(px(8.))
                     .max_w(px(480.))
-                    .text_color(t.text_secondary)
+                    .text_color(t.text_tertiary)
                     .child(text(locale, Key::TopicEmptyProject)),
             )
             .child(
@@ -3438,7 +3441,8 @@ impl RecordPage {
                 .flex_row()
                 .items_center()
                 .gap(px(8.))
-                .mt(px(8.))
+                // Under the add chips' band (components-records.md 5).
+                .mt(px(ADD_BAND + 8.))
                 .min_w_0()
                 .child(icon(
                     Icon::Bot,
@@ -3715,7 +3719,7 @@ fn editor_box_with(
         .flex_col()
         .rounded(px(RADIUS_LG))
         .bg(t.bg_raised)
-        .border_2()
+        .border(px(2.))
         .border_color(t.focus_ring)
         .px(px(16.))
         .py(px(12.))
@@ -3898,6 +3902,24 @@ impl Render for RecordPage {
             .child(column)
     }
 }
+
+/// The 24 band under a properties block (components-records.md 5): part
+/// of the block for hover, empty at rest, and taken back from the space
+/// above the next section (`mb -24`), so showing the add chips in it,
+/// lined up with the values' column, moves nothing.
+pub fn add_band(chips: Option<AnyElement>, label_width: f32) -> gpui_kit::Div {
+    div()
+        .h(px(ADD_BAND))
+        .mb(px(-ADD_BAND))
+        .pl(px(label_width + 16.))
+        .flex()
+        .flex_row()
+        .items_center()
+        .children(chips)
+}
+
+/// The height of the add chips' band.
+pub const ADD_BAND: f32 = 24.;
 
 #[cfg(test)]
 mod tests {

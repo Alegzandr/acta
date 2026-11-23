@@ -17,6 +17,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use crate::zoom::{self, px};
 use acta_core::model::{Author, EpicId, KbId, KbKind, Owner, ProjectId, Record, Status, TopicId};
 use acta_core::store::ExportFile;
 use gpui_kit::component::input::{InputEvent, InputState};
@@ -27,7 +28,7 @@ use gpui_kit::{
     FocusHandle, Focusable, InteractiveElement, IntoElement, KeyBinding, KeyDownEvent,
     ParentElement, PathPromptOptions, Render, StatefulInteractiveElement, Styled, Subscription,
     Task, TitlebarOptions, Window, WindowBounds, WindowDecorations, WindowOptions, actions,
-    deferred, div, point, px, size,
+    deferred, div, point, size,
 };
 
 #[cfg(windows)]
@@ -192,6 +193,12 @@ actions!(
         DismissSidebar,
         /// `Mod+/`, palette "Keyboard shortcuts".
         OpenShortcuts,
+        /// `Mod+=`, `Mod++`: zoom in (layout.md 4.9).
+        ZoomIn,
+        /// `Mod+-`: zoom out.
+        ZoomOut,
+        /// `Mod+0`: back to 100%.
+        ZoomReset,
         /// Settings: "Remove from Claude Code" (confirmed, 6.4).
         RemoveClaudeSetup,
         /// Settings: "Set up Claude Code" (confirmed, with what it touches).
@@ -336,6 +343,13 @@ fn key_bindings() -> Vec<KeyBinding> {
         // run when the sidebar is not shown).
         KeyBinding::new("escape", DismissSidebar, Some("Workbench && !Terminal")),
     ];
+    for (keys, key, context) in crate::zoom::bindings(mac) {
+        out.push(match key {
+            crate::zoom::ZoomKey::In => KeyBinding::new(keys, ZoomIn, context),
+            crate::zoom::ZoomKey::Out => KeyBinding::new(keys, ZoomOut, context),
+            crate::zoom::ZoomKey::Reset => KeyBinding::new(keys, ZoomReset, context),
+        });
+    }
     out.extend(crate::due_picker::bindings());
     out.extend(crate::record_page::questions::bindings());
     // interaction.md 6.1: only Windows has a chat panel to focus.
@@ -589,6 +603,10 @@ pub struct Shell {
     pub titlebar_should_move: bool,
     _appearance: Subscription,
     _open: Task<()>,
+    /// The zoom this window shows and its width in effective px, as of
+    /// its last frame (layout.md 4.9).
+    zoom_applied: u16,
+    effective_width: f32,
 }
 
 impl Shell {
@@ -654,6 +672,8 @@ impl Shell {
             titlebar_should_move: false,
             _appearance: appearance,
             _open: Task::ready(()),
+            zoom_applied: crate::zoom::DEFAULT,
+            effective_width: 0.,
         }
     }
 
@@ -1542,8 +1562,9 @@ impl Shell {
     /// Dismiss the sidebar shown over the page and return to the page.
     fn dismiss_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(bench) = self.bench() else { return };
-        if bench.ui.left_overlay {
+        if bench.ui.left_overlay || bench.ui.right_overlay {
             bench.ui.left_overlay = false;
+            bench.ui.right_overlay = false;
             self.focus_page(window, cx);
             cx.notify();
         }
@@ -1808,6 +1829,7 @@ impl Shell {
         let Some(bench) = self.bench() else { return };
         // Opening something dismisses the sidebar shown over the page.
         bench.ui.left_overlay = false;
+        bench.ui.right_overlay = false;
         let projects = bench.ws.read(cx).projects.clone();
         let project = match route {
             Route::Project(id) | Route::Inbox(id) | Route::Knowledge(id) => Some(id),
@@ -2582,7 +2604,63 @@ impl Shell {
                     .is_some_and(|e| d.phase(e, cx) != crate::voice::view::Phase::Off)
             }),
             dictating: crate::voice::get(cx).is_some_and(|d| d.read(cx).running()),
+            zoom: self.zoom_applied,
+            zoom_max: self.zoom_max(window, cx),
+            trash: match &bench.page {
+                PageView::Trash(page) => Some(page.read(cx).command_state()),
+                _ => None,
+            },
         }
+    }
+
+    /// The largest step the window's monitor work area holds (4.9).
+    fn zoom_max(&self, window: &Window, cx: &App) -> u16 {
+        match window.display(cx) {
+            Some(display) => {
+                let area = display.visible_bounds().size;
+                zoom::largest_fitting(f32::from(area.width), f32::from(area.height))
+            }
+            None => zoom::STEPS[zoom::STEPS.len() - 1],
+        }
+    }
+
+    /// `Mod+=`: the next step the work area holds, growing the window to
+    /// its minimum at that step; nothing at the largest (4.9).
+    pub fn zoom_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (w, h) = match window.display(cx) {
+            Some(display) => {
+                let area = display.visible_bounds().size;
+                (f32::from(area.width), f32::from(area.height))
+            }
+            None => (f32::MAX, f32::MAX),
+        };
+        if let Some(step) = zoom::zoom_in(self.zoom_applied.max(zoom::STEPS[0]), w, h) {
+            self.zoom_to(step, window, cx);
+        }
+    }
+
+    pub fn zoom_out(&mut self, cx: &mut Context<Self>) {
+        if let Some(step) = zoom::zoom_out(self.zoom_applied.max(zoom::STEPS[0])) {
+            settings::set_zoom(step, cx);
+        }
+    }
+
+    /// Choose `step`, growing the window when it is under that step's
+    /// minimum (never past its monitor's work area).
+    pub fn zoom_to(&mut self, step: u16, window: &mut Window, cx: &mut Context<Self>) {
+        let viewport = window.viewport_size();
+        let size = (f32::from(viewport.width), f32::from(viewport.height));
+        let work = window
+            .display(cx)
+            .map(|d| d.visible_bounds().size)
+            .map_or(size, |a| (f32::from(a.width), f32::from(a.height)));
+        if !window.is_maximized()
+            && !window.is_fullscreen()
+            && let Some((w, h)) = zoom::grown(step, size, work)
+        {
+            window.resize(gpui_kit::size(gpui_kit::px(w), gpui_kit::px(h)));
+        }
+        settings::set_zoom(step, cx);
     }
 
     fn close_overlay(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -2992,6 +3070,19 @@ impl Shell {
             Command::ReopenTab => self.reopen_tab(window, cx),
             Command::Theme(setting) => settings::set_theme(setting, cx),
             Command::TextSize(size) => settings::set_text_size(size, cx),
+            Command::ZoomIn => self.zoom_in(window, cx),
+            Command::ZoomOut => self.zoom_out(cx),
+            Command::ZoomReset => settings::set_zoom(zoom::DEFAULT, cx),
+            Command::ZoomTo(step) => self.zoom_to(step, window, cx),
+            Command::TrashRestore | Command::TrashDelete | Command::TrashEmpty => {
+                let page = match self.bench().map(|b| &b.page) {
+                    Some(PageView::Trash(page)) => Some(page.clone()),
+                    _ => None,
+                };
+                if let Some(page) = page {
+                    page.update(cx, |page, cx| page.command(command, window, cx));
+                }
+            }
             Command::ReadingWidth(width) => settings::set_reading_width(width, cx),
             Command::Language(locale) => settings::set_language(locale, cx),
             Command::Claude(setting, on) => {
@@ -3855,6 +3946,9 @@ impl Shell {
             Kept::NextPane => Box::new(NextArea),
             Kept::PreviousPane => Box::new(PreviousArea),
             Kept::ZoomToolWindow => Box::new(ZoomArea),
+            Kept::ZoomIn => Box::new(ZoomIn),
+            Kept::ZoomOut => Box::new(ZoomOut),
+            Kept::ZoomReset => Box::new(ZoomReset),
             Kept::Focus(_) => return,
         };
         // The keyboard comes back to the GPUI window before the action
@@ -3914,7 +4008,9 @@ impl Shell {
         // The sidebar shown over the page covers what is under it, and
         // hosts what is in it (workbench.md 4.8.10).
         let left_over = bench.ui.left_overlay && place != Some(Place::Side(Side::Left));
+        let right_over = bench.ui.right_overlay && place != Some(Place::Side(Side::Right));
         left_over
+            || right_over
             || bench.ui.menu.is_some()
             || bench.tree_menu.is_some()
             || toast_over
@@ -4762,6 +4858,8 @@ impl Shell {
         let live = crate::sessions::live(cx).to_vec();
         let counts = crate::sessions::counts(&live);
         let sessions_text = crate::sessions::status_text(locale, counts);
+        // layout.md 4.9: what gives way when the bar is short of room.
+        let give = status_give_way(self.effective_width);
         let claude_item = match (sessions_text, crate::sessions::strongest(&live)) {
             (Some(label), Some(state)) => {
                 // The bar names the most urgent state; the tooltip lists
@@ -4791,8 +4889,20 @@ impl Shell {
             }
             _ => ui::bar_item("status-claude", &tokens)
                 .child(icon(glyph, 14., glyph_color))
-                .child(type_scale::SMALL.el().child(text(locale, key)))
-                .when_some(last_wrote, |this, tip| this.tooltip(ui::tip(tip)))
+                .when(!give.claude_words, |this| {
+                    this.child(type_scale::SMALL.el().child(text(locale, key)))
+                })
+                .when_some(
+                    if give.claude_words {
+                        Some(match last_wrote {
+                            Some(tip) => format!("{}\n{tip}", text(locale, key)),
+                            None => text(locale, key),
+                        })
+                    } else {
+                        last_wrote
+                    },
+                    |this, tip| this.tooltip(ui::tip(tip)),
+                )
                 .on_click(cx.listener(move |shell, _, window, cx| {
                     match status {
                         claude_setup::Status::NoFolder => shell.set_project_folder(window, cx),
@@ -4808,11 +4918,44 @@ impl Shell {
                     }
                 })),
         };
-        let usage_items = if settings::current(cx).hide_usage {
+        let usage_items = if settings::current(cx).hide_usage || give.usage {
             Vec::new()
         } else {
             usage_items(&tokens, locale, cx)
         };
+        let chosen = settings::zoom(cx);
+        let applied = self.zoom_applied;
+        let zoom_item = (applied != zoom::DEFAULT).then(|| {
+            let value = crate::i18n::percent(locale, u64::from(applied));
+            let mut tip = text(locale, Key::ZoomStatusTip);
+            if applied < chosen {
+                tip.push('\n');
+                tip.push_str(&tr(
+                    locale,
+                    Key::ZoomLimited,
+                    &[
+                        (
+                            "chosen",
+                            Arg::Text(&crate::i18n::percent(locale, u64::from(chosen))),
+                        ),
+                        ("applied", Arg::Text(&value)),
+                    ],
+                ));
+            }
+            let macos = cfg!(target_os = "macos");
+            ui::bar_item("status-zoom", &tokens)
+                .child(
+                    type_scale::SMALL
+                        .el()
+                        .font_features(type_scale::tabular())
+                        .child(tr(locale, Key::ZoomStatus, &[("value", Arg::Text(&value))])),
+                )
+                .tooltip(ui::tip_keys(
+                    tip,
+                    vec![crate::i18n::KeyName::Mod.label(locale, macos), "0"],
+                ))
+                .on_click(|_, _, cx| settings::set_zoom(zoom::DEFAULT, cx))
+        });
         div()
             .flex()
             .flex_row()
@@ -4822,7 +4965,7 @@ impl Shell {
             .w_full()
             .h(px(STATUS_BAR_HEIGHT))
             .bg(tokens.bg_sunken)
-            .border_t_1()
+            .border_t(px(1.))
             .border_color(tokens.border_subtle)
             .text_color(tokens.text_tertiary)
             .child(
@@ -4846,6 +4989,7 @@ impl Shell {
                     .flex()
                     .flex_row()
                     .h_full()
+                    .children(zoom_item)
                     .when(settings::updated_this_session(cx), |this| {
                         // components.md 5, Update indicator: "Updated to
                         // 0.4.1" for the first session on a new version,
@@ -4860,18 +5004,20 @@ impl Shell {
                                 .on_click(|_, _, cx| cx.open_url(crate::settings_page::RELEASES)),
                         )
                     })
-                    .child(
-                        ui::bar_item("status-version", &tokens)
-                            .child(
-                                type_scale::SMALL
-                                    .el()
-                                    .font_features(type_scale::tabular())
-                                    .child(version),
-                            )
-                            .on_click(
-                                cx.listener(|shell, _, window, cx| shell.open_settings(window, cx)),
-                            ),
-                    ),
+                    .when(!give.version, |this| {
+                        this.child(
+                            ui::bar_item("status-version", &tokens)
+                                .child(
+                                    type_scale::SMALL
+                                        .el()
+                                        .font_features(type_scale::tabular())
+                                        .child(version),
+                                )
+                                .on_click(cx.listener(|shell, _, window, cx| {
+                                    shell.open_settings(window, cx)
+                                })),
+                        )
+                    }),
             )
     }
 
@@ -5386,7 +5532,7 @@ impl Shell {
                 .px(px(12.))
                 .py(px(8.))
                 .bg(t.bg_overlay)
-                .border_1()
+                .border(px(1.))
                 .border_color(t.border_default)
                 .rounded(px(RADIUS_LG))
                 .shadow(vec![t.shadow_overlay()])
@@ -5490,7 +5636,7 @@ impl Shell {
             .px(px(12.))
             .py(px(8.))
             .bg(t.bg_overlay)
-            .border_1()
+            .border(px(1.))
             .border_color(t.border_default)
             .rounded(px(RADIUS_LG))
             .shadow(vec![t.shadow_overlay()])
@@ -5889,6 +6035,15 @@ fn tree_menu(
 
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // layout.md 4.9: the applied zoom, before anything is sized; every
+        // view of this window renders after this one, in this frame.
+        let viewport = window.viewport_size();
+        let (w, h) = (f32::from(viewport.width), f32::from(viewport.height));
+        self.zoom_applied = zoom::applied(settings::zoom(cx), w, h);
+        zoom::set_factor(zoom::as_factor(self.zoom_applied));
+        window.set_rem_size(zoom::rem_size());
+        crate::webview_build::set_zoom(zoom::factor());
+        self.effective_width = zoom::eff(viewport.width);
         let tokens = cx.global::<Tokens>().clone();
         // A hidden tree reports no pointer leaving it: it is not hovered.
         if !self.view_drawn(ViewId::Projects, window)
@@ -5973,7 +6128,9 @@ impl Render for Shell {
             }))
             .on_action(cx.listener(|s, _: &DismissSidebar, w, cx| {
                 let over = s.bench().is_some_and(|b| {
-                    b.ui.left_overlay && b.overlay.is_none() && b.ui.menu.is_none()
+                    (b.ui.left_overlay || b.ui.right_overlay)
+                        && b.overlay.is_none()
+                        && b.ui.menu.is_none()
                 });
                 if over {
                     s.dismiss_sidebar(w, cx);
@@ -6118,9 +6275,12 @@ impl Render for Shell {
             .on_drag_move(cx.listener(|s, e: &DragMoveEvent<ResizeDrag>, _, cx| {
                 let handle = e.drag(cx).0;
                 let p = e.event.position;
-                layout_ui::on_resize_drag(s, handle, f32::from(p.x), f32::from(p.y), cx)
+                layout_ui::on_resize_drag(s, handle, zoom::eff(p.x), zoom::eff(p.y), cx)
             }))
             .on_action(cx.listener(|s, _: &FocusPage, w, cx| s.focus_page(w, cx)))
+            .on_action(cx.listener(|s, _: &ZoomIn, w, cx| s.zoom_in(w, cx)))
+            .on_action(cx.listener(|s, _: &ZoomOut, _, cx| s.zoom_out(cx)))
+            .on_action(cx.listener(|_, _: &ZoomReset, _, cx| settings::set_zoom(zoom::DEFAULT, cx)))
             .on_action(cx.listener(|s, _: &FocusTerminal, w, cx| {
                 if s.is_workbench() {
                     s.view_action(ViewId::Terminal, ViewAction::Show, w, cx)
@@ -6143,7 +6303,7 @@ impl Render for Shell {
             .bg(tokens.bg_base)
             .text_color(tokens.text_primary)
             .when(outlined, |this| {
-                this.border_1().border_color(tokens.border_subtle)
+                this.border(px(1.)).border_color(tokens.border_subtle)
             })
             .child(titlebar)
             .child(body)
@@ -6159,9 +6319,34 @@ impl Render for Shell {
     }
 }
 
+/// What the status bar leaves out at an effective width (layout.md 4.9):
+/// the version first, then the plan usage meters, then the Claude Code
+/// item's words (its glyph stays). The zoom item never goes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GiveWay {
+    pub version: bool,
+    pub usage: bool,
+    pub claude_words: bool,
+}
+
+pub fn status_give_way(effective_width: f32) -> GiveWay {
+    // 0 is a window not yet laid out: everything shows.
+    let w = if effective_width <= 0. {
+        f32::MAX
+    } else {
+        effective_width
+    };
+    GiveWay {
+        version: w < 960.,
+        usage: w < 880.,
+        claude_words: w < 800.,
+    }
+}
+
 /// Options of an Acta window of the given default size, centred. `focus`
 /// is false only for the test hook that must not take the foreground.
 pub fn window_options(default_size: (f32, f32), focus: bool, cx: &App) -> WindowOptions {
+    let px = gpui_kit::px;
     let inset = px(titlebar::TRAFFIC_LIGHT_INSET);
     WindowOptions {
         titlebar: Some(TitlebarOptions {
@@ -6187,6 +6372,17 @@ pub fn window_options(default_size: (f32, f32), focus: bool, cx: &App) -> Window
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_status_bar_gives_way_in_order() {
+        assert_eq!(status_give_way(1440.), GiveWay::default());
+        assert_eq!(status_give_way(0.), GiveWay::default());
+        let g = status_give_way(900.);
+        assert!(g.version && !g.usage && !g.claude_words);
+        let g = status_give_way(860.);
+        assert!(g.version && g.usage && !g.claude_words);
+        assert!(status_give_way(760.).claude_words);
+    }
 
     #[test]
     fn failures_stay_until_dismissed_and_undo_toasts_go() {

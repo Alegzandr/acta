@@ -20,6 +20,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::zoom::px;
 use acta_core::paths::Os;
 use acta_core::prereqs::detect::detect_tool;
 use acta_core::prereqs::{
@@ -29,7 +30,7 @@ use acta_core::prereqs::{
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, ClipboardItem, Context, EventEmitter, InteractiveElement, IntoElement,
-    ParentElement, ScrollHandle, StatefulInteractiveElement, Styled, div, px,
+    ParentElement, ScrollHandle, StatefulInteractiveElement, Styled, div,
 };
 
 use crate::db::Db;
@@ -916,7 +917,7 @@ fn log_element(
                 .p(px(8.))
                 .rounded(px(RADIUS_SM))
                 .bg(t.bg_sunken)
-                .border_1()
+                .border(px(1.))
                 .border_color(t.border_subtle)
                 .children(lines.into_iter().map(|line| {
                     type_scale::CODE
@@ -1093,7 +1094,7 @@ pub fn dialog_parts(
                 .p(px(8.))
                 .rounded(px(RADIUS_SM))
                 .bg(t.bg_sunken)
-                .border_1()
+                .border(px(1.))
                 .border_color(t.border_subtle)
                 // Wrapped between words only, never inside an option.
                 .child(div().flex().flex_row().flex_wrap().gap_x(px(8.)).children(

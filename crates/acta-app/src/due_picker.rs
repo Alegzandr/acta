@@ -6,6 +6,7 @@
 //! The host (a record page or the tree) opens it, writes what it is told
 //! to on [`DuePickerEvent::Done`], and returns focus to the anchor.
 
+use crate::zoom::px;
 use acta_core::date::Date;
 use gpui_kit::component::input::{
     Escape, IndentInline, Input, InputEvent, InputState, MoveDown, OutdentInline,
@@ -14,7 +15,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, AppContext, Context, Entity, EventEmitter, FocusHandle, InteractiveElement,
     IntoElement, KeyBinding, ParentElement, Render, StatefulInteractiveElement, Styled,
-    Subscription, Window, div, px,
+    Subscription, Window, div,
 };
 
 use crate::due::{self, Area, GridKey, Outcome, Picker, Preview, Tone};
@@ -278,7 +279,7 @@ impl DuePicker {
                         .when(is_selected, |this| this.bg(t.fill_selected))
                         .when(!is_selected, |this| this.hover(move |s| s.bg(hover)))
                         .when(is_today, |this| {
-                            this.border_1().border_color(t.border_strong)
+                            this.border(px(1.)).border_color(t.border_strong)
                         })
                         .when(is_cursor, |this| this.shadow(ui::ring_shadow(t, false)))
                         .on_click(cx.listener(move |picker, _, _, cx| {
@@ -329,7 +330,7 @@ impl Render for DuePicker {
             .items_center()
             .rounded(px(RADIUS_SM))
             .bg(t.bg_raised)
-            .border_1()
+            .border(px(1.))
             .border_color(input_border)
             .when(input_focused && !self.model.error, |this| {
                 this.shadow(ui::ring_shadow(&t, false))
@@ -436,7 +437,7 @@ impl Render for DuePicker {
             .flex()
             .flex_col()
             .bg(t.bg_overlay)
-            .border_1()
+            .border(px(1.))
             .border_color(t.border_default)
             .rounded(px(RADIUS_LG))
             .shadow(vec![t.shadow_overlay()])

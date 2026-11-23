@@ -2470,7 +2470,7 @@ impl RecordPage {
                 .rounded(px(RADIUS_SM))
                 .when(selected, |this| {
                     this.bg(t.fill_selected)
-                        .border_1()
+                        .border(px(1.))
                         .border_color(t.border_strong)
                 })
                 .when(!selected, |this| this.hover(move |s| s.bg(hover)))

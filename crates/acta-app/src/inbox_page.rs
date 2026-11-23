@@ -10,6 +10,7 @@
 use acta_core::Store;
 use std::collections::HashMap;
 
+use crate::zoom::px;
 use acta_core::model::{
     AttachOwner, Attachment, Author, EpicId, Note, NoteFate, NoteId, PageReq, ProjectId,
     ProjectTree, Record, Status, TopicId,
@@ -22,7 +23,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, AppContext, Context, Entity, EventEmitter, Focusable, InteractiveElement,
     IntoElement, ParentElement, Render, SharedString, StatefulInteractiveElement, Styled,
-    Subscription, Task, Window, div, px,
+    Subscription, Task, Window, div,
 };
 
 use crate::attach_ui::{self, StripStyle, Tray};
@@ -559,7 +560,7 @@ impl InboxPage {
             .h(px(28.))
             .px(px(8.))
             .rounded(px(RADIUS_SM))
-            .border_1()
+            .border(px(1.))
             .border_color(t.border_default)
             .text_color(if chosen.is_some() {
                 t.text_primary
@@ -606,7 +607,7 @@ impl InboxPage {
                         .items_center()
                         .rounded(px(RADIUS_SM))
                         .bg(t.bg_raised)
-                        .border_1()
+                        .border(px(1.))
                         .border_color(t.border_default)
                         .child(Input::new(input).appearance(false).w_full()),
                 );
@@ -1181,7 +1182,7 @@ impl InboxPage {
             .py(px(12.))
             .rounded(px(RADIUS_LG))
             .bg(t.bg_raised)
-            .border_1()
+            .border(px(1.))
             .border_color(t.border_subtle)
             .children(body);
         // An open note card at rest takes dropped files.
@@ -1309,7 +1310,7 @@ impl Render for InboxPage {
             .mt(px(24.))
             .rounded(px(RADIUS_LG))
             .bg(t.bg_raised)
-            .border_1()
+            .border(px(1.))
             .border_color(t.border_strong)
             .px(px(16.))
             .py(px(12.))
@@ -1422,10 +1423,10 @@ impl Render for InboxPage {
         let mut list = div().flex().flex_col().gap(px(8.)).mt(px(12.));
         if shown.is_empty() {
             list = list.child(
-                type_scale::READING
+                type_scale::UI
                     .el()
                     .max_w(px(480.))
-                    .text_color(t.text_secondary)
+                    .text_color(t.text_tertiary)
                     .child(text(
                         locale,
                         if self.show_filed {

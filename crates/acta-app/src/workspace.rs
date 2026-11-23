@@ -1481,6 +1481,41 @@ impl Workspace {
         })
     }
 
+    /// Several trashed records put back in one undo step (components-app.md
+    /// 5, Trash page): containers first, so a topic whose epic is also
+    /// selected comes back after it; one that cannot come back (its parent
+    /// still in the trash) is skipped. Returns how many came back.
+    pub fn restore_many(
+        &mut self,
+        mut records: Vec<Record>,
+        project: Option<ProjectId>,
+        message: impl FnOnce(usize) -> String + Send + 'static,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<usize, WriteError>> {
+        records.sort_by_key(|r| restore_rank(*r));
+        let task = self.write_folders(cx, project, None, move |store| {
+            let mut steps = Vec::new();
+            for record in records {
+                if store.restore(record, Author::Human).is_ok() {
+                    steps.push(Undo::Delete(record));
+                }
+            }
+            let n = steps.len();
+            // Undone contents first, then what held them.
+            steps.reverse();
+            Ok((Undo::Many(steps), n))
+        });
+        cx.spawn(async move |ws, cx| {
+            let n = task.await?;
+            let _ = ws.update(cx, |ws, cx| {
+                if n > 0 {
+                    ws.toast(message(n), ToastKind::Undo, cx);
+                }
+            });
+            Ok(n)
+        })
+    }
+
     /// A topic dropped in another epic (or out of any) at `index` among
     /// that epic's topics (components.md 5, Tree row, Drag to reorder):
     /// one write, one undo step, no toast; contacts the move lifts say so
@@ -2017,6 +2052,18 @@ pub fn active_pointer(store: &Store, owner: Owner) -> acta_core::Result<Option<F
         Owner::Epic(id) => store.epic(id)?.active_folder,
         Owner::Topic(id) => store.topic(id)?.active_folder,
     })
+}
+
+/// The order a batch of restores runs in: what contains first.
+fn restore_rank(record: Record) -> u8 {
+    match record {
+        Record::Project(_) => 0,
+        Record::Epic(_) => 1,
+        Record::Topic(_) => 2,
+        Record::Note(_) | Record::Contact(_) => 3,
+        Record::Entry(_) | Record::Kb(_) | Record::Folder(_) | Record::Question(_) => 4,
+        Record::Attachment(_) => 5,
+    }
 }
 
 #[cfg(test)]

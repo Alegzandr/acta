@@ -5,12 +5,13 @@
 
 use std::rc::Rc;
 
+use crate::zoom::{self, px};
 use acta_core::model::{EpicId, Owner, ProjectId, Status};
 use gpui_kit::component::input::{Escape, Input, InputState};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, Context, Entity, Hsla, InteractiveElement, IntoElement, ParentElement,
-    ScrollHandle, SharedString, StatefulInteractiveElement, Styled, Window, div, point, px,
+    ScrollHandle, SharedString, StatefulInteractiveElement, Styled, Window, div, point,
 };
 
 use super::{
@@ -131,7 +132,7 @@ impl Shell {
         // interaction.md 6.5, rule 2: rows that come and go above the
         // first row in view do not move the rows on screen.
         if let Some(old) = &state.cache {
-            let scroll_top = -f32::from(state.scroll.offset().y);
+            let scroll_top = -zoom::eff(state.scroll.offset().y);
             if let Some(top) = old
                 .layout
                 .anchor(&old.rows, scroll_top)
@@ -159,15 +160,15 @@ impl Shell {
         bench.tree.press = dragged.map(|dragged| TreePress {
             dragged,
             key: row.key(),
-            x: f32::from(event.position.x),
-            y: f32::from(event.position.y),
+            x: zoom::eff(event.position.x),
+            y: zoom::eff(event.position.y),
         });
         // The next frame follows the pointer.
         cx.notify();
     }
 
     fn tree_pointer_moved(&mut self, event: &gpui_kit::MouseMoveEvent, cx: &mut Context<Self>) {
-        let (x, y) = (f32::from(event.position.x), f32::from(event.position.y));
+        let (x, y) = (zoom::eff(event.position.x), zoom::eff(event.position.y));
         let Some(bench) = self.bench() else { return };
         if let Some(press) = bench.tree.press {
             if event.pressed_button != Some(gpui_kit::MouseButton::Left) {
@@ -255,9 +256,9 @@ impl Shell {
             return;
         };
         let bounds = bench.tree.scroll.bounds();
-        let scroll_top = -f32::from(bench.tree.scroll.offset().y);
-        let y = f32::from(bounds.top()) + layout.top(to) - scroll_top + tree::ROW * 0.75;
-        let x = f32::from(bounds.left()) + 120.;
+        let scroll_top = -zoom::eff(bench.tree.scroll.offset().y);
+        let y = zoom::eff(bounds.top()) + layout.top(to) - scroll_top + tree::ROW * 0.75;
+        let x = zoom::eff(bounds.left()) + 120.;
         let epic = match dragged {
             tree::Dragged::Topic(_, id) => {
                 tree::locate_topic(&projects, id).map(|l| l.epic.map(|e| e.0))
@@ -294,12 +295,12 @@ impl Shell {
         let bench = self.bench()?;
         let drag = bench.tree.drag?;
         let bounds = bench.tree.scroll.bounds();
-        let (left, top) = (f32::from(bounds.left()), f32::from(bounds.top()));
-        let (w, h) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
+        let (left, top) = (zoom::eff(bounds.left()), zoom::eff(bounds.top()));
+        let (w, h) = (zoom::eff(bounds.size.width), zoom::eff(bounds.size.height));
         if drag.x < left || drag.x > left + w || drag.y < top || drag.y > top + h {
             return None;
         }
-        let scroll_top = -f32::from(bench.tree.scroll.offset().y);
+        let scroll_top = -zoom::eff(bench.tree.scroll.offset().y);
         let projects = &bench.ws.read(cx).projects;
         tree::drop_at(
             projects,
@@ -415,7 +416,7 @@ impl Shell {
     fn settle_scroll(&mut self, rows: &[Row], layout: &Layout, viewport: f32) -> f32 {
         let Some(bench) = self.bench() else { return 0. };
         let state = &mut bench.tree;
-        let mut scroll_top = -f32::from(state.scroll.offset().y);
+        let mut scroll_top = -zoom::eff(state.scroll.offset().y);
         // Before the first layout the viewport is unknown: wait for it.
         if viewport <= 0. {
             return scroll_top;
@@ -458,8 +459,8 @@ impl Shell {
         };
         let handle = bench.tree.scroll.clone();
         let bounds = handle.bounds();
-        let viewport = f32::from(bounds.size.height);
-        let width = f32::from(bounds.size.width);
+        let viewport = zoom::eff(bounds.size.height);
+        let width = zoom::eff(bounds.size.width);
         // Before the first layout the viewport is unknown; a pending
         // reveal or jump asks for the frame that knows it.
         if viewport <= 0. && (bench.tree.reveal.is_some() || bench.tree.to_top.is_some()) {
@@ -483,10 +484,10 @@ impl Shell {
             if !still {
                 bench.tree.drag = None;
             } else if viewport > 0. {
-                let delta = tree::auto_scroll(drag.y - f32::from(bounds.top()), viewport);
+                let delta = tree::auto_scroll(drag.y - zoom::eff(bounds.top()), viewport);
                 if delta != 0. {
                     let max = (layout.height - viewport).max(0.);
-                    let top = (-f32::from(handle.offset().y) + delta).clamp(0., max);
+                    let top = (-zoom::eff(handle.offset().y) + delta).clamp(0., max);
                     handle.set_offset(point(px(0.), px(-top)));
                     window.request_animation_frame();
                 }
@@ -619,7 +620,7 @@ impl Shell {
                 .right_0()
                 .px(px(tree::PAD))
                 .bg(t.bg_sunken)
-                .border_b_1()
+                .border_b(px(1.))
                 .border_color(t.border_subtle)
                 .child(tree_row(
                     row,
@@ -667,7 +668,7 @@ impl Shell {
                 .max_w(px(240.))
                 .px(px(8.))
                 .bg(t.bg_overlay)
-                .border_1()
+                .border(px(1.))
                 .border_color(t.border_default)
                 .rounded(px(RADIUS_SM))
                 .shadow(vec![t.shadow_overlay()])
@@ -695,7 +696,7 @@ impl Shell {
             .flex_col()
             .flex_shrink_0()
             .p(px(8.))
-            .border_t_1()
+            .border_t(px(1.))
             .border_color(t.border_subtle)
             .when(has_contacts, |this| {
                 this.child(
@@ -855,7 +856,7 @@ fn text_width(role: TypeRole, label: &str, cx: &App) -> f32 {
     let mut font = gpui_kit::font(role.family());
     font.weight = role.weight;
     let font = system.resolve_font(&font);
-    let size = px(role.size());
+    let size = gpui_kit::px(role.size());
     label
         .chars()
         .map(|ch| {

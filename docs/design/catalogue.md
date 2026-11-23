@@ -47,6 +47,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `time.short.yesterday` | Yesterday | Hier |
 | `count.projects` | {n} project · {n} projects | {n} projet · {n} projets |
 | `count.topics` | {n} topic · {n} topics | {n} sujet · {n} sujets |
+| `count.items` | {n} item · {n} items | {n} élément · {n} éléments |
 | `count.notes` | {n} note · {n} notes | {n} note · {n} notes |
 | `count.documents` | {n} document · {n} documents | {n} document · {n} documents |
 | `count.memories` | {n} memory · {n} memories | {n} mémoire · {n} mémoires |
@@ -745,6 +746,10 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `cmd.theme` | Theme: {value} | Thème : {value} |
 | `cmd.text_size` | Text size: {value} | Taille du texte : {value} |
 | `cmd.reading_width` | Reading width: {value} | Largeur de lecture : {value} |
+| `cmd.zoom_in` | Zoom in | Zoom avant |
+| `cmd.zoom_out` | Zoom out | Zoom arrière |
+| `cmd.zoom_reset` | Reset zoom | Réinitialiser le zoom |
+| `cmd.zoom_to` | Zoom: {value} | Zoom : {value} |
 | `cmd.language` | Language: {value} | Langue : {value} |
 | `cmd.new_project` | New project... | Nouveau projet... |
 | `cmd.tree_collapse_all` | Projects: Collapse all | Projets : tout replier |
@@ -911,6 +916,8 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `settings.theme.dark` | Dark | Sombre |
 | `settings.language` | Language | Langue |
 | `settings.language.hint` | What you and Claude Code write is never translated. | Ce que vous et Claude Code écrivez n'est jamais traduit. |
+| `settings.zoom` | Zoom | Zoom |
+| `settings.zoom.hint` | Everything in the window. | Tout le contenu de la fenêtre. |
 | `settings.text_size` | Text size | Taille du texte |
 | `settings.text_size.hint` | Timelines, notes and documents. | Journaux, notes et documents. |
 | `settings.text_size.small` | Small | Petit |
@@ -972,6 +979,9 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `statusbar.last_wrote` | Last wrote {when} in {topic} | Dernière écriture {when} dans {topic} |
 | `statusbar.version` | Acta {version} | Acta {version} |
 | `status.claude.missing` | Claude Code: not installed | Claude Code : non installé |
+| `zoom.status` | Zoom {value} | Zoom {value} |
+| `zoom.status.tip` | Reset to 100% | Revenir à 100 % |
+| `zoom.limited` | You chose {chosen}. {applied} is the most this window can show. | Vous avez choisi {chosen}. Cette fenêtre ne peut pas afficher plus de {applied}. |
 | `status.claude.signed_out` | Claude Code: not signed in | Claude Code : non connecté |
 | `update.ready` | Restart to update | Redémarrer pour mettre à jour |
 | `update.done` | Updated to {version} | Mise à jour {version} installée |
@@ -1027,6 +1037,20 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `trash.empty` | Trash is empty. | La corbeille est vide. |
 | `trash.merged_into` | Merged into {name} | Fusionné avec : {name} |
 | `trash.kept_named` | Kept: still named in {n} place · Kept: still named in {n} places | Conservé : encore cité à {n} endroit · Conservé : encore cité à {n} endroits |
+| `trash.selected` | {n} selected | {n} sélectionné · {n} sélectionnés |
+| `trash.delete_selected` | Delete permanently... | Supprimer définitivement... |
+| `trash.empty_all` | Empty trash... | Vider la corbeille... |
+| `trash.restored_n` | {n} item restored. · {n} items restored. | {n} élément restauré. · {n} éléments restaurés. |
+| `trash.confirm_title` | Delete {n} item permanently? · Delete {n} items permanently? | Supprimer définitivement {n} élément ? · Supprimer définitivement {n} éléments ? |
+| `trash.confirm_empty_title` | Empty the trash? | Vider la corbeille ? |
+| `trash.confirm_body` | They are removed from Acta's database now and cannot be restored. Snapshots made before today still hold them until they are replaced. | Ils sont retirés dès maintenant de la base de données d'Acta et ne pourront pas être restaurés. Les sauvegardes faites avant aujourd'hui les conservent jusqu'à leur remplacement. |
+| `trash.confirm_project` | {n} project with {content} · {n} projects with {content} | {n} projet avec {content} · {n} projets avec {content} |
+| `trash.confirm_delete` | Delete permanently | Supprimer définitivement |
+| `trash.delete_failed` | Could not delete. The database is busy; try again. | Suppression impossible. La base de données est occupée ; réessayez. |
+| `trash.kept_tip` | Still named in Acta, so it cannot be deleted. | Encore cité dans Acta : il ne peut pas être supprimé. |
+| `cmd.trash_restore` | Restore selected | Restaurer la sélection |
+| `cmd.trash_delete` | Delete selected permanently... | Supprimer définitivement la sélection... |
+| `cmd.trash_empty` | Empty trash... | Vider la corbeille... |
 | `snapshot.daily` | Daily | Quotidien |
 | `snapshot.weekly` | Weekly | Hebdomadaire |
 | `snapshot.before_update` | Before update to {version} | Avant la mise à jour vers {version} |
@@ -1393,47 +1417,23 @@ Notes. *Mémoire* is feminine and *document* masculine, hence the `.document` / 
 
 ### 10.4.13 Keys of zoom and section folds
 
-New with zoom and section folds (2026-11-22; layout.md 4.9, components-records.md 5 Section fold, screens.md 8.34 and 8.35). Pending: to be moved into 10.4 and `catalogue.rs` when they are implemented, `cmd.zoom*` and `cmd.sections_*` after `cmd.reading_width`, `settings.zoom*` after `settings.language.hint`, `zoom.*` beside the status bar's keys, `section.*` after `section.timeline`. `{value}`, `{applied}` and `{chosen}` are percents in the form of 10.2 ("150%", "150 %" with U+202F). `{section}` is the section's own label key (`section.timeline`, ...), in French between « » because it is a name inside a sentence.
+New with zoom and section folds (2026-11-22; layout.md 4.9, components-records.md 5 Section fold, screens.md 8.34 and 8.35). The zoom keys are in 10.4 and `catalogue.rs` since `gpui-engineer/zoom-trash`, "Zoom: {value}" as `cmd.zoom_to` because `cmd.zoom` was already "Maximize focused area"; the `cmd.sections_*` and `section.*` keys are still pending, to be moved into 10.4 and `catalogue.rs` when they are implemented, `cmd.zoom*` and `cmd.sections_*` after `cmd.reading_width`, `settings.zoom*` after `settings.language.hint`, `zoom.*` beside the status bar's keys, `section.*` after `section.timeline`. `{value}`, `{applied}` and `{chosen}` are percents in the form of 10.2 ("150%", "150 %" with U+202F). `{section}` is the section's own label key (`section.timeline`, ...), in French between « » because it is a name inside a sentence.
 
 **Reused**, not duplicated: the folded Topics count is `table.count`; the stepper of the Zoom row is the Terminal text size row's.
 
 | Key | English | French |
 |---|---|---|
-| `cmd.zoom_in` | Zoom in | Zoom avant |
-| `cmd.zoom_out` | Zoom out | Zoom arrière |
-| `cmd.zoom_reset` | Reset zoom | Réinitialiser le zoom |
-| `cmd.zoom` | Zoom: {value} | Zoom : {value} |
 | `cmd.sections_collapse` | Collapse all sections | Replier toutes les sections |
 | `cmd.sections_expand` | Expand all sections | Déplier toutes les sections |
-| `settings.zoom` | Zoom | Zoom |
-| `settings.zoom.hint` | Everything in the window. | Tout le contenu de la fenêtre. |
-| `zoom.status` | Zoom {value} | Zoom {value} |
-| `zoom.status.tip` | Reset to 100% | Revenir à 100 % |
-| `zoom.limited` | You chose {chosen}. {applied} is the most this window can show. | Vous avez choisi {chosen}. Cette fenêtre ne peut pas afficher plus de {applied}. |
 | `section.fold` | Collapse {section} | Replier « {section} » |
 | `section.unfold` | Expand {section} | Déplier « {section} » |
 | `section.count.entries` | {n} entry · {n} entries | {n} entrée · {n} entrées |
 
 ### 10.4.14 Keys of the trash's selection and purge
 
-New with the user's ruling of 2026-11-22 (components-app.md 5, Trash page; data.md 11, request 25; ADR 0006 amendment). Pending: to be moved into 10.4 and `catalogue.rs` with the `trash.*` family when implemented. Palette commands follow the toolbar: "Restore selected", "Delete selected permanently...", "Empty trash..." (on the trash page only).
+New with the user's ruling of 2026-11-22 (components-app.md 5, Trash page; data.md 11, request 25; ADR 0006 amendment). In `catalogue.rs` with the `trash.*` family since `gpui-engineer/zoom-trash`, with one key the build needed and this table lacked: `count.items` "{n} item · {n} items" / « {n} élément · {n} éléments », the total that opens the body of "Empty the trash?". The project line uses `trash.project_content` for `{content}` ("31 topics, 12 notes"). Palette commands follow the toolbar: "Restore selected", "Delete selected permanently...", "Empty trash..." (on the trash page only).
 
-| Key | English | French |
-|---|---|---|
-| `trash.selected` | {n} selected | {n} sélectionné · {n} sélectionnés |
-| `trash.delete_selected` | Delete permanently... | Supprimer définitivement... |
-| `trash.empty_all` | Empty trash... | Vider la corbeille... |
-| `trash.restored_n` | {n} item restored. · {n} items restored. | {n} élément restauré. · {n} éléments restaurés. |
-| `trash.confirm_title` | Delete {n} item permanently? · Delete {n} items permanently? | Supprimer définitivement {n} élément ? · Supprimer définitivement {n} éléments ? |
-| `trash.confirm_empty_title` | Empty the trash? | Vider la corbeille ? |
-| `trash.confirm_body` | They are removed from Acta's database now and cannot be restored. Snapshots made before today still hold them until they are replaced. | Ils sont retirés dès maintenant de la base de données d'Acta et ne pourront pas être restaurés. Les sauvegardes faites avant aujourd'hui les conservent jusqu'à leur remplacement. |
-| `trash.confirm_project` | {n} project with {content} · {n} projects with {content} | {n} projet avec {content} · {n} projets avec {content} |
-| `trash.confirm_delete` | Delete permanently | Supprimer définitivement |
-| `trash.delete_failed` | Could not delete. The database is busy; try again. | Suppression impossible. La base de données est occupée ; réessayez. |
-| `trash.kept_tip` | Still named in Acta, so it cannot be deleted. | Encore cité dans Acta : il ne peut pas être supprimé. |
-| `cmd.trash_restore` | Restore selected | Restaurer la sélection |
-| `cmd.trash_delete` | Delete selected permanently... | Supprimer définitivement la sélection... |
-| `cmd.trash_empty` | Empty trash... | Vider la corbeille... |
+Every row is now in 10.4.
 
 ### 10.4.15 Keys of the agent browser's developer tools
 

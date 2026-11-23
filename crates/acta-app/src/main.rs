@@ -85,6 +85,7 @@ mod vulkan_shim;
 mod webview_build;
 mod when;
 mod workspace;
+mod zoom;
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};

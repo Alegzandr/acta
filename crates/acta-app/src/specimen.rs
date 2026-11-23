@@ -6,10 +6,11 @@
 //! side: every sans role of docs/design/typography.md 3.2 on the four surfaces, the text
 //! levels, the mono roles and the colour tokens.
 
+use crate::zoom::px;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     Context, Div, FontWeight, Hsla, InteractiveElement, IntoElement, ParentElement, Render,
-    StatefulInteractiveElement, Styled, Window, div, px,
+    StatefulInteractiveElement, Styled, Window, div,
 };
 
 use crate::theme::{FONT_MONO, FONT_SANS, RADIUS_MD, RADIUS_SM, Tokens};
@@ -92,7 +93,7 @@ fn surface(name: &'static str, background: Hsla, floating: bool, tokens: &Tokens
         .gap(px(4.))
         .p(px(16.))
         .bg(background)
-        .border_1()
+        .border(px(1.))
         .border_color(tokens.border_subtle)
         .rounded(px(RADIUS_MD))
         .when(floating, |this| {
@@ -250,7 +251,7 @@ fn mono_samples(tokens: &Tokens) -> Div {
         .gap(px(12.))
         .p(px(16.))
         .bg(tokens.bg_sunken)
-        .border_1()
+        .border(px(1.))
         .border_color(tokens.border_subtle)
         .rounded(px(RADIUS_MD))
         .child(lines)
@@ -279,7 +280,7 @@ fn swatches(name: &'static str, theme: &Tokens, tokens: &Tokens) -> Div {
                     .flex_shrink_0()
                     .rounded(px(RADIUS_SM))
                     .bg(color)
-                    .border_1()
+                    .border(px(1.))
                     .border_color(theme.border_default),
             )
             .child(caption(token, theme.text_secondary))
@@ -299,7 +300,7 @@ fn swatches(name: &'static str, theme: &Tokens, tokens: &Tokens) -> Div {
                 .gap(px(4.))
                 .p(px(12.))
                 .bg(theme.bg_base)
-                .border_1()
+                .border(px(1.))
                 .border_color(tokens.border_subtle)
                 .rounded(px(RADIUS_MD))
                 .children(chips),

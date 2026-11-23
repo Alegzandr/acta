@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use crate::zoom::{self, px};
 use acta_core::Store;
 use acta_core::model::{
     AttachOwner, Attachment, AttachmentId, Author, FileKind, ProjectId, Record,
@@ -22,7 +23,7 @@ use gpui_kit::{
     EventEmitter, ExternalPaths, FocusHandle, Focusable, Global, ImageCacheError, ImageSource,
     InteractiveElement, IntoElement, KeyDownEvent, ObjectFit, ParentElement, PathPromptOptions,
     Pixels, Point, Render, RenderImage, ScrollHandle, SharedString, StatefulInteractiveElement,
-    Styled, StyledImage, Task, WeakEntity, Window, div, img, px,
+    Styled, StyledImage, Task, WeakEntity, Window, div, img,
 };
 
 use crate::attach::{self, Draft, DraftFile, Paste, Refusal};
@@ -642,7 +643,7 @@ fn file_element(
             .rounded(px(RADIUS_SM))
             .overflow_hidden()
             .bg(t.bg_sunken)
-            .border_1()
+            .border(px(1.))
             .border_color(t.border_subtle)
             .hover(move |s| s.border_color(strong))
             .child(
@@ -688,7 +689,7 @@ fn chip(
         .h(px(28.))
         .px(px(8.))
         .rounded(px(RADIUS_SM))
-        .border_1()
+        .border(px(1.))
         .border_color(t.border_default)
         .hover(move |s| s.bg(hover))
         .child(icon(glyph, 16., t.text_secondary))
@@ -1179,7 +1180,7 @@ impl Tray {
                         .rounded(px(RADIUS_SM))
                         .overflow_hidden()
                         .bg(t.bg_sunken)
-                        .border_1()
+                        .border(px(1.))
                         .border_color(t.border_subtle)
                         .hover(move |s| s.border_color(strong))
                         .children(thumb)
@@ -1788,7 +1789,11 @@ impl Viewer {
             (f32::from(max.x), f32::from(max.y)),
             (dx, dy),
         );
-        self.scroll.set_offset(Point { x: px(x), y: px(y) });
+        // Offsets are logical px, as GPUI measures them.
+        self.scroll.set_offset(Point {
+            x: gpui_kit::px(x),
+            y: gpui_kit::px(y),
+        });
     }
 
     /// At 100%, the pointer drags the image: it follows the pointer.
@@ -1811,7 +1816,7 @@ impl Render for Viewer {
         let locale = settings::locale(cx);
         let macos = cfg!(target_os = "macos");
         let viewport = window.viewport_size();
-        let (vw, vh) = (f32::from(viewport.width), f32::from(viewport.height));
+        let (vw, vh) = (zoom::eff(viewport.width), zoom::eff(viewport.height));
         let inset = if vw < 880. || vh < 560. { 24. } else { 32. };
         let Some(file) = self.file().cloned() else {
             return div().into_any_element();
@@ -1825,7 +1830,7 @@ impl Render for Viewer {
             .h(px(44.))
             .px(px(16.))
             .flex_shrink_0()
-            .border_b_1()
+            .border_b(px(1.))
             .border_color(t.border_default)
             .child(
                 type_scale::UI_STRONG
@@ -2042,7 +2047,7 @@ impl Render for Viewer {
                         div()
                             .px(px(16.))
                             .py(px(8.))
-                            .border_t_1()
+                            .border_t(px(1.))
                             .border_color(t.border_default)
                             .child(line(
                                 Icon::Info,
@@ -2074,7 +2079,7 @@ impl Render for Viewer {
                     .flex()
                     .flex_col()
                     .bg(t.bg_overlay)
-                    .border_1()
+                    .border(px(1.))
                     .border_color(t.border_default)
                     .rounded(px(RADIUS_XL))
                     .shadow(vec![t.shadow_overlay()])

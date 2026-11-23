@@ -4,10 +4,11 @@
 
 use std::rc::Rc;
 
+use crate::zoom::px;
 use acta_core::model::FolderId;
 use gpui_kit::{
     AnyElement, Context, Div, InteractiveElement, IntoElement, ParentElement, SharedString,
-    Stateful, StatefulInteractiveElement, Styled, Window, div, px,
+    Stateful, StatefulInteractiveElement, Styled, Window, div,
 };
 
 use crate::folders_model::{self, GitLine};
@@ -167,14 +168,14 @@ pub fn switcher_menu<V: 'static>(
             let item_id = SharedString::from(format!("{id}-{g}-{i}"));
             if entry.missing {
                 panel = panel.child(
-                    type_scale::UI
+                    type_scale::MENU
                         .el()
                         .id(item_id)
                         .flex()
                         .flex_row()
                         .items_center()
                         .gap(px(8.))
-                        .h(px(32.))
+                        .h(px(28.))
                         .px(px(8.))
                         .text_color(t.text_disabled)
                         .child(icon(Icon::FolderX, 16., t.text_disabled))
