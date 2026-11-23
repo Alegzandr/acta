@@ -3001,6 +3001,10 @@ catalogue! {
         en: t("Epics"),
         fr: t("Epics"),
     }
+    PaletteContent "palette.content" {
+        en: t("In content"),
+        fr: t("Dans le contenu"),
+    }
     PaletteHintOpen "palette.hint.open" {
         en: t("{keys} open"),
         fr: t("{keys} ouvrir"),

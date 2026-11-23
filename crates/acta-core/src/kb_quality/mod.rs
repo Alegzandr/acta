@@ -281,7 +281,7 @@ fn conflict_signal(a: &Profile, b: &Profile) -> Option<Signal> {
 
 /// Case folded, accents removed (NFKD, combining marks dropped), curly
 /// apostrophes made straight.
-fn fold(text: &str) -> String {
+pub(crate) fn fold(text: &str) -> String {
     text.nfkd()
         .filter(|c| !is_combining_mark(*c))
         .collect::<String>()
