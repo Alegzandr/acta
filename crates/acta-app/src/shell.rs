@@ -2727,7 +2727,7 @@ impl Shell {
                 Some(PageView::Doc(p)) => p.update(cx, |p, cx| p.verify(cx)),
                 _ => crate::kbq_ui::verify(&ws, k.id, owner, cx),
             },
-            Command::KbRetire => crate::kbq_ui::retire(&ws, k.id, kind, owner, cx),
+            Command::KbRetire => crate::kbq_ui::retire(&ws, k.id, Some(k.rev), kind, owner, cx),
             Command::KbMakeLive => crate::kbq_ui::make_live(&ws, k.id, owner, cx),
             Command::KbKeepBoth(a, b) => {
                 let pair = if k.conflict == Some(b) {

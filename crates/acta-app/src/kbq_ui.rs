@@ -407,7 +407,14 @@ pub fn verify(ws: &Entity<Workspace>, id: KbId, owner: Option<Owner>, cx: &mut A
 
 /// "Mark as no longer true": no reason asked; it leaves the live list,
 /// often away from the reader's eyes, so it toasts with Undo.
-pub fn retire(ws: &Entity<Workspace>, id: KbId, kind: KbKind, owner: Option<Owner>, cx: &mut App) {
+pub fn retire(
+    ws: &Entity<Workspace>,
+    id: KbId,
+    rev: Option<i64>,
+    kind: KbKind,
+    owner: Option<Owner>,
+    cx: &mut App,
+) {
     let project = stack(ws, owner, cx);
     let locale = settings::locale(cx);
     let message = text(
@@ -416,7 +423,9 @@ pub fn retire(ws: &Entity<Workspace>, id: KbId, kind: KbKind, owner: Option<Owne
     );
     ws.update(cx, |ws, cx| {
         ws.undoable(cx, project, Some(message), move |store| {
-            let trace = store.kb_retire(id, None, "", &KbWriteCtx::default(), Author::Human)?;
+            // The revision the page showed: a text changed since is not
+            // retired unseen (refused like a stale edit).
+            let trace = store.kb_retire(id, rev, "", &KbWriteCtx::default(), Author::Human)?;
             Ok((Undo::KbState(Box::new(trace)), ()))
         });
     });
@@ -549,12 +558,35 @@ pub fn find_duplicates(ws: &Entity<Workspace>, project: ProjectId, cx: &mut App)
         return;
     }
     ws.update(cx, |ws, _| ws.kb_scanning = true);
-    let task = ws.read(cx).db.run(cx, move |store| {
-        store.kb_scan_duplicates(project, Author::Human)
-    });
     let ws = ws.clone();
     cx.spawn(async move |cx| {
-        let found = task.await;
+        // Page by page: the store is free for other writes between pages.
+        let mut pairs = std::collections::HashSet::new();
+        let mut offset = Some(0);
+        let mut found = Ok(());
+        while let Some(at) = offset {
+            let task = ws.update(cx, |ws, cx| {
+                ws.db.run(cx, move |store| {
+                    store.kb_scan_duplicates_page(
+                        project,
+                        at,
+                        acta_core::store::SCAN_PAGE,
+                        Author::Human,
+                    )
+                })
+            });
+            match task.await {
+                Ok((page, next)) => {
+                    pairs.extend(page);
+                    offset = next;
+                }
+                Err(err) => {
+                    found = Err(err);
+                    break;
+                }
+            }
+        }
+        let found = found.map(|()| pairs.len());
         ws.update(cx, |ws, cx| {
             ws.kb_scanning = false;
             let locale = settings::locale(cx);
@@ -672,6 +704,8 @@ pub fn reason_lines(reasons: &[Reason], locale: Locale) -> Vec<String> {
 #[derive(Clone, Debug)]
 pub struct NoticeFacts {
     pub id: KbId,
+    /// The revision the page shows.
+    pub rev: i64,
     pub kind: KbKind,
     pub owner: Owner,
     pub notice: Notice,
@@ -691,6 +725,7 @@ impl NoticeFacts {
         )?;
         Some(NoticeFacts {
             id: q.entry.id,
+            rev: q.entry.rev,
             kind: q.entry.kind,
             owner: q.entry.owner,
             notice,
@@ -750,6 +785,7 @@ pub fn notice_el<T: EventEmitter<PageEvent> + 'static>(
 ) -> AnyElement {
     const MARK: &str = "\u{1}";
     let id = f.id;
+    let rev = f.rev;
     let owner = Some(f.owner);
     let kind = f.kind;
     let button = |key: &'static str, label: String| {
@@ -929,7 +965,7 @@ pub fn notice_el<T: EventEmitter<PageEvent> + 'static>(
                         .on_click(move |_, _, cx| move_up(&ws, id, kind, to, &name, cx))
                 }
                 NoticeAction::Retire => button("kbq-retire", text_of(locale, Key::KbRetire))
-                    .on_click(move |_, _, cx| retire(&ws, id, kind, owner, cx)),
+                    .on_click(move |_, _, cx| retire(&ws, id, Some(rev), kind, owner, cx)),
             };
             shell(info)
                 .child(

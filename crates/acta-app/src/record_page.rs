@@ -47,6 +47,10 @@ mod folders;
 pub mod questions;
 
 /// What a page asks the window to do.
+/// A knowledge row drawn: its entry, revision, owner, kind and state (the
+/// palette's target).
+type KbRowId = (KbId, i64, Owner, KbKind, acta_core::model::KbState);
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum PageEvent {
     Open(Route),
@@ -144,7 +148,7 @@ pub struct RecordPage {
     /// drawn (`V`, the palette's target).
     kb_flags: crate::kbq_model::FlagSet,
     kb_row_focus: std::cell::RefCell<Vec<FocusHandle>>,
-    kb_row_ids: std::cell::RefCell<Vec<(KbId, Owner, KbKind, acta_core::model::KbState)>>,
+    kb_row_ids: std::cell::RefCell<Vec<KbRowId>>,
     _kb_git: Task<()>,
     _kb_open: Task<()>,
     id_copied: bool,
@@ -1827,10 +1831,11 @@ impl RecordPage {
             .borrow()
             .iter()
             .position(|h| h.is_focused(window))?;
-        let (id, owner, kind, state) = *self.kb_row_ids.borrow().get(i)?;
+        let (id, rev, owner, kind, state) = *self.kb_row_ids.borrow().get(i)?;
         let reasons = self.kb_flags.reasons(id);
         Some(crate::commands::FocusedKb {
             id,
+            rev,
             owner,
             memory: kind == KbKind::Memory,
             live: state == acta_core::model::KbState::Live,
@@ -1852,7 +1857,7 @@ impl RecordPage {
             .borrow()
             .iter()
             .find(|r| r.0 == id)
-            .map(|r| r.1);
+            .map(|r| r.2);
         self.kb_flags.mark_verified(id);
         crate::kbq_ui::verify(&self.ws, id, owner, cx);
         cx.notify();
@@ -1882,7 +1887,7 @@ impl RecordPage {
         {
             let mut ids = self.kb_row_ids.borrow_mut();
             ids.truncate(index);
-            ids.push((id, entry.owner, kind, entry.state));
+            ids.push((id, entry.rev, entry.owner, kind, entry.state));
         }
         let row = crate::kb_page::kb_row(entry, None, signal, false, index, locale, t)
             .track_focus(&handle)

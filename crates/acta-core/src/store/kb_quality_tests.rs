@@ -1284,6 +1284,25 @@ fn a_human_edit_records_and_settles_pairs() {
             .iter()
             .all(|p| p.state == KbPairState::Resolved)
     );
+    // Back to the contradicting text: the pair is open again.
+    s.kb_update(
+        mine,
+        KbUpdate {
+            expected_rev: None,
+            title: Some("Store tests in parallel".into()),
+            summary: Some("Never run the store tests in parallel".into()),
+            edit: KbEdit::Body("They share a key store.".into()),
+        },
+        H,
+    )
+    .unwrap();
+    s.kb_recheck(mine, H).unwrap();
+    assert!(
+        s.kb_pairs_of(mine)
+            .unwrap()
+            .iter()
+            .any(|p| p.state == KbPairState::Open && p.other(mine) == theirs)
+    );
     // Revisions carry their session and branch for the history.
     let rev = s.kb_history(theirs, PageReq::first(1)).unwrap().items;
     assert_eq!(rev[0].session, None);
@@ -1329,4 +1348,41 @@ fn the_human_scan_records_duplicates_and_changes_no_entry() {
     s.kb_set_pair_state(a, b, KbPairKind::Duplicate, KbPairState::Distinct, H)
         .unwrap();
     assert_eq!(s.kb_scan_duplicates(p, H).unwrap(), 0);
+}
+
+#[test]
+fn the_scan_runs_page_by_page() {
+    let Seed { mut ts, t, p, .. } = seed();
+    let s = &mut ts.store;
+    let same = |s: &mut Store, owner| {
+        s.kb_create(
+            memory(
+                owner,
+                "Keychain entry name",
+                "The key is stored under acta.db",
+                "The keychain entry is named acta.db.",
+            ),
+            C,
+        )
+        .unwrap()
+    };
+    let a = same(s, Owner::Topic(t));
+    let b = same(s, Owner::Project(p));
+    mem(s, Owner::Project(p), "Backups run nightly");
+    // One memory per page: three pages, the pair found once from each side.
+    let mut offset = 0;
+    let mut pages = 0;
+    let mut found = std::collections::HashSet::new();
+    loop {
+        let (pairs, next) = s.kb_scan_duplicates_page(p, offset, 1, H).unwrap();
+        found.extend(pairs);
+        pages += 1;
+        match next {
+            Some(n) => offset = n,
+            None => break,
+        }
+    }
+    assert_eq!(pages, 3);
+    let want: std::collections::HashSet<_> = [(a.min(b), a.max(b))].into();
+    assert_eq!(found, want);
 }

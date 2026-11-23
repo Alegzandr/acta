@@ -295,6 +295,8 @@ pub struct Context {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FocusedKb {
     pub id: KbId,
+    /// The revision shown (Mark as no longer true is refused once it moved).
+    pub rev: i64,
     pub owner: Owner,
     pub memory: bool,
     pub live: bool,

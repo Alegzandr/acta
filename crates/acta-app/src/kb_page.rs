@@ -313,6 +313,7 @@ pub(crate) fn focused_kb(
     use crate::kbq_model::Reason;
     crate::commands::FocusedKb {
         id: entry.id,
+        rev: entry.rev,
         owner: entry.owner,
         memory: entry.kind == KbKind::Memory,
         live: entry.state == acta_core::model::KbState::Live,

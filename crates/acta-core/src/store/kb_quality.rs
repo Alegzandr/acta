@@ -27,6 +27,11 @@ pub const MAX_SUPERSEDES: usize = 3;
 pub const RETIRE_REASON_MAX: usize = 200;
 /// Longest file path or commit a source may name, in characters.
 pub const SOURCE_TEXT_MAX: usize = 300;
+/// One page of the duplicate scan: the open pairs found and the next
+/// offset.
+pub type ScanPage = (Vec<(KbId, KbId)>, Option<i64>);
+/// Memories one page of the duplicate scan checks (about 0.1 s).
+pub const SCAN_PAGE: i64 = 100;
 /// Candidates the full-text prefilter hands to the checker.
 pub const CANDIDATES: usize = 20;
 /// How long the local quality log keeps a row.
@@ -618,7 +623,8 @@ impl Store {
     /// 5, Checks on the human's writes): never refused; each conflict or
     /// duplicate found becomes an open pair (a pair kept apart stays
     /// `distinct`), and its open pairs no longer found are resolved, so an
-    /// edit of either side settles or reopens a pair. Memories only.
+    /// edit of either side settles or reopens a pair (a settled pair found
+    /// again is open again; one kept apart stays distinct). Memories only.
     pub fn kb_recheck(&mut self, id: KbId, author: Author) -> Result<()> {
         let e = self.kb_entry(id)?;
         if e.kind != KbKind::Memory || e.state != KbState::Live {
@@ -640,7 +646,13 @@ impl Store {
                 Verdict::Same | Verdict::Duplicate => KbPairKind::Duplicate,
                 _ => continue,
             };
-            self.kb_record_pair(id, f.candidate.id, kind, f.comparison.s, author)?;
+            // Found again after it was settled: open again (a pair kept
+            // apart stays distinct).
+            if self.kb_record_pair(id, f.candidate.id, kind, f.comparison.s, author)?
+                == KbPairState::Resolved
+            {
+                self.kb_set_pair_state(id, f.candidate.id, kind, KbPairState::Open, author)?;
+            }
             kept.push((kind, f.candidate.id));
         }
         for p in self.kb_pairs_of(id)? {
@@ -655,35 +667,50 @@ impl Store {
     /// "Find duplicate memories" (components-knowledge.md 5): every live
     /// memory of the project checked against its prefilter; each duplicate
     /// found becomes an open pair (one kept apart stays `distinct`). No
-    /// entry changes. Returns how many open duplicate pairs it found.
+    /// entry changes. Returns how many open duplicate pairs it found. The
+    /// app runs it page by page ([`Store::kb_scan_duplicates_page`]) so the
+    /// store is free between pages.
     pub fn kb_scan_duplicates(
         &mut self,
         project: crate::model::ProjectId,
         author: Author,
     ) -> Result<usize> {
+        let mut found = std::collections::HashSet::new();
+        let mut offset = 0;
+        loop {
+            let (pairs, next) = self.kb_scan_duplicates_page(project, offset, SCAN_PAGE, author)?;
+            found.extend(pairs);
+            match next {
+                Some(n) => offset = n,
+                None => return Ok(found.len()),
+            }
+        }
+    }
+
+    /// One page of [`Store::kb_scan_duplicates`]: the live memories of the
+    /// project from `offset`, at most `limit` of them, checked. Returns
+    /// the open duplicate pairs found (lower id first) and the next
+    /// offset, `None` after the last page.
+    pub fn kb_scan_duplicates_page(
+        &mut self,
+        project: crate::model::ProjectId,
+        offset: i64,
+        limit: i64,
+        author: Author,
+    ) -> Result<ScanPage> {
         let filter = super::KbFilter {
             kind: Some(KbKind::Memory),
             ..Default::default()
         };
-        let mut all = Vec::new();
-        loop {
-            let page = self.kb_rollup(
-                Owner::Project(project),
-                &filter,
-                crate::model::PageReq {
-                    offset: all.len() as i64,
-                    limit: crate::model::PageReq::MAX_LIMIT,
-                },
-            )?;
-            let done =
-                page.items.is_empty() || all.len() as i64 + page.items.len() as i64 >= page.total;
-            all.extend(page.items.into_iter().map(|k| k.id));
-            if done {
-                break;
-            }
-        }
-        let mut found = std::collections::HashSet::new();
-        for id in all {
+        let page = self.kb_rollup(
+            Owner::Project(project),
+            &filter,
+            crate::model::PageReq { offset, limit },
+        )?;
+        let next = offset + page.items.len() as i64;
+        let more = !page.items.is_empty() && next < page.total;
+        let mut found = Vec::new();
+        for id in page.items.into_iter().map(|k| k.id) {
             let e = self.kb_entry(id)?;
             let hits = self.kb_check(
                 e.owner,
@@ -699,18 +726,18 @@ impl Store {
                     continue;
                 }
                 let other = f.candidate.id;
-                let key = (id.0.min(other.0), id.0.max(other.0));
+                let key = ordered(id, other);
                 if found.contains(&key) {
                     continue;
                 }
                 let state =
                     self.kb_record_pair(id, other, KbPairKind::Duplicate, f.comparison.s, author)?;
                 if state == KbPairState::Open {
-                    found.insert(key);
+                    found.push(key);
                 }
             }
         }
-        Ok(found.len())
+        Ok((found, more.then_some(next)))
     }
 
     /// Adds sources to an entry (duplicates of one it has are skipped).

@@ -607,6 +607,9 @@ impl Undo {
             }
             Undo::KbRevision { id, back, expect } => {
                 store.kb_restore_revision(*id, *back, me)?;
+                // The text changed back: its pairs are checked again, as
+                // the human's writes are (components-knowledge.md 5).
+                store.kb_recheck(*id, me)?;
                 Undo::KbRevision {
                     id: *id,
                     back: *expect,
@@ -615,6 +618,7 @@ impl Undo {
             }
             Undo::KbOwner { id, back, expect } => {
                 store.kb_move(*id, *back, me)?;
+                store.kb_recheck(*id, me)?;
                 Undo::KbOwner {
                     id: *id,
                     back: *expect,
@@ -2190,6 +2194,75 @@ mod tests {
     use super::*;
     use crate::db::test_support::temp_store;
     use acta_core::store::NewTopic;
+
+    #[test]
+    fn undoing_and_redoing_a_memory_edit_checks_its_pairs_again() {
+        use acta_core::model::{KbKind, KbPairKind, KbPairState};
+        use acta_core::store::{KbEdit, KbUpdate, NewKb};
+        let mut temp = temp_store();
+        let store = &mut temp.store;
+        let (project, _) = topic(store);
+        let memory = |title: &str, summary: &str, body: &str| NewKb {
+            owner: Owner::Project(project),
+            kind: KbKind::Memory,
+            title: title.into(),
+            summary: summary.into(),
+            body: body.into(),
+            from_file: false,
+        };
+        let theirs = store
+            .kb_create(
+                memory(
+                    "Store tests in parallel",
+                    "The store tests run in parallel",
+                    "cargo test runs the store tests in parallel.",
+                ),
+                Author::Claude,
+            )
+            .unwrap();
+        let mine = store
+            .kb_create(
+                memory(
+                    "Store tests in parallel",
+                    "Never run the store tests in parallel",
+                    "They share a key store.",
+                ),
+                Author::Human,
+            )
+            .unwrap();
+        store.kb_recheck(mine, Author::Human).unwrap();
+        let state =
+            |store: &Store| kb_pair_state(store, mine, theirs, KbPairKind::Conflict).unwrap();
+        assert_eq!(state(store), KbPairState::Open);
+        // Alexandre rewrites it about something else: the pair settles.
+        let back = store.kb_entry(mine).unwrap().rev;
+        let expect = store
+            .kb_update(
+                mine,
+                KbUpdate {
+                    expected_rev: None,
+                    title: Some("Keychain entry name".into()),
+                    summary: Some("Alexandre's key lives in the keychain".into()),
+                    edit: KbEdit::Body("The keychain entry is named acta.db.".into()),
+                },
+                Author::Human,
+            )
+            .unwrap();
+        store.kb_recheck(mine, Author::Human).unwrap();
+        assert_eq!(state(store), KbPairState::Resolved);
+        // Undo brings the text and the open pair back; redo settles it again.
+        let redo = Undo::KbRevision {
+            id: mine,
+            back,
+            expect,
+        }
+        .apply(store)
+        .unwrap()
+        .expect("nothing changed since");
+        assert_eq!(state(store), KbPairState::Open);
+        redo.apply(store).unwrap().expect("nothing changed since");
+        assert_eq!(state(store), KbPairState::Resolved);
+    }
 
     #[test]
     fn deleting_a_topic_takes_its_folders_settings_out_and_undo_puts_them_back() {
