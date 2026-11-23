@@ -109,6 +109,9 @@ Requested by the user on 2026-11-22 ("browse the contents of the associated fold
 Requested by the user on 2026-11-23 ("like Notepad on Windows 11: reopening Acta always resumes exactly where you stopped"). To spec then build: the window, layout and open tabs come back (already in `preferences.json`), plus each page's scroll position, the focused element, open editors with their unsaved drafts (drafts are content: stored in the encrypted database, never in `preferences.json`), the folded state, the terminal sessions of each page (restarted with `--resume`), chats and browsers on their last address. Crash-safe: drafts saved continuously.
 - [ ] Spec (product-designer) and build (gpui-engineer), with tests of the restore model.
 
+## Per-page commit mode (ADR 0011 addendum 2026-11-23)
+- [ ] Store override per (page, folder), `--settings` per session for Acta-launched sessions, guard resolves the session's page, folder form "For this page", tests (two pages, one folder, different modes; outside session uses the folder setting).
+
 ## Small fixes
 - [ ] Sidebar: unread dots are not vertically aligned with the counters (user, 2026-11-23); align the trailing slot's dot, glyphs and counts on one baseline/centre line.
 

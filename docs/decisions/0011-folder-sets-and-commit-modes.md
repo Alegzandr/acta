@@ -155,3 +155,11 @@ ADR 0008 "Live files" applies to folder sets: a followed folder keeps its name, 
 
 ## Addendum (2026-11-22): folder paths on Claude Code's command line
 Accepted: the paths of the folders a session sees reach Claude Code as process arguments (`--add-dir`, and the plugin's path in `--plugin-dir`). On Linux and macOS, other local users can read them with `ps`. This extends ADR 0008's process-argument ruling, which weighed only processes of the same user. Paths only: no content, title or key material goes on a command line.
+
+## Addendum (2026-11-23): commit mode per page
+User request: the same folder may be Manual when working from one topic and "commit and push" from another. Decision:
+- A page may override the commit mode (and its two options) of any folder it sees, own or inherited; without an override it uses the folder's own setting (today's behaviour). Stored per (page, folder) in the encrypted database.
+- Sessions Acta starts carry their page, so the effective mode is the page's: Acta passes the allow rules for that session with `--settings <file>` (a per-session settings file under the data dir holding only permission rules and `attribution`, no user content; deleted when the session ends) instead of relying on the folder's `settings.local.json`. The folder file keeps only what the folder's own setting allows (or nothing), so a session started from a Manual page never inherits another page's allow rules.
+- The pre-git guard resolves the session's page through presence (session → page) and applies that page's effective mode; a session started outside Acta uses the folder's own setting; unknown → the strictest.
+- UI: the folder settings form gains "For this page: Use folder setting / Manual / Commit / Commit and push", shown on the page being edited; the folder row's mark shows the effective mode.
+To build after the current queue (PLAN: Folder sets, "Per-page commit mode").
