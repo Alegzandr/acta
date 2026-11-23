@@ -66,7 +66,7 @@ objc2-speech = "0.3.2"
 whisper-rs = { version = "0.16", features = ["vulkan"] }
 
 [target.'cfg(windows)'.dependencies]
-winreg = "0.55"
+winreg = "0.56"
 # The chat panel (ADR 0009): the system web view, Windows only for now (macOS and
 # Linux get the link). Exact pins, bumped together with gpui-kit; gpui-webview builds
 # on Longbridge's wry fork.
