@@ -32,7 +32,8 @@ use gpui_kit::{
 };
 
 #[cfg(windows)]
-use crate::browser_panel::{BrowserEvent, BrowserPanel};
+use crate::browser_dock::BrowserDock;
+use crate::browser_panel::BrowserEvent;
 use crate::capture::{Capture, CaptureEvent};
 #[cfg(windows)]
 use crate::chat::Kept;
@@ -60,6 +61,7 @@ use crate::settings_page::SettingsPage;
 use crate::terminal_dock::{DockEvent, Origin, TerminalDock};
 use crate::theme::{self, RADIUS_LG, Tokens};
 use crate::titlebar::{self, Crumb};
+use crate::tools_model::{Holder, InstanceKey};
 use crate::trash_page::TrashPage;
 use crate::tree::{self, Folds, MenuItem, MenuKind, Row, RowKey};
 use crate::type_scale;
@@ -156,6 +158,15 @@ actions!(
         GoToHeading,
         /// ``Ctrl+` `` or `Mod+Shift+J`.
         ToggleTerminal,
+        /// ``Ctrl+Shift+` ``: a new Claude Code session on the current page
+        /// (layout.md 4.5.1).
+        StartClaudeHere,
+        /// `Ctrl+Alt+J` (`Cmd+Option+J`): Claude Code (no project).
+        ToggleFreeClaude,
+        /// `Ctrl+PageDown` / `Ctrl+PageUp` in a tool view: the next or
+        /// previous instance.
+        NextInstance,
+        PreviousInstance,
         /// `Mod+1`.
         FocusSidebar,
         /// `Mod+2`.
@@ -215,6 +226,15 @@ actions!(
         TreeOpenTab,
     ]
 );
+
+/// The page of a record that owns tools.
+fn owner_route(owner: Owner) -> Route {
+    match owner {
+        Owner::Project(id) => Route::Project(id),
+        Owner::Epic(id) => Route::Epic(id),
+        Owner::Topic(id) => Route::Topic(id),
+    }
+}
 
 /// The command "File with Claude Code" runs (the plugin's triage skill).
 const TRIAGE_COMMAND: &str = "/acta:triage";
@@ -317,6 +337,14 @@ fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new(m("cmd-shift-o", "ctrl-shift-o"), GoToHeading, app),
         KeyBinding::new("ctrl-`", ToggleTerminal, None),
         KeyBinding::new(m("cmd-shift-j", "ctrl-shift-j"), ToggleTerminal, None),
+        // The backtick matched by position on every platform (6.1).
+        KeyBinding::new("ctrl-shift-`", StartClaudeHere, None),
+        KeyBinding::new(m("cmd-alt-j", "ctrl-alt-j"), ToggleFreeClaude, None),
+        // In a tool view only: passed through everywhere else (4.5.1).
+        KeyBinding::new("ctrl-pagedown", NextInstance, Some("Terminal")),
+        KeyBinding::new("ctrl-pageup", PreviousInstance, Some("Terminal")),
+        KeyBinding::new("ctrl-pagedown", NextInstance, Some("ToolView")),
+        KeyBinding::new("ctrl-pageup", PreviousInstance, Some("ToolView")),
         KeyBinding::new(m("cmd-1", "ctrl-1"), FocusSidebar, None),
         KeyBinding::new(m("cmd-2", "ctrl-2"), FocusPage, None),
         KeyBinding::new(m("cmd-3", "ctrl-3"), FocusTerminal, None),
@@ -515,11 +543,11 @@ struct Bench {
     /// What the open picker does with the row chosen.
     on_pick: Option<crate::palette::OnPick>,
     /// "File with Claude Code" found Claude Code mid-task: the restart
-    /// confirmation, when accepted, starts a session on the triage.
-    pending_triage: Option<Origin>,
-    /// "Restart in ..." waiting for the restart confirmation: the
-    /// session's own page.
-    pending_restart: Option<Origin>,
+    /// confirmation, when accepted, restarts that session on the triage.
+    pending_triage: Option<InstanceKey>,
+    /// Restart or "Restart in ..." waiting for the restart confirmation:
+    /// the instance (of the free dock when its holder is free).
+    pending_restart: Option<InstanceKey>,
     recent: Vec<TopicId>,
     overlay: Option<Overlay>,
     /// Where focus returns when the overlay closes.
@@ -535,11 +563,13 @@ struct Bench {
     toast: Option<Toast>,
     toast_timer: Task<()>,
     dock: Entity<TerminalDock>,
+    /// Claude Code (no project) (layout.md 4.5.1).
+    free_dock: Entity<TerminalDock>,
     sessions: Entity<crate::sessions_view::SessionsView>,
     #[cfg(windows)]
     chat: Entity<ChatPanel>,
     #[cfg(windows)]
-    browser: Entity<BrowserPanel>,
+    browser: Entity<BrowserDock>,
     _subs: Vec<Subscription>,
     _page_sub: Option<Subscription>,
 }
@@ -703,7 +733,7 @@ impl Shell {
         #[cfg(windows)]
         let browser = {
             let db = db.clone();
-            cx.new(|cx| BrowserPanel::new(db, window, cx))
+            cx.new(|cx| BrowserDock::new(db, window, cx))
         };
         // Session presence (components-app.md 5, Claude Code sessions), the
         // store for setup's folder links, and this build's plugin files
@@ -719,13 +749,16 @@ impl Shell {
         cx.background_executor()
             .spawn(async { claude_setup::write_plugin_files() })
             .detach();
+        #[cfg(windows)]
+        let chat_db = db.clone();
         let ws = cx.new(|cx| Workspace::new(db, cx));
         let files = cx.new(|_| crate::attach_ui::Files::new(ws.clone()));
         cx.set_global(crate::attach_ui::FilesHub(files.clone()));
-        let dock = cx.new(|cx| TerminalDock::new(ws.clone(), cx));
+        let dock = cx.new(|cx| TerminalDock::new(ws.clone(), false, cx));
+        let free_dock = cx.new(|cx| TerminalDock::new(ws.clone(), true, cx));
         let sessions = cx.new(|cx| crate::sessions_view::SessionsView::new(ws.clone(), cx));
         #[cfg(windows)]
-        let chat = cx.new(|cx| ChatPanel::new(window, cx));
+        let chat = cx.new(|cx| ChatPanel::new(chat_db, window, cx));
         let prefs = settings::current(cx).clone();
         let folds = Folds {
             collapsed: prefs.collapsed.iter().cloned().collect(),
@@ -737,23 +770,8 @@ impl Shell {
         let mut subs = vec![
             cx.subscribe_in(&ws, window, Self::on_workspace),
             cx.observe(&ws, |_, _, cx| cx.notify()),
-            cx.subscribe_in(
-                &dock,
-                window,
-                |shell, _, event: &DockEvent, window, cx| match event {
-                    DockEvent::RestartHere => shell.restart_terminal_here(window, cx),
-                    DockEvent::RestartIn(origin) => {
-                        shell.restart_terminal_in(origin.clone(), window, cx)
-                    }
-                    DockEvent::EditFolders(origin) => {
-                        shell.open_folders_of(origin.owner, false, window, cx)
-                    }
-                    DockEvent::AddFolder(origin) => {
-                        shell.open_folders_of(origin.owner, true, window, cx)
-                    }
-                    DockEvent::OneOffEnded(row) => crate::ready::terminal_ended(*row, cx),
-                },
-            ),
+            cx.subscribe_in(&dock, window, Self::on_dock),
+            cx.subscribe_in(&free_dock, window, Self::on_dock),
             cx.subscribe_in(&sessions, window, Self::on_sessions),
             cx.subscribe_in(&files, window, Self::on_files),
             cx.subscribe_in(
@@ -817,6 +835,7 @@ impl Shell {
             toast: None,
             toast_timer: Task::ready(()),
             dock,
+            free_dock,
             sessions,
             #[cfg(windows)]
             chat,
@@ -826,6 +845,24 @@ impl Shell {
             _page_sub: Some(first_run_sub),
         };
         self.content = Content::Workbench(Box::new(bench));
+        // layout.md 4.5.1, Resources: idle web views close after 10 minutes.
+        #[cfg(windows)]
+        cx.spawn(async move |shell, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_secs(60))
+                    .await;
+                if shell
+                    .update_in(cx, |shell, window, cx| {
+                        shell.close_idle_web_views(window, cx)
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
+        .detach();
         // layout.md 4.6: the setup is checked at launch.
         claude_setup::refresh(cx);
         // The first page waits for the tree (first reload).
@@ -1003,6 +1040,61 @@ impl Shell {
         bench.current = first;
         bench.history = slot.history;
         let _ = (window, cx);
+    }
+
+    #[cfg(debug_assertions)]
+    /// The memory-quality surfaces of `dev_overlay`.
+    fn dev_kbq(&mut self, which: &str, window: &mut Window, cx: &mut Context<Self>) {
+        use crate::kb_model::Chip;
+        let project = self.bench().and_then(|b| b.active_project);
+        let page = self.bench().map(|b| match &b.page {
+            PageView::Doc(p) => (Some(p.clone()), None),
+            PageView::Knowledge(p) => (None, Some(p.clone())),
+            _ => (None, None),
+        });
+        let (doc, kb) = page.unwrap_or((None, None));
+        match which {
+            "kbq-to-check" | "kbq-to-check-all" | "kbq-inactive" | "kbq-to-check-verify" => {
+                let Some(project) = project else { return };
+                let (chip, kind) = match which {
+                    "kbq-inactive" => (Chip::Inactive, None),
+                    "kbq-to-check-all" => (Chip::ToCheck, None),
+                    _ => (Chip::ToCheck, Some(KbKind::Memory)),
+                };
+                self.open_kb_chip(project, chip, kind, window, cx);
+                if which == "kbq-to-check-verify" {
+                    cx.spawn_in(window, async move |shell, cx| {
+                        cx.background_executor()
+                            .timer(Duration::from_millis(1500))
+                            .await;
+                        let _ = shell.update_in(cx, |shell, _, cx| {
+                            if let Some(bench) = shell.bench()
+                                && let PageView::Knowledge(p) = &bench.page
+                            {
+                                p.update(cx, |p, cx| p.dev_verify_first(cx));
+                            }
+                        });
+                    })
+                    .detach();
+                }
+            }
+            "kbq-unfold" => {
+                if let Some(kb) = kb {
+                    kb.update(cx, |p, cx| p.dev_unfold_first(cx));
+                }
+            }
+            "kbq-history" => {
+                if let Some(doc) = doc {
+                    doc.update(cx, |p, cx| p.dev_history(cx));
+                }
+            }
+            "kbq-merge" | "kbq-merge-undo" => {
+                if let Some(doc) = doc {
+                    doc.update(cx, |p, cx| p.dev_merge(cx));
+                }
+            }
+            _ => {}
+        }
     }
 
     #[cfg(debug_assertions)]
@@ -1214,6 +1306,36 @@ impl Shell {
             ) => self.dev_ready(which, window, cx),
             Ok("capture") => self.open_capture(window, cx),
             Ok("terminal") => self.view_action(ViewId::Terminal, ViewAction::Show, window, cx),
+            // Claude Code (no project), shown with nothing started.
+            Ok("free-claude") => {
+                self.change_layout(None, window, cx, |l| {
+                    l.show_view(ViewId::FreeClaude).is_some()
+                });
+            }
+            // Two browsers opened by the human on the current page, once it
+            // has loaded: the instance strip (layout.md 4.5.1).
+            #[cfg(windows)]
+            Ok("browsers") => {
+                self.change_layout(None, window, cx, |l| {
+                    l.show_view(ViewId::AgentBrowser).is_some()
+                });
+                cx.spawn_in(window, async move |shell, cx| {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(1500))
+                        .await;
+                    let _ = shell.update_in(cx, |shell, window, cx| {
+                        shell.sync_tool_owner(window, cx);
+                        if let Some(bench) = shell.bench() {
+                            let browser = bench.browser.clone();
+                            browser.update(cx, |b, cx| {
+                                b.open_new(window, cx);
+                                b.open_new(window, cx);
+                            });
+                        }
+                    });
+                })
+                .detach();
+            }
             // Shown without taking the keyboard, for captures.
             #[cfg(windows)]
             Ok("chat") => {
@@ -1400,6 +1522,44 @@ impl Shell {
             }
             Ok("export") => self.open_export(window, cx),
             Ok("snapshots") => self.open_snapshots(window, cx),
+            // Memory quality (components-knowledge.md 5), once the page
+            // has loaded: the knowledge page with a chip, an unfolded
+            // memory, the history, a merge from the notice (and its undo).
+            #[cfg(debug_assertions)]
+            Ok(which) if which.starts_with("kbq-") => {
+                let which = which.to_owned();
+                cx.spawn_in(window, async move |shell, cx| {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(1500))
+                        .await;
+                    let _ =
+                        shell.update_in(cx, |shell, window, cx| shell.dev_kbq(&which, window, cx));
+                    if which.ends_with("-undo") {
+                        cx.background_executor()
+                            .timer(Duration::from_millis(4000))
+                            .await;
+                        let _ = shell.update_in(cx, |shell, _, cx| {
+                            if let Some(bench) = shell.bench() {
+                                let (ws, project) = (bench.ws.clone(), bench.active_project);
+                                ws.update(cx, |ws, cx| ws.undo_active(project, cx));
+                            }
+                        });
+                        // Then `Esc`, as the person would: the editor
+                        // closes on the text the store now holds.
+                        cx.background_executor()
+                            .timer(Duration::from_millis(1500))
+                            .await;
+                        let _ = shell.update_in(cx, |shell, window, cx| {
+                            if let Some(bench) = shell.bench()
+                                && let PageView::Doc(p) = &bench.page
+                            {
+                                p.update(cx, |p, cx| p.dev_cancel(window, cx));
+                            }
+                        });
+                    }
+                })
+                .detach();
+            }
             // Files (components-attachments.md 5): see `dev_attach`.
             #[cfg(debug_assertions)]
             Ok(which) if which.starts_with("attach-") => {
@@ -1860,17 +2020,7 @@ impl Shell {
             bench.recent.insert(0, id);
             bench.recent.truncate(5);
         }
-        let dock = bench.dock.clone();
-        let origin = self.origin(cx);
-        dock.update(cx, |dock, cx| {
-            if let Some(origin) = &origin
-                && dock.has_session(origin.project)
-            {
-                dock.project = Some(origin.project);
-            }
-            dock.active = origin;
-            cx.notify();
-        });
+        self.sync_tool_owner(window, cx);
         // Opening a page by any route reveals its row (layout.md 4.2.1).
         self.reveal_in_tree(false, cx);
         self.sync_page_kind_views(window, cx);
@@ -1934,11 +2084,14 @@ impl Shell {
                 }
                 cx.notify();
             }
-            PageEvent::ShowTerminal(project) => self.show_session_terminal(*project, window, cx),
+            PageEvent::ShowTerminal(owner) => self.show_page_sessions(*owner, window, cx),
             PageEvent::Confirm(confirm) => {
                 self.open_dialog(DialogKind::Confirm(confirm.clone()), window, cx)
             }
-            PageEvent::StaleMemories(project) => self.open_stale_memories(*project, window, cx),
+            PageEvent::KbChip(project, chip, kind) => {
+                self.open_kb_chip(*project, *chip, *kind, window, cx)
+            }
+            PageEvent::EditKb(id) => self.edit_kb(*id, window, cx),
             PageEvent::LateAnswers(scope) => self.open_late_answers(*scope, window, cx),
             PageEvent::OpenEntry(topic, entry) => self.open_entry(*topic, *entry, window, cx),
         }
@@ -2038,11 +2191,14 @@ impl Shell {
         self.navigate(Route::Questions(scope), true, window, cx);
     }
 
-    /// The Overview's memory line: the knowledge page, Kind Memories, with
-    /// the chip "Not updated for 90 days".
-    pub(super) fn open_stale_memories(
+    /// The knowledge page with a chip (components-knowledge.md 5): "To
+    /// check" from the Overview's memory line (Kind: Memories) or the
+    /// palette (every kind), "Superseded and retired" from the palette.
+    pub(super) fn open_kb_chip(
         &mut self,
         project: ProjectId,
+        chip: crate::kb_model::Chip,
+        kind: Option<KbKind>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -2051,7 +2207,7 @@ impl Shell {
         }
         let Some(bench) = self.bench() else { return };
         let (ws, tab) = (bench.ws.clone(), bench.current);
-        let page = cx.new(|cx| KnowledgePage::new_stale(ws, project, window, cx));
+        let page = cx.new(|cx| KnowledgePage::new_chip(ws, project, chip, kind, window, cx));
         let sub = Self::page_events(&page, tab, window, cx);
         if let Some(bench) = self.bench() {
             bench.page = PageView::Knowledge(page);
@@ -2456,27 +2612,96 @@ impl Shell {
     }
 
     /// The page's record, for the terminal and the folder commands.
+    /// The record that owns the current page's tools, with its project and
+    /// title (layout.md 4.5.1): `None` on a page that owns nothing.
     fn origin(&mut self, cx: &mut Context<Self>) -> Option<Origin> {
         let bench = self.bench()?;
-        let project = bench.active_project?;
-        let projects = bench.ws.read(cx).projects.clone();
-        let route = bench.history.current();
-        let (owner, name) = match route {
-            Some(Route::Topic(id)) => (
-                Owner::Topic(id),
-                tree::locate_topic(&projects, id)?.topic?.1,
-            ),
-            Some(Route::Epic(id)) => (Owner::Epic(id), tree::locate_epic(&projects, id)?.epic?.1),
-            _ => (
-                Owner::Project(project),
-                tree::locate_project(&projects, project)?.project?.1,
-            ),
+        let route = bench.history.current()?;
+        let kb_owner = match (&bench.page, route) {
+            (PageView::Doc(page), Route::Kb(_)) => page.read(cx).located().map(|(o, _)| o),
+            _ => None,
+        };
+        let owner = crate::tools_model::owner_of(route, kb_owner)?;
+        let ws = bench.ws.read(cx);
+        let projects = &ws.projects;
+        let (project, name) = match owner {
+            Owner::Project(id) => (id, tree::locate_project(projects, id)?.project?.1),
+            Owner::Epic(id) => {
+                let l = tree::locate_epic(projects, id)?;
+                (l.project?.0, l.epic?.1)
+            }
+            Owner::Topic(id) => {
+                let l = tree::locate_topic(projects, id)?;
+                (l.project?.0, l.topic?.1)
+            }
         };
         Some(Origin {
             owner,
             project,
             name,
         })
+    }
+
+    /// The Terminal view follows the current page (layout.md 4.5.1): set
+    /// on navigation and each frame (a document's owner arrives after it
+    /// loads); a no-op while nothing changed.
+    fn sync_tool_owner(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let origin = self.origin(cx);
+        let Some(bench) = self.bench() else { return };
+        let dock = bench.dock.clone();
+        if dock.read(cx).current() != origin.as_ref() {
+            dock.update(cx, |dock, cx| dock.set_current(origin.clone(), cx));
+        }
+        #[cfg(windows)]
+        {
+            let chat = bench.chat.clone();
+            chat.update(cx, |chat, cx| chat.set_current(origin.clone(), window, cx));
+            let browser = bench.browser.clone();
+            browser.update(cx, |b, cx| b.set_current(origin, window, cx));
+        }
+        #[cfg(not(windows))]
+        let _ = window;
+    }
+
+    /// The 10-minute and 6-view rules over every web view, chats and
+    /// browsers together (layout.md 4.5.1, Resources): run each minute and
+    /// whenever a web view opens.
+    #[cfg(windows)]
+    fn close_idle_web_views(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        use crate::tools_model::{WebUse, web_to_close};
+        #[derive(Clone, Copy)]
+        enum Web {
+            Chat(InstanceKey),
+            Browser(InstanceKey),
+        }
+        let Some(bench) = self.bench() else { return };
+        let (chat, browser) = (bench.chat.clone(), bench.browser.clone());
+        let tag = |f: fn(InstanceKey) -> Web, u: WebUse<InstanceKey>| WebUse {
+            key: f(u.key),
+            open: u.open,
+            on_screen: u.on_screen,
+            last_used: u.last_used,
+            busy: u.busy,
+        };
+        let uses: Vec<WebUse<Web>> = chat
+            .read(cx)
+            .web_uses()
+            .into_iter()
+            .map(|u| tag(Web::Chat, u))
+            .chain(
+                browser
+                    .read(cx)
+                    .web_uses(cx)
+                    .into_iter()
+                    .map(|u| tag(Web::Browser, u)),
+            )
+            .collect();
+        for web in web_to_close(&uses, std::time::Instant::now()) {
+            match web {
+                Web::Chat(key) => chat.update(cx, |c, cx| c.close_web(key, cx)),
+                Web::Browser(key) => browser.update(cx, |b, cx| b.close_web(key, window, cx)),
+            }
+        }
     }
 
     // ---- overlays ----
@@ -2559,7 +2784,22 @@ impl Shell {
                     .view_focus(*v, cx)
                     .is_some_and(|h| h.contains_focused(window, cx))
         });
+        let tools = {
+            let dock = bench.dock.read(cx);
+            let free = bench.free_dock.read(cx);
+            commands::ToolCommands {
+                claude_start: dock.current().is_some() && !dock.at_limit(),
+                claude_restart: dock.shown().is_some(),
+                free_new: !free.at_limit(),
+                #[cfg(windows)]
+                browser_devtools: bench.layout.is_visible(ViewId::AgentBrowser)
+                    && bench.browser.read(cx).has_page(cx),
+                #[cfg(not(windows))]
+                browser_devtools: false,
+            }
+        };
         commands::Context {
+            tools,
             has_project: bench.active_project.is_some(),
             on_topic: matches!(bench.history.current(), Some(Route::Topic(_))),
             on_record: matches!(bench.page, PageView::Record(_)),
@@ -2610,6 +2850,97 @@ impl Shell {
                 PageView::Trash(page) => Some(page.read(cx).command_state()),
                 _ => None,
             },
+            kb: self.kb_target(window, cx),
+            kb_scanning: bench.ws.read(cx).kb_scanning,
+        }
+    }
+
+    /// The knowledge entry the memory-quality commands act on: the focused
+    /// row, else the open entry (interaction.md 6.1).
+    fn kb_target(&self, window: &Window, cx: &App) -> Option<commands::FocusedKb> {
+        let Content::Workbench(bench) = &self.content else {
+            return None;
+        };
+        match &bench.page {
+            PageView::Knowledge(page) => page.read(cx).kb_context(window),
+            PageView::Record(page) => page.read(cx).kb_context(window),
+            PageView::Doc(page) => page.read(cx).kb_context(),
+            _ => None,
+        }
+    }
+
+    /// Run a memory-quality command on [`Self::kb_target`].
+    fn kb_command(&mut self, command: Command, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(k) = self.kb_target(window, cx) else {
+            return;
+        };
+        let Some(bench) = self.bench() else { return };
+        let ws = bench.ws.clone();
+        let page = match &bench.page {
+            PageView::Knowledge(p) => Some(PageView::Knowledge(p.clone())),
+            PageView::Record(p) => Some(PageView::Record(p.clone())),
+            PageView::Doc(p) => Some(PageView::Doc(p.clone())),
+            _ => None,
+        };
+        let owner = Some(k.owner);
+        let kind = if k.memory {
+            KbKind::Memory
+        } else {
+            KbKind::Document
+        };
+        match command {
+            // The page hides the mark at once; the write follows.
+            Command::KbVerify => match page {
+                Some(PageView::Knowledge(p)) => p.update(cx, |p, cx| p.verify_row(k.id, cx)),
+                Some(PageView::Record(p)) => p.update(cx, |p, cx| p.verify_kb(k.id, cx)),
+                Some(PageView::Doc(p)) => p.update(cx, |p, cx| p.verify(cx)),
+                _ => crate::kbq_ui::verify(&ws, k.id, owner, cx),
+            },
+            Command::KbRetire => crate::kbq_ui::retire(&ws, k.id, Some(k.rev), kind, owner, cx),
+            Command::KbMakeLive => crate::kbq_ui::make_live(&ws, k.id, owner, cx),
+            Command::KbKeepBoth(a, b) => {
+                let pair = if k.conflict == Some(b) {
+                    acta_core::model::KbPairKind::Conflict
+                } else {
+                    acta_core::model::KbPairKind::Duplicate
+                };
+                crate::kbq_ui::keep_both(&ws, a, b, pair, owner, cx)
+            }
+            Command::KbReplace(old) => crate::kbq_ui::replace(&ws, k.id, old, owner, cx),
+            Command::KbMerge => {
+                let task = crate::kbq_ui::merge_candidates(&ws, k.id, cx);
+                let locale = settings::locale(cx);
+                cx.spawn_in(window, async move |shell, cx| {
+                    let Ok(candidates) = task.await else {
+                        return;
+                    };
+                    let _ = shell.update_in(cx, |shell, window, cx| {
+                        let weak = cx.entity().downgrade();
+                        let on_merged: crate::kbq_ui::OnMerged =
+                            std::rc::Rc::new(move |id, window, cx| {
+                                let _ = weak.update(cx, |s, cx| s.edit_kb(id, window, cx));
+                            });
+                        let (picker, on_pick) = crate::kbq_ui::merge_picker(
+                            locale, &ws, k.id, owner, candidates, on_merged,
+                        );
+                        shell.open_picker(picker, on_pick, window, cx);
+                    });
+                })
+                .detach();
+            }
+            _ => {}
+        }
+    }
+
+    /// A merge's survivor opens in its editor so the person can tidy the
+    /// joined text (components-knowledge.md 5, Merge).
+    pub(super) fn edit_kb(&mut self, id: KbId, window: &mut Window, cx: &mut Context<Self>) {
+        self.navigate(Route::Kb(id), true, window, cx);
+        if let Some(bench) = self.bench()
+            && let PageView::Doc(page) = &bench.page
+            && page.read(cx).id == Some(id)
+        {
+            page.update(cx, |page, cx| page.edit_when_loaded(cx));
         }
     }
 
@@ -2712,6 +3043,7 @@ impl Shell {
                     Target::Kb(id, _) => Route::Kb(id),
                     Target::Command(command) => return self.run_command(command, window, cx),
                     Target::Choice(_) => return,
+                    Target::Found(route, _) => route,
                 };
                 if new_tab {
                     self.open_in_tab(route, window, cx);
@@ -2885,7 +3217,33 @@ impl Shell {
                     bench.ws.update(cx, |ws, cx| ws.set_due(owner, None, cx));
                 }
             }
+            // "Show knowledge to check": every kind (the Overview's line
+            // adds Kind: Memories).
+            Command::Show(acta_core::store::OverviewFilter::StaleMemories) => {
+                if let Some(project) = self.bench().and_then(|b| b.active_project) {
+                    self.open_kb_chip(project, crate::kb_model::Chip::ToCheck, None, window, cx);
+                }
+            }
             Command::Show(filter) => self.show_overview_list(filter, window, cx),
+            Command::ShowInactive => {
+                if let Some(project) = self.bench().and_then(|b| b.active_project) {
+                    self.open_kb_chip(project, crate::kb_model::Chip::Inactive, None, window, cx);
+                }
+            }
+            Command::KbFindDuplicates => {
+                if let Some(bench) = self.bench()
+                    && let Some(project) = bench.active_project
+                {
+                    let ws = bench.ws.clone();
+                    crate::kbq_ui::find_duplicates(&ws, project, cx);
+                }
+            }
+            Command::KbVerify
+            | Command::KbRetire
+            | Command::KbMakeLive
+            | Command::KbMerge
+            | Command::KbKeepBoth(..)
+            | Command::KbReplace(_) => self.kb_command(command, window, cx),
             Command::QuestionNew => {
                 self.with_record(cx, |page, window, cx| page.new_question(window, cx), window)
             }
@@ -3002,7 +3360,11 @@ impl Shell {
             Command::ChatBrowser => cx.open_url(CLAUDE_HOME),
             #[cfg(windows)]
             Command::ChatSignOut => self.open_dialog(DialogKind::ChatSignOut, window, cx),
-            Command::RestartTerminal => self.restart_terminal_here(window, cx),
+            Command::ClaudeRestart => self.restart_shown(window, cx),
+            Command::ClaudeStart => self.start_claude_here(window, cx),
+            Command::FreeNew => self.new_free_claude(window, cx),
+            #[cfg(windows)]
+            Command::BrowserDevtools => self.open_browser_devtools(window, cx),
             Command::TerminalLarger => self.terminal_size(1., cx),
             Command::TerminalSmaller => self.terminal_size(-1., cx),
             Command::SetFolder => self.with_record(cx, |page, _, cx| page.set_folder(cx), window),
@@ -3211,11 +3573,12 @@ impl Shell {
                     shell.close_overlay(window, cx);
                     let restart = shell.bench().and_then(|b| b.pending_restart.take());
                     match shell.bench().and_then(|b| b.pending_triage.take()) {
-                        Some(origin) => shell.start_triage(origin, window, cx),
-                        None => match restart {
-                            Some(origin) => shell.do_restart_in(origin, window, cx),
-                            None => shell.do_restart_terminal(window, cx),
-                        },
+                        Some(key) => shell.start_triage(key, window, cx),
+                        None => {
+                            if let Some(key) = restart {
+                                shell.do_restart(key, window, cx)
+                            }
+                        }
                     }
                 }
                 DialogEvent::RemoveSetup => {
@@ -3694,73 +4057,192 @@ impl Shell {
         use crate::sessions_view::SessionsEvent;
         match event {
             SessionsEvent::Open(owner) => {
-                let route = match *owner {
-                    Owner::Topic(id) => Route::Topic(id),
-                    Owner::Epic(id) => Route::Epic(id),
-                    Owner::Project(id) => Route::Project(id),
-                };
-                self.navigate(route, true, window, cx);
+                self.navigate(owner_route(*owner), true, window, cx);
             }
-            SessionsEvent::ShowTerminal(project) => {
-                self.show_session_terminal(*project, window, cx)
-            }
-            SessionsEvent::End(project) => {
+            SessionsEvent::ShowTerminal(key) => self.show_session_terminal(*key, window, cx),
+            SessionsEvent::End(key) => {
                 if let Some(bench) = self.bench() {
-                    bench.dock.update(cx, |dock, cx| dock.end(*project, cx));
+                    bench.dock.update(cx, |dock, cx| dock.end(*key, cx));
                 }
             }
         }
     }
 
-    /// Shows the terminal view on the project's running session.
-    pub(crate) fn show_session_terminal(
+    /// What a terminal dock asks of the shell (layout.md 4.5.1).
+    fn on_dock(
         &mut self,
-        project: ProjectId,
+        _: &Entity<TerminalDock>,
+        event: &DockEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.change_layout(None, window, cx, |l| {
-            l.show_view(ViewId::Terminal).is_some()
-        });
+        match event {
+            DockEvent::Restart(key) => self.restart_instance(*key, window, cx),
+            DockEvent::EditFolders(origin) => self.open_folders_of(origin.owner, false, window, cx),
+            DockEvent::AddFolder(origin) => self.open_folders_of(origin.owner, true, window, cx),
+            DockEvent::OneOffEnded(row) => crate::ready::terminal_ended(*row, cx),
+            DockEvent::ShowFree => {
+                self.view_action(ViewId::FreeClaude, ViewAction::Show, window, cx)
+            }
+        }
+    }
+
+    /// The dock holding `key`: the free one for Claude Code (no project).
+    fn dock_of(&mut self, key: InstanceKey) -> Option<Entity<TerminalDock>> {
+        let bench = self.bench()?;
+        Some(match key.holder {
+            Holder::Free => bench.free_dock.clone(),
+            Holder::Page(_) => bench.dock.clone(),
+        })
+    }
+
+    /// "Show terminal" (Sessions view): the session's own page opens in
+    /// the active tab and the Terminal view shows that session; the view
+    /// never shows a session of another page (layout.md 4.5.1).
+    pub(crate) fn show_session_terminal(
+        &mut self,
+        key: InstanceKey,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Holder::Page(owner) = key.holder else {
+            return;
+        };
+        self.navigate(owner_route(owner), false, window, cx);
+        self.show_terminal_view(window, cx);
         let Some(bench) = self.bench() else { return };
-        bench.ui.terminal_shown = true;
         let dock = bench.dock.clone();
-        dock.update(cx, |dock, cx| dock.select(project, cx));
+        dock.update(cx, |dock, cx| dock.select(key, cx));
         let focus = dock.read(cx).focus_handle(cx);
         window.focus(&focus, cx);
         cx.notify();
     }
 
-    /// "Restart terminal here": confirmed while a process runs (6.4).
-    fn restart_terminal_here(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(origin) = self.origin(cx) else {
+    /// "Show terminal" of a page line: the page's own session (the one
+    /// waiting, else the one used last).
+    pub(crate) fn show_page_sessions(
+        &mut self,
+        owner: Owner,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.navigate(owner_route(owner), false, window, cx);
+        self.show_terminal_view(window, cx);
+        let Some(bench) = self.bench() else { return };
+        let dock = bench.dock.clone();
+        dock.update(cx, |dock, cx| dock.select_page_session(owner, cx));
+        let focus = dock.read(cx).focus_handle(cx);
+        window.focus(&focus, cx);
+        cx.notify();
+    }
+
+    /// Show the Terminal view without starting anything.
+    fn show_terminal_view(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.change_layout(None, window, cx, |l| {
+            l.show_view(ViewId::Terminal).is_some()
+        });
+        if let Some(bench) = self.bench() {
+            bench.ui.terminal_shown = true;
+        }
+    }
+
+    /// "Start Claude Code here" (``Ctrl+Shift+` ``, the palette): a new
+    /// session on the current page, the view shown. On a page that owns
+    /// nothing the view shows why.
+    fn start_claude_here(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sync_tool_owner(window, cx);
+        self.show_terminal_view(window, cx);
+        let Some(bench) = self.bench() else { return };
+        let dock = bench.dock.clone();
+        dock.update(cx, |dock, cx| {
+            dock.start_here(window, cx);
+        });
+        let focus = dock.read(cx).focus_handle(cx);
+        window.focus(&focus, cx);
+        cx.notify();
+    }
+
+    /// "New Claude Code (no project)": the view shown and a session
+    /// started in it.
+    fn new_free_claude(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.change_layout(None, window, cx, |l| {
+            l.show_view(ViewId::FreeClaude).is_some()
+        });
+        let Some(bench) = self.bench() else { return };
+        let dock = bench.free_dock.clone();
+        dock.update(cx, |dock, cx| {
+            dock.start_here(window, cx);
+        });
+        let focus = dock.read(cx).focus_handle(cx);
+        window.focus(&focus, cx);
+        cx.notify();
+    }
+
+    /// `Ctrl+PageDown` / `Ctrl+PageUp`: the next or previous instance of
+    /// the tool view that has the keyboard.
+    fn step_instance(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(bench) = self.bench() else { return };
+        #[cfg(windows)]
+        {
+            let chat = bench.chat.clone();
+            if chat.read(cx).focus_handle(cx).contains_focused(window, cx) {
+                chat.update(cx, |chat, cx| chat.step(forward, window, cx));
+                return;
+            }
+            let browser = bench.browser.clone();
+            if browser
+                .read(cx)
+                .focus_handle(cx)
+                .contains_focused(window, cx)
+            {
+                browser.update(cx, |b, cx| b.step(forward, window, cx));
+                return;
+            }
+        }
+        let free = bench.free_dock.clone();
+        let dock = if free.read(cx).focus_handle(cx).contains_focused(window, cx) {
+            free
+        } else {
+            bench.dock.clone()
+        };
+        dock.update(cx, |dock, cx| dock.step(forward, window, cx));
+    }
+
+    /// "Restart Claude Code" (palette): the session in view of the
+    /// Terminal view, else of Claude Code (no project).
+    fn restart_shown(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(bench) = self.bench() else { return };
+        let key = bench
+            .dock
+            .read(cx)
+            .shown()
+            .or_else(|| bench.free_dock.read(cx).shown());
+        if let Some(key) = key {
+            self.restart_instance(key, window, cx);
+        }
+    }
+
+    /// Restart and "Restart in ..." (layout.md 4.5.1): the instance starts
+    /// again from its own page; confirmed while a process runs (6.4).
+    fn restart_instance(&mut self, key: InstanceKey, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(dock) = self.dock_of(key) else {
             return;
         };
-        let Some(bench) = self.bench() else { return };
-        if bench.dock.read(cx).is_running(origin.project, cx) {
+        if dock.read(cx).is_running(key, cx) {
+            if let Some(bench) = self.bench() {
+                bench.pending_restart = Some(key);
+            }
             self.open_dialog(DialogKind::RestartTerminal, window, cx);
         } else {
-            self.do_restart_terminal(window, cx);
+            self.do_restart(key, window, cx);
         }
     }
 
-    /// "Restart in <folder>" (layout.md 4.5): the session's own page,
-    /// with its active folder now; confirmed while a process runs.
-    fn restart_terminal_in(&mut self, origin: Origin, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(bench) = self.bench() else { return };
-        if bench.dock.read(cx).is_running(origin.project, cx) {
-            bench.pending_restart = Some(origin);
-            self.open_dialog(DialogKind::RestartTerminal, window, cx);
-        } else {
-            self.do_restart_in(origin, window, cx);
-        }
-    }
-
-    fn do_restart_in(&mut self, origin: Origin, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(bench) = self.bench() else { return };
-        bench
-            .dock
-            .update(cx, |dock, cx| dock.restart(origin, window, cx));
+    fn do_restart(&mut self, key: InstanceKey, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(dock) = self.dock_of(key) else {
+            return;
+        };
+        dock.update(cx, |dock, cx| dock.restart(key, window, cx));
         cx.notify();
     }
 
@@ -3773,12 +4255,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let route = match owner {
-            Owner::Project(id) => Route::Project(id),
-            Owner::Epic(id) => Route::Epic(id),
-            Owner::Topic(id) => Route::Topic(id),
-        };
-        self.navigate(route, true, window, cx);
+        self.navigate(owner_route(owner), true, window, cx);
         self.with_record(
             cx,
             |page, _, cx| {
@@ -3791,25 +4268,11 @@ impl Shell {
         );
     }
 
-    fn do_restart_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(origin) = self.origin(cx) else {
-            return;
-        };
-        self.change_layout(None, window, cx, |l| {
-            l.show_view(ViewId::Terminal).is_some()
-        });
-        let Some(bench) = self.bench() else { return };
-        bench.ui.terminal_shown = true;
-        bench
-            .dock
-            .update(cx, |dock, cx| dock.restart(origin, window, cx));
-        cx.notify();
-    }
-
     /// "File with Claude Code" (screens.md 8.2): the terminal shows, and
-    /// the triage command runs in the project's session, typed there only
-    /// when Claude Code is idle at its prompt. Mid-task, nothing is typed:
-    /// the restart confirmation asks before a new session starts on it.
+    /// the triage command runs in the project page's session, typed there
+    /// only when Claude Code is idle at its prompt. Mid-task, nothing is
+    /// typed: the restart confirmation asks before that session restarts
+    /// on it.
     fn file_with_claude(
         &mut self,
         project: ProjectId,
@@ -3826,50 +4289,51 @@ impl Shell {
             project,
             name: name.1,
         };
-        self.show_terminal_for_command(window, cx);
+        self.show_terminal_view(window, cx);
         let Some(bench) = self.bench() else { return };
         let dock = bench.dock.clone();
-        let sent = dock.update(cx, |dock, cx| {
+        let (sent, key) = dock.update(cx, |dock, cx| {
             dock.send(origin.clone(), TRIAGE_COMMAND, window, cx)
         });
         crate::log::line(&format!("triage: {sent:?}"));
         if sent == crate::terminal_dock::Send::Busy {
             if let Some(bench) = self.bench() {
-                bench.pending_triage = Some(origin);
+                bench.pending_triage = key;
             }
             self.open_dialog(DialogKind::RestartTerminal, window, cx);
         }
     }
 
-    fn start_triage(&mut self, origin: Origin, window: &mut Window, cx: &mut Context<Self>) {
-        self.show_terminal_for_command(window, cx);
+    fn start_triage(&mut self, key: InstanceKey, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_terminal_view(window, cx);
         let Some(bench) = self.bench() else { return };
         bench.dock.update(cx, |dock, cx| {
-            dock.restart_on(origin, TRIAGE_COMMAND, window, cx)
+            dock.restart_on(key, TRIAGE_COMMAND, window, cx)
         });
         cx.notify();
     }
 
-    /// Show the Terminal view without starting a session from the page:
-    /// the command decides which session runs.
-    fn show_terminal_for_command(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(bench) = self.bench() {
-            bench.ui.terminal_shown = true;
-        }
-        self.change_layout(None, window, cx, |l| {
-            l.show_view(ViewId::Terminal).is_some()
-        });
-    }
-
     fn terminal_size(&mut self, by: f32, cx: &mut Context<Self>) {
         if let Some(bench) = self.bench() {
+            let free = bench.free_dock.clone();
             bench
                 .dock
                 .update(cx, |dock, cx| dock.change_text_size(by, cx));
+            let size = bench.dock.read(cx).text_size();
+            free.update(cx, |dock, cx| dock.apply_text_size(size, cx));
         }
     }
 
     // ---- chat ----
+
+    /// "Agent browser: Open developer tools" (the palette, while the view
+    /// is shown): the view's DevTools window.
+    #[cfg(windows)]
+    fn open_browser_devtools(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(bench) = self.bench() {
+            bench.browser.update(cx, |b, cx| b.open_devtools(cx));
+        }
+    }
 
     #[cfg(windows)]
     fn on_chat(
@@ -3883,6 +4347,7 @@ impl Shell {
             ChatEvent::View(action) => self.view_action(ViewId::Chat, *action, window, cx),
             ChatEvent::SignOut => self.open_dialog(DialogKind::ChatSignOut, window, cx),
             ChatEvent::Kept(kept) => self.run_kept(*kept, window, cx),
+            ChatEvent::Opened => self.close_idle_web_views(window, cx),
             ChatEvent::ClearFailed => {
                 let message = text(settings::locale(cx), Key::ChatClearFailed);
                 if let Some(bench) = self.bench() {
@@ -3897,7 +4362,7 @@ impl Shell {
     #[cfg(windows)]
     fn on_browser(
         &mut self,
-        browser: &Entity<BrowserPanel>,
+        browser: &Entity<BrowserDock>,
         event: &BrowserEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -3949,7 +4414,8 @@ impl Shell {
             Kept::ZoomIn => Box::new(ZoomIn),
             Kept::ZoomOut => Box::new(ZoomOut),
             Kept::ZoomReset => Box::new(ZoomReset),
-            Kept::Focus(_) => return,
+            // The agent browser handles its own; the chat never keeps it.
+            Kept::DevTools | Kept::Focus(_) => return,
         };
         // The keyboard comes back to the GPUI window before the action
         // runs, so that what it focuses receives the next keys.
@@ -4017,7 +4483,7 @@ impl Shell {
             || bench.overlay.is_some()
             || any_page_menu
             || bench.chat.read(cx).menu_open()
-            || bench.browser.read(cx).menu_open()
+            || bench.browser.read(cx).menu_open(cx)
     }
 
     #[cfg(windows)]
@@ -4088,7 +4554,7 @@ impl Shell {
     #[cfg(debug_assertions)]
     fn dev_permission_check(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let prompt = std::env::var("ACTA_DEV_CHECK_PROMPT").unwrap_or_default();
-        self.view_action(ViewId::Terminal, ViewAction::Show, window, cx);
+        self.start_claude_here(window, cx);
         cx.spawn_in(window, async move |shell, cx| {
             let step = |shell: &mut Shell, name: &str, cx: &mut Context<Shell>, f: &dyn Fn(&mut TerminalDock, ProjectId, &mut Context<TerminalDock>)| {
                 let Some(bench) = shell.bench() else { return };
@@ -5559,6 +6025,26 @@ impl Shell {
                         // The parent folder with the file selected, never the file.
                         .on_click(move |_, _, cx| cx.reveal_path(&path))
                         .into_any_element(),
+                        crate::workspace::ToastAction::ShowToCheck(project) => ui::button(
+                            "toast-show",
+                            text(locale, Key::KbScanShow),
+                            Variant::Ghost,
+                            false,
+                            &t,
+                        )
+                        .on_click(cx.listener(move |shell, _, window, cx| {
+                            if let Some(bench) = shell.bench() {
+                                bench.toast = None;
+                            }
+                            shell.open_kb_chip(
+                                project,
+                                crate::kb_model::Chip::ToCheck,
+                                None,
+                                window,
+                                cx,
+                            );
+                        }))
+                        .into_any_element(),
                         crate::workspace::ToastAction::RetrySave(file, path) => ui::button(
                             "toast-retry",
                             text(locale, Key::CommonRetry),
@@ -5809,7 +6295,8 @@ fn seed_if_asked(store: &mut acta_core::Store) {
             || seed == "folders-missing"
             || seed == "questions"
             || seed == "people"
-            || seed == "attachments")
+            || seed == "attachments"
+            || seed == "quality")
         && let Some(dir) = crate::launch_dir()
         && let Err(err) = match seed.as_str() {
             "bare" => crate::dev_seed::bare(store, &dir),
@@ -5822,6 +6309,8 @@ fn seed_if_asked(store: &mut acta_core::Store) {
             "questions" | "people" => crate::dev_seed::questions(store, &dir),
             #[cfg(debug_assertions)]
             "attachments" => crate::dev_seed::attachments(store, &dir),
+            #[cfg(debug_assertions)]
+            "quality" => crate::dev_seed::quality(store, &dir),
             _ => crate::dev_seed::seed(store, &dir),
         }
     {
@@ -6045,6 +6534,7 @@ impl Render for Shell {
         crate::webview_build::set_zoom(zoom::factor());
         self.effective_width = zoom::eff(viewport.width);
         let tokens = cx.global::<Tokens>().clone();
+        self.sync_tool_owner(window, cx);
         // A hidden tree reports no pointer leaving it: it is not hovered.
         if !self.view_drawn(ViewId::Projects, window)
             && let Some(bench) = self.bench()
@@ -6241,6 +6731,18 @@ impl Render for Shell {
             .on_action(cx.listener(|s, _: &RestoreSnapshot, w, cx| s.open_snapshots(w, cx)))
             .on_action(cx.listener(|s, _: &OpenTrash, w, cx| s.navigate(Route::Trash, true, w, cx)))
             .on_action(cx.listener(|s, _: &ToggleTerminal, w, cx| s.toggle_terminal(w, cx)))
+            .on_action(cx.listener(|s, _: &StartClaudeHere, w, cx| {
+                if s.is_workbench() {
+                    s.start_claude_here(w, cx)
+                }
+            }))
+            .on_action(cx.listener(|s, _: &ToggleFreeClaude, w, cx| {
+                if s.is_workbench() {
+                    s.toggle_view(ViewId::FreeClaude, w, cx)
+                }
+            }))
+            .on_action(cx.listener(|s, _: &NextInstance, w, cx| s.step_instance(true, w, cx)))
+            .on_action(cx.listener(|s, _: &PreviousInstance, w, cx| s.step_instance(false, w, cx)))
             .on_action(cx.listener(|s, _: &ToggleChat, w, cx| s.toggle_chat(w, cx)))
             .on_action(cx.listener(|s, _: &FocusChat, w, cx| s.focus_chat(w, cx)))
             .on_action(|_: &OpenChatInBrowser, _, cx| cx.open_url(CLAUDE_HOME))

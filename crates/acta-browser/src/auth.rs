@@ -4,7 +4,7 @@
 //! from the OS keychain (ADR 0003): nothing new is stored, shown, copied or
 //! passed in arguments.
 
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 
 type H = Hmac<Sha256>;
@@ -14,7 +14,7 @@ pub const PROTOCOL: &str = "acta-agent-browser/1";
 pub const KEY_LABEL: &[u8] = b"acta agent-browser ipc v1";
 
 fn tag(key: &[u8; 32], role: &str, a: &[u8], b: &[u8]) -> H {
-    let mut m = <H as Mac>::new_from_slice(key).expect("HMAC takes any key length");
+    let mut m = <H as KeyInit>::new_from_slice(key).expect("HMAC takes any key length");
     m.update(PROTOCOL.as_bytes());
     m.update(role.as_bytes());
     m.update(a);
@@ -85,5 +85,20 @@ mod tests {
         assert!(!verify(&k, "client", &s, &c, "zz"));
         assert!(!verify(&k, "client", &s, &c, ""));
         assert_ne!(nonce(), nonce());
+    }
+
+    /// Known answers, computed with an independent HMAC-SHA256: the app and
+    /// `acta mcp browser` of different builds must keep agreeing.
+    #[test]
+    fn proofs_are_stable() {
+        let (k, s, c) = ([1u8; 32], [2u8; 32], [3u8; 32]);
+        assert_eq!(
+            client_mac(&k, &s, &c),
+            "b8b669b8b4b2bb24926475966bd784f68adfac42c10c090087090e8a9021c40f"
+        );
+        assert_eq!(
+            server_mac(&k, &s, &c),
+            "5ecff43c60a21fcef25cd6c52d0d75d6ff2394eede3f59e424fb420b272ea46a"
+        );
     }
 }

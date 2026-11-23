@@ -38,7 +38,8 @@ pub use kb::{
 pub use kb_quality::{
     CANDIDATES, KbBranchTrace, KbCandidate, KbFinding, KbLink, KbLinkTarget, KbLogRow,
     KbMergeTrace, KbPair, KbQualityReport, KbSource, KbStateTrace, KbSuccessor, KbVerifyTrace,
-    MAX_SUPERSEDES, QUALITY_LOG_DAYS, RETIRE_REASON_MAX, SOURCE_TEXT_MAX, UNMERGE_WINDOW_MS,
+    MAX_SUPERSEDES, QUALITY_LOG_DAYS, RETIRE_REASON_MAX, SCAN_PAGE, SOURCE_TEXT_MAX, ScanPage,
+    UNMERGE_WINDOW_MS,
 };
 pub use overview::{
     IDLE_DAYS, INBOX_DAYS, Overview, OverviewEpic, OverviewFilter, OverviewItem, STALE_MEMORY_DAYS,
@@ -548,5 +549,7 @@ mod kb_quality_tests;
 mod purge_tests;
 #[cfg(test)]
 mod questions_tests;
+#[cfg(test)]
+mod search_tests;
 #[cfg(test)]
 mod tests;

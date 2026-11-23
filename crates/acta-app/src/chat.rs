@@ -113,6 +113,7 @@ pub enum KeyCode {
     Tab,
     Enter,
     F6,
+    F12,
     Other,
 }
 
@@ -145,12 +146,16 @@ pub enum Kept {
     ZoomIn,
     ZoomOut,
     ZoomReset,
+    /// `F12` in the agent browser: its developer tools (components-app.md
+    /// 5); the chat passes it to the page.
+    DevTools,
 }
 
-/// What Acta keeps of `key` with `mods` while the chat web view has focus
-/// (interaction.md 6.1, "Chat web view", Windows). Everything else belongs
-/// to the page, `Ctrl+K` and plain typing included.
-pub fn kept(key: KeyCode, mods: Mods) -> Option<Kept> {
+/// What Acta keeps of `key` with `mods` while the chat web view (or, with
+/// `agent`, the agent browser) has focus (interaction.md 6.1, "Chat web
+/// view", Windows). Everything else belongs to the page, `Ctrl+K` and plain
+/// typing included.
+pub fn kept(key: KeyCode, mods: Mods, agent: bool) -> Option<Kept> {
     let Mods {
         ctrl,
         shift,
@@ -164,6 +169,7 @@ pub fn kept(key: KeyCode, mods: Mods) -> Option<Kept> {
     }
     let bare = !ctrl;
     match key {
+        KeyCode::F12 if agent && bare && !shift => Some(Kept::DevTools),
         KeyCode::F6 if bare => Some(if shift {
             Kept::PreviousPane
         } else {
@@ -207,6 +213,7 @@ pub fn windows_key(virtual_key: u32, scan_code: u32) -> KeyCode {
         (0x09, _) => KeyCode::Tab,
         (0x0d, _) => KeyCode::Enter,
         (0x75, _) => KeyCode::F6,
+        (0x7b, _) => KeyCode::F12,
         _ => KeyCode::Other,
     }
 }
@@ -390,6 +397,16 @@ impl ChatState {
         self.covered = covered;
     }
 
+    /// The web view was closed after 10 minutes off screen (layout.md
+    /// 4.5.1, Resources): showing it again opens it where it was.
+    pub fn idle_closed(&mut self) {
+        if self.has_web || self.phase == Phase::Live {
+            self.has_web = false;
+            self.phase = Phase::NotStarted;
+            self.starting_line = false;
+        }
+    }
+
     /// "Sign out and clear chat data", confirmed: back to not started.
     pub fn sign_out(&mut self) -> Effect {
         self.phase = Phase::NotStarted;
@@ -543,7 +560,7 @@ mod tests {
     #[test]
     fn windows_keeps_exactly_the_listed_keys() {
         use KeyCode::*;
-        let w = |key, mods| kept(key, mods);
+        let w = |key, mods| kept(key, mods, false);
         assert_eq!(w(Letter('k'), ctrl_shift()), Some(Kept::Palette));
         assert_eq!(w(Letter('h'), ctrl_shift()), Some(Kept::ToggleChat));
         assert_eq!(w(Backtick, ctrl()), Some(Kept::ToggleTerminal));
@@ -567,7 +584,7 @@ mod tests {
     #[test]
     fn windows_passes_the_page_its_own_keys() {
         use KeyCode::*;
-        let w = |key, mods| kept(key, mods);
+        let w = |key, mods| kept(key, mods, false);
         // Mod+K is claude.ai's own shortcut; Ctrl+W, Ctrl+N, Ctrl+Enter too.
         for key in [Letter('k'), Letter('w'), Letter('n'), Letter('c'), Enter] {
             assert_eq!(w(key, ctrl()), None, "{key:?}");
@@ -715,6 +732,33 @@ mod tests {
     }
 
     #[test]
+    fn a_chat_closed_while_idle_reopens_when_shown() {
+        let mut s = ChatState::new(false);
+        s.show();
+        assert_eq!(s.start(), Effect::Build);
+        s.built(Built::Ok);
+        s.hide();
+        s.idle_closed();
+        assert!(!s.has_web);
+        assert_eq!(s.surface(), Surface::Closed);
+        // Its page comes back: the web view is created again, no question.
+        assert_eq!(s.show(), Effect::Build);
+        assert_eq!(s.surface(), Surface::Starting { line: false });
+    }
+
+    #[test]
+    fn f12_is_kept_in_the_agent_browser_only() {
+        let none = Mods::default();
+        assert_eq!(kept(KeyCode::F12, none, true), Some(Kept::DevTools));
+        assert_eq!(
+            kept(KeyCode::F12, none, false),
+            None,
+            "the chat's page has it"
+        );
+        assert_eq!(windows_key(0x7b, 0x58), KeyCode::F12);
+    }
+
+    #[test]
     fn signing_out_drops_everything_and_asks_again() {
         let mut s = ChatState::new(true);
         s.show();
@@ -749,18 +793,36 @@ mod tests {
             ..Mods::default()
         };
         // US `=` key, with and without Shift, and the numpad.
-        assert_eq!(kept(windows_key(0xbb, 0x0d), ctrl), Some(Kept::ZoomIn));
         assert_eq!(
-            kept(windows_key(0xbb, 0x0d), ctrl_shift),
+            kept(windows_key(0xbb, 0x0d), ctrl, false),
             Some(Kept::ZoomIn)
         );
-        assert_eq!(kept(windows_key(0x6b, 0x4e), ctrl), Some(Kept::ZoomIn));
-        assert_eq!(kept(windows_key(0xbd, 0x0c), ctrl), Some(Kept::ZoomOut));
-        assert_eq!(kept(windows_key(0x6d, 0x4a), ctrl), Some(Kept::ZoomOut));
+        assert_eq!(
+            kept(windows_key(0xbb, 0x0d), ctrl_shift, false),
+            Some(Kept::ZoomIn)
+        );
+        assert_eq!(
+            kept(windows_key(0x6b, 0x4e), ctrl, false),
+            Some(Kept::ZoomIn)
+        );
+        assert_eq!(
+            kept(windows_key(0xbd, 0x0c), ctrl, false),
+            Some(Kept::ZoomOut)
+        );
+        assert_eq!(
+            kept(windows_key(0x6d, 0x4a), ctrl, false),
+            Some(Kept::ZoomOut)
+        );
         // The 0 key by position (AZERTY types `à` there), and the numpad's.
-        assert_eq!(kept(windows_key(0x30, 0x0b), ctrl), Some(Kept::ZoomReset));
-        assert_eq!(kept(windows_key(0x60, 0x52), ctrl), Some(Kept::ZoomReset));
+        assert_eq!(
+            kept(windows_key(0x30, 0x0b), ctrl, false),
+            Some(Kept::ZoomReset)
+        );
+        assert_eq!(
+            kept(windows_key(0x60, 0x52), ctrl, false),
+            Some(Kept::ZoomReset)
+        );
         // Without Ctrl, typing.
-        assert_eq!(kept(windows_key(0xbb, 0x0d), Mods::default()), None);
+        assert_eq!(kept(windows_key(0xbb, 0x0d), Mods::default(), false), None);
     }
 }

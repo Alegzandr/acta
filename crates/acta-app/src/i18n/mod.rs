@@ -346,6 +346,7 @@ mod tests {
                 | "meta.record"
                 | "questions.scope"
                 | "contact.meta"
+                | "kb.source.copy_path"
                 | "ready.state.with_bash"
                 | "ready.state.without_bash"
                 | "ready.state.missing_optional"

@@ -5,6 +5,8 @@
 mod attach;
 mod attach_ui;
 #[cfg(windows)]
+mod browser_dock;
+#[cfg(windows)]
 mod browser_host;
 #[cfg(windows)]
 mod browser_panel;
@@ -39,6 +41,8 @@ mod icons;
 mod inbox_page;
 mod kb_model;
 mod kb_page;
+mod kbq_model;
+mod kbq_ui;
 mod layout;
 mod layout_frame;
 mod log;
@@ -67,6 +71,8 @@ mod table;
 mod terminal_dock;
 mod theme;
 mod titlebar;
+mod tool_strip;
+mod tools_model;
 mod trash_page;
 mod tree;
 mod type_scale;

@@ -316,7 +316,9 @@ impl Store {
             }
             Record::Kb(id) => {
                 tx.execute(
-                    &format!("UPDATE kb_entries {shift} WHERE id = ?1"),
+                    &format!(
+                        "UPDATE kb_entries {shift}, verified_at = coalesce(verified_at, updated_at) - ?2 WHERE id = ?1"
+                    ),
                     params![id.0, back],
                 )?;
             }

@@ -1204,3 +1204,185 @@ fn a_branch_memory_can_be_made_true_everywhere_and_back() {
     s.kb_restore_branch(&trace, H).unwrap();
     assert_eq!(on_main(s), 0);
 }
+
+#[test]
+fn the_unmerge_check_agrees_with_unmerge() {
+    let Seed { mut ts, t, u, .. } = seed();
+    let s = &mut ts.store;
+    let a = mem(s, Owner::Topic(t), "Keychain entry");
+    let b = mem(s, Owner::Topic(u), "Keychain entry name");
+    let trace = s.kb_merge(a, b, H).unwrap();
+    // The merge revisions name the other entry, as the history shows.
+    let merged = s.kb_history(a, PageReq::first(5)).unwrap().items;
+    assert_eq!(merged[0].change, ChangeKind::Merged);
+    assert_eq!(merged[0].section.as_deref(), Some(b.to_string().as_str()));
+    let superseded = s.kb_history(b, PageReq::first(5)).unwrap().items;
+    assert_eq!(superseded[0].change, ChangeKind::Superseded);
+    assert_eq!(
+        superseded[0].section.as_deref(),
+        Some(a.to_string().as_str())
+    );
+    s.kb_update(a, body("Tidied."), H).unwrap();
+    assert!(s.kb_can_unmerge(&trace).unwrap());
+    s.kb_update(a, body("The agent's text."), C).unwrap();
+    assert!(!s.kb_can_unmerge(&trace).unwrap());
+    assert!(s.kb_unmerge(&trace, H).is_err());
+}
+
+#[test]
+fn a_human_edit_records_and_settles_pairs() {
+    let Seed { mut ts, p, t, .. } = seed();
+    let s = &mut ts.store;
+    let theirs = s
+        .kb_create(
+            memory(
+                Owner::Project(p),
+                "Store tests in parallel",
+                "The store tests run in parallel",
+                "cargo test runs the store tests in parallel.",
+            ),
+            C,
+        )
+        .unwrap();
+    let mine = s
+        .kb_create(
+            memory(
+                Owner::Topic(t),
+                "Store tests in parallel",
+                "Never run the store tests in parallel",
+                "They share a key store.",
+            ),
+            H,
+        )
+        .unwrap();
+    s.kb_recheck(mine, H).unwrap();
+    let open: Vec<_> = s
+        .kb_pairs_of(mine)
+        .unwrap()
+        .into_iter()
+        .filter(|p| p.state == KbPairState::Open)
+        .collect();
+    assert_eq!(open.len(), 1);
+    assert_eq!(open[0].kind, KbPairKind::Conflict);
+    assert_eq!(open[0].other(mine), theirs);
+    // Rewritten about something else: the pair is settled.
+    s.kb_update(
+        mine,
+        KbUpdate {
+            expected_rev: None,
+            title: Some("Keychain entry name".into()),
+            summary: Some("Alexandre's key lives in the keychain".into()),
+            edit: KbEdit::Body("The keychain entry is named acta.db.".into()),
+        },
+        H,
+    )
+    .unwrap();
+    s.kb_recheck(mine, H).unwrap();
+    assert!(
+        s.kb_pairs_of(mine)
+            .unwrap()
+            .iter()
+            .all(|p| p.state == KbPairState::Resolved)
+    );
+    // Back to the contradicting text: the pair is open again.
+    s.kb_update(
+        mine,
+        KbUpdate {
+            expected_rev: None,
+            title: Some("Store tests in parallel".into()),
+            summary: Some("Never run the store tests in parallel".into()),
+            edit: KbEdit::Body("They share a key store.".into()),
+        },
+        H,
+    )
+    .unwrap();
+    s.kb_recheck(mine, H).unwrap();
+    assert!(
+        s.kb_pairs_of(mine)
+            .unwrap()
+            .iter()
+            .any(|p| p.state == KbPairState::Open && p.other(mine) == theirs)
+    );
+    // Revisions carry their session and branch for the history.
+    let rev = s.kb_history(theirs, PageReq::first(1)).unwrap().items;
+    assert_eq!(rev[0].session, None);
+}
+
+#[test]
+fn the_human_scan_records_duplicates_and_changes_no_entry() {
+    let Seed {
+        mut ts, t, u, p, ..
+    } = seed();
+    let s = &mut ts.store;
+    let a = s
+        .kb_create(
+            memory(
+                Owner::Topic(t),
+                "Keychain entry name",
+                "The key is stored under acta.db",
+                "The keychain entry is named acta.db.",
+            ),
+            C,
+        )
+        .unwrap();
+    let b = s
+        .kb_create(
+            memory(
+                Owner::Project(p),
+                "Keychain entry name",
+                "The key is stored under acta.db",
+                "The keychain entry is named acta.db.",
+            ),
+            C,
+        )
+        .unwrap();
+    mem(s, Owner::Topic(u), "Backups run nightly");
+    let rev = s.kb_entry(a).unwrap().rev;
+    assert_eq!(s.kb_scan_duplicates(p, H).unwrap(), 1);
+    assert_eq!(s.kb_entry(a).unwrap().rev, rev);
+    let pairs = s.kb_pairs_of(a).unwrap();
+    assert_eq!(pairs.len(), 1);
+    assert_eq!(pairs[0].other(a), b);
+    assert_eq!(pairs[0].state, KbPairState::Open);
+    // Kept apart, a second scan finds nothing new.
+    s.kb_set_pair_state(a, b, KbPairKind::Duplicate, KbPairState::Distinct, H)
+        .unwrap();
+    assert_eq!(s.kb_scan_duplicates(p, H).unwrap(), 0);
+}
+
+#[test]
+fn the_scan_runs_page_by_page() {
+    let Seed { mut ts, t, p, .. } = seed();
+    let s = &mut ts.store;
+    let same = |s: &mut Store, owner| {
+        s.kb_create(
+            memory(
+                owner,
+                "Keychain entry name",
+                "The key is stored under acta.db",
+                "The keychain entry is named acta.db.",
+            ),
+            C,
+        )
+        .unwrap()
+    };
+    let a = same(s, Owner::Topic(t));
+    let b = same(s, Owner::Project(p));
+    mem(s, Owner::Project(p), "Backups run nightly");
+    // One memory per page: three pages, the pair found once from each side.
+    let mut offset = 0;
+    let mut pages = 0;
+    let mut found = std::collections::HashSet::new();
+    loop {
+        let (pairs, next) = s.kb_scan_duplicates_page(p, offset, 1, H).unwrap();
+        found.extend(pairs);
+        pages += 1;
+        match next {
+            Some(n) => offset = n,
+            None => break,
+        }
+    }
+    assert_eq!(pages, 3);
+    let want: std::collections::HashSet<_> = [(a.min(b), a.max(b))].into();
+    assert_eq!(found, want);
+}

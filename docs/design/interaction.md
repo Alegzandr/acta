@@ -27,6 +27,7 @@ Part of the Acta design system. [DESIGN.md](../../DESIGN.md) is the index: direc
 | Start Claude Code on the current page (layout.md 4.5.1) | ``Ctrl+Shift+` `` | ``Ctrl+Shift+` `` |
 | Show Claude Code (no project), or hide it when focused | `Ctrl+Alt+J` | `Cmd+Option+J` |
 | Toggle chat (same rule; on Linux, opens claude.ai in the browser) | `Ctrl+Shift+H` | `Cmd+Shift+H` |
+| Toggle Files / Toggle Commits (same rule; components-repo.md 5.R.11) | `Ctrl+Shift+E` / `Ctrl+Shift+G` | `Cmd+Shift+E` / `Cmd+Shift+G` |
 | Maximize the focused area or group over the body, and back (4.8) | `Ctrl+Shift+Enter` | `Cmd+Shift+Enter` |
 | Toggle left sidebar | `Ctrl+B` | `Cmd+B` |
 | Toggle right sidebar | `Ctrl+Shift+B` | `Cmd+Shift+B` |
@@ -57,6 +58,8 @@ In the working folders list (the folder row is one of the blocks `Up` / `Down` s
 On macOS the app must have a standard Edit menu whose items go to the first responder; without it `Cmd+C`, `Cmd+V`, `Cmd+X`, `Cmd+A` and `Cmd+Z` do nothing inside the web view. On Linux, and on macOS for now (ADR 0009, changelog 2026-11-21), there is no chat web view: `Mod+Shift+H` opens claude.ai in the browser and `Mod+4` is not bound; the macOS row above applies once the panel comes to macOS. The web view does not forward keys by itself; the kept keys are routed from it (ADR 0009), and that route working is a condition of shipping the panel.
 
 **Keyboard layouts.** Shortcuts on letters, and the zoom keys on `=`, `+` and `-`, match the character the layout produces. Shortcuts on digits (`Mod+0` included), on the backtick, on the backslash (`Mod+\`) and on the brackets (`Mod+Shift+[`, `Mod+Shift+]`) match the physical key (the US position), because on a French AZERTY keyboard the digit row yields symbols and the backtick needs AltGr; `Ctrl+Shift+J` exists so that the terminal toggle never depends on that key. If the pinned GPUI cannot match by position, the digit shortcuts are dropped on those layouts rather than made unreliable: `F6` and the palette cover them.
+
+**Inside a Markdown editor** its own keys win over this map: `Mod+B`, `Mod+I`, `Mod+E`, `Mod+K` (link; the palette stays on `Mod+Shift+K`), `Mod+Shift+1` to `3`, `Mod+Shift+7` to `9`, `Mod+Shift+V`, `Mod+Shift+M`, and `Mod+Z` / `Mod+Shift+Z` on the draft (components-editor.md 5).
 
 **Two meanings of `Mod+Enter`, never at once.** In an editor it saves; on a row, a link or a palette result it opens in a new tab. An editor has no rows and a list has no draft, so the context always decides.
 

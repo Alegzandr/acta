@@ -21,6 +21,9 @@ pub struct OpenArgs {
     /// back, forward or reload instead of a URL.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub go: Option<Go>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<i64>")]
+    pub browser: Option<u8>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -45,6 +48,10 @@ pub struct SnapshotArgs {
     /// Character budget, default 6000, at most 8000.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max: Option<u32>,
+    /// Browser number on this page (default: yours).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<i64>")]
+    pub browser: Option<u8>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -55,6 +62,9 @@ pub struct ReadArgs {
     /// From the previous reply's "more: cursor=N".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<i64>")]
+    pub browser: Option<u8>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -64,6 +74,9 @@ pub struct ClickArgs {
     pub target: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub double: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<i64>")]
+    pub browser: Option<u8>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -97,6 +110,9 @@ pub struct TypeArgs {
     /// A key to press after the text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key: Option<Key>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<i64>")]
+    pub browser: Option<u8>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -107,6 +123,9 @@ pub struct ScreenshotArgs {
     /// Image width, 320 to 1568, default 1024.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub width: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<i64>")]
+    pub browser: Option<u8>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -128,6 +147,9 @@ pub struct ConsoleArgs {
     /// Default 20, at most 50.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<i64>")]
+    pub browser: Option<u8>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -141,12 +163,18 @@ pub struct NetworkArgs {
     /// Default 20, at most 50.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<i64>")]
+    pub browser: Option<u8>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct HandoffArgs {
     /// What the user should do, at most 200 chars.
     pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<i64>")]
+    pub browser: Option<u8>,
 }
 
 /// One request over the pipe: an operation, never CDP (ADR 0010, decision 4).
@@ -204,6 +232,21 @@ impl Request {
         }
     }
 
+    /// The browser the call names, else the session's own.
+    pub fn browser(&self) -> Option<u8> {
+        match self {
+            Request::Open(a) => a.browser,
+            Request::Snapshot(a) => a.browser,
+            Request::Read(a) => a.browser,
+            Request::Click(a) => a.browser,
+            Request::Type(a) => a.browser,
+            Request::Screenshot(a) => a.browser,
+            Request::Console(a) => a.browser,
+            Request::Network(a) => a.browser,
+            Request::Handoff(a) => a.browser,
+        }
+    }
+
     pub fn name(&self) -> &'static str {
         match self {
             Request::Open(_) => "open",
@@ -255,6 +298,7 @@ mod tests {
         let r = Request::Click(ClickArgs {
             target: "e19".into(),
             double: None,
+            browser: None,
         });
         let line = serde_json::to_string(&r).unwrap();
         assert_eq!(line, r#"{"op":"click","args":{"ref":"e19"}}"#);
@@ -281,7 +325,11 @@ mod tests {
         let url = Request::Open(OpenArgs {
             url: Some(format!("https://example.com/{}", "a".repeat(limits::URL))),
             go: None,
+            browser: None,
         });
+        let named: Request =
+            serde_json::from_str(r#"{"op":"console","args":{"browser":2}}"#).unwrap();
+        assert_eq!(named.browser(), Some(2));
         assert!(url.check().is_err());
     }
 }
