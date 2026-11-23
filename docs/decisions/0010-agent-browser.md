@@ -104,6 +104,7 @@ from the claude.ai profile. Claude in Chrome stays usable alongside; Acta neithe
    opens the pipe with `SECURITY_IDENTIFICATION` (no impersonation). One controlling connection at a time;
    another session's call gets one line, "the browser is in use by another Claude Code session". No TCP
    port, no DevTools port, DevTools UI disabled (`AreDevToolsEnabled = false`).
+   - Amended by the user's request of 2026-11-22: the DevTools UI is enabled on the agent view only, opened by the human from the view menu or `F12` (components-app.md 5, Agent browser, Developer tools). It is an in-process window, not a port; the refusal rules above are unchanged, and no pipe operation opens or reads it. The chat's stays disabled.
    - The app refuses to create the agent view, and says why, if the `AdditionalBrowserArguments` policy
      value for Acta's executable or a `DevToolsActivePort` file in either profile exists.
    - macOS and Linux (later): a Unix socket in a 0700 per-user directory (`$XDG_RUNTIME_DIR/acta` or the
@@ -277,6 +278,25 @@ Not verified:
   refused by the DACL (only one local user was available).
 - Image token cost (width x height / 750 is Anthropic's published estimate, not measured here).
 - macOS and Linux: nothing built or run.
+
+### Page-bound browsers (2026-11-22, `gpui-engineer/page-sessions`)
+
+Implements layout.md 4.5.1 and data.md 11, request 27 (c): browsers belong to pages, on the one
+agent profile. `acta-browser`'s server takes a `Pages` (the app's browsers by page and number)
+instead of one host; one lease per browser. The client's hello adds the session's page (its focus,
+else its project) and its `ACTA_LAUNCH` token; a session's own browser is opened on its first call
+and found again by that token (by its connection when it has none). The nine tools gain an
+optional `browser` number (no new tool); every reply's first line is "browsers: 2 (yours), 1"; a
+number not on the page, or a session with no page, gets one line. `tools/list` went from 4,584 to
+4,535 chars: the field is a plain integer and the tool descriptions were shortened (the arguments'
+own descriptions already say what they do). A session started by Acta's terminal reaches the page
+of that terminal, found by its launch token, whatever page its client names; a token no terminal
+has gives no page; without a token the client's page (from its folder) stands. Page scoping keeps
+sessions apart; it is not a boundary against a process of the same user running its own client,
+which could name any token or page (the pipe's key and DACL are the boundary, decision 3).
+Developer tools: enabled on the agent view only and
+opened by the human (decision 3 amendment); the agent view is built with them allowed, so the
+setting holds from its first navigation; no pipe operation reaches them.
 
 ### Implementation (M8, 2026-11-21)
 Crate `acta-browser` (operations over a `Host` trait, policy, fence and budgets, event store, handshake,

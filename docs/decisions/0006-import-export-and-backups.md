@@ -31,6 +31,7 @@ Three mechanisms, each answering one scenario.
 **3. Soft delete (answers 3).**
 - Deleting a project, epic, topic, entry or note marks it deleted. It can be restored from a trash view for 30 days, then it is purged. Exports include trashed records, flagged.
 - There is no "empty trash" or "delete now" in v1: no key press destroys data. Known limit: something sensitive pasted by mistake stays in the encrypted database and its snapshots until retention expires. Revisit if users ask for immediate erasure.
+- Amended by the user on 2026-11-22: the trash page offers "Delete permanently..." on a selection and "Empty trash...", each behind a confirmation that names the count, purging the records and their unreferenced blobs at once (components-app.md 5, Trash page; data.md 11, request 25). Snapshots taken before keep them until rotation, and the dialog says so. Ctrl+Z still never destroys anything.
 
 **Key-loss recovery.** If the database exists but its key does not, the app does not create a fresh database over it. It keeps the unreadable file aside, says exactly what happened, and offers to import an export. The first export is suggested once real data exists; the app then shows the age of the last export in settings, without nagging.
 

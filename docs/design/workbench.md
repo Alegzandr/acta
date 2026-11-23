@@ -13,7 +13,7 @@ Implemented in M8; the catalogue rows of this section are in 10.4.
 #### 4.8.1 Vocabulary
 
 - An **area** is a region of the window that holds things. There are four: the **left sidebar**, the **right sidebar**, the **bottom panel** and the **page area**. Areas never move; what is in them does. (VS Code's "primary side bar", "secondary side bar", "panel" and "editor area".)
-- A **view** is a movable unit that keeps running when hidden: Projects (the tree), Inbox, Knowledge, Terminal, Chat and Agent browser. A view is in exactly one place at a time, or hidden; it is never duplicated.
+- A **view** is a movable unit that keeps running when hidden: Projects (the tree), Inbox, Knowledge, Terminal, Chat, Agent browser, Claude Code sessions and Claude Code (no project). Terminal, Chat and Agent browser show the instances of the current page (layout.md 4.5.1): the view is one place in the layout, its content follows the page. A view is in exactly one place at a time, or hidden; it is never duplicated.
 - A **group** is a set of tabs inside an area, one of them active. A side area or the bottom panel holds one or two groups; the page area holds one to three.
 - A **page** is what 4.2 already calls a page (topic, epic, project, document, settings, trash, shortcuts). Pages live only in the page area. Inbox and Knowledge are both: a page by default, a view once moved out of the page area (4.8.3).
 
@@ -44,7 +44,10 @@ User-facing words, in both languages, are exactly the catalogue's: "left sidebar
 | Terminal | `terminal` | `square-terminal` | Right sidebar, first tab | 400 x 160 | One session per project, unchanged (4.5). Moving never restarts it; the grid reflows to the new size. |
 | Chat | `chat` | `message-circle` | Right sidebar, second tab | 400 x 240 | Windows only (ADR 0009). A native web view (4.8.9). Moving never reloads it. |
 | Agent browser | `agent_browser` | `globe` | Right sidebar, third tab | 400 x 240 | Windows only (ADR 0010). A native web view (4.8.9), parked rather than hidden when off screen (components-app.md 5, Agent browser). Moving never reloads it. |
+| Claude Code (no project) | `free_claude` | `terminal` | Bottom panel, hidden | 400 x 160 | Plain Claude Code in the home folder, belonging to no page (layout.md 4.5.1). |
 | Claude Code sessions | `sessions` | `bot` | Bottom panel, hidden | 280 x 120 | The live Claude Code sessions (components-app.md 5, Claude Code sessions). Hidden on a new install; the status bar's Claude Code item shows it. |
+| Files | `files` | `folder-tree` | Left sidebar, tab after Projects, hidden | 200 x 160 | No titlebar toggle (4.8.5). A read-only tree of a folder the followed page sees (components-repo.md 5.R.3). Opens files in the file viewer tab, which is a page-area tab but not a page. |
+| Commits | `commits` | `git-graph` | Bottom panel, hidden | 400 x 160 | No titlebar toggle (4.8.5). The commit graph and details of a folder the followed page sees (components-repo.md 5.R.5). |
 
 **What a view looks like where it lands.**
 - In a side area or the bottom panel, the area header (4.8.4) names the view, so a view drops its page title and its meta line; its content starts 12 below the header with side padding 12. Inbox and Knowledge take the narrow forms their components already define (note cards full width; knowledge rows in their two-line 52 form under 520; the filter row wraps). Projects is the tree, padding 8 as in 4.2.
@@ -80,7 +83,7 @@ Left to right:
 
 Two kinds of toggle, both in the titlebar (4.3) and both always visible, whatever is hidden.
 
-**View toggles**: one ghost icon button (28 x 28, icon 16; 24 x 24 on macOS, like every titlebar control there) per view, in the table order of 4.8.3, gap 4. Visible view: `fill.selected`, icon `text.primary`. Hidden view: no fill, icon `text.secondary`. Hover `fill.hover`, pressed `fill.pressed`, keyboard focus ring inside. Tooltip: the view's name and its shortcut. Right click opens the view menu. The chat toggle exists on Windows only (ADR 0009); the agent browser's too (ADR 0010). For Inbox and Knowledge while they are pages, the toggle is selected when the active tab of the focused group shows that page.
+**View toggles**: one ghost icon button (28 x 28, icon 16; 24 x 24 on macOS, like every titlebar control there) per view, in the table order of 4.8.3, gap 4. Visible view: `fill.selected`, icon `text.primary`. Hidden view: no fill, icon `text.secondary`. Hover `fill.hover`, pressed `fill.pressed`, keyboard focus ring inside. Tooltip: the view's name and its shortcut. Right click opens the view menu. The chat toggle exists on Windows only (ADR 0009); the agent browser's too (ADR 0010). For Inbox and Knowledge while they are pages, the toggle is selected when the active tab of the focused group shows that page. Files and Commits have no titlebar toggle (lead decision of 2026-11-22, to keep the titlebar from reaching 13 icons, clarity review finding 14): their way back is the Layout menu, which is always visible, their key and the palette (rule 1 of 4.8.11).
 
 **Area toggles**: `panel-left`, `panel-bottom`, `panel-right`, same size and states; selected when the area is shown. They replace the sidebar toggle at the left of the titlebar. Right click opens the Layout menu.
 
@@ -150,11 +153,11 @@ The chat and the agent browser are native child windows drawn above everything A
 
 #### 4.8.10 Narrow windows and minimum sizes
 
-The window minimum stays 880 x 560. When the areas no longer fit, they give way in this order, each step undone in reverse as space returns, and none of it is saved (the remembered layout is what the user chose, not what the window allowed):
+The window minimum stays 880 x 560. Every width and height in this section is in effective px (4.9): a zoomed window is laid out as a window of its size divided by the zoom, down to 760 x 480. When the areas no longer fit, they give way in this order, each step undone in reverse as space returns, and none of it is saved (the remembered layout is what the user chose, not what the window allowed):
 
 1. **The left sidebar auto-hides** (4.2's rule, unchanged): its toggle and `Mod+B` show it as an overlay on top of the page area at its remembered width (at most the window width minus 48), with `shadow.overlay` and a 1px `border.default` edge, dismissed by `Esc` (wherever the keyboard is, except in a terminal, a field, a menu or a dialog), by a click outside or by opening something. A web view in it is shown in it, the overlay being its host; a web view under it is hidden (4.8.9).
 2. **The page area folds its groups** when it cannot give every group 400: only the focused group is shown, its tab bar stays, and the bar's `chevron-down` menu lists every group's tabs under `type.label` headings "Group 1", "Group 2"; choosing a tab of another group shows that group in place of the first. `F6` reaches only the shown group. The split returns when the width does.
-3. **The right sidebar** clamps between its active view's minimum and the room the page area leaves; it never auto-hides (at 880 it gets 460 against the page's 420, as today).
+3. **The right sidebar** clamps between its active view's minimum and the room the page area leaves (at 880 it gets 460 against the page's 420, as today). It auto-hides only when the page area's 420 and the active view's minimum no longer fit side by side, which happens only in a zoomed window (4.9: effective widths from 760 to 820). It then behaves exactly as the auto-hidden left sidebar of step 1, mirrored: its toggle, `Mod+Shift+B` and the keys of its views (``Ctrl+` ``, `Mod+Shift+H`) show it as an overlay at the right edge at its remembered width (at most the window width minus 48), and the same things dismiss it.
 4. **The bottom panel** clamps so the page area keeps 200 of height; at the 560 minimum the body is 500, so the panel always keeps at least 160.
 
 Two groups in a sidebar stack vertically and need only height: at the minimum body of 500, two groups of 240 fit; when they do not, the second group folds behind the first the same way as step 2, its views listed in the header's `chevron-down` menu.
@@ -163,7 +166,7 @@ Two groups in a sidebar stack vertically and need only height: at the minimum bo
 
 Rearranging must never be a way to lose something. These rules are absolute: a change that breaks one is a defect, whatever else it fixes.
 
-1. **Every view always has a visible way back.** Its titlebar toggle is shown whether the view is visible, hidden, in a hidden area or in a folded group, and activating it brings the view back where it was last. The Layout menu lists every view by name, the palette has "{view}: Show" for each, and each view keeps its key.
+1. **Every view always has a visible way back.** Its titlebar toggle (for Files and Commits, which have none, their item in the Layout menu, whose button is always in the titlebar) is shown whether the view is visible, hidden, in a hidden area or in a folded group, and activating it brings the view back where it was last. The Layout menu lists every view by name, the palette has "{view}: Show" for each, and each view keeps its key.
 2. **Reset layout is one click away** from the Layout menu, the palette, Settings (Appearance) and the move toast. It is undoable, so it asks nothing.
 3. **Every layout change is one undo step**: moving a view, hiding or showing a view or an area, resizing (one step per drag, keyboard steps within one second coalesced), splitting, joining, moving or reordering a tab, resetting. `Mod+Z` undoes the most recent undoable thing, whether a layout change or a write (6.4); "Undo layout change" in the palette and the Layout menu undoes the last layout change even when focus is in an editor, a terminal or the chat, where `Mod+Z` belongs to them. The layout keeps the last 50 steps per window, for the session.
 4. **A closed view reopens in its last place and size**: the same area, the same group (or the group nearest it if that group is gone), the same tab position (or the end), the area at its remembered size. A view never reappears in an area it was not in, except after Reset layout.
@@ -207,7 +210,7 @@ The layout is saved per window in `preferences.json` (4.7) under one `layout` ke
 The defaults are 4.2's workbench, unchanged for someone who never moves anything:
 - Left sidebar shown, 260, Projects alone.
 - Right sidebar hidden, 648, Terminal, Chat and Agent browser as tabs (the last two on Windows), Terminal active. It is hidden on a new install because showing the terminal starts a shell and showing the chat creates a web view; both wait for the user (4.5, 5).
-- Bottom panel hidden, 320, empty.
+- Bottom panel hidden, 320, holding Claude Code (no project) and Claude Code sessions, both hidden.
 - Page area: one group. Inbox and Knowledge are pages.
 
 **Reset layout** puts every area, view, size and split back to these defaults in one step, in one frame. It keeps the open tabs (gathered into one group, in group order, the focused group's active tab staying active), every terminal session, the chat's page and sign-in, the theme and everything else in the file. It is undoable and toasts "Layout reset." with Undo. Reached from the Layout menu, the palette, the move toast, and Settings > Appearance: a row "Layout", description "Puts every view and panel back where it was on a new install. You can undo it right after.", control a secondary button "Reset layout".

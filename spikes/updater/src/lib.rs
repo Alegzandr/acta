@@ -124,13 +124,16 @@ mod path_win {
         String::from_utf16_lossy(&w).trim_end_matches('\0').to_string()
     }
 
-    fn encode(s: &str, vtype: RegType) -> RegValue {
-        let bytes = s
+    fn encode(s: &str, vtype: RegType) -> RegValue<'static> {
+        let bytes: Vec<u8> = s
             .encode_utf16()
             .chain(std::iter::once(0))
             .flat_map(|u| u.to_le_bytes())
             .collect();
-        RegValue { bytes, vtype }
+        RegValue {
+            bytes: bytes.into(),
+            vtype,
+        }
     }
 
     /// Add or remove `dir` in HKCU\Environment\Path, keeping the value type.

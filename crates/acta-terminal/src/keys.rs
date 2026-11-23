@@ -140,8 +140,24 @@ pub fn kept_by_app(key: &Key, os: Os) -> bool {
     if k == "f6" && !m.ctrl && !m.alt && !m.platform {
         return true;
     }
-    // Ctrl+` and Ctrl+Tab / Ctrl+Shift+Tab on every platform.
-    if m.ctrl && !m.alt && !m.platform && (k == "tab" || (k == "`" && !m.shift)) {
+    // Ctrl+` (Ctrl+Shift+`: a new Claude Code session), Ctrl+Tab /
+    // Ctrl+Shift+Tab and Ctrl+PageUp / Ctrl+PageDown (the previous and
+    // next instance of the view) on every platform.
+    if m.ctrl
+        && !m.alt
+        && !m.platform
+        && (k == "tab" || k == "`" || (!m.shift && (k == "pageup" || k == "pagedown")))
+    {
+        return true;
+    }
+    // Claude Code (no project): Ctrl+Alt+J, Cmd+Option+J on macOS.
+    let free = match os {
+        Os::Other => m.ctrl && !m.platform,
+        Os::Mac => m.platform && !m.ctrl,
+    };
+    // Where AltGr+J types a character, the character wins (6.1).
+    let typed_other = key.key_char.is_some_and(|c| c != k);
+    if free && m.alt && !m.shift && k == "j" && !typed_other {
         return true;
     }
     match os {
@@ -573,6 +589,14 @@ mod tests {
         assert_eq!(route(&ctrl_shift("h"), NONE, Os::Other), Route::App);
         assert_eq!(route(&ctrl_shift("enter"), NONE, Os::Other), Route::App);
         assert_eq!(route(&ctrl("`"), NONE, Os::Other), Route::App);
+        assert_eq!(route(&ctrl_shift("`"), NONE, Os::Other), Route::App);
+        assert_eq!(route(&ctrl("pagedown"), NONE, Os::Other), Route::App);
+        assert_eq!(route(&ctrl("pageup"), NONE, Os::Other), Route::App);
+        let ctrl_alt_j = with("j", |m| {
+            m.ctrl = true;
+            m.alt = true
+        });
+        assert_eq!(route(&ctrl_alt_j, NONE, Os::Other), Route::App);
         assert_eq!(route(&ctrl("3"), NONE, Os::Other), Route::App);
         assert_eq!(route(&ctrl("tab"), NONE, Os::Other), Route::App);
         assert_eq!(route(&ctrl_shift("tab"), NONE, Os::Other), Route::App);

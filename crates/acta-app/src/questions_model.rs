@@ -222,6 +222,28 @@ pub fn step(index: usize, len: usize, down: bool) -> Option<usize> {
     }
 }
 
+/// Dragging an open question (components-questions.md 5): the gap a
+/// pointer at `y` falls in among the open rows drawn at `rows` (each top
+/// and bottom), as an insertion index from 0 (before the first) to the
+/// number of rows (after the last).
+pub fn drop_gap(rows: &[(f32, f32)], y: f32) -> usize {
+    rows.iter()
+        .position(|(top, bottom)| y < (top + bottom) / 2.)
+        .unwrap_or(rows.len())
+}
+
+/// The index `reorder_question` takes for the row at `from` dropped in
+/// `gap`; `None` on its own place (just above or below itself).
+pub fn gap_target(from: usize, gap: usize) -> Option<usize> {
+    if gap == from || gap == from + 1 {
+        None
+    } else if gap > from {
+        Some(gap - 1)
+    } else {
+        Some(gap)
+    }
+}
+
 /// A question's text as typed: one paragraph (line breaks become spaces,
 /// as the store keeps it), cut at 300 characters.
 pub fn clean_text(text: &str) -> String {
@@ -380,6 +402,22 @@ mod tests {
         assert_eq!(clean_text(&"a".repeat(400)).chars().count(), 300);
         assert_eq!(counter(&"a".repeat(240)), None);
         assert_eq!(counter(&"a".repeat(264)), Some(264));
+    }
+
+    #[test]
+    fn a_dragged_question_lands_in_the_gap_under_the_pointer() {
+        let rows = [(0., 32.), (32., 80.), (80., 112.)];
+        assert_eq!(drop_gap(&rows, 5.), 0);
+        assert_eq!(drop_gap(&rows, 20.), 1);
+        assert_eq!(drop_gap(&rows, 60.), 2);
+        assert_eq!(drop_gap(&rows, 200.), 3);
+        // The second row dropped above the first, after the last, or on
+        // its own place.
+        assert_eq!(gap_target(1, 0), Some(0));
+        assert_eq!(gap_target(1, 3), Some(2));
+        assert_eq!(gap_target(1, 1), None);
+        assert_eq!(gap_target(1, 2), None);
+        assert_eq!(gap_target(0, 3), Some(2));
     }
 
     #[test]

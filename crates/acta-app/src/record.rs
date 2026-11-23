@@ -71,6 +71,51 @@ pub struct Folders {
     pub missing: HashSet<String>,
     /// The Settings default of "Commit in my name" (Settings > Claude Code).
     pub as_user_default: bool,
+    /// The page's own folders that other topics (or epics) of the project
+    /// have too (components-folders.md 5, Same folder on two topics).
+    pub also: HashMap<FolderId, Also>,
+}
+
+/// The other owners of the same folder, with their names, and the level a
+/// session started there outside Acta opens on (the nearest one they
+/// share with the page).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Also {
+    pub others: Vec<(Owner, String)>,
+    pub level: (Owner, String),
+}
+
+/// The owners of the same kind as `owner` (topics for a topic, epics for
+/// an epic), in the same project, other than `owner`, that have a folder
+/// at `path` (the same folder: stored forms equal, ignoring case on
+/// Windows and macOS). A project has no such line.
+pub fn same_folder_owners(
+    owner: Owner,
+    project: ProjectId,
+    path: &str,
+    all: &[acta_core::model::Folder],
+    os: acta_core::paths::Os,
+) -> Vec<Owner> {
+    let kind = |o: &Owner| match o {
+        Owner::Topic(_) => 0,
+        Owner::Epic(_) => 1,
+        Owner::Project(_) => 2,
+    };
+    if matches!(owner, Owner::Project(_)) {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for f in all {
+        if f.project == project
+            && f.owner != owner
+            && kind(&f.owner) == kind(&owner)
+            && acta_core::folder_path::same(os, &f.path, path)
+            && !out.contains(&f.owner)
+        {
+            out.push(f.owner);
+        }
+    }
+    out
 }
 
 impl Folders {
@@ -119,6 +164,9 @@ pub struct Loaded {
     pub loose: Vec<TopicSummary>,
     pub groups: Vec<(EpicId, String, Vec<TopicSummary>)>,
     pub kb: Section,
+    /// The store's flags of the section's entries (ADR 0015, 1); git's
+    /// arrive later.
+    pub kb_flags: Vec<(acta_core::model::KbId, Vec<acta_core::agent::kbq::Flag>)>,
     /// Epic and project pages: entries in the levels below.
     pub kb_below: i64,
     pub folders: Folders,
@@ -306,11 +354,50 @@ pub fn load_folders(store: &Store, owner: Owner) -> Result<Folders> {
         levels.push((parent, owner_name(store, parent)?));
         level = parent;
     }
+    let mut also = HashMap::new();
+    if !matches!(owner, Owner::Project(_)) {
+        let all = store.all_folders()?;
+        let os = acta_core::paths::Os::CURRENT;
+        for v in visible.folders.iter().filter(|v| v.origin == owner) {
+            let others = same_folder_owners(owner, v.folder.project, &v.folder.path, &all, os);
+            if others.is_empty() {
+                continue;
+            }
+            // The nearest level they share: the epic when every topic is
+            // in the same one, else the project.
+            let shared = match owner {
+                Owner::Topic(_) => {
+                    let mine = parent_of(store, owner)?;
+                    let mut same = true;
+                    for o in &others {
+                        same &= parent_of(store, *o)? == mine;
+                    }
+                    match mine {
+                        Some(Owner::Epic(e)) if same => Owner::Epic(e),
+                        _ => Owner::Project(v.folder.project),
+                    }
+                }
+                _ => Owner::Project(v.folder.project),
+            };
+            let mut named = Vec::new();
+            for o in others {
+                named.push((o, owner_name(store, o)?));
+            }
+            also.insert(
+                v.folder.id,
+                Also {
+                    others: named,
+                    level: (shared, owner_name(store, shared)?),
+                },
+            );
+        }
+    }
     Ok(Folders {
         items,
         levels,
         missing: HashSet::new(),
         as_user_default: acta_core::claude_settings::as_user_default(store)?,
+        also,
     })
 }
 
@@ -330,6 +417,13 @@ pub fn load(
 ) -> Result<Loaded> {
     let kb_scope = store.kb_scope(owner, &KbFilter::default(), KB_PAGE)?.items;
     let kb = kb_model::section(owner, kb_scope);
+    let kb_ids: Vec<acta_core::model::KbId> = kb
+        .own
+        .iter()
+        .chain(kb.inherited.iter().flat_map(|(_, e)| e.iter()))
+        .map(|e| e.id)
+        .collect();
+    let kb_flags = crate::kbq_ui::store_flags_of(store, &kb_ids, today)?;
     let folders = load_folders(store, owner)?;
     match owner {
         Owner::Topic(id) => {
@@ -389,6 +483,7 @@ pub fn load(
                 loose: Vec::new(),
                 groups: Vec::new(),
                 kb,
+                kb_flags: kb_flags.clone(),
                 kb_below: 0,
                 folders,
             })
@@ -434,6 +529,7 @@ pub fn load(
                 loose: Vec::new(),
                 groups: Vec::new(),
                 kb,
+                kb_flags: kb_flags.clone(),
                 kb_below: (below - own).max(0),
                 folders,
             })
@@ -476,10 +572,64 @@ pub fn load(
                     .map(|(e, t)| (e.id, e.title, t))
                     .collect(),
                 kb,
+                kb_flags: kb_flags.clone(),
                 kb_below: (below - own).max(0),
                 folders,
             })
         }
+    }
+}
+
+/// A block of a record page that `Up` / `Down` step through
+/// (interaction.md 6.1): the title, the folder row, the current state, the
+/// description, the Questions section and each entry of the timeline.
+/// `Enter` edits the focused block (or goes inside the folder row and the
+/// Questions section).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Block {
+    Title,
+    Folders,
+    State,
+    Description,
+    Questions,
+    Entry(acta_core::model::EntryId),
+}
+
+/// The blocks of a page, in reading order: a topic has a current state and
+/// a timeline (`entries`: the entries shown, system lines excluded, newest
+/// first); the folder row is a block while it is drawn.
+pub fn blocks(topic: bool, folders: bool, entries: &[Entry]) -> Vec<Block> {
+    let mut out = vec![Block::Title];
+    if folders {
+        out.push(Block::Folders);
+    }
+    if topic {
+        out.push(Block::State);
+    }
+    out.push(Block::Description);
+    out.push(Block::Questions);
+    if topic {
+        out.extend(
+            entries
+                .iter()
+                .filter(|e| e.kind != EntryKind::System)
+                .map(|e| Block::Entry(e.id)),
+        );
+    }
+    out
+}
+
+/// `Up` / `Down` from `at` (`None`: the page itself has the keyboard, and
+/// `Down` goes to the first block). The ends stay where they are.
+pub fn step_block(order: &[Block], at: Option<Block>, up: bool) -> Option<Block> {
+    let Some(at) = at else {
+        return if up { None } else { order.first().copied() };
+    };
+    let i = order.iter().position(|b| *b == at)?;
+    if up {
+        order.get(i.checked_sub(1)?).copied()
+    } else {
+        order.get(i + 1).copied()
     }
 }
 
@@ -558,6 +708,58 @@ pub fn collapse_status_events(entries: Vec<Entry>) -> Vec<Entry> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn entry_of(id: i64, kind: EntryKind) -> Entry {
+        let mut e = status_event(id, 0, Status::Draft, Status::Done, Author::Human);
+        e.kind = kind;
+        e
+    }
+
+    #[test]
+    fn a_topic_page_steps_title_folders_state_description_questions_entries() {
+        let entries = [
+            entry_of(3, EntryKind::Decision),
+            entry_of(2, EntryKind::System),
+            entry_of(1, EntryKind::Progress),
+        ];
+        let order = blocks(true, true, &entries);
+        assert_eq!(
+            order,
+            vec![
+                Block::Title,
+                Block::Folders,
+                Block::State,
+                Block::Description,
+                Block::Questions,
+                Block::Entry(acta_core::model::EntryId(3)),
+                Block::Entry(acta_core::model::EntryId(1)),
+            ]
+        );
+        // An epic has no state and no timeline; no folder row, no stop.
+        assert_eq!(
+            blocks(false, false, &entries),
+            vec![Block::Title, Block::Description, Block::Questions]
+        );
+        assert_eq!(step_block(&order, None, false), Some(Block::Title));
+        assert_eq!(step_block(&order, None, true), None);
+        assert_eq!(step_block(&order, Some(Block::Title), true), None);
+        assert_eq!(
+            step_block(&order, Some(Block::Questions), false),
+            Some(Block::Entry(acta_core::model::EntryId(3)))
+        );
+        assert_eq!(
+            step_block(
+                &order,
+                Some(Block::Entry(acta_core::model::EntryId(1))),
+                false
+            ),
+            None
+        );
+        assert_eq!(
+            step_block(&order, Some(Block::State), true),
+            Some(Block::Folders)
+        );
+    }
     use crate::db::test_support::temp_store;
     use acta_core::model::{KbKind, Status};
     use acta_core::store::{NewEntry, NewKb, NewTopic};
@@ -709,6 +911,53 @@ mod tests {
             status_event(1, 10, Status::Active, Status::Blocked, me),
         ];
         assert_eq!(collapse_status_events(mixed).len(), 2);
+    }
+
+    #[test]
+    fn a_folder_on_two_topics_names_the_other_and_the_level_they_share() {
+        let mut temp = temp_store();
+        let dir = tempfile::tempdir().unwrap();
+        let s = &mut temp.store;
+        let me = Author::Human;
+        let project = s.create_project("Acta", "", me).unwrap();
+        let epic = s.create_epic(project, "Terminal", "", me).unwrap();
+        let topic = |s: &mut Store, title: &str, epic: Option<EpicId>| {
+            s.create_topic(
+                NewTopic {
+                    project,
+                    epic,
+                    title: title.into(),
+                    description: String::new(),
+                    status: Status::Active,
+                },
+                me,
+            )
+            .unwrap()
+        };
+        let embed = topic(s, "Embed the terminal", Some(epic));
+        let scroll = topic(s, "Scrollback", Some(epic));
+        let loose = topic(s, "Links", None);
+        s.add_folder(Owner::Topic(embed), dir.path(), me).unwrap();
+        s.add_folder(Owner::Topic(scroll), dir.path(), me).unwrap();
+
+        let page = load_folders(s, Owner::Topic(embed)).unwrap();
+        let own = page.items.iter().find(|f| f.own).unwrap();
+        let also = page.also.get(&own.id).unwrap();
+        assert_eq!(
+            also.others,
+            vec![(Owner::Topic(scroll), "Scrollback".to_owned())]
+        );
+        assert_eq!(also.level, (Owner::Epic(epic), "Terminal".to_owned()));
+
+        // A third topic outside the epic: they share only the project.
+        s.add_folder(Owner::Topic(loose), dir.path(), me).unwrap();
+        let page = load_folders(s, Owner::Topic(embed)).unwrap();
+        let own = page.items.iter().find(|f| f.own).unwrap();
+        let also = page.also.get(&own.id).unwrap();
+        assert_eq!(also.others.len(), 2);
+        assert_eq!(also.level, (Owner::Project(project), "Acta".to_owned()));
+        // The epic page has no line: the topics are not of its kind.
+        assert!(load_folders(s, Owner::Epic(epic)).unwrap().also.is_empty());
     }
 
     #[test]

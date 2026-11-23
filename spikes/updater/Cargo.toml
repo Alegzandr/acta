@@ -11,7 +11,7 @@ publish = false
 velopack = "=1.2.161"
 
 [target.'cfg(windows)'.dependencies]
-winreg = "0.55"
+winreg = "0.56"
 
 # GUI executable (Windows subsystem: no console window). Velopack --mainExe.
 [[bin]]

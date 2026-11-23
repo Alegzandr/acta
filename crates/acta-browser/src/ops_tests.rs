@@ -191,6 +191,7 @@ fn every_request() -> Vec<(Request, usize)> {
     vec![
         (
             Request::Open(OpenArgs {
+                browser: None,
                 url: Some("http://127.0.0.1:8080/form.html".into()),
                 go: None,
             }),
@@ -214,6 +215,7 @@ fn every_request() -> Vec<(Request, usize)> {
         (Request::Read(ReadArgs::default()), budget::READ),
         (
             Request::Click(ClickArgs {
+                browser: None,
                 target: "e12".into(),
                 double: Some(true),
             }),
@@ -221,6 +223,7 @@ fn every_request() -> Vec<(Request, usize)> {
         ),
         (
             Request::Type(TypeArgs {
+                browser: None,
                 target: "e2".into(),
                 text: Some("Alexandre".into()),
                 clear: Some(true),
@@ -236,6 +239,7 @@ fn every_request() -> Vec<(Request, usize)> {
         (Request::Network(NetworkArgs::default()), budget::NETWORK),
         (
             Request::Handoff(HandoffArgs {
+                browser: None,
                 message: "Please sign in to the staging site, then press Done.".into(),
             }),
             budget::HANDOFF,
@@ -338,6 +342,7 @@ fn cut_lists_say_how_to_see_more() {
     let next = run(
         &fake,
         &Request::Read(ReadArgs {
+            browser: None,
             within: None,
             cursor: Some(cursor),
         }),
@@ -363,6 +368,7 @@ fn refused_urls_never_reach_the_browser() {
         let reply = run(
             &fake,
             &Request::Open(OpenArgs {
+                browser: None,
                 url: Some(url.into()),
                 go: None,
             }),
@@ -418,6 +424,7 @@ fn bad_refs_are_explained() {
         let reply = run(
             &fake,
             &Request::Click(ClickArgs {
+                browser: None,
                 target: rf.into(),
                 double: None,
             }),
@@ -449,6 +456,7 @@ fn stop_answers_every_call_without_touching_the_page() {
 fn handoff_reports_how_it_ended() {
     let mut fake = Fake::new(big_tree(1));
     let req = Request::Handoff(HandoffArgs {
+        browser: None,
         message: "Sign in, then press Done.".into(),
     });
     assert!(run(&fake, &req).text.starts_with("done"));
@@ -457,6 +465,7 @@ fn handoff_reports_how_it_ended() {
     fake.handoff = Handoff::Stopped;
     assert_eq!(run(&fake, &req).text, STOPPED);
     let long = Request::Handoff(HandoffArgs {
+        browser: None,
         message: "x".repeat(MESSAGE_MAX + 1),
     });
     assert!(!run(&fake, &long).ok);
@@ -490,6 +499,7 @@ fn a_new_view_is_set_up_once_and_actions_are_shown_to_the_human() {
     run(
         &fake,
         &Request::Click(ClickArgs {
+            browser: None,
             target: "e12".into(),
             double: None,
         }),
@@ -497,6 +507,7 @@ fn a_new_view_is_set_up_once_and_actions_are_shown_to_the_human() {
     run(
         &fake,
         &Request::Click(ClickArgs {
+            browser: None,
             target: "e12".into(),
             double: None,
         }),

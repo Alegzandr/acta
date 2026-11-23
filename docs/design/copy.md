@@ -35,7 +35,7 @@ Plain, specific, short. Acta talks like a careful colleague's notes: it names th
 | Missing folder | Error: invalid path | Not found on this computer. Locate... |
 | No folder | No directory configured! | No working folder. The terminal will ask where to start. |
 | Attribution | Updated by AI 2 hours ago | Updated 2 h ago by Claude Code |
-| Placeholder | Enter description here... | What is this topic about, and what does done look like? |
+| Empty current state | Enter description here... | Claude Code writes where this stands as it works. |
 
 ## 10. Languages
 

@@ -53,6 +53,10 @@ pub(super) struct FolderUi {
     git_seen: Option<u64>,
     /// Folders a git action runs in: their buttons wait.
     busy: HashSet<String>,
+    /// One focus handle per folder of the list, and the list's order as
+    /// last drawn: the rows are keyboard stops (interaction.md 6.1).
+    row_focus: HashMap<FolderId, FocusHandle>,
+    row_order: std::cell::RefCell<Vec<FolderId>>,
     _git: Option<Task<()>>,
 }
 
@@ -164,6 +168,14 @@ impl RecordPage {
                     }
                 }
                 "escape" => self.folder_ui.switcher = None,
+                // Type-ahead by name (components.md 5, Context menu).
+                typed if typed.chars().count() == 1 => {
+                    let groups = self.switch_groups(folders, locale);
+                    match folders_view::type_ahead(&groups, at, typed) {
+                        Some(i) => self.folder_ui.switcher = Some(i),
+                        None => return false,
+                    }
+                }
                 _ => return false,
             }
             let _ = window;
@@ -176,6 +188,226 @@ impl RecordPage {
             return true;
         }
         false
+    }
+
+    /// Before drawing: a focus handle for each folder of the page.
+    pub(super) fn folder_handles(&mut self, cx: &mut Context<Self>) {
+        let ids: Vec<FolderId> = self
+            .folders()
+            .map(|f| f.items.iter().map(|i| i.id).collect())
+            .unwrap_or_default();
+        for id in ids {
+            self.folder_ui
+                .row_focus
+                .entry(id)
+                .or_insert_with(|| cx.focus_handle());
+        }
+    }
+
+    /// The folder row with the keyboard.
+    pub(super) fn focused_folder(&self, window: &Window) -> Option<FolderId> {
+        self.folder_ui
+            .row_focus
+            .iter()
+            .find(|(_, h)| h.is_focused(window))
+            .map(|(id, _)| *id)
+    }
+
+    fn focus_folder(&mut self, id: FolderId, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(h) = self.folder_ui.row_focus.get(&id) {
+            window.focus(h, cx);
+        }
+        cx.notify();
+    }
+
+    /// `Enter` or `Right` on the folder row: the list unfolds and the
+    /// keyboard goes to the active folder.
+    pub(super) fn enter_folders(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.folder_ui.open = true;
+        if let Some(active) = self.folders().and_then(|f| f.active()).map(|f| f.id) {
+            self.focus_folder(active, window, cx);
+        }
+        cx.notify();
+    }
+
+    /// Keys on the folder row (one of the page's blocks): `Enter` / `Right`
+    /// unfold and go in, `Left` / `Esc` fold, `Space` / `Alt+Down` open the
+    /// switcher. Whether the key was taken.
+    pub(super) fn folder_row_keys(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let k = &event.keystroke;
+        let alt_only = k.modifiers.alt && !k.modifiers.control && !k.modifiers.platform;
+        let plain = !k.modifiers.modified();
+        match k.key.as_str() {
+            "right" if plain => self.enter_folders(window, cx),
+            "left" | "escape" if plain && self.folder_ui.open => {
+                self.folder_ui.open = false;
+                cx.notify();
+            }
+            "space" if plain => self.folder_ui.switcher = Some(0),
+            "down" if alt_only => self.folder_ui.switcher = Some(0),
+            _ => return false,
+        }
+        cx.stop_propagation();
+        cx.notify();
+        true
+    }
+
+    /// Keys on a folder of the list (interaction.md 6.1): on any folder,
+    /// `Space` makes it active, `Enter` reveals it (Locate when not found),
+    /// `Mod+C` copies its path, `Shift+F10` or the menu key opens its menu;
+    /// on an own folder, `Alt+Up` / `Alt+Down` reorder, `F2` opens its
+    /// settings, `E` chooses another folder, `Delete` removes it. `Up` /
+    /// `Down` move between folders, `Left` / `Esc` fold the list.
+    fn on_folder_key(
+        &mut self,
+        id: FolderId,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(folders) = self.folders() else {
+            return;
+        };
+        let Some(f) = folders.get(id).cloned() else {
+            return;
+        };
+        let missing = folders.is_missing(&f.path);
+        let k = &event.keystroke;
+        let m = &k.modifiers;
+        let plain = !m.modified();
+        let alt_only = m.alt && !m.control && !m.platform && !m.shift;
+        let secondary = if cfg!(target_os = "macos") {
+            m.platform && !m.control
+        } else {
+            m.control && !m.platform
+        };
+        let action = folder_key(
+            &k.key,
+            plain,
+            alt_only,
+            secondary && !m.alt && !m.shift,
+            m.shift && !m.control && !m.platform && !m.alt,
+            m.platform,
+        );
+        let Some(action) = action else { return };
+        let own = f.own;
+        match action {
+            FolderKey::Step(up) => {
+                let order = self.folder_ui.row_order.borrow().clone();
+                let at = order.iter().position(|r| *r == id).unwrap_or(0);
+                let to = if up {
+                    at.checked_sub(1)
+                } else {
+                    (at + 1 < order.len()).then_some(at + 1)
+                };
+                match to.and_then(|i| order.get(i).copied()) {
+                    Some(next) => self.focus_folder(next, window, cx),
+                    None if up => self.focus_block(record::Block::Folders, window, cx),
+                    None => {
+                        let next = record::step_block(
+                            &self.block_order,
+                            Some(record::Block::Folders),
+                            false,
+                        );
+                        if let Some(next) = next {
+                            self.focus_block(next, window, cx);
+                        }
+                    }
+                }
+            }
+            FolderKey::Activate if !missing => self.set_active(id, cx),
+            FolderKey::Open if missing => self.locate(f.origin, f.path.clone(), cx),
+            FolderKey::Open => cx.reveal_path(Path::new(&f.path)),
+            FolderKey::Copy => cx.write_to_clipboard(ClipboardItem::new_string(f.path.clone())),
+            FolderKey::Menu => {
+                self.folder_ui.row_menu = Some(id);
+                self.folder_ui.switcher = None;
+                self.folder_ui.branch_menu = None;
+            }
+            FolderKey::Move(delta) if own => {
+                self.move_folder(id, delta, cx);
+                self.focus_folder(id, window, cx);
+            }
+            FolderKey::Settings if own => self.open_folder_settings(id, window, cx),
+            FolderKey::Other if own => self.choose_other(id, cx),
+            FolderKey::Remove if own => {
+                self.remove_folder(id, cx);
+                self.focus_block(record::Block::Folders, window, cx);
+            }
+            FolderKey::Fold => {
+                self.folder_ui.open = false;
+                self.focus_block(record::Block::Folders, window, cx);
+            }
+            // On an inherited folder those keys do nothing; a folder not
+            // found cannot be made active.
+            _ => {}
+        }
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    /// The palette's commands on the focused folder (interaction.md 6.1).
+    pub fn focused_folder_commands(
+        &self,
+        window: &Window,
+    ) -> Option<crate::commands::FocusedFolder> {
+        let id = self.focused_folder(window)?;
+        let folders = self.folders()?;
+        let f = folders.get(id)?;
+        let own: Vec<FolderId> = folders
+            .items
+            .iter()
+            .filter(|item| item.own)
+            .map(|item| item.id)
+            .collect();
+        let (up, down) = if f.own {
+            move_options(&own, id)
+        } else {
+            (false, false)
+        };
+        Some(crate::commands::FocusedFolder {
+            own: f.own,
+            active: f.active,
+            missing: folders.is_missing(&f.path),
+            up,
+            down,
+            level: match self.owner {
+                Owner::Topic(_) => crate::commands::FolderLevel::Topic,
+                Owner::Epic(_) => crate::commands::FolderLevel::Epic,
+                Owner::Project(_) => crate::commands::FolderLevel::Project,
+            },
+        })
+    }
+
+    /// A palette command on the focused folder.
+    pub fn run_folder_command(
+        &mut self,
+        command: crate::commands::FolderCommand,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::commands::FolderCommand as C;
+        let Some(id) = self.focused_folder(window) else {
+            return;
+        };
+        let Some(f) = self.folder(id) else { return };
+        match command {
+            C::Active => self.set_active(id, cx),
+            C::Settings => self.open_folder_settings(id, window, cx),
+            C::Up => self.move_folder(id, -1, cx),
+            C::Down => self.move_folder(id, 1, cx),
+            C::Other => self.choose_other(id, cx),
+            C::Locate => self.locate(f.origin, f.path.clone(), cx),
+            C::Copy => cx.write_to_clipboard(ClipboardItem::new_string(f.path.clone())),
+            C::Show => cx.reveal_path(Path::new(&f.path)),
+            C::Remove(_) => self.remove_folder(id, cx),
+        }
+        cx.notify();
     }
 
     /// `Esc` on the page: folds the newest folder menu or form.
@@ -620,7 +852,10 @@ impl RecordPage {
                 .placeholder(placeholder)
                 .default_value(folder.own_name.clone())
         });
-        input.update(cx, |state, cx| state.focus(window, cx));
+        input.update(cx, |state, cx| {
+            state.focus(window, cx);
+            state.select_all(window, cx);
+        });
         let sub = cx.subscribe_in(
             &input,
             window,
@@ -1574,7 +1809,8 @@ impl RecordPage {
             16.,
             t.text_secondary,
         );
-        let header = ui::focusable(div().id("folder-row"), t, false)
+        let header = self
+            .block_el(record::Block::Folders, div().id("folder-row"), t)
             .px(px(8.))
             .ml(px(-8.))
             .w_full()
@@ -1649,6 +1885,7 @@ impl RecordPage {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let mut list = div().flex().flex_col().pl(px(24.));
+        let mut order = Vec::new();
         let active_name = folders.active().map(|f| f.name.clone()).unwrap_or_default();
         for (origin, items) in fm::groups(self.owner, &folders.items) {
             list = list.child(
@@ -1676,12 +1913,14 @@ impl RecordPage {
             }
             for i in items {
                 let f = folders.items[i].clone();
+                order.push(f.id);
                 list = list.child(self.render_folder_row(&f, folders, &active_name, locale, t, cx));
                 if self.folder_ui.settings == Some(f.id) && f.own {
                     list = list.child(self.render_folder_form(&f, folders, locale, t, cx));
                 }
             }
         }
+        *self.folder_ui.row_order.borrow_mut() = order;
         list = list
             .child(
                 div().pt(px(4.)).flex().child(
@@ -1881,8 +2120,12 @@ impl RecordPage {
                         .child(self.render_row_menu(f, folders, locale, t, cx))
                 }),
         );
-        let mut row = div()
-            .id(row_id.clone())
+        let handle = self.folder_ui.row_focus.get(&id).cloned();
+        let mut row = ui::focusable(div().id(row_id.clone()), t, false)
+            .when_some(handle, |this, h| this.track_focus(&h))
+            .on_key_down(cx.listener(move |page, event: &KeyDownEvent, window, cx| {
+                page.on_folder_key(id, event, window, cx)
+            }))
             .group(group)
             .flex()
             .flex_col()
@@ -1932,7 +2175,116 @@ impl RecordPage {
                     ),
             );
         }
+        if let Some(also) = folders.also.get(&f.id) {
+            row = row.child(self.render_also(&row_id, also, locale, t, cx));
+        }
         row.into_any_element()
+    }
+
+    /// "Also attached to topic Scrollback." under an own folder that
+    /// another topic (or epic) of the project has too, the other's name a
+    /// link; the tooltip says where a session started there outside Acta
+    /// opens (components-folders.md 5, Same folder on two topics).
+    fn render_also(
+        &self,
+        row_id: &SharedString,
+        also: &crate::record::Also,
+        locale: Locale,
+        t: &Tokens,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let route = |o: Owner| match o {
+            Owner::Project(id) => Route::Project(id),
+            Owner::Epic(id) => Route::Epic(id),
+            Owner::Topic(id) => Route::Topic(id),
+        };
+        let level = crate::questions_page::owner_label(locale, also.level.0, &also.level.1);
+        let tip = tr(locale, Key::FoldersAlsoTip, &[("level", Arg::Text(&level))]);
+        let sentence: AnyElement = match also.others.as_slice() {
+            [(owner, name)] => {
+                let key = match owner {
+                    Owner::Epic(_) => Key::FoldersAlsoEpic,
+                    _ => Key::FoldersAlsoTopic,
+                };
+                let (before, after) = crate::question_view::around_name(locale, key, name);
+                let to = route(*owner);
+                div()
+                    .flex()
+                    .flex_row()
+                    .flex_wrap()
+                    .child(before)
+                    .child(
+                        crate::question_view::name_link(
+                            SharedString::from(format!("{row_id}-also")),
+                            name,
+                            false,
+                            locale,
+                            t,
+                        )
+                        .on_click(cx.listener(move |_, _, _, cx| {
+                            cx.stop_propagation();
+                            cx.emit(PageEvent::Open(to));
+                        })),
+                    )
+                    .child(after)
+                    .into_any_element()
+            }
+            // Two or more: each of the first two names a link carrying its
+            // level word ("topic Scrollback"), then how many more.
+            others => {
+                const A: &str = "\u{1}";
+                const B: &str = "\u{2}";
+                let line = also_line(locale, others.len(), A, B);
+                let mut parts = div().flex().flex_row().flex_wrap();
+                let mut rest = line.as_str();
+                for (i, mark) in [A, B].into_iter().enumerate() {
+                    let Some((before, after)) = rest.split_once(mark) else {
+                        continue;
+                    };
+                    let (owner, name) = &others[i];
+                    let label = also_name(locale, *owner, name);
+                    let to = route(*owner);
+                    parts = parts.child(before.to_owned()).child(
+                        crate::question_view::name_link(
+                            SharedString::from(format!("{row_id}-also-{i}")),
+                            &label,
+                            false,
+                            locale,
+                            t,
+                        )
+                        .on_click(cx.listener(move |_, _, _, cx| {
+                            cx.stop_propagation();
+                            cx.emit(PageEvent::Open(to));
+                        })),
+                    );
+                    rest = after;
+                }
+                parts.child(rest.to_owned()).into_any_element()
+            }
+        };
+        div()
+            .id(SharedString::from(format!("{row_id}-also-line")))
+            .flex()
+            .flex_row()
+            .items_start()
+            .gap(px(6.))
+            .pl(px(48.))
+            .pt(px(2.))
+            .tooltip(ui::tip(tip))
+            .child(
+                div()
+                    .pt(px(1.))
+                    .child(icon(Icon::Info, 14., t.text_secondary)),
+            )
+            .child(
+                type_scale::SMALL
+                    .el()
+                    .flex_1()
+                    .min_w_0()
+                    .text_color(t.text_secondary)
+                    .child(sentence),
+            )
+            .into_any_element()
     }
 
     fn render_row_menu(
@@ -2350,6 +2702,92 @@ const ICON_GAP: f32 = 2.;
 /// The width that lays `count` icon toggles out in rows of equal length
 /// within `room`: `None` when they fit on one line (or the room is not
 /// known), else the width of the longest balanced row.
+/// The "Also attached to" sentence for `count` other owners (two or
+/// more), with `a` and `b` standing where the first two names go.
+fn also_line(locale: Locale, count: usize, a: &str, b: &str) -> String {
+    if count == 2 {
+        tr(
+            locale,
+            Key::FoldersAlsoTwo,
+            &[("a", Arg::Text(a)), ("b", Arg::Text(b))],
+        )
+    } else {
+        tr(
+            locale,
+            Key::FoldersAlsoMore,
+            &[
+                ("a", Arg::Text(a)),
+                ("b", Arg::Text(b)),
+                ("n", Arg::Count(count.saturating_sub(2) as u64)),
+            ],
+        )
+    }
+}
+
+/// An owner's name with its level word: "topic Scrollback".
+fn also_name(locale: Locale, owner: Owner, name: &str) -> String {
+    let key = match owner {
+        Owner::Epic(_) => Key::FoldersAlsoNameEpic,
+        _ => Key::FoldersAlsoNameTopic,
+    };
+    tr(locale, key, &[("name", Arg::Text(name))])
+}
+
+/// What a key does on a folder of the list (interaction.md 6.1).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FolderKey {
+    /// `Up` (true) / `Down`.
+    Step(bool),
+    /// `Space`: make it active here.
+    Activate,
+    /// `Enter`: reveal it, or Locate when not found.
+    Open,
+    /// `Mod+C`: copy its full path.
+    Copy,
+    /// `Shift+F10`, the menu key.
+    Menu,
+    /// `Alt+Up` (-1) / `Alt+Down` (+1), own folders only.
+    Move(i64),
+    /// `F2`: its settings, own folders only.
+    Settings,
+    /// `E`: "Choose another folder...", own folders only.
+    Other,
+    /// `Delete`, `Cmd+Backspace`: remove it from this level, own only.
+    Remove,
+    /// `Left`, `Esc`: fold the list.
+    Fold,
+}
+
+/// The key's action on a folder row: `key` is GPUI's key name; `plain`
+/// no modifier, `alt` Alt alone, `secondary` the platform's `Mod` alone,
+/// `shift` Shift alone, `platform` Cmd (or the Windows key) held.
+fn folder_key(
+    key: &str,
+    plain: bool,
+    alt: bool,
+    secondary: bool,
+    shift: bool,
+    platform: bool,
+) -> Option<FolderKey> {
+    Some(match key {
+        "up" if plain => FolderKey::Step(true),
+        "down" if plain => FolderKey::Step(false),
+        "up" if alt => FolderKey::Move(-1),
+        "down" if alt => FolderKey::Move(1),
+        "space" if plain => FolderKey::Activate,
+        "enter" if plain => FolderKey::Open,
+        "c" if secondary => FolderKey::Copy,
+        "f10" if shift => FolderKey::Menu,
+        "menu" if plain => FolderKey::Menu,
+        "f2" if plain => FolderKey::Settings,
+        "e" if plain => FolderKey::Other,
+        "delete" if plain => FolderKey::Remove,
+        "backspace" if platform => FolderKey::Remove,
+        "left" | "escape" if plain => FolderKey::Fold,
+        _ => return None,
+    })
+}
+
 fn balanced_width(count: usize, room: f32) -> Option<f32> {
     let step = ICON_SIZE + ICON_GAP;
     let per_line = (((room + ICON_GAP) / step).floor() as usize).max(1);
@@ -2373,6 +2811,95 @@ fn move_options(own: &[FolderId], id: FolderId) -> (bool, bool) {
 #[cfg(test)]
 mod form_tests {
     use super::*;
+
+    #[test]
+    fn two_other_owners_are_named_and_more_are_counted() {
+        let en = Locale::En;
+        assert_eq!(
+            also_line(
+                en,
+                2,
+                &also_name(en, Owner::Topic(acta_core::model::TopicId(2)), "Scrollback"),
+                "topic Links"
+            ),
+            "Also attached to topic Scrollback and topic Links."
+        );
+        assert_eq!(
+            also_line(en, 4, "topic A", "topic B"),
+            "Also attached to topic A, topic B and 2 more."
+        );
+        assert_eq!(
+            also_line(Locale::Fr, 3, "sujet A", "sujet B"),
+            "Également rattaché à sujet A, à sujet B et à 1 autre."
+        );
+        assert_eq!(
+            also_name(
+                Locale::Fr,
+                Owner::Epic(acta_core::model::EpicId(1)),
+                "Notes"
+            ),
+            "epic Notes"
+        );
+    }
+
+    #[test]
+    fn folder_rows_take_the_keys_of_the_keyboard_map() {
+        let k = |key, plain, alt, secondary, shift, platform| {
+            folder_key(key, plain, alt, secondary, shift, platform)
+        };
+        assert_eq!(
+            k("space", true, false, false, false, false),
+            Some(FolderKey::Activate)
+        );
+        assert_eq!(
+            k("enter", true, false, false, false, false),
+            Some(FolderKey::Open)
+        );
+        assert_eq!(
+            k("up", false, true, false, false, false),
+            Some(FolderKey::Move(-1))
+        );
+        assert_eq!(
+            k("down", false, true, false, false, false),
+            Some(FolderKey::Move(1))
+        );
+        assert_eq!(
+            k("down", true, false, false, false, false),
+            Some(FolderKey::Step(false))
+        );
+        assert_eq!(
+            k("f2", true, false, false, false, false),
+            Some(FolderKey::Settings)
+        );
+        assert_eq!(
+            k("e", true, false, false, false, false),
+            Some(FolderKey::Other)
+        );
+        assert_eq!(
+            k("delete", true, false, false, false, false),
+            Some(FolderKey::Remove)
+        );
+        assert_eq!(
+            k("backspace", false, false, false, false, true),
+            Some(FolderKey::Remove)
+        );
+        assert_eq!(k("backspace", true, false, false, false, false), None);
+        assert_eq!(
+            k("c", false, false, true, false, false),
+            Some(FolderKey::Copy)
+        );
+        assert_eq!(k("c", true, false, false, false, false), None);
+        assert_eq!(
+            k("f10", false, false, false, true, false),
+            Some(FolderKey::Menu)
+        );
+        assert_eq!(
+            k("escape", true, false, false, false, false),
+            Some(FolderKey::Fold)
+        );
+        // A letter with a modifier is someone else's shortcut.
+        assert_eq!(k("e", false, false, true, false, false), None);
+    }
 
     #[test]
     fn an_only_folder_moves_nowhere_and_the_ends_move_one_way() {

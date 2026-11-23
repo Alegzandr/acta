@@ -307,6 +307,16 @@ impl Draft {
 
 /// A strip's files: images first, then the others, each in the order
 /// they were added.
+/// A pan of `d` (the content moves the other way) from the scroll offset
+/// `o`, kept inside `0` to `-max` on each axis: what `Shift`+arrows and a
+/// drag at 100% do in the viewer (components-attachments.md 5, Image).
+pub fn panned(o: (f32, f32), max: (f32, f32), d: (f32, f32)) -> (f32, f32) {
+    (
+        (o.0 - d.0).clamp(-max.0.max(0.), 0.),
+        (o.1 - d.1).clamp(-max.1.max(0.), 0.),
+    )
+}
+
 pub fn strip_order(files: &[Attachment]) -> Vec<&Attachment> {
     let (images, others): (Vec<&Attachment>, Vec<&Attachment>) =
         files.iter().partition(|f| f.kind == FileKind::Image);
@@ -603,5 +613,15 @@ mod tests {
             totals_line(Locale::Fr, 312 * 1024 * 1024, 48),
             "Fichiers joints\u{a0}: 312\u{202f}Mo dans 48 fichiers"
         );
+    }
+
+    #[test]
+    fn panning_follows_the_pointer_and_stops_at_the_edges() {
+        // Dragging the image left by 30 scrolls 30 to the right.
+        assert_eq!(panned((0., 0.), (100., 50.), (30., 0.)), (-30., 0.));
+        assert_eq!(panned((-90., -40.), (100., 50.), (30., 30.)), (-100., -50.));
+        assert_eq!(panned((-10., 0.), (100., 50.), (-30., -5.)), (0., 0.));
+        // An image that fits on an axis never moves on it.
+        assert_eq!(panned((0., 0.), (0., 0.), (30., 30.)), (0., 0.));
     }
 }

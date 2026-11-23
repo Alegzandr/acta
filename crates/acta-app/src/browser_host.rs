@@ -28,13 +28,22 @@ use webview2_com::{
     NavigationStartingEventHandler, PermissionRequestedEventHandler,
     ScriptDialogOpeningEventHandler, take_pwstr,
 };
-use windows::core::{HSTRING, Interface as _, PWSTR};
+use windows_core::{HSTRING, Interface as _, PWSTR};
 
 /// `<data dir>/agent-browser`: its own user data folder, hence its own
 /// browser process, never the chat's (ADR 0010, decision 2).
 pub fn profile_dir() -> Option<PathBuf> {
     use acta_core::paths::{BaseDirs, Os, data_dir};
     Some(data_dir(Os::CURRENT, &BaseDirs::from_env())?.join("agent-browser"))
+}
+
+/// "Open developer tools" (components-app.md 5): the system's DevTools
+/// window for the page in view; a second call brings it to the front.
+pub fn open_devtools(webview: &ICoreWebView2) {
+    // SAFETY: a COM call on the live web view, on the UI thread.
+    if let Err(e) = unsafe { webview.OpenDevToolsWindow() } {
+        crate::log::line(&format!("browser: developer tools not opened: {e}"));
+    }
 }
 
 /// One DevTools Protocol call; `reply` runs on the UI thread with the JSON
@@ -140,7 +149,7 @@ pub fn install(
     webview: &ICoreWebView2,
     events: Arc<Events>,
     allowed: Arc<dyn Fn(&str) -> bool + Send + Sync>,
-) -> windows::core::Result<Hooks> {
+) -> windows_core::Result<Hooks> {
     let mut receivers = Vec::new();
     for name in SUBSCRIBED {
         let sink = events.clone();
@@ -172,7 +181,10 @@ pub fn install(
     unsafe {
         let settings = webview.Settings()?;
         settings.SetAreDefaultScriptDialogsEnabled(false)?;
-        settings.SetAreDevToolsEnabled(false)?;
+        // The DevTools window, for the human only (ADR 0010, 3, amended
+        // 2026-11-22): an in-process window, never a port; no pipe
+        // operation opens or reads it. The chat keeps it off.
+        settings.SetAreDevToolsEnabled(true)?;
     }
     let sink = events.clone();
     let dialog_handler = ScriptDialogOpeningEventHandler::create(Box::new(move |_, args| {

@@ -27,6 +27,11 @@ pub const MAX_SUPERSEDES: usize = 3;
 pub const RETIRE_REASON_MAX: usize = 200;
 /// Longest file path or commit a source may name, in characters.
 pub const SOURCE_TEXT_MAX: usize = 300;
+/// One page of the duplicate scan: the open pairs found and the next
+/// offset.
+pub type ScanPage = (Vec<(KbId, KbId)>, Option<i64>);
+/// Memories one page of the duplicate scan checks (about 0.1 s).
+pub const SCAN_PAGE: i64 = 100;
 /// Candidates the full-text prefilter hands to the checker.
 pub const CANDIDATES: usize = 20;
 /// How long the local quality log keeps a row.
@@ -235,11 +240,15 @@ impl Store {
             KbState::Superseded => ChangeKind::Superseded,
             KbState::Retired => ChangeKind::Retired,
         };
+        let successor = trace
+            .superseded_by
+            .filter(|_| trace.state == KbState::Superseded)
+            .map(|k| k.to_string());
         let rev = state_revision(
             &tx,
             &cur,
             change,
-            None,
+            successor.as_deref(),
             &KbWriteCtx::default(),
             author,
             now_ms(),
@@ -502,7 +511,7 @@ impl Store {
             &body,
             author,
             ChangeKind::Merged,
-            None,
+            Some(&other.to_string()),
             now,
             &KbWriteCtx::default(),
         )?;
@@ -535,34 +544,11 @@ impl Store {
     /// anything else since refuses it.
     pub fn kb_unmerge(&mut self, trace: &KbMergeTrace, author: Author) -> Result<()> {
         let tx = self.write()?;
+        if let Some(why) = unmerge_refusal(&tx, trace)? {
+            return Err(Error::Invalid(why));
+        }
         let s = read_kb(&tx, trace.survivor)?;
-        if s.rev != trace.merged_rev {
-            let merged_at: i64 = tx.query_row(
-                "SELECT created_at FROM kb_revisions WHERE entry_id = ?1 AND rev = ?2",
-                params![trace.survivor.0, trace.merged_rev],
-                |r| r.get(0),
-            )?;
-            let other_changes: i64 = tx.query_row(
-                "SELECT count(*) FROM kb_revisions WHERE entry_id = ?1 AND rev > ?2
-                 AND NOT (author = 'human' AND created_at <= ?3
-                          AND change IN ('edited', 'replaced_section', 'appended_section', 'restored'))",
-                params![trace.survivor.0, trace.merged_rev, merged_at + UNMERGE_WINDOW_MS],
-                |r| r.get(0),
-            )?;
-            if other_changes > 0 {
-                return Err(Error::Invalid(format!(
-                    "{} changed since the merge",
-                    trace.survivor
-                )));
-            }
-        }
         let o = read_kb(&tx, trace.other)?;
-        if o.superseded_by != Some(trace.survivor) {
-            return Err(Error::Invalid(format!(
-                "{} is no longer merged into {}",
-                trace.other, trace.survivor
-            )));
-        }
         let now = now_ms();
         let old = tx
             .query_row(
@@ -625,6 +611,133 @@ impl Store {
         restore_pairs(&tx, trace.survivor, trace.other, &trace.pairs_before)?;
         tx.commit()?;
         Ok(())
+    }
+
+    /// Whether [`Store::kb_unmerge`] would take `trace` back now (the
+    /// app's undo checks before it writes).
+    pub fn kb_can_unmerge(&self, trace: &KbMergeTrace) -> Result<bool> {
+        Ok(unmerge_refusal(&self.conn, trace)?.is_none())
+    }
+
+    /// The checker over an entry the human wrote (components-knowledge.md
+    /// 5, Checks on the human's writes): never refused; each conflict or
+    /// duplicate found becomes an open pair (a pair kept apart stays
+    /// `distinct`), and its open pairs no longer found are resolved, so an
+    /// edit of either side settles or reopens a pair (a settled pair found
+    /// again is open again; one kept apart stays distinct). Memories only.
+    pub fn kb_recheck(&mut self, id: KbId, author: Author) -> Result<()> {
+        let e = self.kb_entry(id)?;
+        if e.kind != KbKind::Memory || e.state != KbState::Live {
+            return Ok(());
+        }
+        let found = self.kb_check(
+            e.owner,
+            &Text {
+                title: &e.title,
+                summary: &e.summary,
+                body: &e.body,
+            },
+            Some(id),
+        )?;
+        let mut kept = Vec::new();
+        for f in found {
+            let kind = match f.comparison.verdict {
+                Verdict::Conflict => KbPairKind::Conflict,
+                Verdict::Same | Verdict::Duplicate => KbPairKind::Duplicate,
+                _ => continue,
+            };
+            // Found again after it was settled: open again (a pair kept
+            // apart stays distinct).
+            if self.kb_record_pair(id, f.candidate.id, kind, f.comparison.s, author)?
+                == KbPairState::Resolved
+            {
+                self.kb_set_pair_state(id, f.candidate.id, kind, KbPairState::Open, author)?;
+            }
+            kept.push((kind, f.candidate.id));
+        }
+        for p in self.kb_pairs_of(id)? {
+            let other = p.other(id);
+            if p.state == KbPairState::Open && !kept.contains(&(p.kind, other)) {
+                self.kb_set_pair_state(id, other, p.kind, KbPairState::Resolved, author)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// "Find duplicate memories" (components-knowledge.md 5): every live
+    /// memory of the project checked against its prefilter; each duplicate
+    /// found becomes an open pair (one kept apart stays `distinct`). No
+    /// entry changes. Returns how many open duplicate pairs it found. The
+    /// app runs it page by page ([`Store::kb_scan_duplicates_page`]) so the
+    /// store is free between pages.
+    pub fn kb_scan_duplicates(
+        &mut self,
+        project: crate::model::ProjectId,
+        author: Author,
+    ) -> Result<usize> {
+        let mut found = std::collections::HashSet::new();
+        let mut offset = 0;
+        loop {
+            let (pairs, next) = self.kb_scan_duplicates_page(project, offset, SCAN_PAGE, author)?;
+            found.extend(pairs);
+            match next {
+                Some(n) => offset = n,
+                None => return Ok(found.len()),
+            }
+        }
+    }
+
+    /// One page of [`Store::kb_scan_duplicates`]: the live memories of the
+    /// project from `offset`, at most `limit` of them, checked. Returns
+    /// the open duplicate pairs found (lower id first) and the next
+    /// offset, `None` after the last page.
+    pub fn kb_scan_duplicates_page(
+        &mut self,
+        project: crate::model::ProjectId,
+        offset: i64,
+        limit: i64,
+        author: Author,
+    ) -> Result<ScanPage> {
+        let filter = super::KbFilter {
+            kind: Some(KbKind::Memory),
+            ..Default::default()
+        };
+        let page = self.kb_rollup(
+            Owner::Project(project),
+            &filter,
+            crate::model::PageReq { offset, limit },
+        )?;
+        let next = offset + page.items.len() as i64;
+        let more = !page.items.is_empty() && next < page.total;
+        let mut found = Vec::new();
+        for id in page.items.into_iter().map(|k| k.id) {
+            let e = self.kb_entry(id)?;
+            let hits = self.kb_check(
+                e.owner,
+                &Text {
+                    title: &e.title,
+                    summary: &e.summary,
+                    body: &e.body,
+                },
+                Some(id),
+            )?;
+            for f in hits {
+                if !matches!(f.comparison.verdict, Verdict::Same | Verdict::Duplicate) {
+                    continue;
+                }
+                let other = f.candidate.id;
+                let key = ordered(id, other);
+                if found.contains(&key) {
+                    continue;
+                }
+                let state =
+                    self.kb_record_pair(id, other, KbPairKind::Duplicate, f.comparison.s, author)?;
+                if state == KbPairState::Open {
+                    found.push(key);
+                }
+            }
+        }
+        Ok((found, more.then_some(next)))
     }
 
     /// Adds sources to an entry (duplicates of one it has are skipped).
@@ -1214,7 +1327,16 @@ fn supersede_one(
     now: i64,
 ) -> Result<KbStateTrace> {
     let pairs = pairs_between(tx, by, old.id)?;
-    let rev = state_revision(tx, old, ChangeKind::Superseded, None, ctx, author, now)?;
+    let successor = by.to_string();
+    let rev = state_revision(
+        tx,
+        old,
+        ChangeKind::Superseded,
+        Some(&successor),
+        ctx,
+        author,
+        now,
+    )?;
     tx.execute(
         "UPDATE kb_entries SET state = 'superseded', superseded_by = ?2 WHERE id = ?1",
         params![old.id.0, by.0],
@@ -1233,6 +1355,38 @@ fn supersede_one(
         other: Some(by),
         pairs,
     })
+}
+
+/// Why a merge can no longer be taken back, if it cannot: the survivor
+/// changed by more than the human's tidying within [`UNMERGE_WINDOW_MS`],
+/// or the other entry is no longer superseded by it.
+fn unmerge_refusal(tx: &rusqlite::Connection, trace: &KbMergeTrace) -> Result<Option<String>> {
+    let s = read_kb(tx, trace.survivor)?;
+    if s.rev != trace.merged_rev {
+        let merged_at: i64 = tx.query_row(
+            "SELECT created_at FROM kb_revisions WHERE entry_id = ?1 AND rev = ?2",
+            params![trace.survivor.0, trace.merged_rev],
+            |r| r.get(0),
+        )?;
+        let other_changes: i64 = tx.query_row(
+            "SELECT count(*) FROM kb_revisions WHERE entry_id = ?1 AND rev > ?2
+             AND NOT (author = 'human' AND created_at <= ?3
+                      AND change IN ('edited', 'replaced_section', 'appended_section', 'restored'))",
+            params![trace.survivor.0, trace.merged_rev, merged_at + UNMERGE_WINDOW_MS],
+            |r| r.get(0),
+        )?;
+        if other_changes > 0 {
+            return Ok(Some(format!("{} changed since the merge", trace.survivor)));
+        }
+    }
+    let o = read_kb(tx, trace.other)?;
+    if o.superseded_by != Some(trace.survivor) {
+        return Ok(Some(format!(
+            "{} is no longer merged into {}",
+            trace.other, trace.survivor
+        )));
+    }
+    Ok(None)
 }
 
 /// The pairs between two entries back as they were.

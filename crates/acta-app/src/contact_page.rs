@@ -1132,14 +1132,16 @@ impl Render for ContactPage {
                     today,
                 };
                 let page = cx.entity().downgrade();
+                let logged = q.decision_entry;
                 let mut row = question_view::row(
                     q,
                     &look,
                     None,
                     |_, _, _| {},
                     move |_, _, cx| {
-                        let _ =
-                            page.update(cx, |_, cx| cx.emit(PageEvent::Open(owner_route(owner))));
+                        let _ = page.update(cx, |_, cx| {
+                            cx.emit(crate::questions_page::logged_event(owner, logged))
+                        });
                     },
                     locale,
                     &t,
