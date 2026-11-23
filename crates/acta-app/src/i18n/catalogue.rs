@@ -4458,8 +4458,8 @@ catalogue! {
         fr: t("Vider la corbeille\u{202f}?"),
     }
     TrashConfirmBody "trash.confirm_body" {
-        en: t("They are removed from Acta\u{2019}s database now and cannot be restored. Snapshots made before today still hold them until they are replaced."),
-        fr: t("Ils sont retirés dès maintenant de la base de données d\u{2019}Acta et ne pourront pas être restaurés. Les sauvegardes faites avant aujourd\u{2019}hui les conservent jusqu\u{2019}à leur remplacement."),
+        en: t("They are removed from Acta\u{2019}s database now and cannot be restored. Snapshots made before now still hold them until they are replaced."),
+        fr: t("Ils sont retirés dès maintenant de la base de données d\u{2019}Acta et ne pourront pas être restaurés. Les sauvegardes déjà faites les gardent jusqu\u{2019}à leur remplacement."),
     }
     TrashConfirmProject "trash.confirm_project" {
         en: p("{n} project with {content}", "{n} projects with {content}"),

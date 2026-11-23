@@ -560,9 +560,11 @@ impl ReadingWidth {
     /// reading text per line at the Default text size.
     pub fn column_max(self) -> f32 {
         match self {
-            ReadingWidth::Narrow => 480.,
-            ReadingWidth::Default => 560.,
-            ReadingWidth::Wide => 720.,
+            // typography.md 3.3: 60 to 75 characters at the 15 px
+            // reading size by default (lead decision 2026-11-23).
+            ReadingWidth::Narrow => 440.,
+            ReadingWidth::Default => 520.,
+            ReadingWidth::Wide => 680.,
         }
     }
 }

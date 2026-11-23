@@ -138,7 +138,7 @@ The user's request of 2026-11-22. Specified on `product-designer/zoom-collapse` 
 ## Type and hover fixes of 2026-11-22
 - [x] Menus in `type.menu` 13 / 18 on rows of 28 (menu.rs, the folder switcher); the palette keeps `type.ui` on 32 (gpui-engineer, `gpui-engineer/zoom-trash`).
 - [x] The add chips (Due date, Report to; the contact page's) drawn in the 24 band under the properties block, empty at rest: hovering moves nothing (components.md 5, revealed controls).
-- [x] Lead decision: `type.reading` 15 / 24 (Text size 14 / 22, 15 / 24, 17 / 28) and `type.document` 16 / 26; empty states and empty-field placeholders in `type.ui` `text.tertiary` (timeline, description, current state, inbox, questions, contacts, contact page, shortcuts, trash, the empty project). Open for the designer: the Default reading width now holds about 81 characters (typography.md 3.3). Captures before and after left (paused).
+- [x] Lead decision: `type.reading` 15 / 24 (Text size 14 / 22, 15 / 24, 17 / 28) and `type.document` 16 / 26; empty states and empty-field placeholders in `type.ui` `text.tertiary` (timeline, description, current state, inbox, questions, contacts, contact page, shortcuts, trash, the empty project). Reading width 440 / 520 / 680 (lead decision 2026-11-23), about 63, 75 and 100 characters per timeline line at 15. Captures before and after left (paused).
 
 ## Who writes what
 The user's rule of 2026-11-22: the human types only notes; every other field is configuration or a correction of what Claude Code wrote. Specified on `product-designer/zoom-collapse` (DESIGN.md principle 8 and never-list, components-records.md 5 Who writes what, data.md 11 request 26, catalogue 10.4.16).

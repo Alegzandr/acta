@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::Store;
 use super::trash::{cascade, table_of};
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::model::{PageReq, ProjectId, Record};
 use crate::time::now_ms;
 
@@ -233,6 +233,16 @@ impl Store {
             }
         }
         let (blobs, bytes) = super::attachments::sweep_blobs(&tx, now, &held)?;
+        // A reference this purge left behind would fail the commit with no
+        // name: find which tables hold it first, for the log (table names
+        // only, never values).
+        let blocking = blocking_tables(&tx)?;
+        if !blocking.is_empty() {
+            return Err(Error::Invalid(format!(
+                "a purge would leave references in {}",
+                blocking.join(", ")
+            )));
+        }
         tx.commit()?;
         if self.conn.is_autocommit() && (!counts.is_empty() || blobs > 0) {
             let _ = super::attachments::incremental_vacuum(&self.conn);
@@ -275,4 +285,16 @@ impl Store {
         }
         self.trash_purge(&ids)
     }
+}
+
+/// The tables holding a reference to a missing row, from
+/// `PRAGMA foreign_key_check` (deferred keys are not yet checked).
+fn blocking_tables(tx: &rusqlite::Connection) -> Result<Vec<String>> {
+    let mut stmt = tx.prepare("PRAGMA foreign_key_check")?;
+    let mut tables: Vec<String> = stmt
+        .query_map([], |r| r.get::<_, String>(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    tables.sort();
+    tables.dedup();
+    Ok(tables)
 }

@@ -425,7 +425,9 @@ impl TrashPage {
                 page.selection.clear();
                 let ws = page.ws.clone();
                 ws.update(cx, |ws, cx| {
-                    if done.is_err() {
+                    if let Err(err) = &done {
+                        // The blocking tables' names, never values.
+                        crate::log::line(&format!("trash: purge failed: {err}"));
                         ws.toast_error(Key::TrashDeleteFailed, cx);
                     }
                     ws.reload(cx);

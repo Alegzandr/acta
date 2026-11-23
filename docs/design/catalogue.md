@@ -1122,7 +1122,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `trash.restored_n` | {n} item restored. · {n} items restored. | {n} élément restauré. · {n} éléments restaurés. |
 | `trash.confirm_title` | Delete {n} item permanently? · Delete {n} items permanently? | Supprimer définitivement {n} élément ? · Supprimer définitivement {n} éléments ? |
 | `trash.confirm_empty_title` | Empty the trash? | Vider la corbeille ? |
-| `trash.confirm_body` | They are removed from Acta's database now and cannot be restored. Snapshots made before today still hold them until they are replaced. | Ils sont retirés dès maintenant de la base de données d'Acta et ne pourront pas être restaurés. Les sauvegardes faites avant aujourd'hui les conservent jusqu'à leur remplacement. |
+| `trash.confirm_body` | They are removed from Acta's database now and cannot be restored. Snapshots made before now still hold them until they are replaced. | Ils sont retirés dès maintenant de la base de données d'Acta et ne pourront pas être restaurés. Les sauvegardes déjà faites les gardent jusqu'à leur remplacement. |
 | `trash.confirm_project` | {n} project with {content} · {n} projects with {content} | {n} projet avec {content} · {n} projets avec {content} |
 | `trash.confirm_delete` | Delete permanently | Supprimer définitivement |
 | `trash.delete_failed` | Could not delete. The database is busy; try again. | Suppression impossible. La base de données est occupée ; réessayez. |
