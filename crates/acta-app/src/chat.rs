@@ -107,6 +107,9 @@ pub enum KeyCode {
     Letter(char),
     Digit(u8),
     Backtick,
+    /// `=`, `+` and `-` as the layout types them, the numpad's included
+    /// (layout.md 4.9).
+    Char(char),
     Tab,
     Enter,
     F6,
@@ -137,6 +140,11 @@ pub enum Kept {
     NextPane,
     PreviousPane,
     ZoomToolWindow,
+    /// The window's zoom (layout.md 4.9): the web views keep none of the
+    /// zoom keys for themselves.
+    ZoomIn,
+    ZoomOut,
+    ZoomReset,
 }
 
 /// What Acta keeps of `key` with `mods` while the chat web view has focus
@@ -174,6 +182,9 @@ pub fn kept(key: KeyCode, mods: Mods) -> Option<Kept> {
         KeyCode::Letter('b') if shift => Some(Kept::ToggleRight),
         KeyCode::Enter if shift => Some(Kept::ZoomToolWindow),
         KeyCode::Digit(n @ 1..=4) if !shift => Some(Kept::Focus(n)),
+        KeyCode::Char('=' | '+') => Some(Kept::ZoomIn),
+        KeyCode::Char('-') if !shift => Some(Kept::ZoomOut),
+        KeyCode::Digit(0) if !shift => Some(Kept::ZoomReset),
         _ => None,
     }
 }
@@ -184,6 +195,12 @@ pub fn kept(key: KeyCode, mods: Mods) -> Option<Kept> {
 pub fn windows_key(virtual_key: u32, scan_code: u32) -> KeyCode {
     match (virtual_key, scan_code) {
         (0x41..=0x5a, _) => KeyCode::Letter(char::from(virtual_key as u8).to_ascii_lowercase()),
+        // VK_OEM_PLUS (`=`, or `+` on QWERTZ), VK_ADD; VK_OEM_MINUS,
+        // VK_SUBTRACT; VK_NUMPAD0.
+        (0xbb, _) => KeyCode::Char('='),
+        (0x6b, _) => KeyCode::Char('+'),
+        (0xbd | 0x6d, _) => KeyCode::Char('-'),
+        (0x60, _) => KeyCode::Digit(0),
         (_, 0x02..=0x0a) => KeyCode::Digit((scan_code - 1) as u8),
         (_, 0x0b) => KeyCode::Digit(0),
         (_, 0x29) => KeyCode::Backtick,
@@ -718,5 +735,32 @@ mod tests {
         assert_eq!(failure_of(14), None);
         assert_eq!(failure_of(0), None);
         assert_eq!(failure_of(15), None);
+    }
+
+    #[test]
+    fn the_web_views_keep_the_zoom_keys_for_acta() {
+        let ctrl = Mods {
+            ctrl: true,
+            ..Mods::default()
+        };
+        let ctrl_shift = Mods {
+            ctrl: true,
+            shift: true,
+            ..Mods::default()
+        };
+        // US `=` key, with and without Shift, and the numpad.
+        assert_eq!(kept(windows_key(0xbb, 0x0d), ctrl), Some(Kept::ZoomIn));
+        assert_eq!(
+            kept(windows_key(0xbb, 0x0d), ctrl_shift),
+            Some(Kept::ZoomIn)
+        );
+        assert_eq!(kept(windows_key(0x6b, 0x4e), ctrl), Some(Kept::ZoomIn));
+        assert_eq!(kept(windows_key(0xbd, 0x0c), ctrl), Some(Kept::ZoomOut));
+        assert_eq!(kept(windows_key(0x6d, 0x4a), ctrl), Some(Kept::ZoomOut));
+        // The 0 key by position (AZERTY types `à` there), and the numpad's.
+        assert_eq!(kept(windows_key(0x30, 0x0b), ctrl), Some(Kept::ZoomReset));
+        assert_eq!(kept(windows_key(0x60, 0x52), ctrl), Some(Kept::ZoomReset));
+        // Without Ctrl, typing.
+        assert_eq!(kept(windows_key(0xbb, 0x0d), Mods::default()), None);
     }
 }

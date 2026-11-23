@@ -128,6 +128,23 @@ pub fn set_reading_width(width: ReadingWidth, cx: &mut App) {
     cx.refresh_windows();
 }
 
+/// The chosen zoom, a step in percent (layout.md 4.9).
+pub fn zoom(cx: &App) -> u16 {
+    current(cx).zoom.unwrap_or(crate::zoom::DEFAULT)
+}
+
+/// Choose a zoom: every window lays out again at once.
+pub fn set_zoom(step: u16, cx: &mut App) {
+    let step = crate::zoom::nearest_step(i64::from(step));
+    if zoom(cx) == step {
+        return;
+    }
+    change(cx, |prefs| {
+        prefs.zoom = (step != crate::zoom::DEFAULT).then_some(step)
+    });
+    cx.refresh_windows();
+}
+
 /// The interface language in force.
 pub fn locale(cx: &App) -> Locale {
     current(cx).language
