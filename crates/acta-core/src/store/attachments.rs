@@ -1171,6 +1171,11 @@ impl Store {
             &format!("DELETE FROM attachment_blobs WHERE id IN ({orphans})"),
             [now - PENDING_GRACE_MS],
         )?;
+        if rows > 0 {
+            // The search index of files keeps deleted rows' segments until
+            // merged: merge them, so a purge gives the space back.
+            tx.execute_batch("INSERT INTO attachments_fts(attachments_fts) VALUES ('optimize');")?;
+        }
         tx.commit()?;
         if self.conn.is_autocommit() && (rows > 0 || blobs > 0) {
             // Returns every free page; nothing to undo if it fails. Each

@@ -154,11 +154,11 @@ impl Store {
         if wants(SearchKind::Topic) {
             tables.push("topics_fts");
             parts.push(format!(
-                "SELECT 'topic', x.id, x.project_id, NULL, x.title,
-                        '', m.score, {}
-                 FROM (SELECT rowid AS rid, bm25(topics_fts) AS score FROM topics_fts WHERE topics_fts MATCH ?1
-                       ORDER BY rowid DESC LIMIT {PER_KIND}) m JOIN topics x ON x.id = m.rid
-                 WHERE x.deleted_at IS NULL{project}{}",
+                "SELECT * FROM (SELECT 'topic', x.id, x.project_id, NULL, x.title,
+                        '', bm25(topics_fts), {}
+                 FROM topics_fts JOIN topics x ON x.id = topics_fts.rowid
+                 WHERE topics_fts MATCH ?1 AND x.deleted_at IS NULL{project}{}
+                 ORDER BY topics_fts.rowid DESC LIMIT {PER_KIND})",
                 titled("topics_fts", "title"),
                 topic_filter.replace("t.", "x.")
             ));
@@ -166,44 +166,44 @@ impl Store {
         if wants(SearchKind::Entry) {
             tables.push("entries_fts");
             parts.push(format!(
-                "SELECT 'entry', x.id, t.project_id AS project_id, x.topic_id, '',
-                        '', m.score, 0
-                 FROM (SELECT rowid AS rid, bm25(entries_fts) AS score FROM entries_fts WHERE entries_fts MATCH ?1
-                       ORDER BY rowid DESC LIMIT {PER_KIND}) m JOIN entries x ON x.id = m.rid
+                "SELECT * FROM (SELECT 'entry', x.id, t.project_id AS project_id, x.topic_id, '',
+                        '', bm25(entries_fts), 0
+                 FROM entries_fts JOIN entries x ON x.id = entries_fts.rowid
                  JOIN topics t ON t.id = x.topic_id
-                 WHERE x.deleted_at IS NULL AND t.deleted_at IS NULL{}{topic_filter}",
+                 WHERE entries_fts MATCH ?1 AND x.deleted_at IS NULL AND t.deleted_at IS NULL{}{topic_filter}
+                 ORDER BY entries_fts.rowid DESC LIMIT {PER_KIND})",
                 project.replace("x.project_id", "t.project_id")
             ));
         }
         if wants(SearchKind::Note) && unfiled {
             tables.push("notes_fts");
             parts.push(format!(
-                "SELECT 'note', x.id, x.project_id, x.filed_topic_id, '',
-                        '', m.score, 0
-                 FROM (SELECT rowid AS rid, bm25(notes_fts) AS score FROM notes_fts WHERE notes_fts MATCH ?1
-                       ORDER BY rowid DESC LIMIT {PER_KIND}) m JOIN notes x ON x.id = m.rid
-                 WHERE x.deleted_at IS NULL{project}"
+                "SELECT * FROM (SELECT 'note', x.id, x.project_id, x.filed_topic_id, '',
+                        '', bm25(notes_fts), 0
+                 FROM notes_fts JOIN notes x ON x.id = notes_fts.rowid
+                 WHERE notes_fts MATCH ?1 AND x.deleted_at IS NULL{project}
+                 ORDER BY notes_fts.rowid DESC LIMIT {PER_KIND})"
             ));
         }
         if wants(SearchKind::Kb) && unfiled {
             tables.push("kb_fts");
             parts.push(format!(
-                "SELECT 'kb', x.id, x.project_id, x.topic_id, x.title,
-                        '', m.score, {}
-                 FROM (SELECT rowid AS rid, bm25(kb_fts) AS score FROM kb_fts WHERE kb_fts MATCH ?1
-                       ORDER BY rowid DESC LIMIT {PER_KIND}) m JOIN kb_entries x ON x.id = m.rid
-                 WHERE x.deleted_at IS NULL AND x.state = 'live'{project}",
+                "SELECT * FROM (SELECT 'kb', x.id, x.project_id, x.topic_id, x.title,
+                        '', bm25(kb_fts), {}
+                 FROM kb_fts JOIN kb_entries x ON x.id = kb_fts.rowid
+                 WHERE kb_fts MATCH ?1 AND x.deleted_at IS NULL AND x.state = 'live'{project}
+                 ORDER BY kb_fts.rowid DESC LIMIT {PER_KIND})",
                 titled("kb_fts", "title")
             ));
         }
         if wants(SearchKind::Project) && unfiled {
             tables.push("projects_fts");
             parts.push(format!(
-                "SELECT 'project', x.id, x.id, NULL, x.title,
-                        '', m.score, {}
-                 FROM (SELECT rowid AS rid, bm25(projects_fts) AS score FROM projects_fts WHERE projects_fts MATCH ?1
-                       ORDER BY rowid DESC LIMIT {PER_KIND}) m JOIN projects x ON x.id = m.rid
-                 WHERE x.deleted_at IS NULL{}",
+                "SELECT * FROM (SELECT 'project', x.id, x.id, NULL, x.title,
+                        '', bm25(projects_fts), {}
+                 FROM projects_fts JOIN projects x ON x.id = projects_fts.rowid
+                 WHERE projects_fts MATCH ?1 AND x.deleted_at IS NULL{}
+                 ORDER BY projects_fts.rowid DESC LIMIT {PER_KIND})",
                 titled("projects_fts", "title"),
                 project.replace("x.project_id", "x.id")
             ));
@@ -211,22 +211,22 @@ impl Store {
         if wants(SearchKind::Epic) && unfiled {
             tables.push("epics_fts");
             parts.push(format!(
-                "SELECT 'epic', x.id, x.project_id, NULL, x.title,
-                        '', m.score, {}
-                 FROM (SELECT rowid AS rid, bm25(epics_fts) AS score FROM epics_fts WHERE epics_fts MATCH ?1
-                       ORDER BY rowid DESC LIMIT {PER_KIND}) m JOIN epics x ON x.id = m.rid
-                 WHERE x.deleted_at IS NULL{project}",
+                "SELECT * FROM (SELECT 'epic', x.id, x.project_id, NULL, x.title,
+                        '', bm25(epics_fts), {}
+                 FROM epics_fts JOIN epics x ON x.id = epics_fts.rowid
+                 WHERE epics_fts MATCH ?1 AND x.deleted_at IS NULL{project}
+                 ORDER BY epics_fts.rowid DESC LIMIT {PER_KIND})",
                 titled("epics_fts", "title")
             ));
         }
         if wants(SearchKind::Question) && unfiled {
             tables.push("questions_fts");
             parts.push(format!(
-                "SELECT 'question', x.id, x.project_id, x.topic_id, x.text,
-                        '', m.score, {}
-                 FROM (SELECT rowid AS rid, bm25(questions_fts) AS score FROM questions_fts WHERE questions_fts MATCH ?1
-                       ORDER BY rowid DESC LIMIT {PER_KIND}) m JOIN questions x ON x.id = m.rid
-                 WHERE x.deleted_at IS NULL{project}",
+                "SELECT * FROM (SELECT 'question', x.id, x.project_id, x.topic_id, x.text,
+                        '', bm25(questions_fts), {}
+                 FROM questions_fts JOIN questions x ON x.id = questions_fts.rowid
+                 WHERE questions_fts MATCH ?1 AND x.deleted_at IS NULL{project}
+                 ORDER BY questions_fts.rowid DESC LIMIT {PER_KIND})",
                 titled("questions_fts", "text")
             ));
         }
@@ -237,24 +237,24 @@ impl Store {
                 format!(" AND (x.project_id IS NULL OR x.project_id = {})", p.0)
             });
             parts.push(format!(
-                "SELECT 'contact', x.id, coalesce(x.project_id, 0), NULL, x.name,
-                        '', m.score, {}
-                 FROM (SELECT rowid AS rid, bm25(contacts_fts) AS score FROM contacts_fts WHERE contacts_fts MATCH ?1
-                       ORDER BY rowid DESC LIMIT {PER_KIND}) m JOIN contacts x ON x.id = m.rid
-                 WHERE x.deleted_at IS NULL{contact_project}",
+                "SELECT * FROM (SELECT 'contact', x.id, coalesce(x.project_id, 0), NULL, x.name,
+                        '', bm25(contacts_fts), {}
+                 FROM contacts_fts JOIN contacts x ON x.id = contacts_fts.rowid
+                 WHERE contacts_fts MATCH ?1 AND x.deleted_at IS NULL{contact_project}
+                 ORDER BY contacts_fts.rowid DESC LIMIT {PER_KIND})",
                 titled("contacts_fts", "name")
             ));
         }
         if wants(SearchKind::Attachment) && unfiled {
             tables.push("attachments_fts");
             parts.push(format!(
-                "SELECT 'attachment', x.id, x.project_id,
+                "SELECT * FROM (SELECT 'attachment', x.id, x.project_id,
                         coalesce(x.topic_id, (SELECT e.topic_id FROM entries e WHERE e.id = x.entry_id)),
                         x.name,
-                        '', m.score, {}
-                 FROM (SELECT rowid AS rid, bm25(attachments_fts) AS score FROM attachments_fts WHERE attachments_fts MATCH ?1
-                       ORDER BY rowid DESC LIMIT {PER_KIND}) m JOIN attachments x ON x.id = m.rid
-                 WHERE x.deleted_at IS NULL{project}",
+                        '', bm25(attachments_fts), {}
+                 FROM attachments_fts JOIN attachments x ON x.id = attachments_fts.rowid
+                 WHERE attachments_fts MATCH ?1 AND x.deleted_at IS NULL{project}
+                 ORDER BY attachments_fts.rowid DESC LIMIT {PER_KIND})",
                 titled("attachments_fts", "name")
             ));
         }
@@ -267,7 +267,7 @@ impl Store {
             });
         }
         let sql = format!(
-            "SELECT * FROM ({}) ORDER BY 8 DESC, 7, 1, 2 LIMIT {}",
+            "SELECT * FROM ({}) ORDER BY 8 DESC, 7, 2 DESC, 1 LIMIT {}",
             parts.join(" UNION ALL "),
             MAX_HITS + 1
         );
@@ -302,9 +302,11 @@ impl Store {
                 })
             })?
             .collect::<rusqlite::Result<_>>()?;
-        // Each kind ranks its newest PER_KIND matches only (bm25 on every
-        // match of a common word cost about 120 ms over 200,000 entries):
-        // a kind that has more says the total is capped.
+        // Each kind ranks its newest PER_KIND returnable matches only (the
+        // trash, the project, the state and the topic filters are applied
+        // before the cap; bm25 on every match of a common word cost about
+        // 120 ms over 200,000 entries): a kind that has more matches says
+        // the total may be capped.
         let mut capped = all.len() as i64 > MAX_HITS;
         for table in tables {
             if capped {

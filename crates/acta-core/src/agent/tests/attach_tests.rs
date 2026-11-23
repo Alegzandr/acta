@@ -86,9 +86,12 @@ fn twenty_files_of_25_mb_everywhere_stay_within_every_budget() {
     assert!(inbox.contains(" · files: A-"), "{inbox}");
     assert!(inbox.contains(" 25M, A-"), "{inbox}");
     assert!(inbox.contains(" +18"), "{inbox}");
+    // A title match ranks first (search everywhere, 2026-11-22): "keychain"
+    // fills the page with the seed's 126 topic titles, so the files of
+    // entries are checked with a word only their text holds.
     let found = ok(
         a.find(FindArgs {
-            query: Some("keychain".into()),
+            query: Some("decision".into()),
             limit: Some(20),
             ..FindArgs::default()
         }),
