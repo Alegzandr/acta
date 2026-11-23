@@ -3,6 +3,10 @@
 //! browsers, how instances are numbered and capped, when an off-screen web
 //! view is closed, and when a session offers "Restart in {folder}". No GPUI.
 
+// Chats and agent browsers exist on Windows only (ADR 0009, ADR 0010);
+// their limits and helpers are unused elsewhere.
+#![cfg_attr(not(windows), allow(dead_code))]
+
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
