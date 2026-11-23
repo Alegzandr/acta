@@ -3,7 +3,7 @@
 //! the catalogue and its direct shortcut, shown so the palette teaches the
 //! keyboard.
 
-use acta_core::model::Status;
+use acta_core::model::{KbId, Owner, Status};
 use acta_core::store::OverviewFilter;
 
 use crate::i18n::{Arg, Key, KeyName, Locale, text, tr};
@@ -40,6 +40,20 @@ pub enum Command {
     /// "Overview: Show more" / "Overview: Show less".
     OverviewMore,
     OverviewLess,
+    /// Memory quality (interaction.md 6.1), on the focused knowledge row,
+    /// else the open entry: "Mark as still true", "Mark as no longer
+    /// true", "Make live again", "Merge into...", "Keep both K-4 and K-9",
+    /// "Replace K-9 with this".
+    KbVerify,
+    KbRetire,
+    KbMakeLive,
+    KbMerge,
+    KbKeepBoth(KbId, KbId),
+    KbReplace(KbId),
+    /// On the active project: "Show superseded and retired", "Find
+    /// duplicate memories" ("Show knowledge to check" is a `Show`).
+    ShowInactive,
+    KbFindDuplicates,
     /// Questions and Report to (interaction.md 6.1).
     QuestionNew,
     QuestionsOpen,
@@ -114,6 +128,12 @@ pub enum Command {
     FolderPull,
     FolderFetch,
     FolderBranch,
+    /// On the focused folder row of the list (interaction.md 6.1).
+    Folder(FolderCommand),
+    /// "Attach files..." on the editor that has (or last had) the focus,
+    /// "Save file as..." on the focused file (components-attachments.md 5).
+    Attach,
+    AttachmentSave,
     Export,
     Import,
     Trash,
@@ -147,6 +167,42 @@ pub enum QuestionCommand {
     Reopen,
     Move,
     Delete,
+}
+
+/// What the palette does to the focused folder of the list.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FolderCommand {
+    Active,
+    Settings,
+    Up,
+    Down,
+    Other,
+    Locate,
+    Copy,
+    Show,
+    /// "Remove folder from this topic" (or epic, or project).
+    Remove(FolderLevel),
+}
+
+/// The level a page's own folders belong to.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum FolderLevel {
+    #[default]
+    Topic,
+    Epic,
+    Project,
+}
+
+/// The focused folder row: its own level's or inherited, active, not
+/// found, and where it can move.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FocusedFolder {
+    pub own: bool,
+    pub active: bool,
+    pub missing: bool,
+    pub up: bool,
+    pub down: bool,
+    pub level: FolderLevel,
 }
 
 /// What the palette does to the open contact.
@@ -224,6 +280,12 @@ pub struct Context {
     pub report: Option<(bool, bool)>,
     /// A question row has the keyboard.
     pub question: Option<FocusedQuestion>,
+    /// A folder row of the list has the keyboard.
+    pub folder: Option<FocusedFolder>,
+    /// An editor that takes files has (or last had) the focus.
+    pub attach: bool,
+    /// A file of a strip has the keyboard.
+    pub attachment: bool,
     /// A contact page is open.
     pub on_contact: bool,
     /// An editor that offers dictation has, or last had, the focus.
@@ -232,6 +294,25 @@ pub struct Context {
     pub tools: ToolCommands,
     /// A take is running.
     pub dictating: bool,
+    /// The knowledge entry the memory-quality commands act on.
+    pub kb: Option<FocusedKb>,
+    /// "Find duplicate memories" is running.
+    pub kb_scanning: bool,
+}
+
+/// The knowledge entry under the keyboard (a focused row), else the open
+/// one: what memory-quality commands it offers (interaction.md 6.1).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FocusedKb {
+    pub id: KbId,
+    /// The revision shown (Mark as no longer true is refused once it moved).
+    pub rev: i64,
+    pub owner: Owner,
+    pub memory: bool,
+    pub live: bool,
+    /// Its open conflict and duplicate pairs, if any.
+    pub conflict: Option<KbId>,
+    pub duplicate: Option<KbId>,
 }
 
 /// The page-bound tool commands that apply now (layout.md 4.5.1).
@@ -269,6 +350,36 @@ pub const SHOW: [OverviewFilter; 6] = [
     OverviewFilter::Created,
     OverviewFilter::StaleMemories,
 ];
+
+/// The commands on a focused folder, in the order of interaction.md 6.1:
+/// any folder can be made active (when found and not already), copied
+/// and shown; an own folder also has its settings, moves, another folder
+/// and removal; a folder not found has Locate.
+pub fn folder_commands(f: FocusedFolder) -> Vec<FolderCommand> {
+    use FolderCommand as F;
+    let mut out = Vec::new();
+    if !f.active && !f.missing {
+        out.push(F::Active);
+    }
+    if f.own {
+        out.push(F::Settings);
+        if f.up {
+            out.push(F::Up);
+        }
+        if f.down {
+            out.push(F::Down);
+        }
+        out.push(F::Other);
+    }
+    if f.missing {
+        out.push(F::Locate);
+    }
+    out.extend([F::Copy, F::Show]);
+    if f.own {
+        out.push(F::Remove(f.level));
+    }
+    out
+}
 
 /// The palette commands of one view, in the order of 4.8.7.
 fn view_commands(view: ViewId, state: ViewState) -> Vec<Command> {
@@ -323,6 +434,26 @@ impl Command {
         if ctx.has_project {
             out.extend(SHOW.map(Command::Show));
             out.push(Command::ShowQuestionsLate);
+            out.push(Command::ShowInactive);
+            if !ctx.kb_scanning {
+                out.push(Command::KbFindDuplicates);
+            }
+        }
+        if let Some(k) = ctx.kb {
+            if k.live {
+                out.extend([Command::KbVerify, Command::KbRetire]);
+                if k.memory {
+                    out.push(Command::KbMerge);
+                }
+                if let Some(other) = k.conflict {
+                    out.extend([Command::KbKeepBoth(k.id, other), Command::KbReplace(other)]);
+                }
+                if let Some(other) = k.duplicate {
+                    out.push(Command::KbKeepBoth(k.id, other));
+                }
+            } else {
+                out.push(Command::KbMakeLive);
+            }
         }
         if ctx.on_record {
             out.push(Command::QuestionNew);
@@ -406,6 +537,15 @@ impl Command {
                 .into_iter()
                 .filter_map(|(on, c)| on.then_some(c)),
             );
+        }
+        if let Some(f) = ctx.folder {
+            out.extend(folder_commands(f).into_iter().map(Command::Folder));
+        }
+        if ctx.attach {
+            out.push(Command::Attach);
+        }
+        if ctx.attachment {
+            out.push(Command::AttachmentSave);
         }
         if ctx.has_project {
             out.extend([
@@ -535,6 +675,27 @@ impl Command {
     pub fn label(self, locale: Locale) -> String {
         use crate::theme::ThemeSetting;
         let key = match self {
+            Command::KbKeepBoth(a, b) => {
+                let (a, b) = (a.min(b).to_string(), a.max(b).to_string());
+                return tr(
+                    locale,
+                    Key::CmdKbKeepBoth,
+                    &[("a", Arg::Text(&a)), ("b", Arg::Text(&b))],
+                );
+            }
+            Command::KbReplace(id) => {
+                return tr(
+                    locale,
+                    Key::CmdKbReplace,
+                    &[("id", Arg::Text(&id.to_string()))],
+                );
+            }
+            Command::KbVerify => Key::CmdKbVerify,
+            Command::KbRetire => Key::CmdKbRetire,
+            Command::KbMakeLive => Key::CmdKbMakeLive,
+            Command::KbMerge => Key::CmdKbMerge,
+            Command::ShowInactive => Key::CmdShowInactive,
+            Command::KbFindDuplicates => Key::CmdKbFindDuplicates,
             Command::GoTopic => Key::CmdGoTopic,
             Command::SwitchProject => Key::CmdSwitchProject,
             Command::NewTopic => Key::CmdNewTopic,
@@ -604,6 +765,23 @@ impl Command {
             Command::FolderPull => Key::CmdFolderPull,
             Command::FolderFetch => Key::CmdFolderFetch,
             Command::FolderBranch => Key::CmdFolderBranch,
+            Command::Folder(f) => match f {
+                FolderCommand::Active => Key::CmdFolderActive,
+                FolderCommand::Settings => Key::CmdFolderSettings,
+                FolderCommand::Up => Key::CmdFolderUp,
+                FolderCommand::Down => Key::CmdFolderDown,
+                FolderCommand::Other => Key::FoldersChooseOther,
+                FolderCommand::Locate => Key::CmdFolderLocate,
+                FolderCommand::Copy => Key::CmdFolderCopy,
+                FolderCommand::Show if cfg!(target_os = "macos") => Key::CmdFolderShowM,
+                FolderCommand::Show if cfg!(windows) => Key::CmdFolderShowW,
+                FolderCommand::Show => Key::CmdFolderShowL,
+                FolderCommand::Remove(FolderLevel::Topic) => Key::CmdFolderRemoveTopic,
+                FolderCommand::Remove(FolderLevel::Epic) => Key::CmdFolderRemoveEpic,
+                FolderCommand::Remove(FolderLevel::Project) => Key::CmdFolderRemoveProject,
+            },
+            Command::Attach => Key::CmdAttach,
+            Command::AttachmentSave => Key::CmdAttachmentSave,
             Command::Export => Key::CmdExport,
             Command::Import => Key::CmdImport,
             Command::Trash => Key::CmdTrash,
@@ -634,7 +812,7 @@ impl Command {
                 OverviewFilter::Done => Key::CmdShowDoneWeek,
                 OverviewFilter::Decided => Key::CmdShowDecidedWeek,
                 OverviewFilter::Created => Key::CmdShowCreatedWeek,
-                OverviewFilter::StaleMemories => Key::CmdShowStaleMemories,
+                OverviewFilter::StaleMemories => Key::CmdShowToCheck,
                 // Overdue keeps the table's segment, the inbox "Go to
                 // inbox": never listed (SHOW).
                 OverviewFilter::Overdue | OverviewFilter::Inbox => Key::CmdGoInbox,
@@ -751,6 +929,7 @@ impl Command {
             Command::Back => vec![alt, "\u{2190}"],
             Command::Forward => vec![alt, "\u{2192}"],
             Command::SetStatus(_) => vec!["S"],
+            Command::KbVerify => vec!["V"],
             Command::SetDue => vec!["D"],
             Command::QuestionNew => vec!["Q"],
             Command::ReportSet => vec!["R"],
@@ -761,6 +940,16 @@ impl Command {
             Command::Question(QuestionCommand::Delete) => {
                 vec![KeyName::Delete.label(locale, macos)]
             }
+            Command::Folder(FolderCommand::Active) => vec!["Space"],
+            Command::Folder(FolderCommand::Settings) => vec!["F2"],
+            Command::Folder(FolderCommand::Up) => vec![alt, "\u{2191}"],
+            Command::Folder(FolderCommand::Down) => vec![alt, "\u{2193}"],
+            Command::Folder(FolderCommand::Other) => vec!["E"],
+            Command::Folder(FolderCommand::Copy) => vec![m, "C"],
+            Command::Folder(FolderCommand::Remove(_)) => {
+                vec![KeyName::Delete.label(locale, macos)]
+            }
+            Command::Attach => vec![m, shift, "A"],
             Command::Contact(ContactCommand::Rename) => vec!["F2"],
             Command::Contact(ContactCommand::Move) => vec!["M"],
             _ => vec![],
@@ -815,6 +1004,84 @@ mod tests {
             ["Ctrl", "Shift", "Space"]
         );
         assert_eq!(Command::VoiceSettings.label(Locale::En), "Voice settings");
+    }
+
+    #[test]
+    fn a_focused_folder_offers_what_its_keys_do() {
+        let inherited = FocusedFolder {
+            own: false,
+            ..FocusedFolder::default()
+        };
+        assert_eq!(
+            folder_commands(inherited),
+            [
+                FolderCommand::Active,
+                FolderCommand::Copy,
+                FolderCommand::Show
+            ]
+        );
+        let own = FocusedFolder {
+            own: true,
+            active: true,
+            up: true,
+            level: FolderLevel::Epic,
+            ..FocusedFolder::default()
+        };
+        assert_eq!(
+            folder_commands(own),
+            [
+                FolderCommand::Settings,
+                FolderCommand::Up,
+                FolderCommand::Other,
+                FolderCommand::Copy,
+                FolderCommand::Show,
+                FolderCommand::Remove(FolderLevel::Epic),
+            ]
+        );
+        let missing = FocusedFolder {
+            missing: true,
+            ..FocusedFolder::default()
+        };
+        assert!(folder_commands(missing).contains(&FolderCommand::Locate));
+        assert!(!folder_commands(missing).contains(&FolderCommand::Active));
+        let listed = Command::available(Context {
+            on_record: true,
+            folder: Some(own),
+            ..Context::default()
+        });
+        assert!(listed.contains(&Command::Folder(FolderCommand::Remove(FolderLevel::Epic))));
+        assert_eq!(
+            Command::Folder(FolderCommand::Remove(FolderLevel::Epic)).label(Locale::En),
+            "Remove folder from this epic"
+        );
+        assert!(
+            !Command::available(Context::default())
+                .iter()
+                .any(|c| matches!(c, Command::Folder(_)))
+        );
+    }
+
+    #[test]
+    fn attachment_commands_follow_the_editor_and_the_file() {
+        let none = Command::available(Context::default());
+        assert!(!none.contains(&Command::Attach));
+        assert!(!none.contains(&Command::AttachmentSave));
+        let both = Command::available(Context {
+            attach: true,
+            attachment: true,
+            ..Context::default()
+        });
+        assert!(both.contains(&Command::Attach));
+        assert!(both.contains(&Command::AttachmentSave));
+        assert_eq!(Command::Attach.label(Locale::En), "Attach files\u{2026}");
+        assert_eq!(
+            Command::AttachmentSave.label(Locale::En),
+            "Save file as\u{2026}"
+        );
+        assert_eq!(
+            Command::Attach.shortcut(Locale::En, false),
+            ["Ctrl", "Shift", "A"]
+        );
     }
 
     #[test]

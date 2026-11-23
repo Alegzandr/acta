@@ -3593,8 +3593,12 @@ impl Shell {
             PageEvent::Confirm(confirm) => {
                 self.open_dialog(crate::dialogs::Kind::Confirm(confirm.clone()), window, cx)
             }
-            PageEvent::StaleMemories(project) => self.open_stale_memories(*project, window, cx),
+            PageEvent::KbChip(project, chip, kind) => {
+                self.open_kb_chip(*project, *chip, *kind, window, cx)
+            }
+            PageEvent::EditKb(id) => self.edit_kb(*id, window, cx),
             PageEvent::LateAnswers(scope) => self.open_late_answers(*scope, window, cx),
+            PageEvent::OpenEntry(topic, entry) => self.open_entry(*topic, *entry, window, cx),
             PageEvent::Saved(_) | PageEvent::Located(_) => cx.notify(),
         }
     }

@@ -355,6 +355,9 @@ pub struct TerminalDock {
     /// The header switcher's menu, with its highlighted entry.
     switcher: Option<usize>,
     switch_anchor: crate::menu::AnchorBounds,
+    /// The not-found message's "Or start in another folder:" switcher.
+    missing_switcher: Option<usize>,
+    missing_anchor: crate::menu::AnchorBounds,
     /// The one-off session, and whether it is the one shown.
     one_off: Option<OneOff>,
     show_one_off: bool,
@@ -429,6 +432,8 @@ impl TerminalDock {
             pages: HashMap::new(),
             switcher: None,
             switch_anchor: Default::default(),
+            missing_switcher: None,
+            missing_anchor: Default::default(),
             one_off: None,
             show_one_off: false,
             seen_revision: 0,
@@ -503,8 +508,9 @@ impl TerminalDock {
         }));
     }
 
-    /// The folders of every session's page read again (off the UI
-    /// thread), with the existence of each.
+    /// The folders of every session's page (and of a page whose active
+    /// folder was not found) read again off the UI thread, with the
+    /// existence of each.
     fn refresh_pages(&mut self, cx: &mut Context<Self>) {
         let wanted: Vec<(InstanceKey, Owner, Option<FolderId>)> = self
             .panes
@@ -515,6 +521,8 @@ impl TerminalDock {
                     start,
                     ..
                 } => Some((key, origin.owner, start.folder)),
+                // The not-found message offers the page's other folders.
+                Pane::Missing { origin, .. } => Some((key, origin.owner, None)),
                 _ => None,
             })
             .collect();
@@ -1685,6 +1693,7 @@ impl TerminalDock {
                         Owner::Project(_) => Key::TerminalMissingBodyProject,
                     };
                     let level_name = origin.name.clone();
+                    let other = self.other_folder_switcher(key, &origin, locale, &t, cx);
                     message(&t, surface)
                         .child(
                             type_scale::HEADING
@@ -1746,6 +1755,7 @@ impl TerminalDock {
                                     )),
                                 ),
                         )
+                        .children(other)
                         .into_any_element()
                 }
                 Some(Pane::NotFound { .. }) => {
@@ -1845,6 +1855,99 @@ impl TerminalDock {
                     .collect(),
             })
             .collect()
+    }
+
+    /// "Or start in another folder:" and the switcher, under the not-found
+    /// message, when the page sees another folder that exists: choosing
+    /// makes it active for the page and starts the session there
+    /// (components-folders.md 5, Terminal launch).
+    fn other_folder_switcher(
+        &self,
+        key: InstanceKey,
+        origin: &Origin,
+        locale: Locale,
+        t: &Tokens,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let (project, owner) = (origin.project, origin.owner);
+        let groups = self.switch_groups(key, owner, locale);
+        let entries = || groups.iter().flat_map(|g| g.entries.iter());
+        if !entries().any(|e| !e.missing && !e.active) {
+            return None;
+        }
+        let active = entries().find(|e| e.active)?.clone();
+        let button = folders_view::switcher(
+            "terminal-missing-switcher",
+            active.icon,
+            &active.name,
+            active.missing,
+            false,
+            t,
+        )
+        .on_click(cx.listener(|dock, _, _, cx| {
+            dock.missing_switcher = match dock.missing_switcher {
+                Some(_) => None,
+                None => Some(0),
+            };
+            cx.notify();
+        }));
+        let mut wrap = div()
+            .relative()
+            .flex()
+            .child(button)
+            .child(self.missing_anchor.measure());
+        if self.missing_switcher.is_some() {
+            let start = origin.clone();
+            let (edit_origin, add_origin) = (origin.clone(), origin.clone());
+            wrap = wrap.child(folders_view::switcher_menu(
+                "terminal-missing-menu",
+                &self.missing_anchor,
+                &groups,
+                self.missing_switcher,
+                locale,
+                t,
+                cx,
+                SwitchActions {
+                    choose: Rc::new(move |dock: &mut Self, id, window, cx| {
+                        dock.missing_switcher = None;
+                        dock.set_page_active(owner, key, project, id, cx);
+                        // The write is queued first, so the launch reads
+                        // the new active folder.
+                        dock.launch(key, Some(start.clone()), None, window, cx);
+                    }),
+                    edit: Rc::new(move |dock: &mut Self, _, cx| {
+                        dock.missing_switcher = None;
+                        cx.emit(DockEvent::EditFolders(edit_origin.clone()));
+                        cx.notify();
+                    }),
+                    add: Rc::new(move |dock: &mut Self, _, cx| {
+                        dock.missing_switcher = None;
+                        cx.emit(DockEvent::AddFolder(add_origin.clone()));
+                        cx.notify();
+                    }),
+                    close: Rc::new(|dock: &mut Self, _, cx| {
+                        dock.missing_switcher = None;
+                        cx.notify();
+                    }),
+                },
+            ));
+        }
+        Some(
+            div()
+                .mt(px(16.))
+                .flex()
+                .flex_col()
+                .items_start()
+                .gap(px(4.))
+                .child(
+                    type_scale::SMALL
+                        .el()
+                        .text_color(t.text_secondary)
+                        .child(text(locale, Key::TerminalMissingOther)),
+                )
+                .child(wrap)
+                .into_any_element(),
+        )
     }
 
     /// The header switcher sets the session page's active folder, exactly

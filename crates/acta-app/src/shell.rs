@@ -1023,6 +1023,61 @@ impl Shell {
     }
 
     #[cfg(debug_assertions)]
+    /// The memory-quality surfaces of `dev_overlay`.
+    fn dev_kbq(&mut self, which: &str, window: &mut Window, cx: &mut Context<Self>) {
+        use crate::kb_model::Chip;
+        let project = self.bench().and_then(|b| b.active_project);
+        let page = self.bench().map(|b| match &b.page {
+            PageView::Doc(p) => (Some(p.clone()), None),
+            PageView::Knowledge(p) => (None, Some(p.clone())),
+            _ => (None, None),
+        });
+        let (doc, kb) = page.unwrap_or((None, None));
+        match which {
+            "kbq-to-check" | "kbq-to-check-all" | "kbq-inactive" | "kbq-to-check-verify" => {
+                let Some(project) = project else { return };
+                let (chip, kind) = match which {
+                    "kbq-inactive" => (Chip::Inactive, None),
+                    "kbq-to-check-all" => (Chip::ToCheck, None),
+                    _ => (Chip::ToCheck, Some(KbKind::Memory)),
+                };
+                self.open_kb_chip(project, chip, kind, window, cx);
+                if which == "kbq-to-check-verify" {
+                    cx.spawn_in(window, async move |shell, cx| {
+                        cx.background_executor()
+                            .timer(Duration::from_millis(1500))
+                            .await;
+                        let _ = shell.update_in(cx, |shell, _, cx| {
+                            if let Some(bench) = shell.bench()
+                                && let PageView::Knowledge(p) = &bench.page
+                            {
+                                p.update(cx, |p, cx| p.dev_verify_first(cx));
+                            }
+                        });
+                    })
+                    .detach();
+                }
+            }
+            "kbq-unfold" => {
+                if let Some(kb) = kb {
+                    kb.update(cx, |p, cx| p.dev_unfold_first(cx));
+                }
+            }
+            "kbq-history" => {
+                if let Some(doc) = doc {
+                    doc.update(cx, |p, cx| p.dev_history(cx));
+                }
+            }
+            "kbq-merge" | "kbq-merge-undo" => {
+                if let Some(doc) = doc {
+                    doc.update(cx, |p, cx| p.dev_merge(cx));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    #[cfg(debug_assertions)]
     /// The due date and Overview surfaces of `dev_overlay`.
     fn dev_due(&mut self, which: &str, window: &mut Window, cx: &mut Context<Self>) {
         let input = std::env::var("ACTA_DEV_DUE_INPUT").unwrap_or_default();
@@ -1100,6 +1155,33 @@ impl Shell {
             });
         })
         .detach();
+    }
+
+    /// Debug builds' captures of drags and in-place editors (see the
+    /// `tree-drag` arm of [`Shell::dev_overlay`]).
+    #[cfg(debug_assertions)]
+    fn dev_drag_and_pages(&mut self, which: &str, window: &mut Window, cx: &mut Context<Self>) {
+        match which {
+            "tree-drag" | "tree-drag-onto" => self.dev_tree_drag(which == "tree-drag-onto", cx),
+            "qpage-edit" => {
+                if let Some(bench) = self.bench()
+                    && let PageView::Questions(page) = &bench.page
+                {
+                    let page = page.clone();
+                    page.update(cx, |page, cx| page.dev_edit_first(window, cx));
+                }
+            }
+            "inbox-filter" => {
+                if let Some(bench) = self.bench()
+                    && let PageView::Inbox(page) = &bench.page
+                {
+                    let page = page.clone();
+                    page.update(cx, |page, cx| page.dev_open_filter(window, cx));
+                }
+            }
+            _ => {}
+        }
+        cx.notify();
     }
 
     /// Debug builds: `ACTA_DEV_OVERLAY=palette|capture|terminal|chat|chat-palette|browser|browser-palette|export|snapshots`
@@ -1310,7 +1392,7 @@ impl Shell {
             #[cfg(debug_assertions)]
             Ok(
                 which @ ("q-composer" | "q-answer" | "q-closed" | "q-menu" | "q-scroll"
-                | "report-popover" | "contact-move"),
+                | "report-popover" | "contact-move" | "q-drag" | "q-refused" | "blocks"),
             ) => {
                 let which = which.to_owned();
                 cx.spawn_in(window, async move |shell, cx| {
@@ -1335,6 +1417,23 @@ impl Shell {
                                 window,
                             )
                         }
+                    });
+                })
+                .detach();
+            }
+            // Dragging tree rows (components.md 5): a topic held over the
+            // lower half of another topic's row, or over its epic's row;
+            // the Questions page with its first open question edited in
+            // place; the inbox's Report to filter open with its search.
+            #[cfg(debug_assertions)]
+            Ok(which @ ("tree-drag" | "tree-drag-onto" | "qpage-edit" | "inbox-filter")) => {
+                let which = which.to_owned();
+                cx.spawn_in(window, async move |shell, cx| {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(1500))
+                        .await;
+                    let _ = shell.update_in(cx, |shell, window, cx| {
+                        shell.dev_drag_and_pages(&which, window, cx)
                     });
                 })
                 .detach();
@@ -1373,6 +1472,44 @@ impl Shell {
             }
             Ok("export") => self.open_export(window, cx),
             Ok("snapshots") => self.open_snapshots(window, cx),
+            // Memory quality (components-knowledge.md 5), once the page
+            // has loaded: the knowledge page with a chip, an unfolded
+            // memory, the history, a merge from the notice (and its undo).
+            #[cfg(debug_assertions)]
+            Ok(which) if which.starts_with("kbq-") => {
+                let which = which.to_owned();
+                cx.spawn_in(window, async move |shell, cx| {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(1500))
+                        .await;
+                    let _ =
+                        shell.update_in(cx, |shell, window, cx| shell.dev_kbq(&which, window, cx));
+                    if which.ends_with("-undo") {
+                        cx.background_executor()
+                            .timer(Duration::from_millis(4000))
+                            .await;
+                        let _ = shell.update_in(cx, |shell, _, cx| {
+                            if let Some(bench) = shell.bench() {
+                                let (ws, project) = (bench.ws.clone(), bench.active_project);
+                                ws.update(cx, |ws, cx| ws.undo_active(project, cx));
+                            }
+                        });
+                        // Then `Esc`, as the person would: the editor
+                        // closes on the text the store now holds.
+                        cx.background_executor()
+                            .timer(Duration::from_millis(1500))
+                            .await;
+                        let _ = shell.update_in(cx, |shell, window, cx| {
+                            if let Some(bench) = shell.bench()
+                                && let PageView::Doc(p) = &bench.page
+                            {
+                                p.update(cx, |p, cx| p.dev_cancel(window, cx));
+                            }
+                        });
+                    }
+                })
+                .detach();
+            }
             // Files (components-attachments.md 5): see `dev_attach`.
             #[cfg(debug_assertions)]
             Ok(which) if which.starts_with("attach-") => {
@@ -1852,7 +1989,10 @@ impl Shell {
         // A page in another group: that group takes focus first.
         let current = self.bench().map(|b| b.current);
         if current != Some(tab)
-            && matches!(event, PageEvent::Open(_) | PageEvent::NewKb(_))
+            && matches!(
+                event,
+                PageEvent::Open(_) | PageEvent::NewKb(_) | PageEvent::OpenEntry(..)
+            )
             && let Some(bench) = self.bench()
             && let Some(spot) = bench.layout.locate(Tab::Page(tab))
         {
@@ -1896,8 +2036,12 @@ impl Shell {
             PageEvent::Confirm(confirm) => {
                 self.open_dialog(DialogKind::Confirm(confirm.clone()), window, cx)
             }
-            PageEvent::StaleMemories(project) => self.open_stale_memories(*project, window, cx),
+            PageEvent::KbChip(project, chip, kind) => {
+                self.open_kb_chip(*project, *chip, *kind, window, cx)
+            }
+            PageEvent::EditKb(id) => self.edit_kb(*id, window, cx),
             PageEvent::LateAnswers(scope) => self.open_late_answers(*scope, window, cx),
+            PageEvent::OpenEntry(topic, entry) => self.open_entry(*topic, *entry, window, cx),
         }
     }
 
@@ -1965,6 +2109,24 @@ impl Shell {
     }
 
     /// The Overview's late answers: the Questions page with Overdue.
+    /// "Logged as a decision": the topic, with that entry focused.
+    pub(super) fn open_entry(
+        &mut self,
+        topic: TopicId,
+        entry: acta_core::model::EntryId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.navigate(Route::Topic(topic), true, window, cx);
+        if let Some(bench) = self.bench()
+            && let PageView::Record(page) = &bench.page
+            && page.read(cx).topic() == Some(topic)
+        {
+            let page = page.clone();
+            page.update(cx, |page, cx| page.focus_entry(entry, window, cx));
+        }
+    }
+
     pub(super) fn open_late_answers(
         &mut self,
         scope: Owner,
@@ -1977,11 +2139,14 @@ impl Shell {
         self.navigate(Route::Questions(scope), true, window, cx);
     }
 
-    /// The Overview's memory line: the knowledge page, Kind Memories, with
-    /// the chip "Not updated for 90 days".
-    pub(super) fn open_stale_memories(
+    /// The knowledge page with a chip (components-knowledge.md 5): "To
+    /// check" from the Overview's memory line (Kind: Memories) or the
+    /// palette (every kind), "Superseded and retired" from the palette.
+    pub(super) fn open_kb_chip(
         &mut self,
         project: ProjectId,
+        chip: crate::kb_model::Chip,
+        kind: Option<KbKind>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1990,7 +2155,7 @@ impl Shell {
         }
         let Some(bench) = self.bench() else { return };
         let (ws, tab) = (bench.ws.clone(), bench.current);
-        let page = cx.new(|cx| KnowledgePage::new_stale(ws, project, window, cx));
+        let page = cx.new(|cx| KnowledgePage::new_chip(ws, project, chip, kind, window, cx));
         let sub = Self::page_events(&page, tab, window, cx);
         if let Some(bench) = self.bench() {
             bench.page = PageView::Knowledge(page);
@@ -2614,6 +2779,12 @@ impl Shell {
                 PageView::Record(page) => page.read(cx).question_context(window),
                 _ => None,
             },
+            folder: match &bench.page {
+                PageView::Record(page) => page.read(cx).focused_folder_commands(window),
+                _ => None,
+            },
+            attach: crate::attach_ui::target_tray(cx).is_some(),
+            attachment: crate::attach_ui::focused_file(window, cx).is_some(),
             on_contact: matches!(bench.page, PageView::Contact(_)),
             dictate: crate::voice::get(cx).is_some_and(|d| {
                 let d = d.read(cx);
@@ -2621,6 +2792,97 @@ impl Shell {
                     .is_some_and(|e| d.phase(e, cx) != crate::voice::view::Phase::Off)
             }),
             dictating: crate::voice::get(cx).is_some_and(|d| d.read(cx).running()),
+            kb: self.kb_target(window, cx),
+            kb_scanning: bench.ws.read(cx).kb_scanning,
+        }
+    }
+
+    /// The knowledge entry the memory-quality commands act on: the focused
+    /// row, else the open entry (interaction.md 6.1).
+    fn kb_target(&self, window: &Window, cx: &App) -> Option<commands::FocusedKb> {
+        let Content::Workbench(bench) = &self.content else {
+            return None;
+        };
+        match &bench.page {
+            PageView::Knowledge(page) => page.read(cx).kb_context(window),
+            PageView::Record(page) => page.read(cx).kb_context(window),
+            PageView::Doc(page) => page.read(cx).kb_context(),
+            _ => None,
+        }
+    }
+
+    /// Run a memory-quality command on [`Self::kb_target`].
+    fn kb_command(&mut self, command: Command, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(k) = self.kb_target(window, cx) else {
+            return;
+        };
+        let Some(bench) = self.bench() else { return };
+        let ws = bench.ws.clone();
+        let page = match &bench.page {
+            PageView::Knowledge(p) => Some(PageView::Knowledge(p.clone())),
+            PageView::Record(p) => Some(PageView::Record(p.clone())),
+            PageView::Doc(p) => Some(PageView::Doc(p.clone())),
+            _ => None,
+        };
+        let owner = Some(k.owner);
+        let kind = if k.memory {
+            KbKind::Memory
+        } else {
+            KbKind::Document
+        };
+        match command {
+            // The page hides the mark at once; the write follows.
+            Command::KbVerify => match page {
+                Some(PageView::Knowledge(p)) => p.update(cx, |p, cx| p.verify_row(k.id, cx)),
+                Some(PageView::Record(p)) => p.update(cx, |p, cx| p.verify_kb(k.id, cx)),
+                Some(PageView::Doc(p)) => p.update(cx, |p, cx| p.verify(cx)),
+                _ => crate::kbq_ui::verify(&ws, k.id, owner, cx),
+            },
+            Command::KbRetire => crate::kbq_ui::retire(&ws, k.id, Some(k.rev), kind, owner, cx),
+            Command::KbMakeLive => crate::kbq_ui::make_live(&ws, k.id, owner, cx),
+            Command::KbKeepBoth(a, b) => {
+                let pair = if k.conflict == Some(b) {
+                    acta_core::model::KbPairKind::Conflict
+                } else {
+                    acta_core::model::KbPairKind::Duplicate
+                };
+                crate::kbq_ui::keep_both(&ws, a, b, pair, owner, cx)
+            }
+            Command::KbReplace(old) => crate::kbq_ui::replace(&ws, k.id, old, owner, cx),
+            Command::KbMerge => {
+                let task = crate::kbq_ui::merge_candidates(&ws, k.id, cx);
+                let locale = settings::locale(cx);
+                cx.spawn_in(window, async move |shell, cx| {
+                    let Ok(candidates) = task.await else {
+                        return;
+                    };
+                    let _ = shell.update_in(cx, |shell, window, cx| {
+                        let weak = cx.entity().downgrade();
+                        let on_merged: crate::kbq_ui::OnMerged =
+                            std::rc::Rc::new(move |id, window, cx| {
+                                let _ = weak.update(cx, |s, cx| s.edit_kb(id, window, cx));
+                            });
+                        let (picker, on_pick) = crate::kbq_ui::merge_picker(
+                            locale, &ws, k.id, owner, candidates, on_merged,
+                        );
+                        shell.open_picker(picker, on_pick, window, cx);
+                    });
+                })
+                .detach();
+            }
+            _ => {}
+        }
+    }
+
+    /// A merge's survivor opens in its editor so the person can tidy the
+    /// joined text (components-knowledge.md 5, Merge).
+    pub(super) fn edit_kb(&mut self, id: KbId, window: &mut Window, cx: &mut Context<Self>) {
+        self.navigate(Route::Kb(id), true, window, cx);
+        if let Some(bench) = self.bench()
+            && let PageView::Doc(page) = &bench.page
+            && page.read(cx).id == Some(id)
+        {
+            page.update(cx, |page, cx| page.edit_when_loaded(cx));
         }
     }
 
@@ -2846,7 +3108,33 @@ impl Shell {
                     bench.ws.update(cx, |ws, cx| ws.set_due(owner, None, cx));
                 }
             }
+            // "Show knowledge to check": every kind (the Overview's line
+            // adds Kind: Memories).
+            Command::Show(acta_core::store::OverviewFilter::StaleMemories) => {
+                if let Some(project) = self.bench().and_then(|b| b.active_project) {
+                    self.open_kb_chip(project, crate::kb_model::Chip::ToCheck, None, window, cx);
+                }
+            }
             Command::Show(filter) => self.show_overview_list(filter, window, cx),
+            Command::ShowInactive => {
+                if let Some(project) = self.bench().and_then(|b| b.active_project) {
+                    self.open_kb_chip(project, crate::kb_model::Chip::Inactive, None, window, cx);
+                }
+            }
+            Command::KbFindDuplicates => {
+                if let Some(bench) = self.bench()
+                    && let Some(project) = bench.active_project
+                {
+                    let ws = bench.ws.clone();
+                    crate::kbq_ui::find_duplicates(&ws, project, cx);
+                }
+            }
+            Command::KbVerify
+            | Command::KbRetire
+            | Command::KbMakeLive
+            | Command::KbMerge
+            | Command::KbKeepBoth(..)
+            | Command::KbReplace(_) => self.kb_command(command, window, cx),
             Command::QuestionNew => {
                 self.with_record(cx, |page, window, cx| page.new_question(window, cx), window)
             }
@@ -2894,6 +3182,13 @@ impl Shell {
                 |page, window, cx| page.run_question(q, window, cx),
                 window,
             ),
+            Command::Folder(f) => self.with_record(
+                cx,
+                |page, window, cx| page.run_folder_command(f, window, cx),
+                window,
+            ),
+            Command::Attach => crate::attach_ui::attach_to_target(window, cx),
+            Command::AttachmentSave => crate::attach_ui::save_focused(window, cx),
             Command::ContactsOpen => self.navigate(Route::Contacts, true, window, cx),
             Command::ContactGo => self.pick_contact(window, cx),
             Command::ContactNew => self.open_palette(None, Some(CreateKind::Contact), window, cx),
@@ -3102,13 +3397,33 @@ impl Shell {
         let sub = cx.subscribe_in(
             &capture,
             window,
-            |shell, _, event: &CaptureEvent, window, cx| {
-                let CaptureEvent::Close(draft, tray) = event;
-                if let Some(bench) = shell.bench() {
-                    bench.capture_draft = draft.clone();
-                    bench.capture_tray = tray.clone();
+            |shell, _, event: &CaptureEvent, window, cx| match event {
+                CaptureEvent::Close(draft, tray) => {
+                    if let Some(bench) = shell.bench() {
+                        bench.capture_draft = draft.clone();
+                        bench.capture_tray = tray.clone();
+                    }
+                    shell.close_overlay(window, cx);
                 }
-                shell.close_overlay(window, cx);
+                // The note was refused for its contact: the capture comes
+                // back with the text and the files, unless another overlay
+                // took the screen meanwhile (the draft then waits).
+                CaptureEvent::Refused { body, name, tray } => {
+                    let Some(bench) = shell.bench() else { return };
+                    bench.capture_draft = body.clone();
+                    bench.capture_tray = Some(tray.clone());
+                    if bench.overlay.is_some() {
+                        return;
+                    }
+                    shell.open_capture(window, cx);
+                    let capture = shell.bench().and_then(|b| match &b.overlay {
+                        Some(Overlay::Capture(c)) => Some(c.clone()),
+                        _ => None,
+                    });
+                    if let Some(capture) = capture {
+                        capture.update(cx, |c, cx| c.refused(name, window, cx));
+                    }
+                }
             },
         );
         let Some(bench) = self.bench() else { return };
@@ -5405,18 +5720,29 @@ impl Shell {
 
     /// The palette and quick capture: 96 below the window top, centred,
     /// no scrim; dialogs draw their own scrim. Above every other layer (the
-    /// sidebar over the page, the toast, menus, a drag).
-    fn overlay_element(&mut self) -> Option<AnyElement> {
+    /// sidebar over the page, the toast, menus, a drag). Both are modal: a
+    /// transparent layer over the window takes every click outside them,
+    /// which closes them and reaches nothing behind (the user's report of
+    /// 2026-11-22: the app behind stayed clickable under the palette).
+    fn overlay_element(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let outside = cx.listener(|shell, _: &gpui_kit::MouseDownEvent, window, cx| {
+            shell.overlay_clicked_outside(window, cx)
+        });
         let bench = self.bench()?;
         let top = |child: AnyElement| {
             deferred(
                 div()
+                    .id("overlay-catcher")
                     .absolute()
-                    .top(px(96.))
+                    .top_0()
                     .left_0()
-                    .right_0()
+                    .size_full()
+                    .occlude()
+                    .on_any_mouse_down(outside)
+                    .pt(px(96.))
                     .flex()
                     .justify_center()
+                    .items_start()
                     .child(child),
             )
             .with_priority(OVERLAY_PRIORITY)
@@ -5435,6 +5761,31 @@ impl Shell {
                 .with_priority(OVERLAY_PRIORITY)
                 .into_any_element(),
         })
+    }
+
+    /// The palette is open: `Tab` never leaves it.
+    fn modal_overlay(&mut self) -> bool {
+        self.bench()
+            .is_some_and(|b| matches!(b.overlay, Some(Overlay::Palette(_))))
+    }
+
+    /// A click outside the palette or quick capture: it closes, as `Esc`
+    /// does (capture keeps its draft), and the click acts on nothing else.
+    fn overlay_clicked_outside(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        cx.stop_propagation();
+        let Some(bench) = self.bench() else { return };
+        match &bench.overlay {
+            Some(Overlay::Palette(_)) => {
+                bench.create_in = None;
+                bench.on_pick = None;
+                self.close_overlay(window, cx);
+            }
+            Some(Overlay::Capture(capture)) => {
+                let capture = capture.clone();
+                capture.update(cx, |c, cx| c.close(cx));
+            }
+            _ => {}
+        }
     }
 
     fn toast_element(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -5496,6 +5847,26 @@ impl Shell {
                         )
                         // The parent folder with the file selected, never the file.
                         .on_click(move |_, _, cx| cx.reveal_path(&path))
+                        .into_any_element(),
+                        crate::workspace::ToastAction::ShowToCheck(project) => ui::button(
+                            "toast-show",
+                            text(locale, Key::KbScanShow),
+                            Variant::Ghost,
+                            false,
+                            &t,
+                        )
+                        .on_click(cx.listener(move |shell, _, window, cx| {
+                            if let Some(bench) = shell.bench() {
+                                bench.toast = None;
+                            }
+                            shell.open_kb_chip(
+                                project,
+                                crate::kb_model::Chip::ToCheck,
+                                None,
+                                window,
+                                cx,
+                            );
+                        }))
                         .into_any_element(),
                         crate::workspace::ToastAction::RetrySave(file, path) => ui::button(
                             "toast-retry",
@@ -5744,8 +6115,11 @@ fn seed_if_asked(store: &mut acta_core::Store) {
             || seed == "long"
             || seed == "due"
             || seed == "folders"
+            || seed == "folders-missing"
             || seed == "questions"
-            || seed == "attachments")
+            || seed == "people"
+            || seed == "attachments"
+            || seed == "quality")
         && let Some(dir) = crate::launch_dir()
         && let Err(err) = match seed.as_str() {
             "bare" => crate::dev_seed::bare(store, &dir),
@@ -5753,11 +6127,13 @@ fn seed_if_asked(store: &mut acta_core::Store) {
             #[cfg(debug_assertions)]
             "due" => crate::dev_seed::due(store, &dir),
             #[cfg(debug_assertions)]
-            "folders" => crate::dev_seed::folders(store, &dir),
+            "folders" | "folders-missing" => crate::dev_seed::folders(store, &dir),
             #[cfg(debug_assertions)]
-            "questions" => crate::dev_seed::questions(store, &dir),
+            "questions" | "people" => crate::dev_seed::questions(store, &dir),
             #[cfg(debug_assertions)]
             "attachments" => crate::dev_seed::attachments(store, &dir),
+            #[cfg(debug_assertions)]
+            "quality" => crate::dev_seed::quality(store, &dir),
             _ => crate::dev_seed::seed(store, &dir),
         }
     {
@@ -6036,7 +6412,7 @@ impl Render for Shell {
         }
         let dragging = matches!(&self.content, Content::Workbench(b) if b.ui.dragging());
         let status_bar = is_bench.then(|| self.status_bar(cx));
-        let overlay = self.overlay_element();
+        let overlay = self.overlay_element(cx);
 
         let frame = type_scale::UI
             .el()
@@ -6047,7 +6423,7 @@ impl Render for Shell {
             // 4.8.7: `Esc` cancels a drag before it means anything else,
             // whatever has focus.
             .capture_key_down(cx.listener(|s, e: &KeyDownEvent, w, cx| {
-                if e.keystroke.key == "escape" && s.cancel_drag(w, cx) {
+                if e.keystroke.key == "escape" && (s.cancel_drag(w, cx) || s.cancel_tree_drag(cx)) {
                     cx.stop_propagation();
                 }
             }))
@@ -6078,6 +6454,15 @@ impl Render for Shell {
             // Dictation (components-voice.md 5): push-to-talk ends on the
             // key's release, wherever the focus is.
             .capture_key_up(crate::voice::key_up)
+            .capture_key_down(crate::voice::any_key_down)
+            // One take, one undo step: the window sees an editor's undo
+            // and redo first (voice/group.rs).
+            .capture_action(|_: &gpui_kit::component::input::Undo, window, cx| {
+                crate::voice::undo_key(true, window, cx)
+            })
+            .capture_action(|_: &gpui_kit::component::input::Redo, window, cx| {
+                crate::voice::undo_key(false, window, cx)
+            })
             .on_action(
                 cx.listener(|s, _: &crate::voice::OpenVoiceSettings, w, cx| {
                     s.open_voice_settings(w, cx)
@@ -6109,8 +6494,17 @@ impl Render for Shell {
                 let focus = !s.terminal_focused(w, cx);
                 s.cycle_tab(false, focus, w, cx)
             }))
-            .on_action(|_: &FocusNext, window, cx| window.focus_next(cx))
-            .on_action(|_: &FocusPrevious, window, cx| window.focus_prev(cx))
+            // Focus stays in the palette while it is open (it is modal).
+            .on_action(cx.listener(|s, _: &FocusNext, window, cx| {
+                if !s.modal_overlay() {
+                    window.focus_next(cx)
+                }
+            }))
+            .on_action(cx.listener(|s, _: &FocusPrevious, window, cx| {
+                if !s.modal_overlay() {
+                    window.focus_prev(cx)
+                }
+            }))
             .on_action(cx.listener(|s, _: &OpenPalette, w, cx| s.open_palette(None, None, w, cx)))
             .on_action(cx.listener(|s, _: &GoToTopic, w, cx| {
                 s.open_palette(Some(Group::Topics), None, w, cx)

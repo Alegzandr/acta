@@ -118,6 +118,14 @@ Run against every screen, in dark and in light, in English and in French. One fa
 - [ ] A session on another page is visible only as signals (tree glyph, status bar, Sessions view, page line) and "Show terminal" opens its own page.
 - [ ] Claude Code (no project) is in the home folder, has no Acta argument, uses the `terminal` icon and its own view, and is never listed as a page's session.
 
+**Markdown and the editor** (components-editor.md 5; run with the conformance corpus open as a document and as an entry, in both themes, at 100% and 150%, in the editor and in reading)
+- [ ] Every element of the corpus renders as the element table says; nothing is dropped or half-rendered, unknown syntax shows as typed, nested numbered lists keep their numbers.
+- [ ] No image loads from anywhere but an attachment (watch the network: none); raw HTML shows as text, `<br>` excepted; only `http`, `https`, `mailto` and `#anchor` links act, a middle click does nothing, a deceptive link asks first.
+- [ ] A wide code block and a wide table scroll inside their block with the scrollbar shown; the page never scrolls sideways.
+- [ ] Open then save with no change writes nothing; an edit leaves every byte outside it identical (compare the stored text); a task toggle changes one byte and is one undo step.
+- [ ] Moving the caret between blocks never moves the line with the caret on screen; the active block shows its syntax in `text.tertiary` and nothing else changes style.
+- [ ] Every editor key of the table works on AZERTY too; the palette lists the formatting commands only while an editor has focus.
+
 **Behaviour**
 - [ ] Feedback on the next frame; nothing in the "never animates" list animates; budgets in 6.3 hold with 10,000 topics.
 - [ ] Writes are optimistic; failure restores state and keeps the user's text.

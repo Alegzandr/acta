@@ -132,7 +132,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `overview.epics` | Epics | Epics |
 | `overview.epics.more` | {n} more epic · {n} more epics | {n} autre epic · {n} autres epics |
 | `overview.epics.complete` | {n} complete epic · {n} complete epics | {n} epic terminé · {n} epics terminés |
-| `overview.memories` | {n} memory not updated for 90 days · {n} memories not updated for 90 days | {n} mémoire non mise à jour depuis 90 jours · {n} mémoires non mises à jour depuis 90 jours |
+| `overview.to_check` | {n} memory to check · {n} memories to check | {n} mémoire à vérifier · {n} mémoires à vérifier |
 | `overview.questions_late` | {n} question past its answer date · {n} questions past their answer date | {n} question dont la date de réponse est passée · {n} questions dont la date de réponse est passée |
 | `section.timeline` | Timeline | Journal |
 | `state.updated` | Updated {when} by {author} | Modifié {when} par {author} |
@@ -193,7 +193,8 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `filter.done_week` | Done in the last 7 days | Terminés ces 7 derniers jours |
 | `filter.decided_week` | Decided in the last 7 days | Décidés ces 7 derniers jours |
 | `filter.created_week` | Created in the last 7 days | Créés ces 7 derniers jours |
-| `filter.stale_memories` | Not updated for 90 days | Non mises à jour depuis 90 jours |
+| `filter.to_check` | To check | À vérifier |
+| `filter.inactive` | Superseded and retired | Remplacés et obsolètes |
 | `filter.clear` | Clear filter | Effacer le filtre |
 | `table.group_progress` | {done} of {total} done | {done} sur {total} terminé · {done} sur {total} terminés (form chosen by {done}) |
 | `inbox.count` | {n} note · {n} notes | {n} note · {n} notes |
@@ -355,6 +356,67 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `kb.value.memories` | Memories | Mémoires |
 | `kb.results` | {n} result for "{query}" · {n} results for "{query}" | {n} résultat pour « {query} » · {n} résultats pour « {query} » |
 | `kb.no_results` | Nothing in this project mentions "{query}". | Rien dans ce projet ne mentionne « {query} ». |
+| `kb.inactive_row` | {n} superseded or retired | {n} élément remplacé ou obsolète · {n} éléments remplacés ou obsolètes |
+| `kb.to_check_empty` | Nothing to check. | Rien à vérifier. |
+| `kb.inactive_empty` | Nothing is superseded or retired. | Aucun élément remplacé ou obsolète. |
+| `kb.reason.conflict` | May contradict {id} | Contredit peut-être {id} |
+| `kb.reason.duplicate` | Possible duplicate of {id} | Doublon possible de {id} |
+| `kb.reason.file_gone` | {file} was deleted or moved | {file} a été supprimé ou déplacé |
+| `kb.reason.file_gone_more` | {file} and {n} more file were deleted or moved · {file} and {n} more files were deleted or moved | {file} et {n} autre fichier ont été supprimés ou déplacés · {file} et {n} autres fichiers ont été supprimés ou déplacés |
+| `kb.reason.file_changed` | {file} changed since it was checked | {file} a changé depuis la dernière vérification |
+| `kb.reason.file_changed_more` | {file} and {n} more file changed since they were checked · {file} and {n} more files changed since they were checked | {file} et {n} autre fichier ont changé depuis la dernière vérification · {file} et {n} autres fichiers ont changé depuis la dernière vérification |
+| `kb.reason.branch_gone` | Branch {branch} no longer exists | La branche {branch} n'existe plus |
+| `kb.reason.branch_merged` | Branch {branch} was merged | La branche {branch} a été fusionnée |
+| `kb.reason.folder_removed` | Its folder was removed from Acta | Son dossier a été retiré d'Acta |
+| `kb.reason.topic_done` | Its topic is done | Son sujet est terminé |
+| `kb.reason.topic_dropped` | Its topic was dropped | Son sujet a été abandonné |
+| `kb.reason.old` | Not checked for {days} days | Non vérifiée depuis {days} jours |
+| `kb.verify` | Mark as still true | Marquer comme toujours valable |
+| `kb.retire` | Mark as no longer true | Marquer comme obsolète |
+| `kb.retired_toast.document` | Marked as no longer true. | Marqué comme obsolète. |
+| `kb.retired_toast.memory` | Marked as no longer true. | Marquée comme obsolète. |
+| `kb.make_live` | Make live again | Rétablir |
+| `kb.notice.superseded.document` | Superseded by {title} on {date}. | Remplacé le {date} par {title}. |
+| `kb.notice.superseded.memory` | Superseded by {title} on {date}. | Remplacée le {date} par {title}. |
+| `kb.notice.retired.document` | Retired by {author} on {date}. | Rendu obsolète le {date} par {author}. |
+| `kb.notice.retired.memory` | Retired by {author} on {date}. | Rendue obsolète le {date} par {author}. |
+| `kb.notice.conflict` | May contradict {id}. | Contredit peut-être {id}. |
+| `kb.notice.duplicate` | Possible duplicate of {id}. | Doublon possible de {id}. |
+| `kb.this_replaces` | This replaces it | Celle-ci la remplace |
+| `kb.replaced_toast` | {id} is now superseded by this. | {id} est désormais remplacée par celle-ci. |
+| `kb.merge_into_id` | Merge into {id} | Fusionner dans {id} |
+| `kb.merge_here` | Merge {id} into this | Fusionner {id} dans celle-ci |
+| `kb.merge_into` | Merge into... | Fusionner dans... |
+| `kb.merged` | Merged into {id}. | Fusionnée dans {id}. |
+| `kb.prop.branch` | Branch | Branche |
+| `kb.prop.sources` | Sources | Sources |
+| `kb.branch.merged` | merged | fusionnée |
+| `kb.branch.gone` | no longer exists | n'existe plus |
+| `kb.branch.tip` | True only on this branch, in {folder}. | Valable seulement sur cette branche, dans {folder}. |
+| `kb.source.entry` | {topic}, entry of {date} | {topic}, entrée du {date} |
+| `kb.source.missing` | A record not in this database | Un élément absent de cette base |
+| `kb.source.commit` | Commit {sha} | Commit {sha} |
+| `kb.source.copy_commit` | Copy commit id | Copier l'identifiant du commit |
+| `kb.source.copy_path` | {folder} · Copy path | {folder} · Copier le chemin |
+| `kb.source.changed` | changed since checked | modifié depuis la vérification |
+| `kb.source.gone` | deleted or moved | supprimé ou déplacé |
+| `kb.prov.from` | From topic {id} | Depuis le sujet {id} |
+| `kb.prov.branch` | On branch {branch} | Sur la branche {branch} |
+| `kb.prov.checked.document` | Checked {when} by {author} | Vérifié {when} par {author} |
+| `kb.prov.checked.memory` | Checked {when} by {author} | Vérifiée {when} par {author} |
+| `kb.session.on` | A Claude Code session on {topic} | Une session Claude Code sur {topic} |
+| `kb.session.any` | A Claude Code session | Une session Claude Code |
+| `kb.session.branch` | Branch {branch} | Branche {branch} |
+| `kb.also_open.memory` | Claude Code is working with this memory on {topic} | Claude Code travaille avec cette mémoire sur {topic} |
+| `kb.also_open.document` | Claude Code is working with this document on {topic} | Claude Code travaille avec ce document sur {topic} |
+| `kb.also_open.memory_any` | Claude Code is working with this memory | Claude Code travaille avec cette mémoire |
+| `kb.also_open.document_any` | Claude Code is working with this document | Claude Code travaille avec ce document |
+| `kb.also_open.read` | Last read {when} | Dernière lecture {when} |
+| `kb.also_open.wrote` | Last changed {when} | Dernière modification {when} |
+| `kb.save_merged` | Saved. Claude Code's changes to other sections are kept. | Enregistré. Les modifications de Claude Code dans les autres sections sont conservées. |
+| `kb.scan_found` | Found {n} possible duplicate. · Found {n} possible duplicates. | {n} doublon possible trouvé. · {n} doublons possibles trouvés. |
+| `kb.scan_show` | Show | Afficher |
+| `kb.scan_none` | No possible duplicates found. | Aucun doublon possible trouvé. |
 | `questions.new` | New question | Nouvelle question |
 | `questions.closed` | {n} closed | {n} close · {n} closes |
 | `questions.more_epic` | {n} more open in the topics of this epic | {n} autre en suspens dans les sujets de cet epic · {n} autres en suspens dans les sujets de cet epic |
@@ -423,6 +485,8 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `contact.move.more` | +{n} more | +{n} autre · +{n} autres |
 | `contact.lifted` | {name} is now a contact of all projects, so {record} still sees them. | Contact étendu à tous les projets pour rester visible depuis {record} : {name}. |
 | `contact.lifted.project` | {name} is now a contact of project {project}, so {record} still sees them. | Contact étendu au projet {project} pour rester visible depuis {record} : {name}. |
+| `contact.lift_kept` | {name} stays a contact of all projects. | Le contact reste dans tous les projets : {name}. |
+| `contact.lift_kept.project` | {name} stays a contact of project {project}. | Le contact reste au niveau du projet {project} : {name}. |
 | `contacts.title` | Contacts | Contacts |
 | `contacts.count` | {n} contact · {n} contacts | {n} contact · {n} contacts |
 | `contacts.filter.project` | This project | Ce projet |
@@ -477,6 +541,17 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `history.from_file.memory` | Created from file | Créée depuis un fichier |
 | `history.created.document` | Created | Créé |
 | `history.created.memory` | Created | Créée |
+| `history.verified.document` | Marked as still true | Marqué comme toujours valable |
+| `history.verified.memory` | Marked as still true | Marquée comme toujours valable |
+| `history.superseded.document` | Superseded by {id} | Remplacé par {id} |
+| `history.superseded.memory` | Superseded by {id} | Remplacée par {id} |
+| `history.retired.document` | Retired | Rendu obsolète |
+| `history.retired.memory` | Retired | Rendue obsolète |
+| `history.retired_reason.document` | Retired: {reason} | Rendu obsolète : {reason} |
+| `history.retired_reason.memory` | Retired: {reason} | Rendue obsolète : {reason} |
+| `history.made_live.document` | Made live again | Rétabli |
+| `history.made_live.memory` | Made live again | Rétablie |
+| `history.merged` | Merged {id} into this | Fusion de {id} |
 | `folders.title` | Working folders | Dossiers de travail |
 | `folders.from_epic` | from epic {name} | de l'epic {name} |
 | `folders.from_project` | from project {name} | du projet {name} |
@@ -489,7 +564,10 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `folders.n_not_found` | {n} not found | {n} introuvable · {n} introuvables |
 | `folders.also_topic` | Also attached to topic {name}. | Également rattaché au sujet {name}. |
 | `folders.also_epic` | Also attached to epic {name}. | Également rattaché à l'epic {name}. |
-| `folders.also_more` | Also attached to topics {a}, {b} and {n} more. | Également rattaché aux sujets {a}, {b} et {n} autre. · Également rattaché aux sujets {a}, {b} et {n} autres. |
+| `folders.also_two` | Also attached to {a} and {b}. | Également rattaché à {a} et à {b}. |
+| `folders.also_more` | Also attached to {a}, {b} and {n} more. | Également rattaché à {a}, à {b} et à {n} autre. · Également rattaché à {a}, à {b} et à {n} autres. |
+| `folders.also_name.topic` | topic {name} | sujet {name} |
+| `folders.also_name.epic` | epic {name} | epic {name} |
 | `folders.also.tip` | A session started in this folder outside Acta opens on {level} and is told about both. | Une session lancée dans ce dossier hors d'Acta s'ouvre sur : {level}, et est informée des deux. |
 | `folders.show.w` | Show in Explorer (W) | Afficher dans l'Explorateur |
 | `folders.show.m` | Reveal in Finder (M) | Afficher dans le Finder |
@@ -696,7 +774,8 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `cmd.show_done_week` | Show topics done in the last 7 days | Afficher les sujets terminés ces 7 derniers jours |
 | `cmd.show_decided_week` | Show topics with a decision in the last 7 days | Afficher les sujets avec une décision ces 7 derniers jours |
 | `cmd.show_created_week` | Show topics created in the last 7 days | Afficher les sujets créés ces 7 derniers jours |
-| `cmd.show_stale_memories` | Show memories not updated for 90 days | Afficher les mémoires non mises à jour depuis 90 jours |
+| `cmd.show_to_check` | Show knowledge to check | Afficher les connaissances à vérifier |
+| `cmd.show_inactive` | Show superseded and retired | Afficher les éléments remplacés et obsolètes |
 | `cmd.show_questions_late` | Show questions past their answer date | Afficher les questions dont la date de réponse est passée |
 | `cmd.overview_more` | Overview: Show more | Vue d'ensemble : afficher plus |
 | `cmd.overview_less` | Overview: Show less | Vue d'ensemble : afficher moins |
@@ -780,6 +859,13 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `cmd.kb_from_file` | New document from file... | Nouveau document depuis un fichier... |
 | `cmd.kb_to_memory` | Change kind to memory | Convertir en mémoire |
 | `cmd.kb_to_document` | Change kind to document | Convertir en document |
+| `cmd.kb_verify` | Mark as still true | Marquer comme toujours valable |
+| `cmd.kb_retire` | Mark as no longer true | Marquer comme obsolète |
+| `cmd.kb_make_live` | Make live again | Rétablir |
+| `cmd.kb_merge` | Merge into... | Fusionner dans... |
+| `cmd.kb_keep_both` | Keep both {a} and {b} | Garder les deux : {a} et {b} |
+| `cmd.kb_replace` | Replace {id} with this | Remplacer {id} par celle-ci |
+| `cmd.kb_find_duplicates` | Find duplicate memories | Trouver les mémoires en double |
 | `cmd.go_heading` | Go to heading... | Aller au titre... |
 | `cmd.save_file` | Save as file... | Enregistrer comme fichier... |
 | `cmd.attach` | Attach files... | Joindre des fichiers... |
@@ -1299,7 +1385,7 @@ From the clarity review of 2026-11-22 ([reviews/2026-11-22-clarity.md](reviews/2
 | `prop.add_report_to` | Report to | À rapporter à |
 | `meta.record` | {id} · Updated {when} by {author} | {id} · Modifié {when} par {author} |
 
-`{level}` in `folders.also.tip` is a `level.*` string ("Epic Terminal", « Epic Terminal »), which is why the French follows a colon. `prop.add_due` and `prop.add_report_to` label the hover-revealed add chips of an unset optional property (components-records.md 5, Properties block). `meta.record` is the one meta line under the properties block that replaces the Id and Updated rows; `{id}` is in `type.code`. `settings.setup.details` (the former text of `settings.setup.hint`) is the body behind "What setup changes", followed by `settings.plugin.hint`. The Settings rows Snapshots, Trash and Keyboard shortcuts take `settings.restore`, `common.open` and `common.open` as their buttons, so a label is never repeated on its own button.
+`{a}` and `{b}` in `folders.also_two` and `folders.also_more` are `folders.also_name.*` strings (each name carries its level word, "topic Scrollback"); `folders.also_two` is for exactly two other owners, `folders.also_more` for three or more (`{n}` is at least 1, plural on `{n}`); one other owner keeps `folders.also_topic` / `folders.also_epic` (review of `gpui-engineer/gaps`, 2026-11-22). `{level}` in `folders.also.tip` is a `level.*` string ("Epic Terminal", « Epic Terminal »), which is why the French follows a colon. `prop.add_due` and `prop.add_report_to` label the hover-revealed add chips of an unset optional property (components-records.md 5, Properties block). `meta.record` is the one meta line under the properties block that replaces the Id and Updated rows; `{id}` is in `type.code`. `settings.setup.details` (the former text of `settings.setup.hint`) is the body behind "What setup changes", followed by `settings.plugin.hint`. The Settings rows Snapshots, Trash and Keyboard shortcuts take `settings.restore`, `common.open` and `common.open` as their buttons, so a label is never repeated on its own button.
 
 ### 10.4.11 Keys of contacts and the profile
 
@@ -1309,102 +1395,15 @@ New with contacts (2026-11-22; components-contacts.md 5, data.md 11 requests 22 
 
 In French, *contact* is masculine ("ajouté", "supprimé", "fusionné"); a contact's name is user text and in French always follows a colon (10.3), so sentences put it last. `{level}` is `contact.level.all` or a `level.project` / `level.epic` string; `{record}` is a record title as written; `{places}` is a list of `contact.move.place`, joined by ", " as 10.3 licenses, at most three, then `contact.move.more`.
 
-`contact.lifted.project` replaces `contact.lifted` when the contact is lifted to a project rather than to all projects. `contact.meta_updated` replaces `contact.meta` once the contact changed after it was added. The `{field}` of `contact.move.place` is `prop.report_to` or `question.field.asked`. Agent-facing text (`ok C-12 Paul (P-1)`, `refused: no contact "Mari" here`, `User: Alexandre, Product designer`) is protocol, English only, and not in this catalogue (10).
+`contact.lifted.project` replaces `contact.lifted` when the contact is lifted to a project rather than to all projects. `contact.lift_kept` (and `.project`) is the toast when a tree drag that lifted a contact is undone: the topic goes back, the contact stays at its wider level (review of `gpui-engineer/gaps`, 2026-11-22). `contact.meta_updated` replaces `contact.meta` once the contact changed after it was added. The `{field}` of `contact.move.place` is `prop.report_to` or `question.field.asked`. Agent-facing text (`ok C-12 Paul (P-1)`, `refused: no contact "Mari" here`, `User: Alexandre, Product designer`) is protocol, English only, and not in this catalogue (10).
 
 ### 10.4.12 Keys of memory quality (ADR 0015)
 
-New with memory quality (2026-11-22; components-knowledge.md 5, Memory quality; components-records.md 5, Overview; screens.md 8.31 to 8.33). Pending: to be moved into 10.4 and `catalogue.rs` when the UI is implemented (PLAN.md, Memory quality, phase 5): `overview.to_check` in the place of `overview.memories`, `filter.to_check` and `filter.inactive` in the place of `filter.stale_memories`, `cmd.show_to_check` and `cmd.show_inactive` in the place of `cmd.show_stale_memories`, the other `cmd.kb_*` keys after `cmd.kb_to_document`, `history.*` after `history.created.memory`, the `kb.*` keys after `kb.no_results`.
+New with memory quality (2026-11-22; components-knowledge.md 5, Memory quality; components-records.md 5, Overview; screens.md 8.31 to 8.33). Moved into 10.4 and `catalogue.rs` when the UI was implemented (PLAN.md, Memory quality, phase 5; branch `gpui-engineer/memory-quality-ui`): `overview.to_check` in the place of `overview.memories`, `filter.to_check` and `filter.inactive` in the place of `filter.stale_memories`, `cmd.show_to_check` and `cmd.show_inactive` in the place of `cmd.show_stale_memories`, the other `cmd.kb_*` keys after `cmd.kb_to_document`, `history.*` after `history.created.memory`, the `kb.*` keys after `kb.no_results`.
 
-**Removed** from 10.4 when they move: `overview.memories`, `filter.stale_memories`, `cmd.show_stale_memories` (the 90-day count became "to check", which counts every reason the store computes and reads the verified date, not the last update).
+**Removed** from 10.4 when they moved: `overview.memories`, `filter.stale_memories`, `cmd.show_stale_memories` (the 90-day count became "to check", which counts every reason the store computes and reads the verified date, not the last update).
 
 **Reused**, not duplicated: Keep both is `contact.keep_both`; Move to epic / project in the notice are `kb.move_epic` and `kb.move_project`; Copied is `common.copied`; the stale-save notice is `conflict.notice`, `conflict.theirs`, `conflict.mine`; "Written by" is `kb.written.*`.
-
-| Key | English | French |
-|---|---|---|
-| `overview.to_check` | {n} memory to check · {n} memories to check | {n} mémoire à vérifier · {n} mémoires à vérifier |
-| `filter.to_check` | To check | À vérifier |
-| `filter.inactive` | Superseded and retired | Remplacés et obsolètes |
-| `kb.inactive_row` | {n} superseded or retired | {n} élément remplacé ou obsolète · {n} éléments remplacés ou obsolètes |
-| `kb.to_check_empty` | Nothing to check. | Rien à vérifier. |
-| `kb.inactive_empty` | Nothing is superseded or retired. | Aucun élément remplacé ou obsolète. |
-| `kb.reason.conflict` | May contradict {id} | Contredit peut-être {id} |
-| `kb.reason.duplicate` | Possible duplicate of {id} | Doublon possible de {id} |
-| `kb.reason.file_gone` | {file} was deleted or moved | {file} a été supprimé ou déplacé |
-| `kb.reason.file_gone_more` | {file} and {n} more file were deleted or moved · {file} and {n} more files were deleted or moved | {file} et {n} autre fichier ont été supprimés ou déplacés · {file} et {n} autres fichiers ont été supprimés ou déplacés |
-| `kb.reason.file_changed` | {file} changed since it was checked | {file} a changé depuis la dernière vérification |
-| `kb.reason.file_changed_more` | {file} and {n} more file changed since they were checked · {file} and {n} more files changed since they were checked | {file} et {n} autre fichier ont changé depuis la dernière vérification · {file} et {n} autres fichiers ont changé depuis la dernière vérification |
-| `kb.reason.branch_gone` | Branch {branch} no longer exists | La branche {branch} n'existe plus |
-| `kb.reason.branch_merged` | Branch {branch} was merged | La branche {branch} a été fusionnée |
-| `kb.reason.folder_removed` | Its folder was removed from Acta | Son dossier a été retiré d'Acta |
-| `kb.reason.topic_done` | Its topic is done | Son sujet est terminé |
-| `kb.reason.topic_dropped` | Its topic was dropped | Son sujet a été abandonné |
-| `kb.reason.old` | Not checked for {days} days | Non vérifiée depuis {days} jours |
-| `kb.verify` | Mark as still true | Marquer comme toujours valable |
-| `kb.retire` | Mark as no longer true | Marquer comme obsolète |
-| `kb.retired_toast.document` | Marked as no longer true. | Marqué comme obsolète. |
-| `kb.retired_toast.memory` | Marked as no longer true. | Marquée comme obsolète. |
-| `kb.make_live` | Make live again | Rétablir |
-| `kb.notice.superseded.document` | Superseded by {title} on {date}. | Remplacé le {date} par {title}. |
-| `kb.notice.superseded.memory` | Superseded by {title} on {date}. | Remplacée le {date} par {title}. |
-| `kb.notice.retired.document` | Retired by {author} on {date}. | Rendu obsolète le {date} par {author}. |
-| `kb.notice.retired.memory` | Retired by {author} on {date}. | Rendue obsolète le {date} par {author}. |
-| `kb.notice.conflict` | May contradict {id}. | Contredit peut-être {id}. |
-| `kb.notice.duplicate` | Possible duplicate of {id}. | Doublon possible de {id}. |
-| `kb.this_replaces` | This replaces it | Celle-ci la remplace |
-| `kb.replaced_toast` | {id} is now superseded by this. | {id} est désormais remplacée par celle-ci. |
-| `kb.merge_into_id` | Merge into {id} | Fusionner dans {id} |
-| `kb.merge_here` | Merge {id} into this | Fusionner {id} dans celle-ci |
-| `kb.merge_into` | Merge into... | Fusionner dans... |
-| `kb.merged` | Merged into {id}. | Fusionnée dans {id}. |
-| `kb.prop.branch` | Branch | Branche |
-| `kb.prop.sources` | Sources | Sources |
-| `kb.branch.merged` | merged | fusionnée |
-| `kb.branch.gone` | no longer exists | n'existe plus |
-| `kb.branch.tip` | True only on this branch, in {folder}. | Valable seulement sur cette branche, dans {folder}. |
-| `kb.source.entry` | {topic}, entry of {date} | {topic}, entrée du {date} |
-| `kb.source.missing` | A record not in this database | Un élément absent de cette base |
-| `kb.source.commit` | Commit {sha} | Commit {sha} |
-| `kb.source.copy_commit` | Copy commit id | Copier l'identifiant du commit |
-| `kb.source.copy_path` | {folder} · Copy path | {folder} · Copier le chemin |
-| `kb.source.changed` | changed since checked | modifié depuis la vérification |
-| `kb.source.gone` | deleted or moved | supprimé ou déplacé |
-| `kb.prov.from` | From topic {id} | Depuis le sujet {id} |
-| `kb.prov.branch` | On branch {branch} | Sur la branche {branch} |
-| `kb.prov.checked.document` | Checked {when} by {author} | Vérifié {when} par {author} |
-| `kb.prov.checked.memory` | Checked {when} by {author} | Vérifiée {when} par {author} |
-| `kb.session.on` | A Claude Code session on {topic} | Une session Claude Code sur {topic} |
-| `kb.session.any` | A Claude Code session | Une session Claude Code |
-| `kb.session.branch` | Branch {branch} | Branche {branch} |
-| `kb.also_open.memory` | Claude Code is working with this memory on {topic} | Claude Code travaille avec cette mémoire sur {topic} |
-| `kb.also_open.document` | Claude Code is working with this document on {topic} | Claude Code travaille avec ce document sur {topic} |
-| `kb.also_open.memory_any` | Claude Code is working with this memory | Claude Code travaille avec cette mémoire |
-| `kb.also_open.document_any` | Claude Code is working with this document | Claude Code travaille avec ce document |
-| `kb.also_open.read` | Last read {when} | Dernière lecture {when} |
-| `kb.also_open.wrote` | Last changed {when} | Dernière modification {when} |
-| `kb.save_merged` | Saved. Claude Code's changes to other sections are kept. | Enregistré. Les modifications de Claude Code dans les autres sections sont conservées. |
-| `kb.scan_found` | Found {n} possible duplicate. · Found {n} possible duplicates. | {n} doublon possible trouvé. · {n} doublons possibles trouvés. |
-| `kb.scan_show` | Show | Afficher |
-| `kb.scan_none` | No possible duplicates found. | Aucun doublon possible trouvé. |
-| `history.verified.document` | Marked as still true | Marqué comme toujours valable |
-| `history.verified.memory` | Marked as still true | Marquée comme toujours valable |
-| `history.superseded.document` | Superseded by {id} | Remplacé par {id} |
-| `history.superseded.memory` | Superseded by {id} | Remplacée par {id} |
-| `history.retired.document` | Retired | Rendu obsolète |
-| `history.retired.memory` | Retired | Rendue obsolète |
-| `history.retired_reason.document` | Retired: {reason} | Rendu obsolète : {reason} |
-| `history.retired_reason.memory` | Retired: {reason} | Rendue obsolète : {reason} |
-| `history.made_live.document` | Made live again | Rétabli |
-| `history.made_live.memory` | Made live again | Rétablie |
-| `history.merged` | Merged {id} into this | Fusion de {id} |
-| `cmd.show_to_check` | Show knowledge to check | Afficher les connaissances à vérifier |
-| `cmd.show_inactive` | Show superseded and retired | Afficher les éléments remplacés et obsolètes |
-| `cmd.kb_verify` | Mark as still true | Marquer comme toujours valable |
-| `cmd.kb_retire` | Mark as no longer true | Marquer comme obsolète |
-| `cmd.kb_make_live` | Make live again | Rétablir |
-| `cmd.kb_merge` | Merge into... | Fusionner dans... |
-| `cmd.kb_keep_both` | Keep both {a} and {b} | Garder les deux : {a} et {b} |
-| `cmd.kb_replace` | Replace {id} with this | Remplacer {id} par celle-ci |
-| `cmd.kb_find_duplicates` | Find duplicate memories | Trouver les mémoires en double |
 
 Notes. *Mémoire* is feminine and *document* masculine, hence the `.document` / `.memory` pairs wherever a participle agrees; conflicts, duplicates and merges concern memories only, so their strings are written in the feminine ("Celle-ci la remplace", "Fusionnée dans"). *Remplacés et obsolètes* and *élément* agree with a mixed set of documents and memories (masculine plural, as `import.safe` already uses *éléments*). "Retired" is the English state word and "Mark as no longer true" the act that produces it; French uses *obsolète* for both, since a literal "retirée" collides with *Retirer* (remove a folder). "Still true" is *toujours valable* rather than *vraie* so that one form fits both kinds. `{id}` is a knowledge id (`K-4`) in `type.code` as the meta line shows it, never translated; `{title}` and `{reason}` are what Claude Code or the human wrote, as written; `{file}` is a file name (the last path segment) and `{branch}` a branch as git has it, both in `type.code`; `{folder}` a working folder's name; `{topic}` a topic id (`T-12`) with its title as the tooltip; `{date}` the absolute date and `{when}` the long form of 10.2; `{days}` is always 90 or more, so the singular form is not needed. The reason lines have no final full stop (they are tooltip and notice lines, one per reason); the notice messages that are sentences do. Agent-facing text (`?old 140d`, `?dup K-4`, `ok K-4 verified (rev 3)`, `K-9 superseded by K-21 on 11-20`) is protocol, English only, and not in this catalogue (10).
 
@@ -1508,3 +1507,168 @@ From the user's decisions of 2026-11-22 (layout.md 4.5.1, data.md 11 request 27)
 | `chat.clear_all_body` | This deletes the cookies and site data of every chat from this computer. Your conversations stay in your Claude account. | Cela supprime de cet ordinateur les cookies et données de site de tous les chats. Vos conversations restent dans votre compte Claude. |
 
 `{level_lower}` is the level word in lower case ("topic", « sujet »); the French form picks "cet" before "epic" (« cet epic »). The commands "Start Claude Code here", "New chat here" and "New browser here" use the `tool.*` labels above as their palette text.
+
+### 10.4.20 Keys of files and commits
+
+New with the Files and Commits views and the file viewer (2026-11-22; components-repo.md 5, wireframes 8.40 to 8.44). Numbered 10.4.20 to leave room for the sections other branches add meanwhile. Pending: to be moved into 10.4 and `catalogue.rs` when the UI is built (PLAN.md, Files and commits): `view.files` and `view.commits` after `view.sessions`, `cmd.toggle_files` and `cmd.toggle_commits` after `cmd.toggle_chat`, `folders.browse_files` and `folders.show_commits` after `folders.copy_path`, the other `cmd.*` keys after `cmd.folder_branch`, the `files.*`, `viewer.*`, `diff.*`, `commits.*` and `mention.*` families together after the `folders.*` keys.
+
+**Reused**, not duplicated: Open `common.open`; Retry `common.retry`; Try again `common.try_again`; Copied `common.copied`; Copy path `folders.copy_path`; Show in Explorer / Reveal in Finder / Show in file manager `folders.show.*`; Set working folder... `folders.set`; Locate... `folders.locate`; Active `folders.active`; the chooser's groups `folders.group.*`; Show working folders `cmd.folders_show`; Branches / Remote branches `folders.git.local`, `folders.git.remote`; no git `folders.git.err.no_git`; Open settings `cmd.settings`; Fit / Actual size `attach.fit`, `attach.actual`; Previous file / Next file `attach.prev`, `attach.next`; the find count "3 of 12" `attach.position`. In the palette, "Show ignored files", "Show changed files only", "Show changes", "Show file history", "Mention in Claude Code", "Copy relative path", "Open in default app" and "Reveal in Files" are their `files.*` keys, "Previous change" / "Next change" `diff.prev_change` / `diff.next_change`, and the Show, Hide and Move commands of the two views come from the `{view}` keys of 10.4.1.
+
+The git letters M, A, U, D, R, C, ref names, hashes, paths, file names and git's own messages (`{message}`) are never translated. *Commit* stays in French as git's word, as in 10.4.3 (*commiter*, *commité*), and so does *hash*. *Fichier* is masculine, *modification* feminine. `{size}`, `{before}` and `{after}` use the size format of components-attachments.md 5; `{seconds}` is a whole number and the French takes U+00A0 before "s"; the French "100 000" and "5 000" take U+202F (10.2). `viewer.too_large` puts the size after a colon in French, so the sentence never starts with a number. Counts take `tnum`.
+
+| Key | English | French |
+|---|---|---|
+| `view.files` | Files | Fichiers |
+| `view.commits` | Commits | Commits |
+| `cmd.toggle_files` | Toggle files | Afficher ou masquer les fichiers |
+| `cmd.toggle_commits` | Toggle commits | Afficher ou masquer les commits |
+| `files.of.topic` | Folders of topic {name} | Dossiers du sujet {name} |
+| `files.of.epic` | Folders of epic {name} | Dossiers de l'epic {name} |
+| `files.of.project` | Folders of project {name} | Dossiers du projet {name} |
+| `files.no_page` | Open a project, epic or topic to see its files. | Ouvrez un projet, un epic ou un sujet pour voir ses fichiers. |
+| `commits.no_page` | Open a project, epic or topic to see its commits. | Ouvrez un projet, un epic ou un sujet pour voir ses commits. |
+| `files.no_folder` | No working folder here. | Aucun dossier de travail ici. |
+| `files.not_found` | {folder} was not found on this computer. | {folder} est introuvable sur cet ordinateur. |
+| `files.status.modified` | Modified | Modifié |
+| `files.status.added` | Added | Ajouté |
+| `files.status.untracked` | Untracked | Non suivi |
+| `files.status.deleted` | Deleted | Supprimé |
+| `files.status.renamed` | Renamed from {path} | Renommé depuis {path} |
+| `files.status.conflict` | Conflict | Conflit |
+| `files.show_ignored` | Show ignored files | Afficher les fichiers ignorés |
+| `files.changed_only` | Show changed files only | Afficher seulement les fichiers modifiés |
+| `files.no_changes` | No changes in {folder}. | Aucune modification dans {folder}. |
+| `files.loading` | Loading... | Chargement... |
+| `files.empty_folder` | Empty | Vide |
+| `files.read_failed` | Could not read this folder. | Impossible de lire ce dossier. |
+| `files.refresh` | Refresh | Actualiser |
+| `files.collapse_all` | Collapse all | Tout replier |
+| `files.filter_placeholder` | Filter by name | Filtrer par nom |
+| `files.matches_more` | {shown} of {n} matches. Keep typing to narrow. | {shown} résultats sur {n}. Continuez à taper pour affiner. |
+| `files.no_match` | No file matches “{query}”. | Aucun fichier ne correspond à « {query} ». |
+| `files.search_capped` | Searched the first 100,000 files. | Recherche limitée aux 100 000 premiers fichiers. |
+| `files.open_default` | Open in default app | Ouvrir avec l'application par défaut |
+| `files.no_run` | Acta does not run programs. | Acta n'exécute pas de programmes. |
+| `files.copy_relative` | Copy relative path | Copier le chemin relatif |
+| `files.mention` | Mention in Claude Code | Mentionner dans Claude Code |
+| `files.show_changes` | Show changes | Afficher les modifications |
+| `files.history` | Show file history | Afficher l'historique du fichier |
+| `files.folder_history` | Show folder history | Afficher l'historique du dossier |
+| `files.reveal` | Reveal in Files | Afficher dans la vue Fichiers |
+| `folders.browse_files` | Browse files | Parcourir les fichiers |
+| `folders.show_commits` | Show commits | Afficher les commits |
+| `mention.timeout` | Claude Code was not ready in time. The mention is copied. | Claude Code n'était pas prêt à temps. La mention est copiée. |
+| `viewer.lines` | {n} line · {n} lines | {n} ligne · {n} lignes |
+| `viewer.binary` | This file is not text Acta can show. | Ce fichier n'est pas du texte qu'Acta peut afficher. |
+| `viewer.not_utf8` | This file is not UTF-8 text. | Ce fichier n'est pas du texte UTF-8. |
+| `viewer.too_large` | {size} is too large to show here. | Trop volumineux pour être affiché ici : {size}. |
+| `viewer.truncated` | Showing the first 1 MB. | Seul le premier Mo est affiché. |
+| `viewer.gone` | This file was deleted or moved. | Ce fichier a été supprimé ou déplacé. |
+| `viewer.read_failed` | Could not read {name}. {reason} | Impossible de lire {name}. {reason} |
+| `viewer.rendered` | Rendered | Rendu |
+| `viewer.source` | Source | Source |
+| `viewer.find` | Find | Rechercher |
+| `viewer.find_none` | No results | Aucun résultat |
+| `diff.tab_uncommitted` | {name} · changes | {name} · modifications |
+| `diff.prev_change` | Previous change | Modification précédente |
+| `diff.next_change` | Next change | Modification suivante |
+| `diff.open_current` | Open current version | Ouvrir la version actuelle |
+| `diff.first_parent` | Compared with the first parent, {hash}. | Comparé au premier parent, {hash}. |
+| `diff.binary` | Binary file, {before} to {after}. | Fichier binaire, de {before} à {after}. |
+| `diff.binary_one` | Binary file, {size}. | Fichier binaire, {size}. |
+| `diff.binary_short` | binary | binaire |
+| `diff.before` | Before | Avant |
+| `diff.after` | After | Après |
+| `diff.no_content` | No changes in content. | Aucune modification du contenu. |
+| `diff.truncated` | Showing the first 5,000 lines of this diff. | Seules les 5 000 premières lignes de ce diff sont affichées. |
+| `commits.all_branches` | All branches | Toutes les branches |
+| `commits.current_branch` | Current branch ({branch}) | Branche courante ({branch}) |
+| `commits.current_commit` | Current commit | Commit courant |
+| `commits.filter_placeholder` | Filter by message, author or hash | Filtrer par message, auteur ou hash |
+| `commits.path_tip` | Only commits that change {path} | Seulement les commits qui modifient {path} |
+| `commits.clear_path` | Clear file filter | Retirer le filtre de fichier |
+| `commits.uncommitted` | Uncommitted changes | Modifications non commitées |
+| `commits.with_upstream` | {branch} and {upstream} | {branch} et {upstream} |
+| `commits.merge` | Merge commit | Commit de fusion |
+| `commits.commit` | Commit | Commit |
+| `commits.committed_by` | Committed by {name} | Commité par {name} |
+| `commits.parents` | Parents | Parents |
+| `commits.files_changed` | {n} file changed · {n} files changed | {n} fichier modifié · {n} fichiers modifiés |
+| `commits.copy_hash` | Copy hash | Copier le hash |
+| `commits.copy_subject` | Copy subject | Copier le titre |
+| `commits.only_branch` | Show only this branch | Afficher seulement cette branche |
+| `commits.loading` | Loading commits... | Chargement des commits... |
+| `commits.more_failed` | Could not load more commits. | Impossible de charger plus de commits. |
+| `commits.capped` | Showing the first 100,000 commits. Filter by branch or file to see older ones. | Seuls les 100 000 premiers commits sont affichés. Filtrez par branche ou par fichier pour voir les plus anciens. |
+| `commits.no_match` | No commits match. | Aucun commit ne correspond. |
+| `commits.clear_filters` | Clear filters | Retirer les filtres |
+| `commits.not_repo` | {folder} is not a git repository. | {folder} n'est pas un dépôt git. |
+| `commits.empty` | No commits yet. | Aucun commit pour l'instant. |
+| `commits.timed_out` | Git took longer than {seconds} s to read the history. | Git a mis plus de {seconds} s à lire l'historique. |
+| `commits.failed` | Could not read the history. {message} | Impossible de lire l'historique. {message} |
+| `cmd.go_to_file` | Go to file... | Aller au fichier... |
+| `cmd.files_folder` | Show files of folder... | Afficher les fichiers du dossier... |
+| `cmd.commits_folder` | Show commits of folder... | Afficher les commits du dossier... |
+| `cmd.files_ignored_hide` | Hide ignored files | Masquer les fichiers ignorés |
+| `cmd.files_all` | Show all files | Afficher tous les fichiers |
+| `cmd.files_collapse` | Collapse all folders | Replier tous les dossiers |
+| `cmd.files_refresh` | Refresh files | Actualiser les fichiers |
+| `cmd.commits_branch` | Filter commits by branch... | Filtrer les commits par branche... |
+| `cmd.commits_all` | Show all branches | Afficher toutes les branches |
+| `cmd.commits_head` | Go to current commit | Aller au commit courant |
+| `cmd.commits_copy_hash` | Copy commit hash | Copier le hash du commit |
+| `cmd.viewer_find` | Find in file | Rechercher dans le fichier |
+| `cmd.viewer_source` | Show source | Afficher la source |
+| `cmd.viewer_rendered` | Show rendered | Afficher le rendu |
+| `cmd.diff_next_file` | Next changed file | Fichier modifié suivant |
+| `cmd.diff_prev_file` | Previous changed file | Fichier modifié précédent |
+
+### 10.4.21 Keys of Markdown rendering and the editor
+
+From the user's request of 2026-11-22 (components-editor.md 5). Pending until implemented; numbered high so that sections added meanwhile by other work keep their numbers. The heading and list commands reuse `slash.h1` to `slash.h3`, `slash.bullets`, `slash.numbers`, `slash.tasks` and `slash.quote` as their palette, bubble and context-menu labels; "Copied" is `common.copied`. `{mod}` is the `Ctrl` / `Cmd` key name of 6.1 (`KeyName::Mod`), `{host}` a host name, `{slug}` a heading anchor and `{item}` a task's text as written (at most 60 characters, then "…"), none of them translated. The alert words name GitHub's alert kinds and are translated like any label; what follows them is content and is not.
+
+| Key | English | French |
+|---|---|---|
+| `md.alert.note` | Note | Remarque |
+| `md.alert.tip` | Tip | Conseil |
+| `md.alert.important` | Important | Important |
+| `md.alert.warning` | Warning | Attention |
+| `md.alert.caution` | Caution | Prudence |
+| `md.copy_code` | Copy code | Copier le code |
+| `md.copy_plain` | Copy as plain text | Copier en texte brut |
+| `md.anchor_missing` | No heading “{slug}” on this page | Aucun titre « {slug} » sur cette page |
+| `md.open_link` | Open link | Ouvrir le lien |
+| `md.copy_link` | Copy link address | Copier l'adresse du lien |
+| `md.mod_click` | {mod}+click to open | {mod}+clic pour ouvrir |
+| `md.link_blocked` | Not opened: Acta opens only web and e-mail links. | Non ouvert : Acta n'ouvre que les liens web et e-mail. |
+| `md.link_mismatch` | This link goes to {host}, not to the address it shows. | Ce lien mène à {host}, pas à l'adresse qu'il affiche. |
+| `md.link_open_host` | Open {host} | Ouvrir {host} |
+| `md.image` | Image | Image |
+| `md.image_blocked` | Not shown: only files attached in Acta are displayed. | Non affichée : seuls les fichiers joints dans Acta sont affichés. |
+| `md.image_missing` | File {id} is not in this project. | Le fichier {id} n'est pas dans ce projet. |
+| `md.image_undecodable` | This file cannot be shown as an image. | Ce fichier ne peut pas être affiché comme image. |
+| `md.footnote_back` | Back to the text | Retour au texte |
+| `md.toggle_stale` | Not changed: Claude Code rewrote this list a moment ago. | Non modifié : Claude Code vient de réécrire cette liste. |
+| `md.link_placeholder` | Paste or type a link | Collez ou saisissez un lien |
+| `md.link_text` | Text | Texte |
+| `md.link_open` | Open | Ouvrir |
+| `md.link_remove` | Remove link | Retirer le lien |
+| `md.link_invalid` | Only web and e-mail links open from Acta. | Seuls les liens web et e-mail s'ouvrent depuis Acta. |
+| `md.paste_images_dropped` | Images in the pasted text were left out. Paste or drop them as files. | Les images du texte collé ont été laissées de côté. Collez-les ou déposez-les comme fichiers. |
+| `md.turn_into` | Turn into | Transformer en |
+| `md.cut` | Cut | Couper |
+| `md.copy` | Copy | Copier |
+| `md.paste` | Paste | Coller |
+| `slash.text` | Text | Texte |
+| `cmd.md_bold` | Bold | Gras |
+| `cmd.md_italic` | Italic | Italique |
+| `cmd.md_code` | Inline code | Code en ligne |
+| `cmd.md_strike` | Strikethrough | Barré |
+| `cmd.md_link` | Link... | Lien... |
+| `cmd.md_paste_plain` | Paste as plain text | Coller en texte brut |
+| `cmd.md_source_show` | Show Markdown source | Afficher la source Markdown |
+| `cmd.md_source_hide` | Show formatted text | Afficher le texte mis en forme |
+| `kb.rev_checked` | Checked “{item}” | « {item} » coché |
+| `kb.rev_unchecked` | Unchecked “{item}” | « {item} » décoché |
+
+The palette lists the `cmd.md_*` commands, the heading and list commands and Quote only while a Markdown editor has focus, each with its key from components-editor.md 5. In French the alert word Attention is the usual rendering of GitHub's "Warning" and Prudence of "Caution"; `md.image_blocked` agrees with *image* (feminine).

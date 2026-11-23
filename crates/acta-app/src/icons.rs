@@ -91,6 +91,7 @@ icons! {
     Mic => "mic",
     Play => "play",
     Bot => "bot",
+    Flag => "flag",
     Clock => "clock",
     ClockAlert => "clock-alert",
     FolderGit2 => "folder-git-2",
