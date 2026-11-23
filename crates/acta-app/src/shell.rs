@@ -32,6 +32,7 @@ use gpui_kit::{
 
 #[cfg(windows)]
 use crate::browser_dock::BrowserDock;
+#[cfg(windows)]
 use crate::browser_panel::BrowserEvent;
 use crate::capture::{Capture, CaptureEvent};
 #[cfg(windows)]
