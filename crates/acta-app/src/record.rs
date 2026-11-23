@@ -164,6 +164,9 @@ pub struct Loaded {
     pub loose: Vec<TopicSummary>,
     pub groups: Vec<(EpicId, String, Vec<TopicSummary>)>,
     pub kb: Section,
+    /// The store's flags of the section's entries (ADR 0015, 1); git's
+    /// arrive later.
+    pub kb_flags: Vec<(acta_core::model::KbId, Vec<acta_core::agent::kbq::Flag>)>,
     /// Epic and project pages: entries in the levels below.
     pub kb_below: i64,
     pub folders: Folders,
@@ -414,6 +417,13 @@ pub fn load(
 ) -> Result<Loaded> {
     let kb_scope = store.kb_scope(owner, &KbFilter::default(), KB_PAGE)?.items;
     let kb = kb_model::section(owner, kb_scope);
+    let kb_ids: Vec<acta_core::model::KbId> = kb
+        .own
+        .iter()
+        .chain(kb.inherited.iter().flat_map(|(_, e)| e.iter()))
+        .map(|e| e.id)
+        .collect();
+    let kb_flags = crate::kbq_ui::store_flags_of(store, &kb_ids, today)?;
     let folders = load_folders(store, owner)?;
     match owner {
         Owner::Topic(id) => {
@@ -473,6 +483,7 @@ pub fn load(
                 loose: Vec::new(),
                 groups: Vec::new(),
                 kb,
+                kb_flags: kb_flags.clone(),
                 kb_below: 0,
                 folders,
             })
@@ -518,6 +529,7 @@ pub fn load(
                 loose: Vec::new(),
                 groups: Vec::new(),
                 kb,
+                kb_flags: kb_flags.clone(),
                 kb_below: (below - own).max(0),
                 folders,
             })
@@ -560,6 +572,7 @@ pub fn load(
                     .map(|(e, t)| (e.id, e.title, t))
                     .collect(),
                 kb,
+                kb_flags: kb_flags.clone(),
                 kb_below: (below - own).max(0),
                 folders,
             })

@@ -39,6 +39,8 @@ mod icons;
 mod inbox_page;
 mod kb_model;
 mod kb_page;
+mod kbq_model;
+mod kbq_ui;
 mod layout;
 mod layout_frame;
 mod log;

@@ -47,6 +47,10 @@ mod folders;
 pub mod questions;
 
 /// What a page asks the window to do.
+/// A knowledge row drawn: its entry, revision, owner, kind and state (the
+/// palette's target).
+type KbRowId = (KbId, i64, Owner, KbKind, acta_core::model::KbState);
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum PageEvent {
     Open(Route),
@@ -69,9 +73,16 @@ pub enum PageEvent {
     /// "File with Claude Code" (screens.md 8.2): run the triage command in
     /// the project's terminal.
     Triage(acta_core::model::ProjectId),
-    /// The Overview's memory line: the knowledge page with the chip "Not
-    /// updated for 90 days".
-    StaleMemories(acta_core::model::ProjectId),
+    /// The knowledge page with a chip: the Overview's memory line ("To
+    /// check", Kind: Memories), or the palette.
+    KbChip(
+        acta_core::model::ProjectId,
+        crate::kb_model::Chip,
+        Option<KbKind>,
+    ),
+    /// A merge's survivor opens in its editor (components-knowledge.md 5,
+    /// Merge).
+    EditKb(KbId),
     /// The Overview's late answers: the Questions page of this scope with
     /// Overdue selected.
     LateAnswers(Owner),
@@ -129,7 +140,17 @@ pub struct RecordPage {
     table_filter: table::Filter,
     table_sort: Option<table::Sort>,
     kb_open: Option<KbId>,
+    /// The unfolded memory's notice and body, once loaded.
+    kb_open_q: Option<crate::kbq_ui::EntryQuality>,
     kb_inherited_open: bool,
+    /// Memory quality of the section's rows (ADR 0015): the store's flags
+    /// with the page, git's later; one focus handle and entry per row
+    /// drawn (`V`, the palette's target).
+    kb_flags: crate::kbq_model::FlagSet,
+    kb_row_focus: std::cell::RefCell<Vec<FocusHandle>>,
+    kb_row_ids: std::cell::RefCell<Vec<KbRowId>>,
+    _kb_git: Task<()>,
+    _kb_open: Task<()>,
     id_copied: bool,
     /// The pointer is over the properties block: its add chips show.
     props_hover: bool,
@@ -266,7 +287,13 @@ impl RecordPage {
             table_filter: table::Filter::Open,
             table_sort: None,
             kb_open: None,
+            kb_open_q: None,
             kb_inherited_open: false,
+            kb_flags: Default::default(),
+            kb_row_focus: Default::default(),
+            kb_row_ids: Default::default(),
+            _kb_git: Task::ready(()),
+            _kb_open: Task::ready(()),
             id_copied: false,
             props_hover: false,
             table_height: Default::default(),
@@ -334,8 +361,14 @@ impl RecordPage {
                         if let Some(old) = &page.data {
                             data.folders.missing = old.folders.missing.clone();
                         }
+                        let ids: Vec<KbId> = data.kb_flags.iter().map(|(id, _)| *id).collect();
+                        page.kb_flags.set_store(data.kb_flags.clone());
                         page.data = Some(data);
                         page.gone = false;
+                        page.read_kb_git(ids, cx);
+                        if let Some(id) = page.kb_open {
+                            page.load_kb_open(id, cx);
+                        }
                     }
                     // Deleted (here or by another process): stay readable
                     // with the notice, keep the last data.
@@ -573,7 +606,11 @@ impl RecordPage {
         };
         match filter {
             OverviewFilter::Inbox => cx.emit(PageEvent::Open(Route::Inbox(project))),
-            OverviewFilter::StaleMemories => cx.emit(PageEvent::StaleMemories(project)),
+            OverviewFilter::StaleMemories => cx.emit(PageEvent::KbChip(
+                project,
+                crate::kb_model::Chip::ToCheck,
+                Some(KbKind::Memory),
+            )),
             OverviewFilter::Overdue => {
                 self.chip = None;
                 self.table_filter = table::Filter::Overdue;
@@ -1760,6 +1797,72 @@ impl RecordPage {
             .into_any_element()
     }
 
+    /// Git's flags of the section's entries, read off the UI thread.
+    fn read_kb_git(&mut self, ids: Vec<KbId>, cx: &mut Context<Self>) {
+        let task = crate::kbq_ui::list_git(&self.ws, ids, cx);
+        self._kb_git = cx.spawn(async move |page, cx| {
+            let flags = task.await;
+            let _ = page.update(cx, |page, cx| {
+                page.kb_flags.set_git(flags);
+                cx.notify();
+            });
+        });
+    }
+
+    /// The unfolded memory's notice and body.
+    fn load_kb_open(&mut self, id: KbId, cx: &mut Context<Self>) {
+        let task = crate::kbq_ui::load_entry(&self.ws, id, cx);
+        self._kb_open = cx.spawn(async move |page, cx| {
+            if let Ok(q) = task.await {
+                let _ = page.update(cx, |page, cx| {
+                    if page.kb_open == Some(q.entry.id) {
+                        page.kb_open_q = Some(q);
+                    }
+                    cx.notify();
+                });
+            }
+        });
+    }
+
+    /// The focused knowledge row's entry, for the palette.
+    pub fn kb_context(&self, window: &Window) -> Option<crate::commands::FocusedKb> {
+        let i = self
+            .kb_row_focus
+            .borrow()
+            .iter()
+            .position(|h| h.is_focused(window))?;
+        let (id, rev, owner, kind, state) = *self.kb_row_ids.borrow().get(i)?;
+        let reasons = self.kb_flags.reasons(id);
+        Some(crate::commands::FocusedKb {
+            id,
+            rev,
+            owner,
+            memory: kind == KbKind::Memory,
+            live: state == acta_core::model::KbState::Live,
+            conflict: reasons.iter().find_map(|r| match r {
+                crate::kbq_model::Reason::Conflict(x) => Some(*x),
+                _ => None,
+            }),
+            duplicate: reasons.iter().find_map(|r| match r {
+                crate::kbq_model::Reason::Duplicate(x) => Some(*x),
+                _ => None,
+            }),
+        })
+    }
+
+    /// "Mark as still true" on a row: its mark goes at once.
+    pub fn verify_kb(&mut self, id: KbId, cx: &mut Context<Self>) {
+        let owner = self
+            .kb_row_ids
+            .borrow()
+            .iter()
+            .find(|r| r.0 == id)
+            .map(|r| r.2);
+        self.kb_flags.mark_verified(id);
+        crate::kbq_ui::verify(&self.ws, id, owner, cx);
+        cx.notify();
+    }
+
     fn render_kb_row(
         &self,
         entry: &KbSummary,
@@ -1772,58 +1875,67 @@ impl RecordPage {
         let kind = entry.kind;
         let open = self.kb_open == Some(id);
         let unread = self.ws.read(cx).is_unread(acta_core::model::Record::Kb(id));
-        let row = crate::kb_page::kb_row(entry, None, unread, index, locale, t).on_click(
-            cx.listener(move |page, _, _, cx| match kind {
+        let reasons = self.kb_flags.reasons(id);
+        let signal = crate::kb_page::Signal::of(unread, &reasons, locale);
+        let handle = {
+            let mut focus = self.kb_row_focus.borrow_mut();
+            while focus.len() <= index {
+                focus.push(cx.focus_handle());
+            }
+            focus[index].clone()
+        };
+        {
+            let mut ids = self.kb_row_ids.borrow_mut();
+            ids.truncate(index);
+            ids.push((id, entry.rev, entry.owner, kind, entry.state));
+        }
+        let row = crate::kb_page::kb_row(entry, None, signal, false, index, locale, t)
+            .track_focus(&handle)
+            .on_key_down(
+                cx.listener(move |page, event: &gpui_kit::KeyDownEvent, _, cx| {
+                    // `V`: Mark as still true (components-knowledge.md 5).
+                    if !event.keystroke.modifiers.modified() && event.keystroke.key == "v" {
+                        page.verify_kb(id, cx);
+                        cx.stop_propagation();
+                    }
+                }),
+            )
+            .on_click(cx.listener(move |page, _, _, cx| match kind {
                 KbKind::Document => cx.emit(PageEvent::Open(Route::Kb(id))),
                 KbKind::Memory => {
                     page.kb_open = if page.kb_open == Some(id) {
+                        page.kb_open_q = None;
                         None
                     } else {
                         // Unfolded is shown: the dot goes.
                         page.ws.update(cx, |ws, cx| {
                             ws.mark_seen(acta_core::model::Record::Kb(id), cx)
                         });
+                        page.load_kb_open(id, cx);
                         Some(id)
                     };
                     cx.notify();
                 }
-            }),
-        );
+            }));
         if !open {
             return row.into_any_element();
         }
+        let ws = self.ws.clone();
+        let unfolded = crate::kb_page::unfolded(
+            id,
+            index,
+            self.kb_open_q.as_ref(),
+            &reasons,
+            &ws,
+            locale,
+            t,
+            cx,
+        );
         div()
             .flex()
             .flex_col()
             .child(row)
-            .child(
-                div()
-                    .pl(px(32.))
-                    .pb(px(8.))
-                    .flex()
-                    .flex_col()
-                    .gap(px(4.))
-                    .child(
-                        type_scale::READING
-                            .el()
-                            .text_color(t.text_primary)
-                            .child(entry.summary.clone()),
-                    )
-                    .child(
-                        div().flex().flex_row().gap(px(4.)).ml(px(-12.)).child(
-                            ui::button(
-                                ("kb-open", index),
-                                text(locale, Key::CommonOpen),
-                                Variant::Ghost,
-                                false,
-                                t,
-                            )
-                            .on_click(cx.listener(
-                                move |_, _, _, cx| cx.emit(PageEvent::Open(Route::Kb(id))),
-                            )),
-                        ),
-                    ),
-            )
+            .child(unfolded)
             .into_any_element()
     }
 
@@ -3189,7 +3301,7 @@ impl RecordPage {
                             .text_color(t.text_primary)
                             .child(tr(
                                 locale,
-                                Key::OverviewMemories,
+                                Key::OverviewToCheck,
                                 &[("n", Arg::Count(o.stale_memories as u64))],
                             )),
                     );

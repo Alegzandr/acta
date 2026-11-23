@@ -46,14 +46,11 @@ pub struct KbSession {
     /// Entries a refusal named in this session (a later edit of one is a
     /// "fixed" outcome).
     pub warned: Vec<KbId>,
-    /// Blob ids at `HEAD` per worktree root: `(head, path -> blob)`.
-    trees: HashMap<PathBuf, (String, HashMap<String, Option<String>>)>,
+    /// Git reads for the flags, cached per folder and `HEAD`.
+    pub git: GitCache,
     /// Debug builds: `ACTA_TEST_BUMP_AFTER_READ` already applied (phase 6
     /// proof of the stale-revision reply).
     pub bumped: bool,
-    /// Whether a branch is merged into the default one, per root, branch
-    /// and the two commits.
-    merged: HashMap<(PathBuf, String, String, String), bool>,
 }
 
 /// Where the session works: the attached folder containing its directory
@@ -104,7 +101,9 @@ impl Flag {
         }
     }
 
-    fn rank(&self) -> u8 {
+    /// Most telling first: the order of the agent's markers and of the
+    /// app's reasons (components-knowledge.md 5, Memory quality).
+    pub fn rank(&self) -> u8 {
         match self {
             Flag::Store(KbFlag::Conflict(_)) => 0,
             Flag::FileGone(_) | Flag::BranchGone(_) => 1,
@@ -167,6 +166,228 @@ fn clean_path(p: &str) -> Option<String> {
     let p = p.trim_start_matches("./").to_owned();
     (!p.is_empty() && !p.starts_with('/') && !p.contains(':') && !p.split('/').any(|s| s == ".."))
         .then_some(p)
+}
+
+/// A file source, as the git flags read it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GitFile {
+    pub link: i64,
+    /// The folder's path as stored.
+    pub dir: PathBuf,
+    /// Relative to the repository root.
+    pub path: String,
+    /// The blob id recorded when the entry was last verified.
+    pub blob: Option<String>,
+}
+
+/// What the git flags of one entry are read from, collected from the
+/// store first so that git runs without holding it (the app reads them
+/// off its storage thread).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GitFacts {
+    pub id: KbId,
+    pub verified_at: i64,
+    /// A branch memory: its branch and its folder's path.
+    pub branch: Option<(String, PathBuf)>,
+    pub files: Vec<GitFile>,
+}
+
+/// The git facts of an entry: `None` when it has neither a branch nor a
+/// file source (no git to read), or is not found.
+pub fn git_facts(store: &crate::store::Store, id: KbId) -> Option<GitFacts> {
+    let e = store.kb_entry(id).ok()?;
+    let branch = match (&e.context_branch, e.context_folder) {
+        (Some(b), Some(folder)) => store
+            .folder(folder)
+            .ok()
+            .map(|f| (b.clone(), PathBuf::from(f.path))),
+        _ => None,
+    };
+    let mut files = Vec::new();
+    for l in store.kb_links(id).ok()? {
+        if let (KbLinkKind::File, KbLinkTarget::Text(path), Some(folder)) =
+            (l.kind, &l.target, l.folder)
+            && let Ok(f) = store.folder(folder)
+        {
+            files.push(GitFile {
+                link: l.id,
+                dir: PathBuf::from(f.path),
+                path: path.clone(),
+                blob: l.blob.clone(),
+            });
+        }
+    }
+    (branch.is_some() || !files.is_empty()).then_some(GitFacts {
+        id,
+        verified_at: e.verified_at,
+        branch,
+        files,
+    })
+}
+
+/// Git reads for the flags, cached per worktree and `HEAD` (blob ids) and
+/// per branch and commits (merged or not). Read only; a slow or absent
+/// git means no git flags.
+#[derive(Clone, Debug, Default)]
+pub struct GitCache {
+    /// Blob ids at `HEAD` per worktree root: `(head, path -> blob)`.
+    trees: HashMap<PathBuf, (String, HashMap<String, Option<String>>)>,
+    /// Whether a branch is merged into the default one, per root, branch
+    /// and the two commits.
+    merged: HashMap<(PathBuf, String, String, String), bool>,
+}
+
+impl GitCache {
+    /// File and branch flags of one entry (ADR 0015, 1 and 4).
+    pub fn flags(&mut self, f: &GitFacts) -> Vec<Flag> {
+        let mut out = Vec::new();
+        // Branch: gone, or merged into the default branch.
+        if let Some((branch, dir)) = &f.branch
+            && let Some(info) = git::inspect(dir)
+        {
+            match git::branch_oid(&info.common_dir, branch) {
+                None => out.push(Flag::BranchGone(branch.clone())),
+                Some(oid) => {
+                    if let Some(def) = info.default_branch.as_deref()
+                        && def != branch
+                        && let Some(def_oid) = git::branch_oid(&info.common_dir, def)
+                        && self.is_merged(&info.root, branch, &oid, def, &def_oid)
+                    {
+                        out.push(Flag::BranchMerged(branch.clone()));
+                    }
+                }
+            }
+        }
+        // Files, by folder.
+        let mut dirs: Vec<&PathBuf> = Vec::new();
+        for file in &f.files {
+            if !dirs.contains(&&file.dir) {
+                dirs.push(&file.dir);
+            }
+        }
+        for dir in dirs {
+            let files: Vec<&GitFile> = f.files.iter().filter(|x| &x.dir == dir).collect();
+            match git::inspect(dir) {
+                Some(info) => {
+                    let paths: Vec<String> = files.iter().map(|x| x.path.clone()).collect();
+                    let Some(now) = self.blobs(&info.root, &paths) else {
+                        continue;
+                    };
+                    for file in files {
+                        match (now.get(&file.path).cloned().flatten(), &file.blob) {
+                            (Some(cur), Some(rec)) if &cur != rec => {
+                                out.push(Flag::FileChanged(file.path.clone()));
+                            }
+                            (None, _) if !info.root.join(&file.path).exists() => {
+                                out.push(Flag::FileGone(file.path.clone()));
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                None => {
+                    for file in files {
+                        match std::fs::metadata(dir.join(&file.path)) {
+                            Err(_) => out.push(Flag::FileGone(file.path.clone())),
+                            Ok(m) => {
+                                let modified = m
+                                    .modified()
+                                    .ok()
+                                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                                    .map_or(0, |d| d.as_millis() as i64);
+                                if modified > f.verified_at {
+                                    out.push(Flag::FileChanged(file.path.clone()));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// The blob ids of an entry's file sources at `HEAD` of their
+    /// folders, as a verify records them again (link id and blob). A
+    /// folder outside git, or a git that did not answer, records nothing.
+    pub fn verify_blobs(&mut self, f: &GitFacts) -> Vec<(i64, Option<String>)> {
+        let mut out = Vec::new();
+        for file in &f.files {
+            let Some(info) = git::inspect(&file.dir) else {
+                continue;
+            };
+            if let Some(now) = self.blobs(&info.root, std::slice::from_ref(&file.path)) {
+                out.push((file.link, now.get(&file.path).cloned().flatten()));
+            }
+        }
+        out
+    }
+
+    /// Blob ids at `HEAD` for `paths`, from the cache for this `HEAD` or
+    /// one `git ls-tree` for the ones it lacks.
+    pub fn blobs(
+        &mut self,
+        root: &Path,
+        paths: &[String],
+    ) -> Option<HashMap<String, Option<String>>> {
+        let head = git::head_oid(root)?;
+        let entry = self
+            .trees
+            .entry(root.to_path_buf())
+            .or_insert_with(|| (head.clone(), HashMap::new()));
+        if entry.0 != head {
+            *entry = (head, HashMap::new());
+        }
+        let missing: Vec<String> = paths
+            .iter()
+            .filter(|p| !entry.1.contains_key(*p))
+            .cloned()
+            .collect();
+        // One `git ls-tree` per batch, so a page of many file sources
+        // never makes a command line too long.
+        for batch in missing.chunks(LS_TREE_BATCH) {
+            let found = ls_tree(root, batch)?;
+            entry.1.extend(found);
+        }
+        Some(
+            paths
+                .iter()
+                .map(|p| (p.clone(), entry.1.get(p).cloned().flatten()))
+                .collect(),
+        )
+    }
+
+    fn is_merged(
+        &mut self,
+        root: &Path,
+        branch: &str,
+        oid: &str,
+        def: &str,
+        def_oid: &str,
+    ) -> bool {
+        let key = (
+            root.to_path_buf(),
+            branch.to_owned(),
+            oid.to_owned(),
+            def_oid.to_owned(),
+        );
+        if let Some(m) = self.merged.get(&key) {
+            return *m;
+        }
+        let mut cmd = crate::git_cmd::command(root);
+        cmd.args([
+            "merge-base",
+            "--is-ancestor",
+            &format!("refs/heads/{branch}"),
+            &format!("refs/heads/{def}"),
+        ]);
+        let merged = crate::process::output_within(&mut cmd, GIT_LIMIT)
+            .ok()
+            .flatten()
+            .is_some_and(|o| o.status.success());
+        self.merged.insert(key, merged);
+        merged
+    }
 }
 
 impl Agent<'_> {
@@ -327,87 +548,10 @@ Also: the script must run from the repository root.",
 
     /// File and branch flags of one entry (ADR 0015, 1 and 4).
     fn git_flags(&mut self, id: KbId) -> Vec<Flag> {
-        let Ok(e) = self.store.kb_entry(id) else {
-            return Vec::new();
-        };
-        let mut out = Vec::new();
-        // Branch: gone, or merged into the default branch.
-        if let (Some(branch), Some(folder)) = (&e.context_branch, e.context_folder)
-            && let Ok(f) = self.store.folder(folder)
-            && let Some(info) = git::inspect(Path::new(&f.path))
-        {
-            match git::branch_oid(&info.common_dir, branch) {
-                None => out.push(Flag::BranchGone(branch.clone())),
-                Some(oid) => {
-                    if let Some(def) = info.default_branch.as_deref()
-                        && def != branch
-                        && let Some(def_oid) = git::branch_oid(&info.common_dir, def)
-                        && self.is_merged(&info.root, branch, &oid, def, &def_oid)
-                    {
-                        out.push(Flag::BranchMerged(branch.clone()));
-                    }
-                }
-            }
+        match git_facts(self.store, id) {
+            Some(facts) => self.session.kb.git.flags(&facts),
+            None => Vec::new(),
         }
-        // Files.
-        let Ok(links) = self.store.kb_links(id) else {
-            return out;
-        };
-        let mut by_folder: HashMap<FolderId, Vec<(String, Option<String>)>> = HashMap::new();
-        for l in links {
-            if let (KbLinkKind::File, KbLinkTarget::Text(path), Some(folder)) =
-                (l.kind, &l.target, l.folder)
-            {
-                by_folder
-                    .entry(folder)
-                    .or_default()
-                    .push((path.clone(), l.blob.clone()));
-            }
-        }
-        for (folder, files) in by_folder {
-            let Ok(f) = self.store.folder(folder) else {
-                continue;
-            };
-            let dir = PathBuf::from(&f.path);
-            match git::inspect(&dir) {
-                Some(info) => {
-                    let paths: Vec<String> = files.iter().map(|(p, _)| p.clone()).collect();
-                    let Some(now) = self.blobs(&info.root, &paths) else {
-                        continue;
-                    };
-                    for (path, recorded) in files {
-                        match (now.get(&path).cloned().flatten(), recorded) {
-                            (Some(cur), Some(rec)) if cur != rec => {
-                                out.push(Flag::FileChanged(path));
-                            }
-                            (None, _) if !info.root.join(&path).exists() => {
-                                out.push(Flag::FileGone(path));
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                None => {
-                    for (path, _) in files {
-                        let p = dir.join(&path);
-                        match std::fs::metadata(&p) {
-                            Err(_) => out.push(Flag::FileGone(path)),
-                            Ok(m) => {
-                                let modified = m
-                                    .modified()
-                                    .ok()
-                                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                                    .map_or(0, |d| d.as_millis() as i64);
-                                if modified > e.verified_at {
-                                    out.push(Flag::FileChanged(path));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        out
     }
 
     /// Blob ids at `HEAD` for `paths`, from the cache for this `HEAD` or
@@ -417,63 +561,7 @@ Also: the script must run from the repository root.",
         root: &Path,
         paths: &[String],
     ) -> Option<HashMap<String, Option<String>>> {
-        let head = git::head_oid(root)?;
-        let cache = &mut self.session.kb.trees;
-        let entry = cache
-            .entry(root.to_path_buf())
-            .or_insert_with(|| (head.clone(), HashMap::new()));
-        if entry.0 != head {
-            *entry = (head, HashMap::new());
-        }
-        let missing: Vec<String> = paths
-            .iter()
-            .filter(|p| !entry.1.contains_key(*p))
-            .cloned()
-            .collect();
-        // One `git ls-tree` per batch, so a page of many file sources
-        // never makes a command line too long.
-        for batch in missing.chunks(LS_TREE_BATCH) {
-            let found = ls_tree(root, batch)?;
-            entry.1.extend(found);
-        }
-        Some(
-            paths
-                .iter()
-                .map(|p| (p.clone(), entry.1.get(p).cloned().flatten()))
-                .collect(),
-        )
-    }
-
-    fn is_merged(
-        &mut self,
-        root: &Path,
-        branch: &str,
-        oid: &str,
-        def: &str,
-        def_oid: &str,
-    ) -> bool {
-        let key = (
-            root.to_path_buf(),
-            branch.to_owned(),
-            oid.to_owned(),
-            def_oid.to_owned(),
-        );
-        if let Some(m) = self.session.kb.merged.get(&key) {
-            return *m;
-        }
-        let mut cmd = crate::git_cmd::command(root);
-        cmd.args([
-            "merge-base",
-            "--is-ancestor",
-            &format!("refs/heads/{branch}"),
-            &format!("refs/heads/{def}"),
-        ]);
-        let merged = crate::process::output_within(&mut cmd, GIT_LIMIT)
-            .ok()
-            .flatten()
-            .is_some_and(|o| o.status.success());
-        self.session.kb.merged.insert(key, merged);
-        merged
+        self.session.kb.git.blobs(root, paths)
     }
 
     /// `refs` (ADR 0015, 5): at most three comma-separated items: an Acta

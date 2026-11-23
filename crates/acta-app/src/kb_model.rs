@@ -95,6 +95,17 @@ pub fn excerpt_plain(snippet: &str) -> String {
         .collect()
 }
 
+/// The knowledge base page's one filter chip (components-knowledge.md 5,
+/// Memory quality), set from the Overview, the palette or the list's last
+/// row; never saved.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Chip {
+    /// Entries with a reason to check, ungrouped, first reason first.
+    ToCheck,
+    /// Superseded and retired entries, newest state change first.
+    Inactive,
+}
+
 /// The knowledge base page's filters (docs/design/components-knowledge.md 5).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Filters {
