@@ -295,6 +295,21 @@ impl Render for SessionsView {
 #[derive(Default)]
 pub struct TerminalTokens(pub Vec<InActa>);
 
+/// The page of every Acta terminal session by launch token, shared with
+/// the agent browser's pipe threads (a session reaches its own page's
+/// browsers, layout.md 4.5.1). Written by the terminal dock.
+#[derive(Clone, Default)]
+pub struct LaunchPages(
+    pub std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, Owner>>>,
+);
+
+impl gpui_kit::Global for LaunchPages {}
+
+/// The shared map, created on first use.
+pub fn launch_pages(cx: &mut App) -> LaunchPages {
+    cx.default_global::<LaunchPages>().clone()
+}
+
 /// A session in Acta's terminal: its launch token, its instance, and
 /// whether its page has several (the row then names it).
 #[derive(Clone, Debug)]

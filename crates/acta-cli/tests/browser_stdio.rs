@@ -275,6 +275,9 @@ mod windows {
             *self.opener.lock().unwrap() = Some(opener.into());
             Ok(1)
         }
+        fn page_of_launch(&self, _: &str) -> Option<String> {
+            None
+        }
         fn driver(&self, _: &str, _: u8, _: Option<&str>, _: bool) {}
         fn busy(&self, _: &str, _: u8, _: bool) {}
     }

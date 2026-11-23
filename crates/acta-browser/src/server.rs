@@ -45,6 +45,9 @@ pub trait Pages: Send + Sync {
     /// token names it after the session: "Browser for Claude 2"); `Err`
     /// is one line (the page's limit).
     fn open(&self, page: &str, opener: &str, launch: Option<&str>) -> Result<u8, String>;
+    /// The page of the Acta terminal session with this launch token, as
+    /// the app knows it; `None` when no terminal of the app has it.
+    fn page_of_launch(&self, launch: &str) -> Option<String>;
     fn driver(&self, page: &str, n: u8, session: Option<&str>, connected: bool);
     fn busy(&self, page: &str, n: u8, busy: bool);
 }
@@ -174,15 +177,29 @@ impl<P: Pages> Server<P> {
             .and_then(|l| l.session.clone())
     }
 
+    /// The page a session reaches: with a launch token, the page of the
+    /// Acta terminal that started it, whatever page the client names (a
+    /// client cannot reach another page by naming it); without one, the
+    /// page the client resolved from its folder. This scopes sessions; it
+    /// is not a boundary against a process of the same user running its
+    /// own client (ADR 0010, page-bound browsers).
+    fn page_of(&self, hello: &Hello) -> Option<String> {
+        match &hello.launch {
+            Some(token) => self.pages.page_of_launch(token),
+            None => hello.page.clone(),
+        }
+    }
+
     /// The browser a request goes to: the one it names, else the
     /// session's own, opened on first use. `Err` is the one-line reply.
     fn target(
         &self,
         hello: &Hello,
+        page: Option<String>,
         me: &str,
         named: Option<u8>,
     ) -> Result<(String, u8, Arc<P::Host>), String> {
-        let page = hello.page.clone().ok_or(NO_PAGE)?;
+        let page = page.ok_or(NO_PAGE)?;
         let list = self.pages.browsers(&page);
         let n = match named {
             Some(n) if list.iter().any(|b| b.n == n) => n,
@@ -216,6 +233,7 @@ impl<P: Pages> Server<P> {
         // The session's identity: its launch token when Acta started it,
         // else this connection.
         let me = hello.identity(id);
+        let page = self.page_of(&hello);
         let _held = Held { server: self, id };
         loop {
             let req: Result<Option<Request>, _> = conn.recv(LINE_MAX);
@@ -227,7 +245,7 @@ impl<P: Pages> Server<P> {
                 Err(_) => return Ok(()),
                 Ok(Some(req)) => match req.check() {
                     Err(why) => Reply::err(why),
-                    Ok(()) => match self.target(&hello, &me, req.browser()) {
+                    Ok(()) => match self.target(&hello, page.clone(), &me, req.browser()) {
                         Err(line) => Reply::err(line),
                         Ok((page, n, host)) => {
                             if !self.acquire(id, &page, n, &hello.session) {
@@ -269,6 +287,8 @@ mod tests {
         browsers: Mutex<HashMap<String, PageBrowsers>>,
         seen: Mutex<Vec<String>>,
         handoff_delay: Option<Duration>,
+        /// Launch tokens of the app's terminals, by page.
+        launches: Mutex<HashMap<String, String>>,
     }
 
     impl FakePages {
@@ -325,6 +345,14 @@ mod tests {
             ));
             Ok(n)
         }
+        fn page_of_launch(&self, launch: &str) -> Option<String> {
+            // The app's terminals: `tok-<page>` started from that page.
+            launch
+                .strip_prefix("tok-")
+                .and_then(|rest| rest.split_once('/'))
+                .map(|(page, _)| page.to_owned())
+                .or_else(|| self.launches.lock().unwrap().get(launch).cloned())
+        }
         fn driver(&self, page: &str, n: u8, session: Option<&str>, connected: bool) {
             self.seen
                 .lock()
@@ -350,11 +378,12 @@ mod tests {
         (c, t)
     }
 
+    /// A session started by the app's terminal on `page`.
     fn on(page: &str, launch: &str, session: &str) -> Hello {
         Hello {
             session: Some(session.into()),
             page: Some(page.into()),
-            launch: Some(launch.into()),
+            launch: Some(format!("tok-{page}/{launch}")),
         }
     }
 
@@ -569,6 +598,48 @@ mod tests {
         let r: Reply = c.recv(REPLY_MAX).unwrap().unwrap();
         assert!(!r.ok && r.text.starts_with("bad request"));
         assert!(console(&mut c, None).ok);
+    }
+
+    #[test]
+    fn a_launch_token_decides_the_page_whatever_the_client_names() {
+        let pages = FakePages::default();
+        pages.human_opens("T-42", 1);
+        pages.human_opens("T-51", 1);
+        pages
+            .launches
+            .lock()
+            .unwrap()
+            .insert("tok-real".into(), "T-42".into());
+        let s = server(pages);
+        let key = [8; 32];
+        // A forged page with a valid token: the token's page.
+        let forged = Hello {
+            session: Some("T-51".into()),
+            page: Some("T-51".into()),
+            launch: Some("tok-real".into()),
+        };
+        let (mut c, _t) = connect(&s, key, forged);
+        assert!(console(&mut c, Some(1)).ok);
+        assert_eq!(s.driver("T-42", 1).as_deref(), Some("T-51"));
+        assert_eq!(s.driver("T-51", 1), None, "never the named page");
+        // A token no terminal of the app has: no page at all.
+        let unknown = Hello {
+            session: None,
+            page: Some("T-51".into()),
+            launch: Some("tok-gone".into()),
+        };
+        let (mut d, _t2) = connect(&s, key, unknown);
+        let r = console(&mut d, Some(1));
+        assert_eq!((r.ok, r.text.as_str()), (false, NO_PAGE));
+        // Without a token, the page the client resolved from its folder.
+        let outside = Hello {
+            session: None,
+            page: Some("T-51".into()),
+            launch: None,
+        };
+        let (mut e, _t3) = connect(&s, key, outside);
+        let r = console(&mut e, Some(1));
+        assert!(r.ok, "{}", r.text);
     }
 
     #[test]

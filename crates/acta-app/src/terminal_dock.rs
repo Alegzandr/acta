@@ -1082,6 +1082,18 @@ impl TerminalDock {
             })
             .collect();
         cx.set_global(crate::sessions_view::TerminalTokens(tokens));
+        let pages: HashMap<String, Owner> = self
+            .panes
+            .iter()
+            .filter_map(|(key, pane)| match (key.holder, pane) {
+                (Holder::Page(owner), Pane::Running { token, .. }) if !token.is_empty() => {
+                    Some((token.clone(), owner))
+                }
+                _ => None,
+            })
+            .collect();
+        let shared = crate::sessions_view::launch_pages(cx);
+        *shared.0.lock().unwrap_or_else(|p| p.into_inner()) = pages;
         let running = self
             .panes
             .iter()

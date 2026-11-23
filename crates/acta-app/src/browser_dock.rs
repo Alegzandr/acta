@@ -72,6 +72,8 @@ struct Entry {
 pub struct Registry {
     browsers: Mutex<HashMap<(Owner, u8), Entry>>,
     jobs: Sender<DockJob>,
+    /// The page of each Acta terminal session, by launch token.
+    launches: crate::sessions_view::LaunchPages,
 }
 
 impl Pages for Registry {
@@ -114,6 +116,11 @@ impl Pages for Registry {
         }
         rx.recv_timeout(OPEN_WAIT)
             .unwrap_or_else(|_| Err("the agent browser did not open within 10 s".into()))
+    }
+
+    fn page_of_launch(&self, launch: &str) -> Option<String> {
+        let map = self.launches.0.lock().unwrap_or_else(|p| p.into_inner());
+        map.get(launch).map(|owner| owner.to_string())
     }
 
     fn driver(&self, page: &str, n: u8, session: Option<&str>, connected: bool) {
@@ -167,6 +174,7 @@ impl BrowserDock {
         let registry = Arc::new(Registry {
             browsers: Mutex::new(HashMap::new()),
             jobs,
+            launches: crate::sessions_view::launch_pages(cx),
         });
         let listen = cx.spawn_in(window, async move |dock, cx| {
             while let Ok(job) = jobs_rx.recv().await {

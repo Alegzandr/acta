@@ -626,7 +626,11 @@ impl BrowserPanel {
                 // a page that sets none is black on white for the human and in
                 // the agent's screenshots, as in any browser.
                 .with_background_color(PAGE_BACKGROUND)
-                .with_devtools(false)
+                // The DevTools window, for the human only (ADR 0010, 3,
+                // amended): allowed from creation, before the first
+                // navigation, since a later settings change applies only
+                // from the next one. An in-process window, never a port.
+                .with_devtools(true)
                 // Never take the keyboard on creation: created on an agent's
                 // call, it must not activate Acta's window (run: a new view
                 // made Acta the foreground window when it could).

@@ -247,6 +247,7 @@ mod windows_link {
                     | "ACTA_EPIC"
                     | "ACTA_TOPIC"
                     | "ACTA_TERMINAL"
+                    | "ACTA_LAUNCH"
             )
     }
 
@@ -414,6 +415,7 @@ mod tests {
             "CLAUDE_PROJECT_DIR",
             "CLAUDE_PLUGIN_ROOT",
             "ACTA_TOPIC",
+            "ACTA_LAUNCH",
             "ANTHROPIC_API_KEY",
             "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
             "webview2_user_data_folder",
