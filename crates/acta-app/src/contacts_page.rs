@@ -6,6 +6,7 @@
 
 use std::collections::HashSet;
 
+use crate::zoom::px;
 use acta_core::model::{Author, Contact, ContactId, ContactLevel, Record};
 use acta_core::store::{ContactPatch, ContactSummary};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
@@ -13,7 +14,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, KeyDownEvent, ParentElement, Render,
-    StatefulInteractiveElement, Styled, Subscription, Task, Window, div, px,
+    StatefulInteractiveElement, Styled, Subscription, Task, Window, div,
 };
 
 use crate::contacts_model::{self as cm, PageFilter};
@@ -681,7 +682,7 @@ impl Render for ContactsPage {
             .items_center()
             .rounded(px(RADIUS_SM))
             .bg(t.bg_raised)
-            .border_1()
+            .border(px(1.))
             .border_color(t.border_default)
             .child(
                 Input::new(&self.search)
@@ -733,10 +734,10 @@ impl Render for ContactsPage {
             );
         if self.loaded && self.all.is_empty() && self.new_row.is_none() {
             column = column.child(
-                type_scale::READING
+                type_scale::UI
                     .el()
                     .mt(px(16.))
-                    .text_color(t.text_secondary)
+                    .text_color(t.text_tertiary)
                     .child(text(locale, Key::ContactsEmpty)),
             );
         } else if self.loaded && groups.is_empty() && self.new_row.is_none() {
@@ -764,12 +765,7 @@ impl Render for ContactsPage {
                     .flex_row()
                     .items_center()
                     .gap(px(8.))
-                    .child(
-                        type_scale::READING
-                            .el()
-                            .text_color(t.text_secondary)
-                            .child(empty),
-                    )
+                    .child(type_scale::UI.el().text_color(t.text_tertiary).child(empty))
                     .when(show_all, |this| {
                         this.child(
                             ui::button(

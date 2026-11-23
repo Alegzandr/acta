@@ -1,14 +1,15 @@
 //! Context and dropdown menus (docs/design/components.md 5): `bg.overlay`,
 //! 1px `border.default`, `radius.md`, `shadow.overlay`, padding 4, items of
-//! 32. Hover and keyboard highlight are the same `fill.selected` row.
+//! 28 in `type.menu` (13 / 18). Hover and keyboard highlight are the same `fill.selected` row.
 
 use std::cell::Cell;
 use std::rc::Rc;
 
+use crate::zoom::{self, px};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     Anchor, AnyElement, Bounds, Div, ElementId, InteractiveElement, IntoElement, ParentElement,
-    Pixels, Point, SharedString, Stateful, Styled, anchored, deferred, div, point, px,
+    Pixels, Point, SharedString, Stateful, Styled, anchored, deferred, div, point,
 };
 
 use crate::icons::{Icon, icon};
@@ -27,7 +28,7 @@ pub fn panel(id: impl Into<ElementId>, tokens: &Tokens) -> Stateful<Div> {
         .max_w(px(320.))
         .p(px(4.))
         .bg(tokens.bg_overlay)
-        .border_1()
+        .border(px(1.))
         .border_color(tokens.border_default)
         .rounded(px(RADIUS_LG))
         .shadow(vec![tokens.shadow_overlay()])
@@ -43,14 +44,14 @@ pub fn item(
     tokens: &Tokens,
 ) -> Stateful<Div> {
     let selected = tokens.fill_selected;
-    type_scale::UI
+    type_scale::MENU
         .el()
         .id(id.into())
         .flex()
         .flex_row()
         .items_center()
         .gap(px(8.))
-        .h(px(32.))
+        .h(px(28.))
         .px(px(8.))
         .rounded(px(RADIUS_SM))
         .text_color(tokens.text_primary)
@@ -68,14 +69,14 @@ pub fn disabled_item(
     trailing: Option<AnyElement>,
     tokens: &Tokens,
 ) -> Stateful<Div> {
-    type_scale::UI
+    type_scale::MENU
         .el()
         .id(id.into())
         .flex()
         .flex_row()
         .items_center()
         .gap(px(8.))
-        .h(px(32.))
+        .h(px(28.))
         .px(px(8.))
         .rounded(px(RADIUS_SM))
         .text_color(tokens.text_disabled)
@@ -182,7 +183,7 @@ impl AnchorBounds {
 
     /// The trigger's width as last measured.
     pub fn width(&self) -> Option<f32> {
-        self.0.get().map(|(_, b)| f32::from(b.size.width))
+        self.0.get().map(|(_, b)| zoom::eff(b.size.width))
     }
 
     /// `layer` 4 below the trigger, lined up with its start or end edge,

@@ -7,6 +7,7 @@
 
 use std::collections::HashMap;
 
+use crate::zoom::px;
 use acta_core::model::{
     Contact, ContactId, ContactLevel, Note, Owner, ProjectId, Question, Record, Status,
     TopicSummary,
@@ -17,7 +18,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, KeyDownEvent, ParentElement, Render,
-    StatefulInteractiveElement, Styled, Subscription, Task, Window, div, px,
+    StatefulInteractiveElement, Styled, Subscription, Task, Window, div,
 };
 
 use crate::contacts_model as cm;
@@ -438,7 +439,7 @@ impl ContactPage {
         if let Some((Field::Name, input)) = &self.edit {
             return type_scale::TITLE
                 .el()
-                .border_b_1()
+                .border_b(px(1.))
                 .border_color(t.border_strong)
                 .child(ui::role_input(Input::new(input), type_scale::TITLE))
                 .into_any_element();
@@ -631,7 +632,7 @@ impl ContactPage {
                 .flex_row()
                 .items_center()
                 .gap(px(8.))
-                .h(px(28.))
+                .h(px(24.))
                 .children(chips.into_iter().map(|(key, id, n)| {
                     ui::focusable(type_scale::SMALL.el().id(id), t, false)
                         .flex()
@@ -688,7 +689,6 @@ impl ContactPage {
                 }
             }))
             .children(rows.into_iter().map(|(l, v)| ui::property(l, width, v, t)))
-            .children(chips)
             .child(
                 type_scale::SMALL
                     .el()
@@ -698,6 +698,12 @@ impl ContactPage {
                     .font_features(type_scale::tabular())
                     .child(meta),
             )
+            // Drawn in the band under the meta line: nothing moves
+            // (components-records.md 5).
+            .child(crate::record_page::add_band(
+                chips.map(|c| c.into_any_element()),
+                width,
+            ))
             .into_any_element()
     }
 
@@ -1004,7 +1010,7 @@ impl Render for ContactPage {
                         .px(px(8.))
                         .rounded(px(RADIUS_SM))
                         .bg(t.bg_raised)
-                        .border_1()
+                        .border(px(1.))
                         .border_color(t.border_default)
                         .child(
                             type_scale::READING.el().child(
@@ -1056,10 +1062,10 @@ impl Render for ContactPage {
             && self.data.reported.is_empty()
         {
             column = column.child(
-                type_scale::READING
+                type_scale::UI
                     .el()
                     .mt(px(32.))
-                    .text_color(t.text_secondary)
+                    .text_color(t.text_tertiary)
                     .child(tr(
                         locale,
                         Key::PersonEmpty,

@@ -165,10 +165,16 @@ pub fn kept_by_app(key: &Key, os: Os) -> bool {
             if !m.ctrl || m.alt || m.platform {
                 return false;
             }
+            // The window's zoom (Acta's layout.md 4.9): `Ctrl+=`,
+            // `Ctrl++` (Shift consumed or not, the numpad's too) and
+            // `Ctrl+0` (`à` on AZERTY); `Ctrl+-` stays Claude Code's undo.
+            if matches!(k, "=" | "+") {
+                return true;
+            }
             if m.shift {
                 matches!(k, "k" | "j" | "h" | "enter")
             } else {
-                digit
+                digit || matches!(k, "0" | "à")
             }
         }
         Os::Mac => {
@@ -496,6 +502,24 @@ mod tests {
         assert_eq!(send(&ctrl("k"), NONE), b"\x0b");
         assert_eq!(send(&ctrl("["), NONE), b"\x1b");
         assert_eq!(send(&with("b", |m| m.alt = true), NONE), b"\x1bb");
+    }
+
+    #[test]
+    fn the_window_zoom_keys_go_to_the_app_but_ctrl_minus_stays() {
+        assert_eq!(route(&ctrl("="), NONE, Os::Other), Route::App);
+        assert_eq!(route(&ctrl("+"), NONE, Os::Other), Route::App);
+        assert_eq!(route(&ctrl("0"), NONE, Os::Other), Route::App);
+        assert_eq!(route(&ctrl("à"), NONE, Os::Other), Route::App);
+        assert_eq!(send(&ctrl("-"), NONE), b"");
+        // Ctrl+Alt+= is still the terminal's own text size.
+        let ctrl_alt = with("=", |m| {
+            m.ctrl = true;
+            m.alt = true
+        });
+        assert_eq!(
+            route(&ctrl_alt, NONE, Os::Other),
+            Route::Command(Command::TextLarger)
+        );
     }
 
     #[test]

@@ -2,13 +2,14 @@
 //! every live Claude Code session, its focus, state and last activity, with
 //! the actions Acta can take on the ones running in its own terminal.
 
+use crate::zoom::px;
 use acta_core::model::Owner;
 use acta_core::presence::LiveSession;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
     IntoElement, ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Window,
-    div, px,
+    div,
 };
 
 use crate::i18n::{Arg, Key, text, tr};

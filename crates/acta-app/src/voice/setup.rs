@@ -3,10 +3,11 @@
 //! download's progress in the same dialog, then Ready. Listening never
 //! starts by itself at the end.
 
+use crate::zoom::px;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, Context, FocusHandle, InteractiveElement, IntoElement, ParentElement,
-    StatefulInteractiveElement, Styled, div, px,
+    StatefulInteractiveElement, Styled, div,
 };
 
 use super::view::{self, Setup};

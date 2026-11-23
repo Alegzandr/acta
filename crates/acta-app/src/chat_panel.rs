@@ -25,13 +25,14 @@
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
+use crate::zoom::px;
 use acta_core::model::Owner;
 use async_channel::{Receiver, Sender};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     Anchor, AnchoredPositionMode, AnyElement, App, AppContext as _, Context, Entity, EventEmitter,
     FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement, Render,
-    StatefulInteractiveElement, Styled, Task, Window, anchored, deferred, div, point, px,
+    StatefulInteractiveElement, Styled, Task, Window, anchored, deferred, div, point,
 };
 
 use crate::chat::{self, Built, ChatState, Decision, Effect, Kept, Reason, Surface};
@@ -1020,7 +1021,7 @@ impl ChatPanel {
                             .py(px(4.))
                             .whitespace_nowrap()
                             .bg(t.bg_overlay)
-                            .border_1()
+                            .border(px(1.))
                             .border_color(t.border_default)
                             .rounded(px(RADIUS_MD))
                             .shadow(vec![t.shadow_overlay()])

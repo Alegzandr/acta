@@ -6,13 +6,14 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::zoom::px;
 use acta_core::model::ProjectId;
 use acta_core::snapshots::{Snapshot, SnapshotKind};
 use acta_core::store::{ExportFile, FileTotals, ImportReport};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
-    IntoElement, ParentElement, Render, StatefulInteractiveElement, Styled, Window, div, px,
+    IntoElement, ParentElement, Render, StatefulInteractiveElement, Styled, Window, div,
 };
 
 use crate::i18n::{Arg, Key, Locale, number, text, tr};
@@ -1183,7 +1184,7 @@ impl Render for Dialog {
                     .flex_col()
                     .p(px(24.))
                     .bg(t.bg_overlay)
-                    .border_1()
+                    .border(px(1.))
                     .border_color(t.border_default)
                     .rounded(px(RADIUS_XL))
                     .shadow(vec![t.shadow_overlay()])

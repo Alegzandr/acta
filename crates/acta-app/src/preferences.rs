@@ -52,6 +52,8 @@ pub struct Preferences {
     /// content column (3.3).
     pub text_size: TextSize,
     pub reading_width: ReadingWidth,
+    /// The chosen zoom (layout.md 4.9), a step in percent; `None` is 100.
+    pub zoom: Option<u16>,
     /// The user has opened claude.ai in the panel: showing it starts the
     /// web view without asking again. Cleared by "Sign out and clear".
     pub chat_started: bool,
@@ -114,6 +116,10 @@ struct Stored {
     text_size: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     reading_width: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Read on its own: a value that is not a number reads as 100 and
+    /// leaves the rest of the file alone (layout.md 4.9).
+    zoom: Option<serde_json::Value>,
     #[serde(default, skip_serializing)]
     chat_bottom: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -332,6 +338,12 @@ pub fn parse(text: &str) -> Result<Preferences, LoadError> {
             .filter(|size| (11..=18).contains(size)),
         text_size: text_size_of(stored.text_size.as_deref()),
         reading_width: reading_width_of(stored.reading_width.as_deref()),
+        zoom: stored
+            .zoom
+            .and_then(|v| v.as_f64())
+            .filter(|v| v.is_finite())
+            .map(|v| crate::zoom::nearest_step(v.round() as i64))
+            .filter(|z| *z != crate::zoom::DEFAULT),
         chat_started: stored.chat_started,
         chat_help_dismissed: stored.chat_help_dismissed,
         chat_clear_pending: stored.chat_clear_pending,
@@ -364,6 +376,10 @@ pub fn serialize(prefs: &Preferences) -> String {
         terminal_text_size: prefs.terminal_text_size,
         text_size: text_size_name(prefs.text_size),
         reading_width: reading_width_name(prefs.reading_width),
+        zoom: prefs
+            .zoom
+            .filter(|z| *z != crate::zoom::DEFAULT)
+            .map(serde_json::Value::from),
         chat_bottom: false,
         chat_started: prefs.chat_started,
         chat_help_dismissed: prefs.chat_help_dismissed,
@@ -580,6 +596,7 @@ mod tests {
         let prefs = Preferences {
             theme: ThemeSetting::Light,
             language: Locale::Fr,
+            zoom: Some(150),
             collapsed: vec!["P-1".into(), "E-3".into()],
             closed_shown: vec!["closed:E-3".into()],
             overview_open: vec!["P-1".into(), "E-3".into()],
@@ -850,5 +867,28 @@ mod tests {
             .collect();
         names.sort();
         assert_eq!(names, ["notes.tmp", FILE_NAME]);
+    }
+
+    #[test]
+    fn zoom_is_stored_as_a_step_and_a_bad_value_reads_as_the_nearest() {
+        let read = |z: &str| {
+            parse(&format!("{{\"version\":1,\"zoom\":{z}}}"))
+                .unwrap()
+                .zoom
+        };
+        assert_eq!(read("150"), Some(150));
+        assert_eq!(read("140"), Some(150));
+        assert_eq!(read("100"), None);
+        assert_eq!(read("5"), Some(90));
+        assert_eq!(read("\"big\""), None);
+        // A value that is not a number leaves the rest of the file alone.
+        let prefs = parse(r#"{"version":1,"zoom":"big","theme":"dark"}"#).unwrap();
+        assert_eq!(prefs.theme, ThemeSetting::Dark);
+        let prefs = Preferences {
+            zoom: Some(175),
+            ..Preferences::default()
+        };
+        assert_eq!(parse(&serialize(&prefs)).unwrap().zoom, Some(175));
+        assert!(!serialize(&Preferences::default()).contains("zoom"));
     }
 }

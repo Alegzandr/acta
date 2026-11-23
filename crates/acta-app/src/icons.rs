@@ -8,7 +8,8 @@
 
 use std::borrow::Cow;
 
-use gpui_kit::{AssetSource, Hsla, Result, SharedString, Styled, Svg, px, svg};
+use crate::zoom::px;
+use gpui_kit::{AssetSource, Hsla, Result, SharedString, Styled, Svg, svg};
 
 macro_rules! icons {
     ($( $variant:ident => $file:literal, )*) => {

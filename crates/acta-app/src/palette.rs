@@ -4,6 +4,7 @@
 //! to the selected row's group; `Enter` runs; with nothing found, `Enter`
 //! creates a topic with the typed title.
 
+use crate::zoom::px;
 use acta_core::model::{KbKind, PageReq, ProjectTree, Record, Status, TopicId};
 use acta_core::store::SearchQuery;
 use gpui_kit::component::input::{
@@ -12,7 +13,7 @@ use gpui_kit::component::input::{
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, AppContext, Context, Entity, EventEmitter, InteractiveElement, IntoElement,
-    ParentElement, Render, StatefulInteractiveElement, Styled, Subscription, Task, Window, div, px,
+    ParentElement, Render, StatefulInteractiveElement, Styled, Subscription, Task, Window, div,
 };
 
 use crate::commands::{self, Command};
@@ -672,7 +673,7 @@ impl Render for Palette {
             .flex()
             .flex_col()
             .bg(t.bg_overlay)
-            .border_1()
+            .border(px(1.))
             .border_color(t.border_default)
             .rounded(px(RADIUS_XL))
             .shadow(vec![t.shadow_overlay()])
@@ -713,7 +714,7 @@ impl Render for Palette {
                     .gap(px(8.))
                     .h(px(44.))
                     .px(px(12.))
-                    .border_b_1()
+                    .border_b(px(1.))
                     .border_color(t.border_default)
                     .child(icon(Icon::Search, 16., t.text_tertiary))
                     .children(chip)
@@ -737,7 +738,7 @@ impl Render for Palette {
                     .py(px(8.))
                     .max_h(px(16. * 4. + 16.))
                     .overflow_hidden()
-                    .border_t_1()
+                    .border_t(px(1.))
                     .border_color(t.border_default)
                     .text_color(t.text_secondary)
                     .child(why)
@@ -750,7 +751,7 @@ impl Render for Palette {
                     .gap(px(16.))
                     .h(px(28.))
                     .px(px(12.))
-                    .border_t_1()
+                    .border_t(px(1.))
                     .border_color(t.border_default)
                     // Naming a new topic or epic: Enter creates it, and
                     // there is nothing to open in a tab.

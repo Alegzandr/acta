@@ -2,11 +2,12 @@
 
 use std::sync::atomic::{AtomicU8, Ordering};
 
+use crate::zoom::px;
 use acta_core::model::{Author, Status};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     BoxShadow, Div, ElementId, FocusHandle, Hsla, InteractiveElement, IntoElement, ParentElement,
-    SharedString, Stateful, StatefulInteractiveElement, Styled, Svg, div, px, transparent_black,
+    SharedString, Stateful, StatefulInteractiveElement, Styled, Svg, div, transparent_black,
 };
 
 use crate::i18n::Key;
@@ -56,7 +57,7 @@ pub fn focus_ring(
         .tab_index(0)
         .m(px(-3.))
         .p(px(1.))
-        .border_2()
+        .border(px(2.))
         .border_color(transparent_black())
         .rounded(px(radius + 3.))
         .focus_visible(move |style| style.border_color(ring))
@@ -79,7 +80,7 @@ impl gpui_kit::Render for Tip {
             .px(px(8.))
             .py(px(4.))
             .bg(t.bg_overlay)
-            .border_1()
+            .border(px(1.))
             .border_color(t.border_default)
             .rounded(px(RADIUS_MD))
             .shadow(vec![t.shadow_overlay()])
@@ -121,7 +122,7 @@ impl gpui_kit::Render for TipKeys {
             .py(px(4.))
             .whitespace_nowrap()
             .bg(t.bg_overlay)
-            .border_1()
+            .border(px(1.))
             .border_color(t.border_default)
             .rounded(px(RADIUS_MD))
             .shadow(vec![t.shadow_overlay()])
@@ -163,7 +164,7 @@ pub fn kbd(keys: &[&str], tokens: &Tokens) -> Div {
                 .items_center()
                 .justify_center()
                 .rounded(px(RADIUS_XS))
-                .border_1()
+                .border(px(1.))
                 .border_color(tokens.border_default)
                 .text_color(tokens.text_tertiary)
                 .child(key.to_string())
@@ -353,14 +354,14 @@ pub fn button(
         (Variant::Primary, true) => base.bg(t.fill_selected).text_color(t.text_disabled),
         (Variant::Secondary, false) => {
             let (hover, pressed) = (t.fill_hover, t.fill_pressed);
-            base.border_1()
+            base.border(px(1.))
                 .border_color(t.border_strong)
                 .text_color(t.text_primary)
                 .hover(move |s| s.bg(hover))
                 .active(move |s| s.bg(pressed))
         }
         (Variant::Secondary, true) => base
-            .border_1()
+            .border(px(1.))
             .border_color(t.border_default)
             .text_color(t.text_disabled),
         (Variant::Ghost, false) => {
@@ -403,7 +404,7 @@ pub fn author_mark(author: Author, human_initial: &str, tokens: &Tokens) -> Div 
             .child(human_initial.to_owned()),
         Author::Claude => mark
             .rounded(px(RADIUS_XS))
-            .border_1()
+            .border(px(1.))
             .border_color(tokens.border_strong)
             .child(icon(Icon::ChevronRight, 12., tokens.text_secondary)),
     }
@@ -439,7 +440,7 @@ pub fn notice_frame(glyph: Option<(Icon, Hsla)>, tokens: &Tokens) -> Div {
         .py(px(6.))
         .rounded(px(RADIUS_LG))
         .bg(tokens.bg_raised)
-        .border_1()
+        .border(px(1.))
         .border_color(tokens.border_subtle)
         // Icon, message and actions share a 28 first line, so a message
         // that wraps keeps its icon on the first line and a one-line
@@ -470,7 +471,7 @@ pub fn checkbox(checked: bool, t: &Tokens) -> Div {
                 .child(icon(Icon::Check, 12., t.text_on_accent))
         })
         .when(!checked, |this| {
-            this.border_1().border_color(t.border_strong)
+            this.border(px(1.)).border_color(t.border_strong)
         })
 }
 
@@ -533,7 +534,7 @@ pub fn segmented(tokens: &Tokens) -> Div {
         .self_start()
         .h(px(28.))
         .rounded(px(RADIUS_SM))
-        .border_1()
+        .border(px(1.))
         .border_color(tokens.border_strong)
         .overflow_hidden()
 }
@@ -559,9 +560,11 @@ impl ReadingWidth {
     /// reading text per line at the Default text size.
     pub fn column_max(self) -> f32 {
         match self {
-            ReadingWidth::Narrow => 480.,
-            ReadingWidth::Default => 560.,
-            ReadingWidth::Wide => 720.,
+            // typography.md 3.3: 60 to 75 characters at the 15 px
+            // reading size by default (lead decision 2026-11-23).
+            ReadingWidth::Narrow => 440.,
+            ReadingWidth::Default => 520.,
+            ReadingWidth::Wide => 680.,
         }
     }
 }
@@ -829,7 +832,8 @@ pub fn scroll_into_view(
         (f32::from(bounds.top()), f32::from(bounds.bottom())),
         f32::from(handle.max_offset().y),
     );
-    handle.set_offset(gpui_kit::point(offset.x, px(y)));
+    // Offsets are logical px, as GPUI measures them.
+    handle.set_offset(gpui_kit::point(offset.x, gpui_kit::px(y)));
 }
 
 /// The scrolling page area that centres the column, with 32 of side
@@ -908,7 +912,8 @@ pub fn property(
 pub fn label_width(labels: &[&str], cx: &gpui_kit::App) -> f32 {
     let system = cx.text_system();
     let font = system.resolve_font(&gpui_kit::font(type_scale::UI.family()));
-    let size = px(type_scale::UI.size);
+    // Measured at 100%: widths are effective px.
+    let size = gpui_kit::px(type_scale::UI.size);
     let width = |label: &str| -> f32 {
         label
             .chars()
@@ -936,7 +941,7 @@ pub fn text_width(role: type_scale::TypeRole, text: &str, cx: &gpui_kit::App) ->
         .chars()
         .map(|ch| {
             system
-                .advance(font, px(size), ch)
+                .advance(font, gpui_kit::px(size), ch)
                 .map(|a| f32::from(a.width))
                 .unwrap_or(size * 0.6)
         })

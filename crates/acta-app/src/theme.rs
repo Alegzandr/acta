@@ -10,8 +10,9 @@
 //! [`os_appearance_changed`]. Switching replaces the tokens and refreshes
 //! every window in the same frame; nothing animates.
 
+use crate::zoom::px;
 use gpui_kit::component::{Theme, ThemeMode};
-use gpui_kit::{App, BoxShadow, Global, Hsla, WindowAppearance, point, px, rgb};
+use gpui_kit::{App, BoxShadow, Global, Hsla, WindowAppearance, point, rgb};
 
 /// The sans of docs/design/typography.md 3.1: the platform's own UI face
 /// where it renders best, the bundled Inter elsewhere. On Windows 10, which

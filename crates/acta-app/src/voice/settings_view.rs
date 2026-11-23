@@ -3,6 +3,7 @@
 //! card where it applies, the language, the microphone with its level
 //! bar, and the shortcut. Everything applies at once.
 
+use crate::zoom::px;
 use acta_core::voice::engine::Lang;
 use acta_core::voice::hardware::Reason;
 use acta_core::voice::models::ModelId;
@@ -10,7 +11,6 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, Context, Div, Entity, FocusHandle, InteractiveElement, IntoElement,
     KeyDownEvent, ParentElement, Render, StatefulInteractiveElement, Styled, Window, actions, div,
-    px,
 };
 
 use super::view::{self, RowState};
@@ -222,7 +222,7 @@ impl VoiceSettings {
             .max_w(px(280.))
             .px(px(12.))
             .rounded(px(RADIUS_SM))
-            .border_1()
+            .border(px(1.))
             .border_color(t.border_strong)
             .text_color(t.text_primary)
             .hover(move |style| style.bg(hover))

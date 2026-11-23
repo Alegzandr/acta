@@ -957,7 +957,7 @@ impl RecordPage {
     }
 
     fn q_pointer_moved(&mut self, e: &gpui_kit::MouseMoveEvent, cx: &mut Context<Self>) {
-        let (x, y) = (f32::from(e.position.x), f32::from(e.position.y));
+        let (x, y) = (zoom::eff(e.position.x), zoom::eff(e.position.y));
         if let Some((id, from, px0, py0)) = self.q.press {
             if e.pressed_button != Some(gpui_kit::MouseButton::Left) {
                 self.q.press = None;
@@ -1389,7 +1389,7 @@ impl RecordPage {
                         .q
                         .section_bounds
                         .get()
-                        .map_or(200., |b| f32::from(b.left()) + 100.);
+                        .map_or(200., |b| zoom::eff(b.left()) + 100.);
                     self.q.drag = Some(QDrag {
                         id,
                         from: 0,
@@ -1611,7 +1611,7 @@ impl RecordPage {
             .flex()
             .flex_col()
             .bg(t.bg_overlay)
-            .border_1()
+            .border(px(1.))
             .border_color(t.border_default)
             .rounded(px(RADIUS_LG))
             .shadow(vec![t.shadow_overlay()])
@@ -1758,7 +1758,7 @@ impl RecordPage {
         *self.q.row_ids.borrow_mut() = drawn.iter().map(|q| q.id).collect();
         if s.is_empty() && self.q.composer.is_none() {
             section = section.child(
-                type_scale::READING
+                type_scale::UI
                     .el()
                     .mt(px(4.))
                     .text_color(t.text_tertiary)
@@ -1805,14 +1805,14 @@ impl RecordPage {
                         gpui_kit::MouseButton::Left,
                         cx.listener(move |page, e: &gpui_kit::MouseDownEvent, _, cx| {
                             page.q.press =
-                                Some((id, i, f32::from(e.position.x), f32::from(e.position.y)));
+                                Some((id, i, zoom::eff(e.position.x), zoom::eff(e.position.y)));
                             cx.notify();
                         }),
                     )
                     .child(self.render_q_row(q, i, locale, t, today, cx))
                     .child(ui::measure(move |b, _| {
                         if let Some(slot) = bounds.borrow_mut().get_mut(i) {
-                            *slot = (f32::from(b.top()), f32::from(b.bottom()));
+                            *slot = (zoom::eff(b.top()), zoom::eff(b.bottom()));
                         }
                     })),
             );
@@ -2355,7 +2355,7 @@ impl RecordPage {
                                     .px(px(8.))
                                     .rounded(px(RADIUS_SM))
                                     .bg(t.bg_raised)
-                                    .border_1()
+                                    .border(px(1.))
                                     .border_color(t.border_default)
                                     // Dictation: the microphone in the
                                     // field's trailing slot, compact

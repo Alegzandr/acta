@@ -79,6 +79,10 @@ pub struct Frame {
     /// (step 1 of 4.8.10): its toggle shows it over the page.
     pub left_auto_hidden: bool,
     pub right: Option<f32>,
+    /// The right sidebar is shown in the layout but its active view and
+    /// the page's 420 do not fit side by side (step 3 of 4.8.10, only in a
+    /// zoomed window): its toggle shows it over the page.
+    pub right_auto_hidden: bool,
     pub bottom: Option<f32>,
     /// The width and height of the page area.
     pub page_w: f32,
@@ -124,10 +128,12 @@ pub fn bottom_height(layout: &Layout, body: f32) -> f32 {
 }
 
 pub fn frame(layout: &Layout, width: f32, body: f32) -> Frame {
-    let right = layout
+    let right_wanted = layout
         .right
         .shown
         .then(|| sidebar_width(layout, Side::Right, width));
+    let right_fits = side_min(layout, Side::Right) + PAGE_MIN_W <= width;
+    let right = right_wanted.filter(|_| right_fits);
     let left_wanted = layout
         .left
         .shown
@@ -166,6 +172,7 @@ pub fn frame(layout: &Layout, width: f32, body: f32) -> Frame {
         left,
         left_auto_hidden: left_wanted.is_some() && !left_fits,
         right,
+        right_auto_hidden: right_wanted.is_some() && !right_fits,
         bottom,
         page_w,
         page_h,
@@ -678,6 +685,8 @@ pub struct Shown {
     pub zoomed: Option<(Place, usize)>,
     /// The auto-hidden left sidebar shown over the page.
     pub left_overlay: bool,
+    /// The auto-hidden right sidebar shown over the page.
+    pub right_overlay: bool,
 }
 
 /// Whether `view` is drawn: visible in the layout, its area beside the
@@ -697,7 +706,8 @@ pub fn on_screen(l: &Layout, f: &Frame, shown: Shown, view: ViewId) -> bool {
         Place::Side(side) => {
             let drawn = match side {
                 Side::Left => f.left.is_some() || (f.left_auto_hidden && shown.left_overlay),
-                _ => f.side(side).is_some(),
+                Side::Right => f.right.is_some() || (f.right_auto_hidden && shown.right_overlay),
+                Side::Bottom => f.bottom.is_some(),
             };
             drawn && (!f.side_folded(side) || spot.group == 0)
         }
@@ -718,6 +728,7 @@ pub fn reveal(l: &mut Layout, f: &Frame, shown: &mut Shown, view: ViewId) {
     match spot.place {
         Place::Page => l.focused = spot.group,
         Place::Side(Side::Left) if f.left_auto_hidden => shown.left_overlay = true,
+        Place::Side(Side::Right) if f.right_auto_hidden => shown.right_overlay = true,
         Place::Side(side) if f.side_folded(side) && spot.group > 0 => {
             let _ = l.move_tab(
                 Tab::View(view),
@@ -1450,6 +1461,7 @@ mod tests {
         let mut zoomed = Shown {
             zoomed: Some((Place::Page, 0)),
             left_overlay: false,
+            right_overlay: false,
         };
         assert!(!on_screen(&l, &f, zoomed, ViewId::Terminal));
         let mut l2 = l.clone();

@@ -14,6 +14,7 @@ mod kb;
 mod kb_quality;
 mod overview;
 mod people;
+mod purge;
 mod questions;
 mod records;
 mod search;
@@ -47,6 +48,7 @@ pub use overview::{
 pub use people::{
     ADDRESS_MAX, ContactPatch, ContactSummary, DETAIL_MAX, MergeTrace, ReportTargets, level_name,
 };
+pub use purge::PurgeReport;
 pub use questions::{ANSWER_MAX, NewQuestion, QUESTION_MAX, QuestionFilter, decision_body};
 pub use records::{EpicPatch, NewTopic, ProjectPatch, TopicFilter, TopicPatch};
 pub use search::{SNIPPET_CLOSE, SNIPPET_OPEN, SearchHit, SearchKind, SearchQuery};
@@ -543,6 +545,8 @@ pub(crate) mod test_support {
 mod attachments_tests;
 #[cfg(test)]
 mod kb_quality_tests;
+#[cfg(test)]
+mod purge_tests;
 #[cfg(test)]
 mod questions_tests;
 #[cfg(test)]

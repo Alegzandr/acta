@@ -1136,41 +1136,13 @@ impl Store {
     /// freed pages with `PRAGMA incremental_vacuum` (ADR 0012, 4).
     pub fn purge_attachments(&mut self, now: i64) -> Result<Purged> {
         let cutoff = now - super::TRASH_RETENTION_MS;
-        // Blobs an open editor of this process holds stay too.
-        let held = if self.held.is_empty() {
-            String::new()
-        } else {
-            let ids: Vec<String> = self.held.iter().map(|b| b.to_string()).collect();
-            format!(" AND b.id NOT IN ({})", ids.join(","))
-        };
+        let held = self.held.clone();
         let tx = self.write()?;
         let rows = tx.execute(
             "DELETE FROM attachments WHERE deleted_at IS NOT NULL AND deleted_at <= ?1",
             [cutoff],
         )? as i64;
-        // Blobs younger than the grace stay, complete or not: one may be
-        // between its lookup and its row in another process.
-        let orphans = format!(
-            "SELECT id FROM attachment_blobs b
-             WHERE NOT EXISTS (SELECT 1 FROM attachments a WHERE a.blob_id = b.id)
-               AND b.created_at <= ?1{held}"
-        );
-        let orphans = orphans.as_str();
-        let (blobs, bytes): (i64, i64) = tx.query_row(
-            &format!(
-                "SELECT count(*), coalesce(sum(size), 0) FROM attachment_blobs WHERE id IN ({orphans})"
-            ),
-            [now - PENDING_GRACE_MS],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )?;
-        tx.execute(
-            &format!("DELETE FROM attachment_chunks WHERE blob_id IN ({orphans})"),
-            [now - PENDING_GRACE_MS],
-        )?;
-        tx.execute(
-            &format!("DELETE FROM attachment_blobs WHERE id IN ({orphans})"),
-            [now - PENDING_GRACE_MS],
-        )?;
+        let (blobs, bytes) = sweep_blobs(&tx, now, &held)?;
         if rows > 0 {
             // The search index of files keeps deleted rows' segments until
             // merged: merge them, so a purge gives the space back.
@@ -1186,7 +1158,47 @@ impl Store {
     }
 }
 
-fn incremental_vacuum(conn: &Connection) -> rusqlite::Result<()> {
+/// Deletes every blob no attachment row names (live or in the trash), and
+/// its chunks; returns how many and their size. Blobs younger than the
+/// pending grace stay, complete or not: one may be between its lookup and
+/// its row in another process. Blobs an open editor of this process holds
+/// (`held`) stay too.
+pub(super) fn sweep_blobs(
+    tx: &Connection,
+    now: i64,
+    held: &std::collections::HashSet<i64>,
+) -> rusqlite::Result<(i64, i64)> {
+    let held = if held.is_empty() {
+        String::new()
+    } else {
+        let ids: Vec<String> = held.iter().map(|b| b.to_string()).collect();
+        format!(" AND b.id NOT IN ({})", ids.join(","))
+    };
+    let orphans = format!(
+        "SELECT id FROM attachment_blobs b
+         WHERE NOT EXISTS (SELECT 1 FROM attachments a WHERE a.blob_id = b.id)
+           AND b.created_at <= ?1{held}"
+    );
+    let grace = now - PENDING_GRACE_MS;
+    let (blobs, bytes): (i64, i64) = tx.query_row(
+        &format!(
+            "SELECT count(*), coalesce(sum(size), 0) FROM attachment_blobs WHERE id IN ({orphans})"
+        ),
+        [grace],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    tx.execute(
+        &format!("DELETE FROM attachment_chunks WHERE blob_id IN ({orphans})"),
+        [grace],
+    )?;
+    tx.execute(
+        &format!("DELETE FROM attachment_blobs WHERE id IN ({orphans})"),
+        [grace],
+    )?;
+    Ok((blobs, bytes))
+}
+
+pub(super) fn incremental_vacuum(conn: &Connection) -> rusqlite::Result<()> {
     let mut stmt = conn.prepare("PRAGMA incremental_vacuum")?;
     let mut rows = stmt.query([])?;
     while rows.next()?.is_some() {}
