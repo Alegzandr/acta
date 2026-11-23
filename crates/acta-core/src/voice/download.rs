@@ -785,7 +785,7 @@ mod tests {
         }
     }
 
-    /// Known answers (FIPS 180-2): the empty input and "abc", across reads.
+    /// Known answers (FIPS 180-2): the empty input and "abc".
     #[test]
     fn sha256_hex_is_sha_256() {
         assert_eq!(
