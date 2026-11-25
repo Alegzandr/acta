@@ -271,7 +271,7 @@ pub fn git_error_text(locale: Locale, err: &GitError, branch: &str, folder: &str
         GitError::InvalidBranchName => tr(locale, Key::FoldersGitErrInvalidName, &b),
         GitError::BranchNotFound => tr(locale, Key::FoldersGitErrNoBranch, &b),
         GitError::CheckedOutElsewhere => tr(locale, Key::FoldersGitErrElsewhere, &b),
-        GitError::NotARepository => other(&err.to_string()),
+        GitError::NotARepository | GitError::NotDownloaded => other(&err.to_string()),
         GitError::Other(message) => other(message),
     }
 }
