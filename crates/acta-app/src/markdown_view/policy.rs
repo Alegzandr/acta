@@ -70,14 +70,26 @@ pub fn classify_link(dest: &str) -> LinkTarget {
     }
 }
 
+/// Endings of file names that are also top-level domains (`README.md`,
+/// `main.rs`, `setup.sh`): a bare name ending in one is a file, not a host.
+const FILE_EXTENSIONS: [&str; 40] = [
+    "md", "rs", "sh", "py", "js", "ts", "go", "rb", "pl", "cs", "fs", "kt", "so", "ps", "cc",
+    "cpp", "hpp", "toml", "yaml", "yml", "json", "lock", "txt", "log", "csv", "xml", "html", "css",
+    "sql", "zip", "png", "jpg", "gif", "svg", "pdf", "exe", "dll", "bin", "ini", "bat",
+];
+
 /// The host a visible link text names, when the text is itself a web
-/// address (`https://github.com/a`, `www.github.com`, `github.com/acta`).
+/// address (`https://github.com/a`, `www.github.com`, `github.com/acta`,
+/// `example.org`). Trailing punctuation is not part of it; a bare name
+/// ending in a file extension is a file.
 fn host_in_text(text: &str) -> Option<String> {
-    let text = text.trim();
+    let text = text
+        .trim()
+        .trim_end_matches(['.', ',', ';', ':', '!', '?', ')', ']', '}', '\'', '"']);
     if text.is_empty() || text.chars().any(char::is_whitespace) {
         return None;
     }
-    let lower = text.to_ascii_lowercase();
+    let lower = text.to_lowercase();
     let schemed = lower.starts_with("https://") || lower.starts_with("http://");
     let rest = lower
         .strip_prefix("https://")
@@ -86,6 +98,7 @@ fn host_in_text(text: &str) -> Option<String> {
     let host_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
     let has_path = host_end < rest.len();
     let authority = &rest[..host_end];
+    // `github.com@evil.example` goes to evil.example.
     let host = authority.rsplit('@').next().unwrap_or(authority);
     let host = host.split(':').next().unwrap_or(host);
     let labels: Vec<&str> = host.split('.').collect();
@@ -99,14 +112,9 @@ fn host_in_text(text: &str) -> Option<String> {
         })
         && tld.chars().count() >= 2
         && tld.chars().all(|c| c.is_alphabetic() || !c.is_ascii());
-    // A bare name with a dot is often a file (`README.md`, `main.rs`):
-    // without a scheme, `www.` or a path, only the common web endings
-    // count as an address.
-    const WEB: [&str; 14] = [
-        "com", "org", "net", "io", "dev", "app", "ai", "co", "edu", "gov", "fr", "de", "uk", "eu",
-    ];
-    let plainly_web = schemed || host.starts_with("www.") || has_path || WEB.contains(tld);
-    if !looks_like_host || !plainly_web {
+    let a_file =
+        !schemed && !has_path && !host.starts_with("www.") && FILE_EXTENSIONS.contains(tld);
+    if !looks_like_host || a_file {
         return None;
     }
     // The ASCII form, so "gіthub.com" with a Cyrillic i does not match.
@@ -121,13 +129,19 @@ fn without_www(host: &str) -> &str {
     host.strip_prefix("www.").unwrap_or(host)
 }
 
-/// Deceptive links (components-editor.md 5): when the visible text of a
-/// web link is itself an address on another host than the destination's,
-/// the destination host to warn about.
+/// Deceptive links (components-editor.md 5): the destination host to warn
+/// about when a web link's visible text is itself an address on another
+/// host, or when the destination hides its host behind a user name
+/// (`https://github.com@evil.example/`).
 pub fn deceptive_host(visible: &str, dest: &str) -> Option<String> {
     let LinkTarget::Web { host, .. } = classify_link(dest) else {
         return None;
     };
+    let userinfo = url::Url::parse(dest.trim())
+        .is_ok_and(|url| !url.username().is_empty() || url.password().is_some());
+    if userinfo {
+        return Some(host);
+    }
     let shown = host_in_text(visible)?;
     (without_www(&shown) != without_www(&host)).then_some(host)
 }
@@ -188,6 +202,44 @@ pub fn is_br(tag: &str) -> bool {
     inner.eq_ignore_ascii_case("br")
 }
 
+/// The deepest nesting of containers (quotes, list items) drawn as
+/// Markdown; a deeper text draws as plain text, so neither the parser nor
+/// the renderer recurses without bound.
+pub const MAX_DEPTH: usize = 64;
+
+/// Whether some line of `text` opens more nested containers than
+/// [`MAX_DEPTH`]: each `>` and list marker counts one, and so do two
+/// columns of indent before them.
+pub fn too_deep(text: &str) -> bool {
+    text.lines().any(|line| {
+        let bytes = line.as_bytes();
+        let (mut depth, mut i, mut spaces) = (0usize, 0usize, 0usize);
+        while i < bytes.len() {
+            match bytes[i] {
+                b' ' => spaces += 1,
+                b'\t' => spaces += 4,
+                b'>' => depth += 1,
+                b'-' | b'*' | b'+' if bytes.get(i + 1).is_none_or(|b| *b == b' ') => depth += 1,
+                b'0'..=b'9' => {
+                    let digits = bytes[i..].iter().take_while(|b| b.is_ascii_digit()).count();
+                    match bytes.get(i + digits) {
+                        Some(b'.' | b')') if digits <= 9 => {
+                            depth += 1;
+                            i += digits;
+                        }
+                        _ => break,
+                    }
+                }
+                _ => break,
+            }
+            i += 1;
+        }
+        // Indent alone nests nothing; before a marker it stands for the
+        // levels above it.
+        depth > 0 && depth + spaces / 2 > MAX_DEPTH
+    })
+}
+
 /// The parse options of the rendering contract: GFM, front matter, math
 /// recognised; the same as gpui-base's with `frontmatter()`.
 pub fn parse_options() -> markdown::ParseOptions {
@@ -204,6 +256,8 @@ pub struct Note {
     pub number: u32,
     /// Its Markdown, the `[^x]:` label and continuation indent removed.
     pub markdown: String,
+    /// The facts of its own Markdown (its links), prepared with the text.
+    pub prepared: Box<Prepared>,
 }
 
 /// What the renderer needs to know about a whole text before it draws a
@@ -216,7 +270,8 @@ pub struct Prepared {
     pub footnotes: HashMap<String, u32>,
     /// The notes, by number.
     pub notes: Vec<Note>,
-    /// The source of every link reference definition, one per line.
+    /// The source of every link reference definition and footnote
+    /// definition, which a nested list parsed on its own must still see.
     pub definitions: String,
     /// Link reference identifier (normalised) to its destination, for
     /// image references.
@@ -229,8 +284,12 @@ pub struct Prepared {
 /// Reads the facts of [`Prepared`] from `text`. Cheap when the text has no
 /// `[` (no footnote, no definition).
 pub fn prepare(text: &str) -> Prepared {
+    prepare_at(text, 0)
+}
+
+fn prepare_at(text: &str, depth: usize) -> Prepared {
     let mut prepared = Prepared::default();
-    if !text.contains('[') {
+    if !text.contains('[') || too_deep(text) {
         return prepared;
     }
     let Ok(root) = markdown::to_mdast(text, &parse_options()) else {
@@ -243,8 +302,10 @@ pub fn prepare(text: &str) -> Prepared {
     walk(&root, &mut |node| match node {
         Node::FootnoteReference(r) => references.push(r.identifier.clone()),
         Node::FootnoteDefinition(d) => {
-            definitions.push((d.identifier.clone(), footnote_markdown(text, d)))
+            definitions.push((d.identifier.clone(), footnote_markdown(text, d)));
+            push_source(&mut prepared.definitions, text, node);
         }
+        Node::Image(i) => shown.push((i.alt.clone(), i.url.clone())),
         Node::Link(l) => shown.push((plain_text(node), l.url.clone())),
         Node::LinkReference(l) => shown_refs.push((plain_text(node), l.identifier.clone())),
         Node::Definition(d) => {
@@ -252,14 +313,7 @@ pub fn prepare(text: &str) -> Prepared {
                 .links
                 .entry(d.identifier.clone())
                 .or_insert_with(|| d.url.clone());
-            if let Some(source) = d
-                .position
-                .as_ref()
-                .and_then(|p| text.get(p.start.offset..p.end.offset))
-            {
-                prepared.definitions.push_str(source.trim());
-                prepared.definitions.push('\n');
-            }
+            push_source(&mut prepared.definitions, text, node);
         }
         _ => {}
     });
@@ -289,14 +343,35 @@ pub fn prepare(text: &str) -> Prepared {
             next += 1;
             next - 1
         });
-        prepared.notes.push(Note { number, markdown });
+        // A note's own notes are not drawn: one level is prepared.
+        let note = if depth == 0 {
+            prepare_at(&markdown, 1)
+        } else {
+            Prepared::default()
+        };
+        prepared.notes.push(Note {
+            number,
+            markdown,
+            prepared: Box::new(note),
+        });
     }
     prepared.notes.sort_by_key(|n| n.number);
     prepared
 }
 
+/// Appends a definition's source, then a blank line.
+fn push_source(out: &mut String, text: &str, node: &Node) {
+    if let Some(source) = node
+        .position()
+        .and_then(|p| text.get(p.start.offset..p.end.offset))
+    {
+        out.push_str(source.trim_end());
+        out.push_str("\n\n");
+    }
+}
+
 /// The text a node shows, without its markup.
-fn plain_text(node: &Node) -> String {
+pub fn plain_text(node: &Node) -> String {
     let mut out = String::new();
     walk(node, &mut |n| match n {
         Node::Text(t) => out.push_str(&t.value),
@@ -306,11 +381,14 @@ fn plain_text(node: &Node) -> String {
     out
 }
 
+/// Visits `node` and its descendants in document order, without
+/// recursion: a deeply nested text cannot exhaust the stack.
 fn walk(node: &Node, f: &mut impl FnMut(&Node)) {
-    f(node);
-    if let Some(children) = node.children() {
-        for child in children {
-            walk(child, f);
+    let mut stack = vec![node];
+    while let Some(node) = stack.pop() {
+        f(node);
+        if let Some(children) = node.children() {
+            stack.extend(children.iter().rev());
         }
     }
 }
@@ -457,6 +535,24 @@ mod tests {
         assert_eq!(deceptive_host("the docs", "https://evil.example/"), None);
         assert_eq!(deceptive_host("README.md", "https://evil.example/"), None);
         assert_eq!(deceptive_host("v1.2", "https://evil.example/"), None);
+        // Trailing punctuation, any real ending, a user name in front.
+        assert_eq!(
+            deceptive_host("example.org.", "https://evil.example/"),
+            Some("evil.example".into())
+        );
+        assert_eq!(
+            deceptive_host("acta.dev)", "https://evil.example/"),
+            Some("evil.example".into())
+        );
+        assert_eq!(deceptive_host("main.rs", "https://evil.example/"), None);
+        assert_eq!(
+            deceptive_host("docs", "https://github.com@evil.example/"),
+            Some("evil.example".into())
+        );
+        assert_eq!(
+            deceptive_host("github.com@evil.example", "https://github.com/"),
+            Some("github.com".into())
+        );
         // A lookalike host in the text never equals the real one.
         assert!(deceptive_host("gіthub.com", "https://github.com/").is_some());
         // Only web destinations are checked.
@@ -525,7 +621,13 @@ mod tests {
     #[test]
     fn definitions_are_collected_for_nested_lists() {
         let p = prepare("See [the plan][plan].\n\n[plan]: https://example.com/plan \"Plan\"\n");
-        assert_eq!(p.definitions, "[plan]: https://example.com/plan \"Plan\"\n");
+        assert_eq!(
+            p.definitions,
+            "[plan]: https://example.com/plan \"Plan\"\n\n"
+        );
+        // Footnote definitions too, for a nested list's own parse.
+        let p = prepare("Text[^n].\n\n[^n]: The note.\n");
+        assert_eq!(p.definitions, "[^n]: The note.\n\n");
         assert_eq!(prepare("no brackets").definitions, "");
     }
 
@@ -545,6 +647,41 @@ mod tests {
         assert_eq!(p.links["r"], "https://evil.example/");
         let p = prepare("[www.example.com][r]\n\n[r]: https://evil.example/\n");
         assert!(p.deceptive.contains_key("https://evil.example/"));
+    }
+
+    #[test]
+    fn deep_texts_are_caught_before_parsing() {
+        assert!(!too_deep("- a\n  - b\n    - c\n> > quoted\n"));
+        assert!(too_deep(&"- ".repeat(1500)));
+        assert!(too_deep(&"> ".repeat(5000)));
+        assert!(too_deep(&format!("{}- x", " ".repeat(200))));
+        assert!(!too_deep(&format!("{}x", " ".repeat(200))));
+        assert!(!too_deep("1. 2. 3. a list of three"));
+    }
+
+    /// Deep texts on a 1 MB stack (the UI thread's on Windows): preparing
+    /// them neither recurses nor overflows.
+    #[test]
+    fn deep_texts_prepare_on_a_small_stack() {
+        std::thread::Builder::new()
+            .stack_size(1024 * 1024)
+            .spawn(|| {
+                for text in [
+                    "- ".repeat(1500) + "[a](b)",
+                    "> ".repeat(5000),
+                    "[x](https://example.com) ".repeat(20_000),
+                ] {
+                    let _ = prepare(&text);
+                    let mut count = 0;
+                    if let Ok(root) = markdown::to_mdast("[a](b)", &parse_options()) {
+                        walk(&root, &mut |_| count += 1);
+                    }
+                    assert!(count > 0);
+                }
+            })
+            .expect("a thread")
+            .join()
+            .expect("no overflow");
     }
 
     #[test]

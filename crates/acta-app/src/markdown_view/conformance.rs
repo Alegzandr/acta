@@ -14,7 +14,7 @@ use std::fmt::Write as _;
 use gpui_kit::base::text::editor_host::{BlockNode, InlineNode, Paragraph, TextMark};
 
 use super::highlight;
-use super::parse::{self, CodeData, FnRefData, ImageData, ListData};
+use super::parse::{self, CodeData, FnRefData, ImageData, ListData, PlainLinkData};
 
 /// A block of the normalised tree.
 #[derive(Clone, Debug, PartialEq)]
@@ -25,11 +25,14 @@ enum B {
     List {
         ordered: bool,
         start: u32,
+        /// Loose: blank lines between items or inside one (paragraph gaps).
+        loose: bool,
         items: Vec<(Option<bool>, Vec<B>)>,
     },
     Code(Option<String>, String),
     Rule,
-    Table(Vec<Vec<Vec<I>>>),
+    /// Column alignments (`none`, `left`, `center`, `right`), then rows.
+    Table(Vec<String>, Vec<Vec<Vec<I>>>),
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -38,7 +41,8 @@ struct Marks {
     strong: bool,
     del: bool,
     code: bool,
-    link: Option<String>,
+    /// Destination and title.
+    link: Option<(String, Option<String>)>,
 }
 
 /// An inline run.
@@ -254,7 +258,12 @@ fn html_inlines(nodes: &[H], marks: &Marks, out: &mut Vec<I>) {
                     "strong" => m.strong = true,
                     "del" => m.del = true,
                     "code" => m.code = true,
-                    "a" => m.link = Some(attr(attrs, "href").unwrap_or_default().to_string()),
+                    "a" => {
+                        m.link = Some((
+                            attr(attrs, "href").unwrap_or_default().to_string(),
+                            attr(attrs, "title").map(str::to_string),
+                        ))
+                    }
                     _ => {}
                 }
                 html_inlines(children, &m, out);
@@ -315,6 +324,13 @@ fn html_blocks(nodes: &[H]) -> Vec<B> {
                 start: attr(attrs, "start")
                     .and_then(|s| s.parse().ok())
                     .unwrap_or(1),
+                // cmark wraps the items of a loose list in paragraphs.
+                loose: children.iter().any(|li| match li {
+                    H::El(n, _, c) if n == "li" => {
+                        c.iter().any(|x| matches!(x, H::El(p, _, _) if p == "p"))
+                    }
+                    _ => false,
+                }),
                 items: children
                     .iter()
                     .filter_map(|li| match li {
@@ -333,8 +349,9 @@ fn html_blocks(nodes: &[H]) -> Vec<B> {
             },
             "table" => {
                 let mut rows = Vec::new();
-                collect_rows(children, &mut rows);
-                B::Table(rows)
+                let mut aligns = Vec::new();
+                collect_rows(children, &mut rows, &mut aligns);
+                B::Table(aligns, rows)
             }
             h => B::Heading(h[1..].parse().unwrap_or(1), inlines_of(children)),
         });
@@ -343,10 +360,21 @@ fn html_blocks(nodes: &[H]) -> Vec<B> {
     out
 }
 
-fn collect_rows(nodes: &[H], rows: &mut Vec<Vec<Vec<I>>>) {
+fn collect_rows(nodes: &[H], rows: &mut Vec<Vec<Vec<I>>>, aligns: &mut Vec<String>) {
     for node in nodes {
         if let H::El(name, _, children) = node {
             if name == "tr" {
+                if rows.is_empty() {
+                    *aligns = children
+                        .iter()
+                        .filter_map(|c| match c {
+                            H::El(n, a, _) if n == "td" || n == "th" => {
+                                Some(attr(a, "align").unwrap_or("none").to_string())
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                }
                 rows.push(
                     children
                         .iter()
@@ -357,7 +385,7 @@ fn collect_rows(nodes: &[H], rows: &mut Vec<Vec<Vec<I>>>) {
                         .collect(),
                 );
             } else {
-                collect_rows(children, rows);
+                collect_rows(children, rows, aligns);
             }
         }
     }
@@ -418,6 +446,10 @@ fn our_block(block: &BlockNode, out: &mut Vec<B>) {
         } => out.push(B::List {
             ordered: *ordered,
             start: start.unwrap_or(1),
+            // gpui-base keeps each item's spread, not the list's.
+            loose: children
+                .iter()
+                .any(|item| matches!(item, BlockNode::ListItem { spread: true, .. })),
             items: children
                 .iter()
                 .filter_map(|item| match item {
@@ -455,10 +487,17 @@ fn our_block(block: &BlockNode, out: &mut Vec<B>) {
             for row in &mut rows {
                 row.resize(width.max(row.len()), Vec::new());
             }
-            out.push(B::Table(rows))
+            let aligns = t
+                .column_aligns()
+                .iter()
+                .map(|a| format!("{a:?}").to_lowercase())
+                .collect();
+            out.push(B::Table(aligns, rows))
         }
         BlockNode::HorizontalRule { .. } => out.push(B::Rule),
-        _ => {}
+        // Drawn as nothing: a link definition, a stray break.
+        BlockNode::Definition { .. } | BlockNode::Break { .. } => {}
+        other => panic!("a block the suite does not know: {other:?}"),
     }
 }
 
@@ -495,7 +534,16 @@ fn inline(node: &InlineNode, out: &mut Vec<I>) {
                 let n = custom.data::<FnRefData>().expect("fnref").number;
                 out.push(I::Text(format!("[{n}]"), base));
             }
-            _ => out.push(I::Text(custom.as_text().to_string(), base)),
+            // A link that does not open, drawn plain on purpose (nested
+            // lists): still the link the text wrote.
+            parse::PLAIN_LINK => {
+                let d = custom.data::<PlainLinkData>().expect("plain link");
+                let mut link = base.clone();
+                link.link = Some((d.dest.clone(), None));
+                out.push(I::Text(custom.as_text().to_string(), link));
+            }
+            parse::HTML => out.push(I::Text(custom.as_text().to_string(), base)),
+            other => panic!("an inline node the suite does not know: {other}"),
         }
         return;
     }
@@ -534,11 +582,15 @@ fn marks_at(runs: &[(std::ops::Range<usize>, TextMark)], at: std::ops::Range<usi
             if let Some(link) = &mark.link {
                 // A reference link carries its identifier; the view
                 // resolves it from the text's definitions when drawing.
-                let url = match (&link.identifier, link.url.is_empty()) {
-                    (Some(id), true) => LINKS.with(|l| l.borrow().get(id.as_ref()).cloned()),
-                    _ => None,
-                };
-                m.link = Some(url.unwrap_or_else(|| link.url.to_string()));
+                m.link = Some(match (&link.identifier, link.url.is_empty()) {
+                    (Some(id), true) => LINKS
+                        .with(|l| l.borrow().get(id.as_ref()).cloned())
+                        .unwrap_or_default(),
+                    _ => (
+                        link.url.to_string(),
+                        link.title.as_ref().map(|t| t.to_string()),
+                    ),
+                });
             }
         }
     }
@@ -546,13 +598,27 @@ fn marks_at(runs: &[(std::ops::Range<usize>, TextMark)], at: std::ops::Range<usi
 }
 
 thread_local! {
-    /// The definitions of the text being converted.
-    static LINKS: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
+    /// The definitions of the text being converted: destination, title.
+    static LINKS: RefCell<HashMap<String, (String, Option<String>)>> =
+        RefCell::new(HashMap::new());
 }
 
 /// The tree Acta draws for `text`.
 fn ours_of(text: &str) -> Vec<B> {
-    let links = super::policy::prepare(text).links;
+    let mut links = HashMap::new();
+    if let Ok(root) = markdown::to_mdast(text, &super::policy::parse_options()) {
+        let mut stack = vec![&root];
+        while let Some(node) = stack.pop() {
+            if let markdown::mdast::Node::Definition(d) = node {
+                links
+                    .entry(d.identifier.clone())
+                    .or_insert_with(|| (d.url.clone(), d.title.clone()));
+            }
+            if let Some(children) = node.children() {
+                stack.extend(children.iter().rev());
+            }
+        }
+    }
     LINKS.with(|l| *l.borrow_mut() = links);
     ours(&parse::parse_tree(text))
 }
@@ -586,7 +652,18 @@ fn normalise(runs: Vec<I>) -> Vec<I> {
     for run in runs {
         match run {
             I::Text(t, mut m) => {
-                m.link = m.link.map(|l| percent_decode(&l));
+                m.link = m.link.map(|(url, title)| (percent_decode(&url), title));
+                if m.code {
+                    // A code span is drawn with its spaces as they are.
+                    if let Some(I::Text(prev, pm)) = merged.last_mut()
+                        && *pm == m
+                    {
+                        prev.push_str(&t);
+                        continue;
+                    }
+                    merged.push(I::Text(t, m));
+                    continue;
+                }
                 let mut folded = String::new();
                 let mut space = false;
                 for c in t.chars() {
@@ -620,10 +697,10 @@ fn normalise(runs: Vec<I>) -> Vec<I> {
         if let I::Text(mut t, m) = run {
             let after_space = match result.last() {
                 None | Some(I::Break) => true,
-                Some(I::Text(p, _)) => p.ends_with(' '),
+                Some(I::Text(p, pm)) => p.ends_with(' ') && !pm.code,
                 _ => false,
             };
-            if after_space {
+            if after_space && !m.code {
                 t = t.trim_start_matches(' ').to_string();
             }
             if !t.is_empty() {
@@ -631,7 +708,8 @@ fn normalise(runs: Vec<I>) -> Vec<I> {
             }
         } else {
             if let I::Break = run
-                && let Some(I::Text(p, _)) = result.last_mut()
+                && let Some(I::Text(p, pm)) = result.last_mut()
+                && !pm.code
             {
                 let trimmed = p.trim_end_matches(' ').len();
                 p.truncate(trimmed);
@@ -642,7 +720,9 @@ fn normalise(runs: Vec<I>) -> Vec<I> {
     while let Some(I::Break) = result.last() {
         result.pop();
     }
-    if let Some(I::Text(p, _)) = result.last_mut() {
+    if let Some(I::Text(p, pm)) = result.last_mut()
+        && !pm.code
+    {
         let trimmed = p.trim_end_matches(' ').len();
         p.truncate(trimmed);
     }
@@ -897,4 +977,29 @@ fn footnotes_are_numbered() {
             Marks::default()
         )])
     );
+}
+
+/// On a 1 MB stack (the UI thread's on Windows): texts nested past the cap
+/// are caught before any parse, and a text nested well within it, every
+/// level a nested numbered list parsed on its own, parses whole.
+#[test]
+fn nesting_stays_within_a_small_stack() {
+    std::thread::Builder::new()
+        .stack_size(1024 * 1024)
+        .spawn(|| {
+            for deep in ["- ".repeat(1500) + "[a](b)", "> ".repeat(5000)] {
+                assert!(super::policy::too_deep(&deep));
+            }
+            let mut text = String::new();
+            for level in 0..16 {
+                text.push_str(&" ".repeat(level * 3));
+                text.push_str("1. level\n");
+            }
+            assert!(!super::policy::too_deep(&text));
+            let printed = render(&ours_of(&text));
+            assert_eq!(printed.matches("ordered: true").count(), 16, "{printed}");
+        })
+        .expect("a thread")
+        .join()
+        .expect("no overflow");
 }

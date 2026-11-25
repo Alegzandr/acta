@@ -1,6 +1,6 @@
 # Accepted differences
 
-Examples of the CommonMark 0.31.2 spec (`commonmark <n>`) and the GFM extension examples (`gfm <n>`) whose tree differs from the spec's HTML, each with its reason. Read by `conformance.rs`.
+Examples of the CommonMark 0.31.2 spec (`commonmark <n>`) and the GFM extension examples (`gfm <n>`) whose tree differs from the spec's HTML, each with its reason. Read by `conformance.rs`. The trees compare block kinds, list starts and looseness, task states, code with its language, table alignments and cells, and inline runs with emphasis, strong, strikethrough, code (spaces kept) and links with their titles; an unknown block or inline kind fails the suite.
 
 ## CommonMark 0.31.2
 
@@ -11,6 +11,7 @@ Examples of the CommonMark 0.31.2 spec (`commonmark <n>`) and the GFM extension 
 - commonmark 31: raw HTML is shown as the text it is, never rendered (components-editor.md 5, HTML)
 - commonmark 96: front matter is on (components-editor.md 5): a text opening with `---` starts YAML front matter
 - commonmark 98: front matter is on (components-editor.md 5): a text opening with `---` starts YAML front matter
+- commonmark 138: gpui-base drops the space after a code span that ends in a space (the soft break before `aaa`)
 - commonmark 148: raw HTML is shown as the text it is, never rendered (components-editor.md 5, HTML)
 - commonmark 149: raw HTML is shown as the text it is, never rendered (components-editor.md 5, HTML)
 - commonmark 150: raw HTML is shown as the text it is, never rendered (components-editor.md 5, HTML)
@@ -56,7 +57,12 @@ Examples of the CommonMark 0.31.2 spec (`commonmark <n>`) and the GFM extension 
 - commonmark 191: raw HTML is shown as the text it is, never rendered (components-editor.md 5, HTML)
 - commonmark 308: raw HTML is shown as the text it is, never rendered (components-editor.md 5, HTML)
 - commonmark 309: raw HTML is shown as the text it is, never rendered (components-editor.md 5, HTML)
+- commonmark 311: a list loose only by a blank line between items draws tight: gpui-base keeps each item's spread, not the list's (a known gap, components-editor.md 5 says loose lists take the paragraph gap)
+- commonmark 313: a list loose only by a blank line between items draws tight: gpui-base keeps each item's spread, not the list's (a known gap, components-editor.md 5 says loose lists take the paragraph gap)
+- commonmark 314: a list loose only by a blank line between items draws tight: gpui-base keeps each item's spread, not the list's (a known gap, components-editor.md 5 says loose lists take the paragraph gap)
+- commonmark 315: a list loose only by a blank line between items draws tight: gpui-base keeps each item's spread, not the list's (a known gap, components-editor.md 5 says loose lists take the paragraph gap)
 - commonmark 318: markdown-rs drops a trailing blank line inside a fenced code block in a list item
+- commonmark 326: a list loose only by a blank line between items draws tight: gpui-base keeps each item's spread, not the list's (a known gap, components-editor.md 5 says loose lists take the paragraph gap)
 - commonmark 344: raw HTML is shown as the text it is, never rendered (components-editor.md 5, HTML)
 - commonmark 475: raw HTML is shown as the text it is, never rendered (components-editor.md 5, HTML)
 - commonmark 476: raw HTML is shown as the text it is, never rendered (components-editor.md 5, HTML)

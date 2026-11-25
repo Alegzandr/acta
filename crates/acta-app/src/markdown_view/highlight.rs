@@ -7,7 +7,9 @@
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::ops::Range;
+use std::sync::mpsc::{SyncSender, sync_channel};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxDefinition, SyntaxSet};
 
@@ -43,74 +45,154 @@ impl Role {
 /// A block over either limit draws unhighlighted.
 const MAX_LINES: usize = 2_000;
 const MAX_BYTES: usize = 200_000;
+/// A block the parser has not finished within this time draws plain. A
+/// debug build parses about ten times slower (the dependencies are not
+/// optimised), so it waits longer.
+const BUDGET: Duration = Duration::from_millis(if cfg!(debug_assertions) { 3_000 } else { 300 });
+/// Blocks waiting for the worker; more are asked for again on a later frame.
+const QUEUE: usize = 64;
+/// What the cache of runs may hold before the least recently drawn go.
+const CACHE_BYTES: usize = 8 * 1024 * 1024;
 
 static SYNTAXES: OnceLock<SyntaxSet> = OnceLock::new();
-static WARMING: OnceLock<()> = OnceLock::new();
 
-/// Loads the syntax set on a background thread, once, so the first code
-/// block does not wait for it on the UI thread.
-pub fn warm() {
-    WARMING.get_or_init(|| {
-        spawn("acta-syntaxes", || {
-            SYNTAXES.get_or_init(load);
-        });
-    });
-}
-
-/// A worker for the parser: fancy-regex backtracks recursively, which can
-/// outgrow a default stack (the UI thread's is 1 MB on Windows), so
-/// highlighting never runs on the UI thread and gets a large stack here.
-fn spawn(name: &str, f: impl FnOnce() + Send + 'static) {
-    std::thread::Builder::new()
-        .name(name.into())
-        .stack_size(16 * 1024 * 1024)
-        .spawn(f)
-        .ok();
-}
-
-/// The runs of a block, highlighted once on a worker.
+/// The runs of a block, highlighted once on the worker.
 pub type Runs = Arc<Vec<(Range<usize>, Role)>>;
 
-/// Highlighted runs per block, keyed by language and code; `None` while
-/// the worker is on it.
-static RUNS: Mutex<Option<HashMap<u64, Option<Runs>>>> = Mutex::new(None);
+struct Job {
+    key: u64,
+    code: String,
+    lang: String,
+}
 
-/// The runs of `code` in `lang`, or `None` while they are being worked
-/// out off the UI thread (the caller draws plain text and asks again).
+/// Results by block: `None` while queued, then the runs (empty when the
+/// block is too large, the language unknown, the budget ran out or the
+/// parser failed), with when each was last asked for.
+#[derive(Default)]
+struct Cache {
+    entries: HashMap<u64, (Option<Runs>, u64)>,
+    bytes: usize,
+    tick: u64,
+}
+
+impl Cache {
+    fn size(runs: &Runs) -> usize {
+        64 + runs.len() * std::mem::size_of::<(Range<usize>, Role)>()
+    }
+
+    /// Stores `runs`, then drops the least recently asked-for results
+    /// until the cache fits; blocks still queued are never dropped.
+    fn insert(&mut self, key: u64, runs: Runs, limit: usize) {
+        self.tick += 1;
+        self.bytes += Self::size(&runs);
+        if let Some((Some(old), _)) = self.entries.insert(key, (Some(runs), self.tick)) {
+            self.bytes -= Self::size(&old);
+        }
+        while self.bytes > limit {
+            let oldest = self
+                .entries
+                .iter()
+                .filter(|(k, (runs, _))| runs.is_some() && **k != key)
+                .min_by_key(|(_, (_, used))| *used)
+                .map(|(k, _)| *k);
+            let Some(oldest) = oldest else { break };
+            if let Some((Some(runs), _)) = self.entries.remove(&oldest) {
+                self.bytes -= Self::size(&runs);
+            }
+        }
+    }
+
+    /// The entry of `key`, marked as just used.
+    fn touch(&mut self, key: u64) -> Option<Option<Runs>> {
+        self.tick += 1;
+        let tick = self.tick;
+        self.entries.get_mut(&key).map(|(runs, used)| {
+            *used = tick;
+            runs.clone()
+        })
+    }
+}
+
+static CACHE: Mutex<Option<Cache>> = Mutex::new(None);
+static WORKER: OnceLock<SyncSender<Job>> = OnceLock::new();
+static NOTIFY: OnceLock<Box<dyn Fn() + Send + Sync>> = OnceLock::new();
+
+/// What the worker calls when a block's runs land, so the window draws
+/// them without waiting for input. Set once by the view.
+pub fn set_notifier(notify: impl Fn() + Send + Sync + 'static) {
+    let _ = NOTIFY.set(Box::new(notify));
+}
+
+fn with_cache<R>(f: impl FnOnce(&mut Cache) -> R) -> R {
+    let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    f(cache.get_or_insert_with(Cache::default))
+}
+
+/// The one worker, with a bounded queue. fancy-regex backtracks
+/// recursively, which can outgrow a default stack (the UI thread's is 1 MB
+/// on Windows), so highlighting never runs on the UI thread and the worker
+/// gets a large stack. A panic in the parser leaves an empty result.
+fn worker() -> Option<&'static SyncSender<Job>> {
+    if let Some(sender) = WORKER.get() {
+        return Some(sender);
+    }
+    let (sender, jobs) = sync_channel::<Job>(QUEUE);
+    std::thread::Builder::new()
+        .name("acta-highlight".into())
+        .stack_size(16 * 1024 * 1024)
+        .spawn(move || {
+            while let Ok(job) = jobs.recv() {
+                let runs = std::panic::catch_unwind(|| {
+                    SYNTAXES.get_or_init(load);
+                    highlight_within(&job.code, &job.lang, Some(Instant::now() + BUDGET))
+                })
+                .unwrap_or_default();
+                with_cache(|cache| cache.insert(job.key, Arc::new(runs), CACHE_BYTES));
+                if let Some(notify) = NOTIFY.get() {
+                    notify();
+                }
+            }
+        })
+        .ok()?;
+    let _ = WORKER.set(sender);
+    WORKER.get()
+}
+
+/// The runs of `code` in `lang`, or `None` while the worker is on them
+/// (the caller draws plain text; the notifier says when they land).
 pub fn runs(code: &str, lang: &str) -> Option<Runs> {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     (lang, code).hash(&mut hasher);
     let key = hasher.finish();
-    let mut cache = RUNS.lock().unwrap_or_else(|e| e.into_inner());
-    let cache = cache.get_or_insert_with(HashMap::new);
-    if let Some(entry) = cache.get(&key) {
-        return entry.clone();
+    if let Some(found) = with_cache(|cache| cache.touch(key)) {
+        return found;
     }
-    if cache.len() > 512 {
-        cache.retain(|_, entry| entry.is_none());
+    let job = Job {
+        key,
+        code: code.to_string(),
+        lang: lang.to_string(),
+    };
+    // A full queue leaves the block plain until a later frame asks again.
+    if worker().is_some_and(|w| w.try_send(job).is_ok()) {
+        with_cache(|cache| {
+            let tick = cache.tick;
+            cache.entries.entry(key).or_insert((None, tick));
+        });
     }
-    cache.insert(key, None);
-    let (code, lang) = (code.to_string(), lang.to_string());
-    spawn("acta-highlight", move || {
-        SYNTAXES.get_or_init(load);
-        let runs = Arc::new(highlight(&code, &lang));
-        if let Some(cache) = RUNS.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
-            cache.insert(key, Some(runs));
-        }
-    });
     None
 }
 
 /// PowerShell, which two-face's set lacks: the SublimeText/PowerShell
-/// package's syntax (MIT, assets/syntaxes/powershell).
-const POWERSHELL: &str =
-    include_str!("../../../../assets/syntaxes/powershell/PowerShell.sublime-syntax");
+/// package's syntax (MIT, assets/syntaxes/powershell), precompiled into a
+/// syntect dump by scripts/syntax-dump so no YAML loader ships.
+const POWERSHELL: &[u8] =
+    include_bytes!("../../../../assets/syntaxes/powershell/PowerShell.syntax.bin");
 
 /// two-face's syntax set with PowerShell added. Linking the set again
-/// takes a moment, so it runs on the warm-up thread.
+/// takes a moment: it runs on the worker, before its first block.
 fn load() -> SyntaxSet {
     let set = two_face::syntax::extra_newlines();
-    let Ok(powershell) = SyntaxDefinition::load_from_str(POWERSHELL, true, None) else {
+    let Ok(powershell) = syntect::dumps::from_reader::<SyntaxDefinition, _>(POWERSHELL) else {
         return set;
     };
     let mut builder = set.into_builder();
@@ -131,7 +213,17 @@ pub fn language(info: Option<&str>) -> Option<String> {
 /// The runs of `code` (already tab-expanded) for a block of language
 /// `lang` (see [`language`]). Empty when the block is too large, the
 /// language unknown, or the syntax set still loading.
+#[cfg(test)]
 pub fn highlight(code: &str, lang: &str) -> Vec<(Range<usize>, Role)> {
+    highlight_within(code, lang, None)
+}
+
+/// [`highlight`], giving up (empty) once `deadline` passes.
+fn highlight_within(
+    code: &str,
+    lang: &str,
+    deadline: Option<Instant>,
+) -> Vec<(Range<usize>, Role)> {
     if code.len() > MAX_BYTES || code.lines().count() > MAX_LINES {
         return Vec::new();
     }
@@ -156,6 +248,9 @@ pub fn highlight(code: &str, lang: &str) -> Vec<(Range<usize>, Role)> {
     let mut runs: Vec<(Range<usize>, Role)> = Vec::new();
     let mut offset = 0;
     for line in code.split_inclusive('\n') {
+        if deadline.is_some_and(|d| Instant::now() > d) {
+            return Vec::new();
+        }
         let Ok(ops) = state.parse_line(line, syntaxes) else {
             return Vec::new();
         };
@@ -291,6 +386,79 @@ mod tests {
 
     fn load() {
         SYNTAXES.get_or_init(super::load);
+    }
+
+    /// The licences of two-face's syntaxes ship with Acta: the notice in
+    /// scripts/licenses/third-party is what two-face lists for them
+    /// (`ACTA_BLESS=1` writes it again).
+    #[test]
+    fn the_syntax_licences_ship() {
+        let mut want = String::from(
+            "# Syntax definitions\n\nThe syntax definitions Acta highlights code with come from \
+             two-face's syntax set (two-face 0.4.5), which lists their licences as follows. \
+             Generated by `markdown_view::highlight` tests; PowerShell's own licence is in \
+             assets/syntaxes/powershell.\n\n",
+        );
+        for licence in two_face::acknowledgement::listing().for_syntaxes() {
+            if licence.needs_acknowledgement() {
+                licence.write_md(&mut want);
+            }
+        }
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../scripts/licenses/third-party/two-face-syntaxes.md");
+        if std::env::var_os("ACTA_BLESS").is_some() {
+            std::fs::write(&path, &want).expect("written");
+        }
+        let have = std::fs::read_to_string(&path)
+            .unwrap_or_default()
+            .replace("\r\n", "\n");
+        assert!(
+            have == want,
+            "{} is stale (ACTA_BLESS=1 rewrites it)",
+            path.display()
+        );
+    }
+
+    #[test]
+    fn a_past_deadline_draws_plain() {
+        load();
+        let code = "let a = 1;\n";
+        assert!(!highlight_within(code, "rust", None).is_empty());
+        let past = Instant::now() - Duration::from_secs(1);
+        assert!(highlight_within(code, "rust", Some(past)).is_empty());
+    }
+
+    #[test]
+    fn the_cache_drops_the_least_recently_drawn() {
+        let runs = |n: usize| Arc::new(vec![(0..1, Role::Keyword); n]);
+        let mut cache = Cache::default();
+        let one = Cache::size(&runs(10));
+        cache.insert(1, runs(10), one * 2);
+        cache.insert(2, runs(10), one * 2);
+        cache.touch(1);
+        cache.insert(3, runs(10), one * 2);
+        assert!(cache.entries.contains_key(&1), "recently drawn, kept");
+        assert!(!cache.entries.contains_key(&2), "least recent, dropped");
+        assert!(cache.entries.contains_key(&3));
+        assert_eq!(cache.bytes, one * 2);
+        // A queued block is never dropped.
+        cache.entries.insert(4, (None, 0));
+        cache.insert(5, runs(10), one);
+        assert!(cache.entries.contains_key(&4));
+    }
+
+    #[test]
+    fn the_worker_highlights_off_the_calling_thread() {
+        let code = "fn worker_test() {}\n";
+        let mut got = None;
+        for _ in 0..200 {
+            if let Some(runs) = runs(code, "rust") {
+                got = Some(runs);
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(got.is_some_and(|r| !r.is_empty()));
     }
 
     fn roles_of<'a>(code: &'a str, lang: &str) -> Vec<(&'a str, Role)> {

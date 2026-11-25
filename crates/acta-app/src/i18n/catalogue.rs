@@ -5273,4 +5273,8 @@ catalogue! {
         en: t("Not shown: only files attached in Acta are displayed."),
         fr: t("Non affichée\u{a0}: seuls les fichiers joints dans Acta sont affichés."),
     }
+    MdLinkBlocked "md.link_blocked" {
+        en: t("Not opened: Acta opens only web and e-mail links."),
+        fr: t("Non ouvert\u{a0}: Acta n\u{2019}ouvre que les liens web et e-mail."),
+    }
 }

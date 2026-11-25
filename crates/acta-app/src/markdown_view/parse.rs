@@ -13,9 +13,13 @@
 //!   leave the flow (`acta.hidden`), drawn together at the end;
 //! - a code span that runs over a line ending keeps it as a space, as
 //!   CommonMark says, where the stock path breaks the line (`acta.code-span`);
+//! - a link that does not open (a path, another scheme) is its text, with
+//!   its destination as tooltip (`acta.plain-link`), so no click handler
+//!   ever sees it;
 //! - an ordered list nested in another block is parsed on its own
 //!   (`acta.list`), so it counts in numbers at every depth.
 
+use std::cell::Cell;
 use std::sync::Arc;
 
 use gpui_kit::base::text::editor_host::{self, BlockNode};
@@ -36,6 +40,7 @@ pub const HTML: &str = "acta.html";
 pub const IMAGE: &str = "acta.image";
 pub const FNREF: &str = "acta.fnref";
 pub const CODE_SPAN: &str = "acta.code-span";
+pub const PLAIN_LINK: &str = "acta.plain-link";
 
 /// The five GitHub alert kinds (components-editor.md 5, GitHub alert).
 pub const ALERTS: [&str; 5] = ["note", "tip", "important", "warning", "caution"];
@@ -63,6 +68,12 @@ pub struct ImageData {
     pub dest: String,
 }
 
+/// A link drawn as plain text: what it shows and where it pointed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PlainLinkData {
+    pub dest: String,
+}
+
 /// A footnote reference's number.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FnRefData {
@@ -80,6 +91,11 @@ fn code(code: &str, label: Option<String>, lang: Option<String>) -> MarkdownNode
         },
     )
     .text(code)
+}
+
+thread_local! {
+    /// How many nested-list parses enclose the current one.
+    static NESTING: Cell<usize> = const { Cell::new(0) };
 }
 
 fn block(node: &Node, cx: &MarkdownParseContext<'_>, prep: &Arc<Prepared>) -> Option<MarkdownNode> {
@@ -107,10 +123,16 @@ fn block(node: &Node, cx: &MarkdownParseContext<'_>, prep: &Arc<Prepared>) -> Op
                 position.end.offset,
                 &prep.definitions,
             )?;
-            let blocks = editor_host::parse_markdown(&source_text, Arc::new(parsers(prep)))
-                .ok()?
-                .into_iter()
-                .next()?;
+            // Each nested list parses its own nested lists: a bounded number
+            // of levels, past which the stock path draws them.
+            let depth = NESTING.with(Cell::get);
+            if depth >= policy::MAX_DEPTH {
+                return None;
+            }
+            NESTING.with(|n| n.set(depth + 1));
+            let parsed = editor_host::parse_markdown(&source_text, Arc::new(parsers(prep, true)));
+            NESTING.with(|n| n.set(depth));
+            let blocks = parsed.ok()?.into_iter().next()?;
             if !matches!(blocks, BlockNode::List { .. }) {
                 return None;
             }
@@ -220,10 +242,51 @@ impl MarkdownPlugin for CodeSpan {
         match node {
             Node::InlineCode(c) if c.value.contains(LINE_ENDS) => {
                 let text = c.value.replace("\r\n", " ").replace(LINE_ENDS, " ");
+                // CommonMark: with the line endings now spaces, one space
+                // is stripped from each end when both ends have one and the
+                // span is not only spaces.
+                let text = match text.strip_prefix(' ').and_then(|t| t.strip_suffix(' ')) {
+                    Some(inner) if !text.bytes().all(|b| b == b' ') => inner.to_string(),
+                    _ => text,
+                };
                 Some(MarkdownNode::new(CODE_SPAN, ()).text(text))
             }
             _ => None,
         }
+    }
+
+    fn render_inline(
+        &self,
+        node: &MarkdownNode,
+        context: &InlineRenderContext,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<InlineElement> {
+        self.render.as_ref()?(node, context, window, cx)
+    }
+}
+
+/// A link whose destination does not open in Acta: its text, plain.
+struct PlainLink {
+    prep: Arc<Prepared>,
+    render: Option<InlineRender>,
+}
+
+impl MarkdownPlugin for PlainLink {
+    fn name(&self) -> &str {
+        PLAIN_LINK
+    }
+
+    fn parse(&self, node: &Node, _: &MarkdownParseContext<'_>) -> Option<MarkdownNode> {
+        let dest = match node {
+            Node::Link(l) => l.url.clone(),
+            Node::LinkReference(l) => self.prep.links.get(&l.identifier)?.clone(),
+            _ => return None,
+        };
+        if policy::classify_link(&dest).is_link() {
+            return None;
+        }
+        Some(MarkdownNode::new(PLAIN_LINK, PlainLinkData { dest }).text(policy::plain_text(node)))
     }
 
     fn render_inline(
@@ -272,13 +335,16 @@ pub struct Renderers {
     pub image: Option<InlineRender>,
     pub fnref: Option<InlineRender>,
     pub code_span: Option<InlineRender>,
+    pub plain_link: Option<InlineRender>,
 }
 
 /// The extensions of the rendering contract with the given inline
 /// renderers; block renderers and alert surfaces are the view's to add.
-pub fn extensions(prep: &Arc<Prepared>, renderers: Renderers) -> MarkdownExtensions {
+/// `nested`: for a nested list, drawn without the text view's link hook,
+/// so links that do not open are claimed as plain text at parse time.
+pub fn extensions(prep: &Arc<Prepared>, renderers: Renderers, nested: bool) -> MarkdownExtensions {
     let block_prep = prep.clone();
-    MarkdownExtensions::default()
+    let ext = MarkdownExtensions::default()
         .frontmatter()
         .plugin(HtmlText)
         .plugin(Image {
@@ -292,12 +358,20 @@ pub fn extensions(prep: &Arc<Prepared>, renderers: Renderers) -> MarkdownExtensi
             prep: prep.clone(),
             render: renderers.fnref,
         })
-        .block_parser(move |node, cx| block(node, cx, &block_prep))
+        .block_parser(move |node, cx| block(node, cx, &block_prep));
+    if nested {
+        ext.plugin(PlainLink {
+            prep: prep.clone(),
+            render: renderers.plain_link,
+        })
+    } else {
+        ext
+    }
 }
 
-/// The extensions for parsing only (a nested list, the tests).
-pub fn parsers(prep: &Arc<Prepared>) -> MarkdownExtensions {
-    with_alert_markers(extensions(prep, Renderers::default()))
+/// The extensions for parsing only: a nested list (`nested`), the tests.
+pub fn parsers(prep: &Arc<Prepared>, nested: bool) -> MarkdownExtensions {
+    with_alert_markers(extensions(prep, Renderers::default(), nested))
 }
 
 /// Registers the alert surfaces with an empty container, for a parse whose
@@ -313,5 +387,5 @@ fn with_alert_markers(mut ext: MarkdownExtensions) -> MarkdownExtensions {
 #[cfg(test)]
 pub fn parse_tree(text: &str) -> Vec<BlockNode> {
     let prep = Arc::new(policy::prepare(text));
-    editor_host::parse_markdown(text, Arc::new(parsers(&prep))).unwrap_or_default()
+    editor_host::parse_markdown(text, Arc::new(parsers(&prep, false))).unwrap_or_default()
 }
