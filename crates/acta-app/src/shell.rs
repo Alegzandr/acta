@@ -3578,6 +3578,11 @@ impl Shell {
                     }
                     shell.close_overlay(window, cx)
                 }
+                DialogEvent::ResetHere(options) => {
+                    let options = *options;
+                    shell.close_overlay(window, cx);
+                    shell.reset_here(options, window, cx);
+                }
                 DialogEvent::BackUpFirst => {
                     shell.close_overlay(window, cx);
                     shell.open_export(window, cx);
@@ -3739,6 +3744,59 @@ impl Shell {
                 voice_models: false,
                 has_models,
                 counts: None,
+                unreachable: None,
+            },
+            window,
+            cx,
+        );
+    }
+
+    /// The key-loss screen's reset: erased now, before anything opens the
+    /// database, then a new one opens on first run.
+    fn reset_here(
+        &mut self,
+        options: acta_core::reset::ResetOptions,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(config) = db::config() else { return };
+        let erasing = cx.background_spawn(async move {
+            acta_core::reset::wipe_here(&config.data_dir, &config.keys, options)
+        });
+        self._open = cx.spawn_in(window, async move |shell, cx| {
+            let wiped = erasing.await;
+            let _ = shell.update_in(cx, |shell, window, cx| {
+                match wiped {
+                    Ok(_) => {
+                        crate::log::line("reset: data erased from the key-loss screen");
+                        settings::change(cx, |prefs| {
+                            crate::preferences::forget_records(prefs, options.sign_out)
+                        });
+                        shell.content = Content::Opening;
+                        shell.open_store(window, cx);
+                    }
+                    Err(err) => crate::log::line(&format!("reset: not done: {err}")),
+                }
+                cx.notify();
+            });
+        });
+    }
+
+    /// "Reset Acta..." on the key-loss screen: the same confirmation,
+    /// without counts (nothing can be read).
+    fn open_reset_here(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let has_models = db::config().is_some_and(|c| {
+            acta_core::voice::models::models_dir(&c.data_dir)
+                .read_dir()
+                .is_ok_and(|mut d| d.next().is_some())
+        });
+        self.open_dialog(
+            DialogKind::Reset {
+                sign_out: false,
+                voice_models: false,
+                has_models,
+                counts: None,
+                unreachable: None,
             },
             window,
             cx,
@@ -5721,18 +5779,33 @@ impl Shell {
                             .child(tr(locale, Key::KeylossLimit, &[("file", Arg::Text(&kept))])),
                     )
                     .child(
-                        div().mt(px(8.)).ml(px(-12.)).child(
-                            ui::button(
-                                "keyloss-empty",
-                                text(locale, Key::KeylossStartEmpty),
-                                Variant::Ghost,
-                                false,
-                                &t,
+                        div()
+                            .mt(px(8.))
+                            .ml(px(-12.))
+                            .child(
+                                ui::button(
+                                    "keyloss-empty",
+                                    text(locale, Key::KeylossStartEmpty),
+                                    Variant::Ghost,
+                                    false,
+                                    &t,
+                                )
+                                .on_click(cx.listener(
+                                    |shell, _, window, cx| shell.start_empty(None, window, cx),
+                                )),
                             )
-                            .on_click(cx.listener(
-                                |shell, _, window, cx| shell.start_empty(None, window, cx),
-                            )),
-                        ),
+                            .child(
+                                ui::button(
+                                    "keyloss-reset",
+                                    text(locale, Key::SettingsReset),
+                                    Variant::Ghost,
+                                    false,
+                                    &t,
+                                )
+                                .on_click(cx.listener(
+                                    |shell, _, window, cx| shell.open_reset_here(window, cx),
+                                )),
+                            ),
                     ),
             )
             .into_any_element()

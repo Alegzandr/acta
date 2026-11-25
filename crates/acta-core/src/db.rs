@@ -251,6 +251,79 @@ fn key_for_new_db(store: &dyn KeyStore) -> Result<Key, crate::keys::KeyStoreErro
     Ok(key)
 }
 
+/// The key the marker names, if its store holds one (Reset Acta). `None`
+/// when there is no marker, no such store or no key: nothing to check with.
+pub(crate) fn marked_key(dir: &Path, stores: &KeyStores) -> Option<(Key, Arc<dyn KeyStore>)> {
+    let name = read_marker(dir).ok()??;
+    let store = stores.by_name(&name)?.clone();
+    let key = store.load().ok()??;
+    Some((key, store))
+}
+
+/// What [`probe_alone`] found.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Probe {
+    /// No other connection has the database open; the meta value asked
+    /// for, if any.
+    Alone(Option<String>),
+    /// Another connection has it open (another process, or this one).
+    Busy,
+    /// The key does not open it.
+    Unreadable,
+}
+
+/// Whether any other connection has the database open, and the meta value
+/// `meta_key`, read on the same connection (Reset Acta). In WAL mode every
+/// open connection holds a shared lock on the database file for as long
+/// as it is open; a connection in exclusive locking mode needs an
+/// exclusive lock at its first read, so it fails at once while any other
+/// is open, on every system. The lock is released when this returns.
+pub(crate) fn probe_alone(dir: &Path, key: &Key, meta_key: &str) -> Result<Probe, OpenError> {
+    initialize_sqlite();
+    let path = dir.join(DB_FILE);
+    let conn = Connection::open_with_flags(
+        &path,
+        OpenFlags::SQLITE_OPEN_NO_MUTEX | OpenFlags::SQLITE_OPEN_READ_WRITE,
+    )?;
+    conn.execute_batch("PRAGMA cipher_log_level = NONE;")?;
+    let sql = zeroize::Zeroizing::new(format!("PRAGMA key = \"x'{}'\";", key.to_hex().as_str()));
+    conn.execute_batch(&sql)?;
+    conn.busy_timeout(Duration::ZERO)?;
+    conn.execute_batch("PRAGMA locking_mode = EXCLUSIVE;")?;
+    let first = conn.query_row("SELECT count(*) FROM sqlite_master", [], |r| {
+        r.get::<_, i64>(0)
+    });
+    match first {
+        Ok(_) => {}
+        Err(rusqlite::Error::SqliteFailure(e, _)) if e.code == ErrorCode::NotADatabase => {
+            return Ok(Probe::Unreadable);
+        }
+        Err(rusqlite::Error::SqliteFailure(e, _))
+            if matches!(e.code, ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked) =>
+        {
+            return Ok(Probe::Busy);
+        }
+        Err(e) => return Err(e.into()),
+    }
+    // A write lock too: in rollback mode the read above took a shared lock
+    // only.
+    match conn.execute_batch("BEGIN EXCLUSIVE; COMMIT;") {
+        Ok(()) => {}
+        Err(rusqlite::Error::SqliteFailure(e, _))
+            if matches!(e.code, ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked) =>
+        {
+            return Ok(Probe::Busy);
+        }
+        Err(e) => return Err(e.into()),
+    }
+    let value = conn
+        .query_row("SELECT value FROM meta WHERE key = ?1", [meta_key], |r| {
+            r.get::<_, String>(0)
+        })
+        .ok();
+    Ok(Probe::Alone(value))
+}
+
 fn named_store<'a>(stores: &'a KeyStores, name: &str) -> Result<&'a Arc<dyn KeyStore>, OpenError> {
     stores.by_name(name).ok_or_else(|| {
         OpenError::KeyStore(format!(

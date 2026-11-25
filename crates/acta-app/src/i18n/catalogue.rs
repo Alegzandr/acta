@@ -4477,6 +4477,14 @@ catalogue! {
         en: t("Reset Acta"),
         fr: t("Réinitialiser Acta"),
     }
+    ResetAnyway "reset.anyway" {
+        en: t("Reset anyway"),
+        fr: t("Réinitialiser quand même"),
+    }
+    ResetUnreachable "reset.unreachable" {
+        en: p("{n} folder could not be reached; it keeps Acta\u{2019}s settings for Claude Code.", "{n} folders could not be reached; they keep Acta\u{2019}s settings for Claude Code."),
+        fr: p("{n} dossier est injoignable\u{202f}; il garde les réglages d\u{2019}Acta pour Claude Code.", "{n} dossiers sont injoignables\u{202f}; ils gardent les réglages d\u{2019}Acta pour Claude Code."),
+    }
     ResetFailed "reset.failed" {
         en: t("Acta could not reset: a Claude Code session still uses its data. Close Claude Code, then reset again."),
         fr: t("Acta n\u{2019}a pas pu se réinitialiser\u{a0}: une session Claude Code utilise encore ses données. Fermez Claude Code, puis recommencez."),

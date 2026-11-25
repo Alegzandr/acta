@@ -39,8 +39,8 @@ pub fn create_new_private_file(path: &Path) -> io::Result<File> {
 /// exclusively so nothing planted there, a symlink included, is followed
 /// or reused; flushed, then renamed over the target. On Unix the file is
 /// 0600. On Windows it inherits the ACL of the directory it is written in:
-/// private in the data directory, as open as that directory elsewhere (an
-/// a backup the user saves to a shared folder is readable there).
+/// private in the data directory, as open as that directory elsewhere (a
+/// backup the user saves to a shared folder is readable there).
 pub fn write_private_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     use std::io::Write as _;
     write_private_atomic_with(path, |file| file.write_all(bytes))

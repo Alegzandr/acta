@@ -85,14 +85,22 @@ pub fn open(config: Option<StoreConfig>) -> Opened {
     // folder settings come back with the sync below.
     match acta_core::reset::wipe_if_requested(&config.data_dir, &config.keys) {
         Ok(None) => {}
-        Ok(Some(left)) => crate::log::line(&format!(
-            "reset: data erased ({} item(s) could not be deleted)",
-            left.len()
+        Ok(Some(wiped)) => crate::log::line(&format!(
+            "reset: data erased ({} item(s) could not be deleted{})",
+            wiped.left.len(),
+            if wiped.db_reappeared {
+                "; a database appeared meanwhile and keeps its key"
+            } else {
+                ""
+            }
         )),
-        Err(err) => {
-            crate::log::line(&format!("reset: not done: {err}"));
+        // A session still runs: tried again at the next start.
+        Err(acta_core::reset::ResetError::InUse) => {
+            crate::log::line("reset: not done: a Claude Code session holds the data");
             RESET_FAILED.store(true, std::sync::atomic::Ordering::Relaxed);
         }
+        // A request this database did not make: dropped, nothing erased.
+        Err(err) => crate::log::line(&format!("reset: request dropped: {err}")),
     }
     match Store::open(&config) {
         Ok(mut store) => {

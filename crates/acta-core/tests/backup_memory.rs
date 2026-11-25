@@ -67,17 +67,22 @@ const MIB: usize = 1024 * 1024;
 
 #[test]
 fn a_large_backup_streams_both_ways() {
-    // A payload of about 32 MiB: one attached file's base64 content.
-    let content = "QUxleGFuZHJl".repeat(32 * MIB / 12);
+    // A payload of about 32 MiB in 512 attached files of 64 KiB each:
+    // no single string is large, so a reader that held the whole text
+    // next to the records would need twice what streaming needs.
+    let blobs: Vec<serde_json::Value> = (0..512)
+        .map(|i| {
+            let content = format!("{i:04}").repeat(64 * 1024 / 4);
+            serde_json::json!({ "hash": format!("{i:064}"), "size": 48 * 1024,
+                                "media_type": "application/octet-stream", "content": content })
+        })
+        .collect();
     let json = serde_json::json!({
         "format": "acta", "version": 5, "exported_at": 0, "project": null,
         "projects": [], "epics": [], "topics": [], "entries": [], "notes": [],
-        "knowledge": [], "folders": [],
-        "blobs": [{ "hash": "0".repeat(64), "size": content.len() / 4 * 3,
-                    "media_type": "application/octet-stream", "content": content }],
+        "knowledge": [], "folders": [], "blobs": blobs,
     });
     let file: ExportFile = serde_json::from_value(json).unwrap();
-    drop(content);
     let text_len = file.to_json().unwrap().len();
     assert!(text_len > 32 * MIB);
 
@@ -96,11 +101,11 @@ fn a_large_backup_streams_both_ways() {
 
     let (back, peak) = peak_during(|| ExportFile::read_backup(&path, &pass));
     let back = back.unwrap();
-    // The records themselves (the 32 MiB string), the parser's scratch
-    // copy of that one string while it is read (grown by doubling) and
-    // small buffers: never the whole decrypted text held as such.
+    // The records themselves (32 MiB of strings) and small buffers. A
+    // reader holding the whole decrypted text next to them would need
+    // about twice the payload.
     assert!(
-        peak < 3 * text_len + 8 * MIB,
+        peak < text_len + 8 * MIB,
         "reading peaked at {} MiB for a {} MiB payload",
         peak / MIB,
         text_len / MIB
