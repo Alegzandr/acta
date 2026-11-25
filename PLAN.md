@@ -117,7 +117,7 @@ Requested by the user on 2026-11-23 ("like Notepad on Windows 11: reopening Acta
 - [ ] Sidebar: unread dots are not vertically aligned with the counters (user, 2026-11-23); align the trailing slot's dot, glyphs and counts on one baseline/centre line.
 
 ## Attachments: Open with (ADR 0012, amendment 2026-11-25)
-- [ ] Working copy in `<data dir>/open/<random>/`, opened with the default app, watched; each save re-encrypted as a new version; deleted when the app lets go (Windows exclusive-open + 60 s idle; macOS/Linux idle 10 min on return to Acta or "Done editing"), at quit and at next start with a last sync-back. First-use sentence, catalogue rows, tests (sync on change, no sync for read-only copies, cleanup after a simulated crash, never reachable by MCP/CLI).
+- [ ] Working copy in `<data dir>/open/<random>/`, opened with the default app, watched; each save re-encrypted as a new version; silent sync on save; on return to Acta after a save a non-blocking "Done?" bar (Done / Keep editing), else "{n} file(s) being edited" in the status bar; Windows also deletes once the app lets go (exclusive open), at quit and at next start with a last sync-back. First-use sentence, catalogue rows, tests (sync on change, no sync for read-only copies, cleanup after a simulated crash, never reachable by MCP/CLI).
 
 ## Deliverables in the folder (ADR 0007 addendum 2026-11-25)
 - [x] using-acta skill: documents produced for people are files in the working folder, never `kb_write`; an entry names the path.
