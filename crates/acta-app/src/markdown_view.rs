@@ -277,8 +277,9 @@ fn facts(text: &SharedString, state: &Entity<ViewState>, cx: &mut App) -> (Arc<P
         let weak = state.downgrade();
         cx.spawn(async move |cx| {
             let prep = Arc::new(task.await);
+            // Kept even when the view is gone: drawn again, it is ready.
+            remember(key, prep.clone());
             let _ = weak.update(cx, |s, cx| {
-                remember(key, prep.clone());
                 if s.preparing == Some(key) {
                     s.prepared = Some((key, prep));
                     s.preparing = None;
@@ -324,10 +325,17 @@ fn decide(url: &str, left_or_key: bool, prep: &Prepared, ready: bool) -> Action 
     }
     match policy::classify_link(url) {
         LinkTarget::Web { .. } if !ready => Action::Nothing,
-        LinkTarget::Web { url: target, host } => match prep.deceptive.get(url) {
-            None => Action::Open(target),
-            Some(_) => Action::Warn { url: target, host },
-        },
+        LinkTarget::Web { url: target, host } => {
+            // A user name in front of the host is caught from the address
+            // alone, whatever the text knows.
+            let disguised =
+                prep.deceptive.contains_key(url) || policy::deceptive_host("", url).is_some();
+            if disguised {
+                Action::Warn { url: target, host }
+            } else {
+                Action::Open(target)
+            }
+        }
         LinkTarget::Mail(mail) => Action::Open(mail),
         // `#slug` scrolling needs the page's scroll handle, which this
         // view is not given yet; paths and other schemes go nowhere.
@@ -1110,6 +1118,18 @@ mod tests {
         assert!(opened("https://example.com", false, &prep, true).is_empty());
         // Until the text's check has run, no web link opens.
         assert!(opened("https://example.com", true, &prep, false).is_empty());
+    }
+
+    #[test]
+    fn a_user_name_in_the_address_asks_first_on_any_text() {
+        let prep = Prepared::default();
+        assert_eq!(
+            decide("https://github.com@evil.example/x", true, &prep, true),
+            Action::Warn {
+                url: "https://github.com@evil.example/x".into(),
+                host: "evil.example".into()
+            }
+        );
     }
 
     #[test]

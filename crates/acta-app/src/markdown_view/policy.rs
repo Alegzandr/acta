@@ -203,27 +203,59 @@ pub fn is_br(tag: &str) -> bool {
 }
 
 /// The deepest nesting of containers (quotes, list items) drawn as
-/// Markdown; a deeper text draws as plain text, so neither the parser nor
-/// the renderer recurses without bound.
-pub const MAX_DEPTH: usize = 64;
+/// Markdown; a deeper text draws as plain text. gpui-base parses a short
+/// text on the UI thread, recursively: a debug build survives 32 levels on
+/// a 1 MB stack (the test below parses this many on one), and the UI
+/// thread has 8 MB on every system (build.rs raises it on Windows).
+pub const MAX_DEPTH: usize = 16;
 
 /// Whether some line of `text` opens more nested containers than
 /// [`MAX_DEPTH`]: each `>` and list marker counts one, and so do two
 /// columns of indent before them.
 pub fn too_deep(text: &str) -> bool {
+    // Lines inside a fenced code block nest nothing.
+    let mut fence: Option<(u8, usize)> = None;
     text.lines().any(|line| {
+        let trimmed = line.trim_start_matches(' ');
+        let run = |c: u8| trimmed.bytes().take_while(|b| *b == c).count();
+        match fence {
+            Some((c, n)) => {
+                if run(c) >= n
+                    && trimmed
+                        .bytes()
+                        .skip(run(c))
+                        .all(|b| b == b' ' || b == b'\t')
+                {
+                    fence = None;
+                }
+                return false;
+            }
+            None => {
+                for c in *b"`~" {
+                    if run(c) >= 3 && line.len() - trimmed.len() < 4 {
+                        fence = Some((c, run(c)));
+                        return false;
+                    }
+                }
+            }
+        }
         let bytes = line.as_bytes();
+        // A marker counts when a space, a tab or the line's end follows.
+        let ends_marker = |at: usize| bytes.get(at).is_none_or(|b| *b == b' ' || *b == b'\t');
         let (mut depth, mut i, mut spaces) = (0usize, 0usize, 0usize);
         while i < bytes.len() {
             match bytes[i] {
+                // Only the indent before the first marker stands for the
+                // levels above; spaces between markers belong to them.
+                b' ' | b'\t' if depth > 0 => {}
                 b' ' => spaces += 1,
                 b'\t' => spaces += 4,
                 b'>' => depth += 1,
-                b'-' | b'*' | b'+' if bytes.get(i + 1).is_none_or(|b| *b == b' ') => depth += 1,
+                b'-' | b'*' | b'+' if ends_marker(i + 1) => depth += 1,
                 b'0'..=b'9' => {
                     let digits = bytes[i..].iter().take_while(|b| b.is_ascii_digit()).count();
                     match bytes.get(i + digits) {
-                        Some(b'.' | b')') if digits <= 9 => {
+                        Some(b'.' | b')') if digits <= 9 && ends_marker(i + digits + 1) => {
                             depth += 1;
                             i += digits;
                         }
@@ -653,7 +685,23 @@ mod tests {
     fn deep_texts_are_caught_before_parsing() {
         assert!(!too_deep("- a\n  - b\n    - c\n> > quoted\n"));
         assert!(too_deep(&"- ".repeat(1500)));
+        assert!(too_deep(&("-\t".repeat(1500) + "x")));
+        assert!(too_deep(&("1.\t".repeat(300) + "x")));
         assert!(too_deep(&"> ".repeat(5000)));
+        assert!(too_deep(&">".repeat(5000)));
+        assert!(!too_deep(&"- ".repeat(MAX_DEPTH)));
+        assert!(too_deep(&"- ".repeat(MAX_DEPTH + 1)));
+        // Not markers: a word, a number in a sentence, a deep code block.
+        assert!(!too_deep(&"-x ".repeat(100)));
+        assert!(!too_deep("1.5 and 2.5"));
+        assert!(!too_deep(&format!(
+            "```yaml\n{}- deep\n```\n",
+            " ".repeat(80)
+        )));
+        assert!(too_deep(&format!(
+            "```\ncode\n```\n{}- deep\n",
+            " ".repeat(80)
+        )));
         assert!(too_deep(&format!("{}- x", " ".repeat(200))));
         assert!(!too_deep(&format!("{}x", " ".repeat(200))));
         assert!(!too_deep("1. 2. 3. a list of three"));

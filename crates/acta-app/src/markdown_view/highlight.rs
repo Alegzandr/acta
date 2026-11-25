@@ -45,6 +45,9 @@ impl Role {
 /// A block over either limit draws unhighlighted.
 const MAX_LINES: usize = 2_000;
 const MAX_BYTES: usize = 200_000;
+/// A block with a line longer than this (minified code, a data blob)
+/// draws plain: the parser's backtracking on one long line is unbounded.
+const MAX_LINE: usize = 8 * 1024;
 /// A block the parser has not finished within this time draws plain. A
 /// debug build parses about ten times slower (the dependencies are not
 /// optimised), so it waits longer.
@@ -224,7 +227,10 @@ fn highlight_within(
     lang: &str,
     deadline: Option<Instant>,
 ) -> Vec<(Range<usize>, Role)> {
-    if code.len() > MAX_BYTES || code.lines().count() > MAX_LINES {
+    if code.len() > MAX_BYTES
+        || code.lines().count() > MAX_LINES
+        || code.lines().any(|line| line.len() > MAX_LINE)
+    {
         return Vec::new();
     }
     if lang == "diff" || lang == "patch" {
@@ -555,6 +561,8 @@ mod tests {
         load();
         let big = "let a = 1;\n".repeat(MAX_LINES + 1);
         assert!(highlight(&big, "rust").is_empty());
+        let long = format!("let a = \"{}\";\n", "x".repeat(MAX_LINE));
+        assert!(highlight(&long, "rust").is_empty());
     }
 
     #[test]

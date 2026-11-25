@@ -991,13 +991,24 @@ fn nesting_stays_within_a_small_stack() {
                 assert!(super::policy::too_deep(&deep));
             }
             let mut text = String::new();
-            for level in 0..16 {
+            for level in 0..10 {
                 text.push_str(&" ".repeat(level * 3));
                 text.push_str("1. level\n");
             }
             assert!(!super::policy::too_deep(&text));
             let printed = render(&ours_of(&text));
-            assert_eq!(printed.matches("ordered: true").count(), 16, "{printed}");
+            assert_eq!(printed.matches("ordered: true").count(), 10, "{printed}");
+            // Exactly as deep as is drawn, through gpui-base's own parse,
+            // which the text view runs on the UI thread.
+            let max = super::policy::MAX_DEPTH;
+            for (deep, kind) in [
+                ("- ".repeat(max) + "x", "list"),
+                ("> ".repeat(max) + "x", "quote"),
+                ("1. ".repeat(max) + "x", "numbered list"),
+            ] {
+                assert!(!super::policy::too_deep(&deep), "{kind}");
+                assert!(!parse::parse_tree(&deep).is_empty(), "{kind}");
+            }
         })
         .expect("a thread")
         .join()
