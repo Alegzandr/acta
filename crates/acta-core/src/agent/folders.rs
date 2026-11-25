@@ -55,12 +55,19 @@ fn name(n: &str) -> String {
 
 /// The two lines for a session on `page` running in `dir`. `in_acta`: the
 /// session was started by Acta's terminal with the launch plan, so the
-/// other folders were passed with `--add-dir`.
-pub fn briefing(store: &Store, page: Owner, dir: Option<&Path>, in_acta: bool) -> BriefingFolders {
+/// other folders were passed with `--add-dir`; `token` is its launch token,
+/// which names the page whose commit mode applies.
+pub fn briefing(
+    store: &Store,
+    page: Owner,
+    dir: Option<&Path>,
+    in_acta: bool,
+    token: Option<&str>,
+) -> BriefingFolders {
     let here = dir.map(stored);
     BriefingFolders {
         folders: folders_line(store, page, here.as_deref(), in_acta),
-        commit: here.as_deref().and_then(|h| commit_line(store, h)),
+        commit: here.as_deref().and_then(|h| commit_line(store, h, token)),
     }
 }
 
@@ -166,8 +173,9 @@ fn folders_line(store: &Store, page: Owner, here: Option<&str>, in_acta: bool) -
 /// runs in, from the store's columns only (the strictest when the path is
 /// attached at several levels). Rules a settings file still holds after an
 /// offline switch are the guard's business, never an invitation to commit.
-fn commit_line(store: &Store, here: &str) -> Option<String> {
-    let folder = claude_settings::chosen_commit_settings_for(store, here).ok()??;
+fn commit_line(store: &Store, here: &str, token: Option<&str>) -> Option<String> {
+    let session = claude_settings::page::session_page(store, token).ok()?;
+    let folder = claude_settings::page::chosen_for_session(store, here, &session).ok()??;
     let settings = folder.settings;
     let info = git::inspect(Path::new(&folder.path))?;
     let not_on = match (&info.default_branch, settings.on_default) {
@@ -261,7 +269,7 @@ mod tests {
         let own = s.add_folder(page, &wt, h).unwrap();
 
         // Started by Acta in the worktree: the main checkout is not open.
-        let b = briefing(s, page, Some(&wt), true);
+        let b = briefing(s, page, Some(&wt), true, None);
         assert_eq!(
             b.folders.as_deref(),
             Some("Folders: work in embed-terminal (active). Also open: acta-docs.")
@@ -271,7 +279,7 @@ mod tests {
             Some("Commits here: only when the user asks.")
         );
         // Started elsewhere: every folder is only attached.
-        let b = briefing(s, page, Some(&wt), false);
+        let b = briefing(s, page, Some(&wt), false, None);
         assert_eq!(
             b.folders.as_deref(),
             Some("Folders: work in embed-terminal (active). Also attached: acta, acta-docs.")
@@ -280,7 +288,7 @@ mod tests {
         s.set_commit_settings(own, CommitMode::Commit, Some(true), false, h)
             .unwrap();
         fs::create_dir_all(wt.join("src")).unwrap();
-        let b = briefing(s, page, Some(&wt.join("src")), true);
+        let b = briefing(s, page, Some(&wt.join("src")), true, None);
         assert_eq!(
             b.commit.as_deref(),
             Some(
@@ -289,7 +297,7 @@ mod tests {
         );
         s.set_commit_settings(own, CommitMode::Push, None, true, h)
             .unwrap();
-        let b = briefing(s, page, Some(&wt), true);
+        let b = briefing(s, page, Some(&wt), true, None);
         assert_eq!(
             b.commit.as_deref(),
             Some(
@@ -298,7 +306,7 @@ mod tests {
         );
 
         // The session runs in another folder of the page than the active.
-        let b = briefing(s, page, Some(&docs), true);
+        let b = briefing(s, page, Some(&docs), true, None);
         assert_eq!(
             b.folders.as_deref(),
             Some("Folders: work in acta-docs (the page's active folder is embed-terminal).")
@@ -308,7 +316,7 @@ mod tests {
         // Outside every folder of the page.
         let elsewhere = tmp.path().join("elsewhere");
         fs::create_dir_all(&elsewhere).unwrap();
-        let b = briefing(s, page, Some(&elsewhere), true);
+        let b = briefing(s, page, Some(&elsewhere), true, None);
         assert_eq!(
             b.folders.as_deref(),
             Some(
@@ -347,7 +355,7 @@ mod tests {
         s.set_commit_settings(id, CommitMode::Push, Some(true), false, h)
             .unwrap();
         for in_acta in [true, false] {
-            let b = briefing(s, Owner::Project(p), Some(&dir), in_acta);
+            let b = briefing(s, Owner::Project(p), Some(&dir), in_acta, None);
             let f = b.folders.unwrap();
             let c = b.commit.unwrap();
             assert!(chars(&f) <= FOLDERS_LINE, "{f}");
@@ -411,7 +419,7 @@ mod tests {
                 format!("ref: refs/remotes/origin/{branch}\n"),
             )
             .unwrap();
-            let c = briefing(s, page, Some(&dir), false).commit.unwrap();
+            let c = briefing(s, page, Some(&dir), false, None).commit.unwrap();
             assert!(c.ends_with(shown), "{branch}: {c}");
         }
     }
@@ -438,7 +446,7 @@ mod tests {
             CommitMode::Push,
             "the guard stays strict"
         );
-        let c = briefing(s, page, Some(&dir), false).commit;
+        let c = briefing(s, page, Some(&dir), false, None).commit;
         assert_eq!(c.as_deref(), Some("Commits here: only when the user asks."));
     }
 }

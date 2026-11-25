@@ -49,6 +49,8 @@ const PUSH_ENV: [(&str, &str); 2] = [("GIT_TERMINAL_PROMPT", "0"), ("GCM_INTERAC
 
 pub use crate::model::CommitMode;
 
+pub mod page;
+
 /// Local value: the Settings default of "Commit in my name, without
 /// Co-Authored-By Claude" (`"1"` on; off when absent, as on a new install).
 pub const AS_USER_DEFAULT_KEY: &str = "commit.as_user_default";
@@ -1071,5 +1073,7 @@ fn replace(target: &Path, text: &str) -> io::Result<()> {
     result
 }
 
+#[cfg(test)]
+mod page_tests;
 #[cfg(test)]
 mod tests;

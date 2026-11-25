@@ -3043,6 +3043,7 @@ impl Agent<'_> {
             scope,
             self.session.dir.as_deref(),
             self.session.in_acta,
+            self.session.launch_token.as_deref(),
         );
         let line_len = |l: &Option<String>| l.as_deref().map_or(0, |l| render::chars(l) + 1);
         // The profile (request 23): who Claude Code works for, fenced (a

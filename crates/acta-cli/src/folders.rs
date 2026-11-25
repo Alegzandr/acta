@@ -112,15 +112,21 @@ pub fn list(store: &Store, session: &Session, id: Option<&str>) -> Result<String
                 Some(b) => format!("git {b}"),
                 None => "git, detached".into(),
             });
-            if let Ok(Some(c)) = claude_settings::commit_settings_for(store, path) {
-                let mut m = mode_label(c.settings.mode).to_owned();
-                if c.settings.mode.automatic() {
-                    if c.settings.as_user {
+            // What this page uses: its own choice, a page above's, else the
+            // folder's (ADR 0011 addendum 2026-11-23).
+            if let Ok(e) = claude_settings::page::effective(store, page, path) {
+                let c = e.settings;
+                let mut m = mode_label(c.mode).to_owned();
+                if c.mode.automatic() {
+                    if c.as_user {
                         m.push_str(", in your name");
                     }
-                    if c.settings.on_default {
+                    if c.on_default {
                         m.push_str(", also on the default branch");
                     }
+                }
+                if let claude_settings::page::Source::Page(o) = e.source {
+                    m.push_str(&format!(" (set on {o})"));
                 }
                 parts.push(m);
             }
