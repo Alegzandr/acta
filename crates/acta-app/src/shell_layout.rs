@@ -550,6 +550,12 @@ impl Shell {
         if tab == bench.current {
             return;
         }
+        if !bench.slots.contains_key(&tab) {
+            return;
+        }
+        // The leaving page's focused element, before it goes to its slot.
+        self.keep_resume_state(window, cx);
+        let Some(bench) = self.bench() else { return };
         let Some(slot) = bench.slots.remove(&tab) else {
             return;
         };

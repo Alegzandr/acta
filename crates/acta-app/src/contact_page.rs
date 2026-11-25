@@ -173,6 +173,10 @@ pub struct ContactPage {
     /// The fold toggles of the three sections (components-records.md 5,
     /// Section fold).
     fold_focus: std::collections::HashMap<fold::Section, FocusHandle>,
+    /// Scroll and focus across launches (interaction.md 6.6), and the
+    /// address draft, read once.
+    keep: Option<crate::page_keep::Keep>,
+    address_draft_read: bool,
     seen_revision: u64,
     _load: Task<()>,
     _subs: Vec<Subscription>,
@@ -202,6 +206,45 @@ const MENU: [MenuItem; 4] = [
 ];
 
 impl ContactPage {
+    /// What Resume keeps of this page (interaction.md 6.6): its route
+    /// key and the focused row.
+    pub fn kept_state(
+        &self,
+        window: &Window,
+        _: &gpui_kit::App,
+    ) -> Option<(String, Option<String>)> {
+        let keep = self.keep.as_ref()?;
+        let focus = self
+            .row_focus
+            .iter()
+            .position(|h| h.is_focused(window))
+            .map(crate::resume::row_key);
+        Some((keep.route().to_owned(), focus))
+    }
+
+    /// Once the content is there: the kept scroll, and the kept row when
+    /// the page has the keyboard, on the next frame (after layout).
+    fn restore_kept(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !(self.data.contact.is_some()) {
+            return;
+        }
+        let Some(kept) = self.keep.as_mut().and_then(crate::page_keep::Keep::take) else {
+            return;
+        };
+        cx.on_next_frame(window, move |page, window, cx| {
+            if let Some(keep) = &page.keep {
+                keep.apply_scroll(&kept);
+            }
+            let row = kept.focus.as_deref().and_then(crate::resume::row_of);
+            if let Some(i) = row
+                && Focusable::focus_handle(page, cx).contains_focused(window, cx)
+                && let Some(h) = page.row_focus.get(i).cloned()
+            {
+                window.focus(&h, cx);
+            }
+        });
+    }
+
     pub fn new(ws: Entity<Workspace>, id: ContactId, cx: &mut Context<Self>) -> Self {
         let subs = vec![cx.observe(&ws, |page, ws, cx| {
             let revision = ws.read(cx).revision;
@@ -233,6 +276,11 @@ impl ContactPage {
             .into_iter()
             .map(|s| (s, cx.focus_handle()))
             .collect(),
+            keep: Some(crate::page_keep::Keep::new(
+                crate::route::Route::Contact(id).key(),
+                cx,
+            )),
+            address_draft_read: false,
             seen_revision: 0,
             _load: Task::ready(()),
             _subs: subs,
@@ -491,6 +539,16 @@ impl ContactPage {
                 .default_value(value)
         });
         editor.update(cx, |s, cx| s.focus(window, cx));
+        self.open_address_editor(editor, window, cx);
+    }
+
+    /// The address editor's events: save, the length cap, the draft.
+    fn open_address_editor(
+        &mut self,
+        editor: Entity<TextareaState>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let sub = cx.subscribe_in(
             &editor,
             window,
@@ -507,7 +565,11 @@ impl ContactPage {
                         let cut: String = v.chars().take(cm::ADDRESS_MAX).collect();
                         editor.update(cx, |s, cx| s.set_value(cut, window, cx));
                     }
+                    page.write_address_draft(&v, cx);
                     cx.notify();
+                }
+                InputEvent::Focus => {
+                    crate::drafts::claim(&page.address_key(), cx.entity_id().as_u64())
                 }
                 _ => {}
             },
@@ -517,8 +579,64 @@ impl ContactPage {
         cx.notify();
     }
 
+    /// Where this contact's address draft is kept.
+    fn address_key(&self) -> String {
+        crate::resume::draft_key_of(&self.id.to_string(), crate::resume::DraftField::Address)
+    }
+
+    fn write_address_draft(&self, typed: &str, cx: &mut Context<Self>) {
+        let stored = self
+            .contact()
+            .and_then(|c| c.address_note.clone())
+            .unwrap_or_default();
+        let value = crate::resume::draft_value(typed, &stored);
+        let db = self.ws.read(cx).db.clone();
+        crate::drafts::changed(&db, self.address_key(), cx.entity_id().as_u64(), value, cx);
+    }
+
+    fn discard_address_draft(&self, cx: &mut Context<Self>) {
+        let db = self.ws.read(cx).db.clone();
+        crate::drafts::discard(&db, self.address_key(), cx.entity_id().as_u64(), cx);
+    }
+
+    /// Once the contact is shown: a kept address draft reopens its editor.
+    fn read_address_draft(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.address_draft_read || self.data.contact.is_none() {
+            return;
+        }
+        self.address_draft_read = true;
+        let key = self.address_key();
+        let task = self
+            .ws
+            .read(cx)
+            .db
+            .run(cx, move |store| store.local_value(&key));
+        cx.spawn_in(window, async move |page, cx| {
+            let Ok(Some(draft)) = task.await else { return };
+            let _ = page.update_in(cx, |page, window, cx| {
+                let stored = page
+                    .contact()
+                    .and_then(|c| c.address_note.clone())
+                    .unwrap_or_default();
+                if page.address.is_some() || crate::resume::draft_value(&draft, &stored).is_none() {
+                    return;
+                }
+                let locale = settings::locale(cx);
+                let editor = cx.new(|cx| {
+                    TextareaState::new(window, cx)
+                        .auto_grow(3, 12)
+                        .placeholder(text(locale, Key::ContactAddressPlaceholder))
+                        .default_value(draft)
+                });
+                page.open_address_editor(editor, window, cx);
+            });
+        })
+        .detach();
+    }
+
     fn save_address(&mut self, note: String, window: &mut Window, cx: &mut Context<Self>) {
         self.address = None;
+        self.discard_address_draft(cx);
         let Some(c) = self.contact().cloned() else {
             return;
         };
@@ -1396,8 +1514,20 @@ impl Render for ContactPage {
                 }
             }
         }
-        let _ = window;
+        self.restore_kept(window, cx);
+        self.read_address_draft(window, cx);
         ui::page_scroll("contact-page")
+            .when_some(
+                self.keep.as_ref().map(|k| k.scroll().clone()),
+                |el, scroll| {
+                    el.track_scroll(&scroll)
+                        .on_scroll(cx.listener(|page, _, _, cx| {
+                            if let Some(keep) = page.keep.as_mut() {
+                                keep.scrolled(cx);
+                            }
+                        }))
+                },
+            )
             .track_focus(&self.focus)
             .key_context("ContactPage")
             .on_key_down(cx.listener(|page, event: &KeyDownEvent, window, cx| {
@@ -1405,7 +1535,9 @@ impl Render for ContactPage {
                 if page.edit.is_some() || page.address.is_some() {
                     if k.key == "escape" {
                         page.edit = None;
-                        page.address = None;
+                        if page.address.take().is_some() {
+                            page.discard_address_draft(cx);
+                        }
                         window.focus(&page.focus, cx);
                         cx.stop_propagation();
                         cx.notify();

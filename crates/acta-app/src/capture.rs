@@ -138,13 +138,12 @@ impl Capture {
     fn write_draft(&mut self, cx: &mut Context<Self>) {
         let text = self.editor.read(cx).value().to_string();
         let db = self.ws.read(cx).db.clone();
-        let timer = cx
-            .background_executor()
-            .timer(std::time::Duration::from_millis(400));
-        self.draft_write = cx.background_executor().spawn(async move {
-            timer.await;
-            keep_draft(&db, &text);
-        });
+        self.draft_write = crate::drafts::write_later(
+            &db,
+            crate::resume::CAPTURE_DRAFT_KEY.into(),
+            draft_of(&text),
+            cx,
+        );
     }
 
     fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -343,16 +342,7 @@ impl Render for Capture {
     }
 }
 
-/// Keep quick capture's draft (`""`: none) in the encrypted database.
-pub fn keep_draft(db: &crate::db::Db, text: &str) {
-    let value = (!text.trim().is_empty()).then_some(text);
-    if let Err(err) = db
-        .lock()
-        .set_local_value(crate::resume::CAPTURE_DRAFT_KEY, value)
-    {
-        crate::log::line(&format!(
-            "draft: capture write failed: {}",
-            crate::workspace::err_kind(&err)
-        ));
-    }
+/// Quick capture's draft as kept: none for an empty text.
+pub fn draft_of(text: &str) -> Option<String> {
+    (!text.trim().is_empty()).then(|| text.to_owned())
 }

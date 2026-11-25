@@ -279,6 +279,8 @@ pub struct ContactsPage {
     menu_anchor: AnchorBounds,
     row_focus: Vec<FocusHandle>,
     row_ids: std::cell::RefCell<Vec<ContactId>>,
+    /// Scroll and focus across launches (interaction.md 6.6).
+    keep: Option<crate::page_keep::Keep>,
     focus: FocusHandle,
     seen_revision: u64,
     _load: Task<()>,
@@ -294,6 +296,45 @@ impl Focusable for ContactsPage {
 }
 
 impl ContactsPage {
+    /// What Resume keeps of this page (interaction.md 6.6): its route
+    /// key and the focused row.
+    pub fn kept_state(
+        &self,
+        window: &Window,
+        _: &gpui_kit::App,
+    ) -> Option<(String, Option<String>)> {
+        let keep = self.keep.as_ref()?;
+        let focus = self
+            .row_focus
+            .iter()
+            .position(|h| h.is_focused(window))
+            .map(crate::resume::row_key);
+        Some((keep.route().to_owned(), focus))
+    }
+
+    /// Once the content is there: the kept scroll, and the kept row when
+    /// the page has the keyboard, on the next frame (after layout).
+    fn restore_kept(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !(self.loaded) {
+            return;
+        }
+        let Some(kept) = self.keep.as_mut().and_then(crate::page_keep::Keep::take) else {
+            return;
+        };
+        cx.on_next_frame(window, move |page, window, cx| {
+            if let Some(keep) = &page.keep {
+                keep.apply_scroll(&kept);
+            }
+            let row = kept.focus.as_deref().and_then(crate::resume::row_of);
+            if let Some(i) = row
+                && Focusable::focus_handle(page, cx).contains_focused(window, cx)
+                && let Some(h) = page.row_focus.get(i).cloned()
+            {
+                window.focus(&h, cx);
+            }
+        });
+    }
+
     pub fn new(
         ws: Entity<Workspace>,
         active: Option<acta_core::model::ProjectId>,
@@ -334,6 +375,7 @@ impl ContactsPage {
             menu_anchor: AnchorBounds::default(),
             row_focus: Vec::new(),
             row_ids: Default::default(),
+            keep: Some(crate::page_keep::Keep::new("contacts".into(), cx)),
             focus: cx.focus_handle(),
             seen_revision: 0,
             _load: Task::ready(()),
@@ -634,7 +676,7 @@ impl ContactsPage {
 }
 
 impl Render for ContactsPage {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.global::<Tokens>().clone();
         let locale = settings::locale(cx);
         let projects = self.ws.read(cx).projects.clone();
@@ -883,7 +925,19 @@ impl Render for ContactsPage {
                 index += 1;
             }
         }
+        self.restore_kept(window, cx);
         ui::page_scroll("contacts-page")
+            .when_some(
+                self.keep.as_ref().map(|k| k.scroll().clone()),
+                |el, scroll| {
+                    el.track_scroll(&scroll)
+                        .on_scroll(cx.listener(|page, _, _, cx| {
+                            if let Some(keep) = page.keep.as_mut() {
+                                keep.scrolled(cx);
+                            }
+                        }))
+                },
+            )
             .track_focus(&self.focus)
             .on_key_down(cx.listener(|page, event: &KeyDownEvent, window, cx| {
                 // Down from the search goes to the first row; Esc cancels a

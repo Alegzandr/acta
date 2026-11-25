@@ -107,6 +107,25 @@ fn section_of(name: &str) -> Option<Section> {
     SECTIONS.iter().find(|(_, n)| *n == name).map(|(s, _)| *s)
 }
 
+/// The focus key of a list page's row, by its place in the list (the
+/// inbox, knowledge, questions and contacts pages): `row:3`.
+pub fn row_key(index: usize) -> String {
+    format!("row:{index}")
+}
+
+/// The row a kept focus key names.
+pub fn row_of(key: &str) -> Option<usize> {
+    key.strip_prefix("row:")?.parse().ok()
+}
+
+/// A document's or memory's editor, and its fields.
+pub const FOCUS_EDITOR: &str = "editor";
+
+/// Whether a kept focus key has a shape this build reads.
+fn known_focus(key: &str) -> bool {
+    focus_block(key).is_some() || row_of(key).is_some() || key == FOCUS_EDITOR
+}
+
 /// The pages' states as read from the file: route keys and focus keys of
 /// the right shape only, at most [`PAGES_MAX`]; anything else is dropped
 /// and so never written back.
@@ -115,7 +134,7 @@ pub fn read_pages(stored: BTreeMap<String, PageState>) -> BTreeMap<String, PageS
         .into_iter()
         .filter(|(route, _)| is_reference(route))
         .map(|(route, mut state)| {
-            state.focus = state.focus.filter(|f| focus_block(f).is_some());
+            state.focus = state.focus.filter(|f| known_focus(f));
             state.scroll = state.scroll.min(1_000_000);
             (route, state)
         })
@@ -141,17 +160,16 @@ pub fn set_scroll(pages: &mut BTreeMap<String, PageState>, route: &str, scroll: 
     changed
 }
 
-/// Record a page's focused element (`None`: the page itself); whether it
-/// changed.
+/// Record a page's focused element as its key (`None`: the page itself);
+/// whether it changed.
 pub fn set_focus(
     pages: &mut BTreeMap<String, PageState>,
     route: &str,
-    focus: Option<Block>,
+    focus: Option<String>,
 ) -> bool {
-    if !is_reference(route) {
+    if !is_reference(route) || focus.as_deref().is_some_and(|f| !known_focus(f)) {
         return false;
     }
-    let focus = focus.map(focus_key);
     let state = pages.entry(route.to_owned()).or_default();
     let changed = state.focus != focus;
     state.focus = focus;
@@ -185,26 +203,57 @@ pub fn parse_owner(id: &str) -> Option<Owner> {
         .or_else(|| TopicId::parse(id).map(Owner::Topic))
 }
 
+/// What a launch does with the kept sessions: restart them, or not when
+/// the last launch was restarting them and never settled (it crashed, or
+/// was ended, while they started), so a session that brings Acta down
+/// cannot do it at every launch.
+pub fn restart_sessions(kept: &[String], last_unsettled: bool) -> bool {
+    !kept.is_empty() && !last_unsettled
+}
+
 /// An editor whose text survives a restart (data.md request 15).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DraftField {
     State,
     Description,
+    /// A timeline entry edited in place: `[entry id, text]`.
+    Entry,
+    /// The Questions composer: `[question id or 0 for a new one, text]`.
+    Question,
+    /// A contact's "How to address them".
+    Address,
+    /// A document or memory: `[title, summary, body]`.
+    Doc,
 }
+
+const FIELDS: [(DraftField, &str); 6] = [
+    (DraftField::State, "state"),
+    (DraftField::Description, "description"),
+    (DraftField::Entry, "entry"),
+    (DraftField::Question, "question"),
+    (DraftField::Address, "address"),
+    (DraftField::Doc, "doc"),
+];
 
 impl DraftField {
     fn name(self) -> &'static str {
-        match self {
-            DraftField::State => "state",
-            DraftField::Description => "description",
-        }
+        FIELDS
+            .iter()
+            .find(|(f, _)| *f == self)
+            .map_or("", |(_, n)| n)
     }
 }
 
 /// Where a record's draft is kept: a local value of the encrypted
 /// database, never exported.
 pub fn draft_key(owner: Owner, field: DraftField) -> String {
-    format!("{}{}", draft_prefix(owner), field.name())
+    draft_key_of(&owner.to_string(), field)
+}
+
+/// The same for a record named by its id (`C-5` for a contact, `K-3` for
+/// a document or memory).
+pub fn draft_key_of(record: &str, field: DraftField) -> String {
+    format!("draft.{record}.{}", field.name())
 }
 
 /// The prefix of every draft of `owner`.
@@ -214,11 +263,27 @@ pub fn draft_prefix(owner: Owner) -> String {
 
 /// The field a kept draft key of `owner` names.
 pub fn draft_field(owner: Owner, key: &str) -> Option<DraftField> {
-    match key.strip_prefix(&draft_prefix(owner))? {
-        "state" => Some(DraftField::State),
-        "description" => Some(DraftField::Description),
-        _ => None,
-    }
+    let name = key.strip_prefix(&draft_prefix(owner))?;
+    FIELDS.iter().find(|(_, n)| *n == name).map(|(f, _)| *f)
+}
+
+/// A draft tied to an item of the record (an entry, a question): the
+/// item's id (0 for a new one) and the text.
+pub fn encode_item(id: i64, text: &str) -> String {
+    serde_json::to_string(&(id, text)).unwrap_or_default()
+}
+
+pub fn decode_item(raw: &str) -> Option<(i64, String)> {
+    serde_json::from_str(raw).ok()
+}
+
+/// A document's or memory's draft: title, summary and body.
+pub fn encode_doc(title: &str, summary: &str, body: &str) -> String {
+    serde_json::to_string(&(title, summary, body)).unwrap_or_default()
+}
+
+pub fn decode_doc(raw: &str) -> Option<(String, String, String)> {
+    serde_json::from_str(raw).ok()
 }
 
 /// What to keep for an editor holding `typed` over the stored `stored`:
@@ -241,15 +306,27 @@ pub fn encode_addresses(addresses: &[String]) -> String {
 }
 
 /// The addresses a page's browsers reopen on: web addresses only (the
-/// agent browser's policy checks them again when they load), at most
-/// `max`. A damaged value reads as none.
+/// agent browser's policy checks them again when they load), without
+/// query or fragment, at most `max`. A damaged value reads as none.
 #[cfg(any(windows, test))]
 pub fn decode_addresses(raw: &str, max: usize) -> Vec<String> {
     let list: Vec<String> = serde_json::from_str(raw).unwrap_or_default();
-    list.into_iter()
-        .filter(|a| a.starts_with("https://") || a.starts_with("http://"))
+    list.iter()
+        .filter_map(|a| kept_address(a))
         .take(max)
         .collect()
+}
+
+/// What is kept of a browser's address: scheme, host and path only, no
+/// query and no fragment, so no token or one-time link is replayed
+/// (interaction.md 6.6). `None` for anything but a web address.
+#[cfg(any(windows, test))]
+pub fn kept_address(url: &str) -> Option<String> {
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return None;
+    }
+    let end = url.find(['?', '#']).unwrap_or(url.len());
+    Some(url[..end].to_owned())
 }
 
 #[cfg(test)]
@@ -324,8 +401,14 @@ mod tests {
         let mut pages = BTreeMap::new();
         assert!(set_scroll(&mut pages, "T-4", 319.6));
         assert!(!set_scroll(&mut pages, "T-4", 320.2));
-        assert!(set_focus(&mut pages, "T-4", Some(Block::State)));
-        assert!(!set_focus(&mut pages, "T-4", Some(Block::State)));
+        assert!(set_focus(&mut pages, "T-4", Some(focus_key(Block::State))));
+        assert!(!set_focus(&mut pages, "T-4", Some(focus_key(Block::State))));
+        assert!(set_focus(&mut pages, "inbox:P-1", Some(row_key(3))));
+        assert_eq!(
+            row_of(pages["inbox:P-1"].focus.as_deref().unwrap()),
+            Some(3)
+        );
+        assert!(!set_focus(&mut pages, "contacts", Some("Alexandre".into())));
         // A new page at the top: nothing to change, kept at 0.
         assert!(!set_scroll(&mut pages, "P-1", -5.));
         assert_eq!(pages["P-1"].scroll, 0);
@@ -338,7 +421,16 @@ mod tests {
             }
         );
         prune(&mut pages, &["T-4".to_owned(), "settings".to_owned()]);
+        assert!(!pages.contains_key("inbox:P-1"));
         assert_eq!(pages.keys().collect::<Vec<_>>(), vec!["T-4"]);
+    }
+
+    #[test]
+    fn a_launch_after_one_that_never_settled_does_not_restart_the_sessions() {
+        let kept = vec!["T-4".to_owned()];
+        assert!(restart_sessions(&kept, false));
+        assert!(!restart_sessions(&kept, true));
+        assert!(!restart_sessions(&[], false));
     }
 
     #[test]
@@ -363,8 +455,17 @@ mod tests {
 
     #[test]
     fn browsers_keep_web_addresses_only() {
+        assert_eq!(
+            kept_address("https://example.com/a/b?token=abc#top").as_deref(),
+            Some("https://example.com/a/b")
+        );
+        assert_eq!(
+            kept_address("https://example.com/#x").as_deref(),
+            Some("https://example.com/")
+        );
+        assert_eq!(kept_address("about:blank"), None);
         let kept = vec![
-            "https://example.com/a".to_owned(),
+            "https://example.com/a?code=1".to_owned(),
             "about:blank".to_owned(),
             "file:///C:/Users/Alexandre/secret.txt".to_owned(),
             "http://localhost:3000".to_owned(),
@@ -398,6 +499,26 @@ mod tests {
             draft_field(Owner::Project(ProjectId(1)), "draft.T-42.state"),
             None
         );
+        assert_eq!(
+            draft_field(topic, "draft.T-42.entry"),
+            Some(DraftField::Entry)
+        );
+        assert_eq!(
+            draft_key_of("C-5", DraftField::Address),
+            "draft.C-5.address"
+        );
+        assert_eq!(draft_key_of("K-3", DraftField::Doc), "draft.K-3.doc");
+        let item = encode_item(12, "Alexandre's correction");
+        assert_eq!(
+            decode_item(&item),
+            Some((12, "Alexandre's correction".into()))
+        );
+        let doc = encode_doc("Title", "Summary", "Body");
+        assert_eq!(
+            decode_doc(&doc),
+            Some(("Title".into(), "Summary".into(), "Body".into()))
+        );
+        assert_eq!(decode_item("not json"), None);
         assert_eq!(draft_value("Same\n", "Same"), None);
         assert_eq!(
             draft_value("Alexandre's draft", "Stored").as_deref(),

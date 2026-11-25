@@ -237,6 +237,10 @@ pub struct InboxPage {
     filed: Vec<(Note, Option<String>)>,
     total_open: i64,
     show_filed: bool,
+    /// Scroll across launches, as a page (interaction.md 6.6), once the
+    /// notes are loaded.
+    keep: Option<crate::page_keep::Keep>,
+    loaded: bool,
     capture: Entity<TextareaState>,
     /// The capture's files (components-attachments.md 5).
     capture_tray: Entity<Tray>,
@@ -270,6 +274,36 @@ pub struct InboxPage {
 impl EventEmitter<PageEvent> for InboxPage {}
 
 impl InboxPage {
+    /// What Resume keeps of this page (interaction.md 6.6): its route
+    /// key and the focused row.
+    pub fn kept_state(
+        &self,
+        window: &Window,
+        _: &gpui_kit::App,
+    ) -> Option<(String, Option<String>)> {
+        let keep = self.keep.as_ref()?;
+        let _ = window;
+        let focus = None;
+        Some((keep.route().to_owned(), focus))
+    }
+
+    /// Once the content is there: the kept scroll, and the kept row when
+    /// the page has the keyboard, on the next frame (after layout).
+    fn restore_kept(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !(self.loaded) {
+            return;
+        }
+        let Some(kept) = self.keep.as_mut().and_then(crate::page_keep::Keep::take) else {
+            return;
+        };
+        cx.on_next_frame(window, move |page, window, cx| {
+            if let Some(keep) = &page.keep {
+                keep.apply_scroll(&kept);
+            }
+            let _ = (window, cx);
+        });
+    }
+
     pub fn new(
         ws: Entity<Workspace>,
         project: ProjectId,
@@ -394,6 +428,10 @@ impl InboxPage {
             filter_anchor: crate::menu::AnchorBounds::default(),
             editing: None,
             as_view,
+            keep: (!as_view).then(|| {
+                crate::page_keep::Keep::new(crate::route::Route::Inbox(project).key(), cx)
+            }),
+            loaded: false,
             seen_revision: 0,
             _load: Task::ready(()),
             _subs: subs,
@@ -449,6 +487,7 @@ impl InboxPage {
             let loaded = task.await;
             let _ = page.update(cx, |page, cx| {
                 if let Ok((open, filed, files, moved)) = loaded {
+                    page.loaded = true;
                     page.total_open = open.total;
                     page.notes = open.items;
                     page.filed = filed;
@@ -1261,7 +1300,7 @@ impl InboxPage {
 }
 
 impl Render for InboxPage {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // The palette's "Attach files..." finds these editors' trays.
         attach_ui::pair(&self.capture, &self.capture_tray, cx);
         if let Some((_, editor, tray)) = &self.editing {
@@ -1506,7 +1545,19 @@ impl Render for InboxPage {
                 .child(column)
                 .into_any_element()
         } else {
+            self.restore_kept(window, cx);
             ui::page_scroll("inbox-page")
+                .when_some(
+                    self.keep.as_ref().map(|k| k.scroll().clone()),
+                    |el, scroll| {
+                        el.track_scroll(&scroll)
+                            .on_scroll(cx.listener(|page, _, _, cx| {
+                                if let Some(keep) = page.keep.as_mut() {
+                                    keep.scrolled(cx);
+                                }
+                            }))
+                    },
+                )
                 .child(column)
                 .into_any_element()
         }

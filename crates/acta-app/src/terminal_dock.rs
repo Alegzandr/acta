@@ -407,6 +407,10 @@ pub struct TerminalDock {
     /// setting says: their session ran when Acta last quit
     /// (interaction.md 6.6).
     force_resume: std::collections::HashSet<Owner>,
+    /// The sessions a launch is restarting, kept as the list until they
+    /// settled (interaction.md 6.6), and the wait for that.
+    resuming: Option<Vec<String>>,
+    _settle: Option<gpui_kit::Task<()>>,
     _refresh: Option<gpui_kit::Task<()>>,
     _folder: Option<gpui_kit::Task<()>>,
     _ws_sub: Option<Subscription>,
@@ -483,6 +487,8 @@ impl TerminalDock {
             show_one_off: false,
             seen_revision: 0,
             force_resume: Default::default(),
+            resuming: None,
+            _settle: None,
             _refresh: None,
             _folder: None,
             _ws_sub: Some(sub),
@@ -681,6 +687,33 @@ impl TerminalDock {
         Some(key)
     }
 
+    /// The launch restarts `origins`' sessions: the kept list stays as it is
+    /// until they settled (15 s), then the launch marker goes and the list
+    /// follows the sessions again.
+    pub fn resume_all(
+        &mut self,
+        origins: Vec<Origin>,
+        kept: Vec<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.resuming = Some(kept);
+        for origin in origins {
+            self.resume(origin, window, cx);
+        }
+        let timer = cx
+            .background_executor()
+            .timer(std::time::Duration::from_secs(15));
+        self._settle = Some(cx.spawn(async move |dock, cx| {
+            timer.await;
+            let _ = dock.update(cx, |dock, cx| {
+                dock.resuming = None;
+                settings::change(cx, |p| p.resuming = false);
+                dock.save_sessions(cx);
+            });
+        }));
+    }
+
     /// Restart the session `origin`'s page had running when Acta last quit
     /// (interaction.md 6.6): a launch like any other (a new launch token,
     /// the page's commit settings), on the page's last conversation.
@@ -696,7 +729,8 @@ impl TerminalDock {
     /// in `preferences.json` so the next launch restarts them. Not while
     /// quitting: the sessions end then, and the list must survive that.
     fn save_sessions(&self, cx: &mut App) {
-        if self.free || crate::resume::quitting() {
+        // While restarted sessions settle, the list stays the one intended.
+        if self.free || crate::resume::quitting() || self.resuming.is_some() {
             return;
         }
         let mut owners: Vec<String> = Vec::new();

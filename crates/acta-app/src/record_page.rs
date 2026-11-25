@@ -26,6 +26,7 @@ use gpui_kit::{
     Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Task, Window, div,
 };
 
+use crate::drafts;
 use crate::due::{self, Outcome, Tone};
 use crate::due_picker::{AnchorBounds, DuePicker, DuePickerEvent};
 use crate::fold;
@@ -204,13 +205,12 @@ pub struct RecordPage {
     fold_anchor: fold_ui::Anchor,
     /// The fold toggle with the keyboard, as of this frame.
     fold_focused: Option<fold::Section>,
-    /// The pending draft writes of the state and description editors
-    /// (interaction.md 6.6), whether the kept drafts were read, and those
-    /// read back, opened at the next frame (an editor needs the window).
-    draft_writes: [Task<()>; 2],
+    /// The kept drafts (interaction.md 6.6): whether they were asked for
+    /// and read, and those read back, opened at the next frame (an editor
+    /// needs the window).
     drafts_read: bool,
     drafts_asked: bool,
-    pending_drafts: Vec<(bool, String)>,
+    pending_drafts: Vec<(resume::DraftField, String)>,
     /// The kept scroll and focus to restore once the page is first drawn,
     /// and the pending write of the scroll (interaction.md 6.6).
     restore: Option<resume::PageState>,
@@ -344,7 +344,6 @@ impl RecordPage {
             fold_stamps: Default::default(),
             fold_anchor: Default::default(),
             fold_focused: None,
-            draft_writes: [Task::ready(()), Task::ready(())],
             drafts_read: false,
             drafts_asked: false,
             pending_drafts: Vec::new(),
@@ -782,8 +781,11 @@ impl RecordPage {
     fn note_fold_writes(&mut self, data: &Loaded, cx: &App) {
         for section in self.fold_kind().sections() {
             let stamps = data.fold_stamps(*section);
+            // The description has one stamp, the text: a change marks only
+            // when Claude Code made the page's last write.
+            let by_claude = data.updated_by == Author::Claude;
             if self.folded(*section, cx)
-                && fold::wrote_inside(self.fold_stamps.get(section), &stamps)
+                && fold::wrote_in(*section, self.fold_stamps.get(section), &stamps, by_claude)
             {
                 self.fold_unread.insert(*section);
             }
@@ -1017,6 +1019,11 @@ impl RecordPage {
                     secondary: true, ..
                 } => page.commit_editor(description, window, cx),
                 InputEvent::Change => page.write_draft(description, cx),
+                // The editor with the keyboard owns the record's draft.
+                InputEvent::Focus => drafts::claim(
+                    &resume::draft_key(page.owner, Self::draft_field(description)),
+                    cx.entity_id().as_u64(),
+                ),
                 _ => {}
             },
         );
@@ -1061,7 +1068,11 @@ impl RecordPage {
 
     /// The element to give the keyboard back to on the next launch: an
     /// open editor, else the focused block.
-    pub fn kept_focus(&self, window: &Window, cx: &App) -> Option<record::Block> {
+    pub fn kept_focus(&self, window: &Window, cx: &App) -> Option<String> {
+        self.kept_block(window, cx).map(resume::focus_key)
+    }
+
+    fn kept_block(&self, window: &Window, cx: &App) -> Option<record::Block> {
         let has = |editor: &Option<Entity<TextareaState>>| {
             editor
                 .as_ref()
@@ -1135,8 +1146,7 @@ impl RecordPage {
     }
 
     /// The editor changed: its text goes to the encrypted database 400 ms
-    /// after the last change (a later change cancels the pending write),
-    /// so a crash or a restart keeps it.
+    /// after the last change, so a crash or a restart keeps it.
     fn write_draft(&mut self, description: bool, cx: &mut Context<Self>) {
         let editor = if description {
             &self.description_edit
@@ -1148,28 +1158,78 @@ impl RecordPage {
         let value = resume::draft_value(&typed, &self.stored_text(description));
         let key = resume::draft_key(self.owner, Self::draft_field(description));
         let db = self.ws.read(cx).db.clone();
-        let timer = cx
-            .background_executor()
-            .timer(std::time::Duration::from_millis(400));
-        self.draft_writes[usize::from(description)] = cx.background_executor().spawn(async move {
-            timer.await;
-            if let Err(err) = db.lock().set_local_value(&key, value.as_deref()) {
-                crate::log::line(&format!(
-                    "draft: write failed: {}",
-                    crate::workspace::err_kind(&err)
-                ));
-            }
-        });
+        drafts::changed(&db, key, cx.entity_id().as_u64(), value, cx);
     }
 
-    /// The editor saved or was cancelled: its draft goes (and a pending
-    /// write with it).
+    /// The editor saved or was cancelled: its draft goes.
     fn clear_draft(&mut self, description: bool, cx: &mut Context<Self>) {
-        let key = resume::draft_key(self.owner, Self::draft_field(description));
+        self.discard_field(Self::draft_field(description), cx);
+    }
+
+    /// Keep `value` as the page's draft of `field` (`None`: no draft).
+    pub(super) fn write_field(
+        &self,
+        field: resume::DraftField,
+        value: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let key = resume::draft_key(self.owner, field);
         let db = self.ws.read(cx).db.clone();
-        self.draft_writes[usize::from(description)] = cx.background_executor().spawn(async move {
-            let _ = db.lock().set_local_value(&key, None);
-        });
+        drafts::changed(&db, key, cx.entity_id().as_u64(), value, cx);
+    }
+
+    /// The editor of `field` saved or was cancelled: its draft goes.
+    pub(super) fn discard_field(&self, field: resume::DraftField, cx: &mut Context<Self>) {
+        let key = resume::draft_key(self.owner, field);
+        let db = self.ws.read(cx).db.clone();
+        drafts::discard(&db, key, cx.entity_id().as_u64(), cx);
+    }
+
+    /// The editor of `field` has the keyboard: it owns the draft.
+    pub(super) fn claim_field(&self, field: resume::DraftField, cx: &mut Context<Self>) {
+        drafts::claim(
+            &resume::draft_key(self.owner, field),
+            cx.entity_id().as_u64(),
+        );
+    }
+
+    /// A kept draft's editor opens again with it (interaction.md 6.6).
+    fn reopen_draft(
+        &mut self,
+        field: resume::DraftField,
+        draft: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match field {
+            resume::DraftField::State => {
+                self.open_editor_with(false, Some(draft), false, window, cx)
+            }
+            resume::DraftField::Description => {
+                self.open_editor_with(true, Some(draft), false, window, cx)
+            }
+            resume::DraftField::Entry => {
+                let Some((id, text)) = resume::decode_item(&draft) else {
+                    return;
+                };
+                let entry = self
+                    .data
+                    .as_ref()
+                    .and_then(|d| d.entries.iter().find(|e| e.id.0 == id).cloned());
+                match entry {
+                    Some(entry) => self.start_entry_edit_with(entry, Some(text), false, window, cx),
+                    // The entry is gone: so is its draft.
+                    None => self.discard_field(field, cx),
+                }
+            }
+            resume::DraftField::Question => {
+                let Some((id, text)) = resume::decode_item(&draft) else {
+                    return;
+                };
+                self.reopen_composer(id, text, window, cx);
+            }
+            _ => {}
+        }
     }
 
     /// Once the page first loaded: the editors that had a draft reopen
@@ -1180,29 +1240,34 @@ impl RecordPage {
         }
         let owner = self.owner;
         let prefix = resume::draft_prefix(owner);
-        let task = self
-            .ws
-            .read(cx)
-            .db
-            .run(cx, move |store| store.local_values(&prefix));
+        let task = self.ws.read(cx).db.run(cx, move |store| {
+            let exists = store.record_exists(owner)?;
+            drafts::read_kept(store, &prefix, exists)
+        });
         cx.spawn(async move |page, cx| {
             let kept = task.await.unwrap_or_default();
             let _ = page.update(cx, |page, cx| {
                 page.drafts_read = true;
                 for (key, value) in kept {
-                    let description = match resume::draft_field(owner, &key) {
-                        Some(resume::DraftField::Description) => true,
-                        Some(resume::DraftField::State) if page.topic().is_some() => false,
-                        _ => continue,
+                    let Some(field) = resume::draft_field(owner, &key) else {
+                        continue;
                     };
-                    let open = if description {
-                        page.description_edit.is_some()
-                    } else {
-                        page.state_edit.is_some()
+                    let keep = match field {
+                        resume::DraftField::Description => {
+                            page.description_edit.is_none()
+                                && resume::draft_value(&value, &page.stored_text(true)).is_some()
+                        }
+                        resume::DraftField::State => {
+                            page.topic().is_some()
+                                && page.state_edit.is_none()
+                                && resume::draft_value(&value, &page.stored_text(false)).is_some()
+                        }
+                        resume::DraftField::Entry => page.entry_edit.is_none(),
+                        resume::DraftField::Question => page.q.composer.is_none(),
+                        _ => false,
                     };
-                    let kept = resume::draft_value(&value, &page.stored_text(description));
-                    if !open && kept.is_some() {
-                        page.pending_drafts.push((description, value));
+                    if keep {
+                        page.pending_drafts.push((field, value));
                     }
                 }
                 cx.notify();
@@ -1337,6 +1402,9 @@ impl RecordPage {
         if self.state_edit.is_some() {
             self.clear_draft(false, cx);
         }
+        if self.entry_edit.is_some() {
+            self.discard_field(resume::DraftField::Entry, cx);
+        }
         if self.description_edit.is_some() {
             self.clear_draft(true, cx);
         }
@@ -1438,32 +1506,54 @@ impl RecordPage {
 
     /// Edit: the body becomes the multi-line editor in place.
     fn start_entry_edit(&mut self, entry: Entry, window: &mut Window, cx: &mut Context<Self>) {
+        self.start_entry_edit_with(entry, None, true, window, cx);
+    }
+
+    /// The entry's editor, on `draft` (a kept draft) or its text.
+    fn start_entry_edit_with(
+        &mut self,
+        entry: Entry,
+        draft: Option<String>,
+        focus: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let id = entry.id;
         let state = cx.new(|cx| {
             TextareaState::new(window, cx)
                 .auto_grow(3, 16)
-                .default_value(entry.text.clone())
+                .default_value(draft.unwrap_or_else(|| entry.text.clone()))
         });
-        state.update(cx, |state, cx| state.focus(window, cx));
+        if focus {
+            state.update(cx, |state, cx| state.focus(window, cx));
+        }
         crate::voice::attach(&state, window, cx);
         let sub = cx.subscribe_in(
             &state,
             window,
-            move |page, editor, event: &InputEvent, window, cx| {
-                if let InputEvent::PressEnter {
+            move |page, editor, event: &InputEvent, window, cx| match event {
+                InputEvent::PressEnter {
                     secondary: true, ..
-                } = event
-                {
+                } => {
                     let text = editor.read(cx).value().trim_end().to_owned();
                     if !text.trim().is_empty() {
                         page.write_entry(&entry, text, entry.kind, cx);
                         let tray = page.entry_tray.take();
                         page.commit_tray(tray, AttachOwner::Entry(entry.id), cx);
                         page.entry_edit = None;
+                        page.discard_field(resume::DraftField::Entry, cx);
                         window.focus(&page.focus, cx);
                         cx.notify();
                     }
                 }
+                InputEvent::Change => {
+                    let typed = editor.read(cx).value().to_string();
+                    let value = resume::draft_value(&typed, &entry.text)
+                        .map(|t| resume::encode_item(entry.id.0, &t));
+                    page.write_field(resume::DraftField::Entry, value, cx);
+                }
+                InputEvent::Focus => page.claim_field(resume::DraftField::Entry, cx),
+                _ => {}
             },
         );
         self._subs.push(sub);
@@ -4469,8 +4559,8 @@ impl Render for RecordPage {
             });
         }
         // Kept drafts reopen their editors (interaction.md 6.6).
-        for (description, draft) in std::mem::take(&mut self.pending_drafts) {
-            self.open_editor_with(description, Some(draft), false, window, cx);
+        for (field, draft) in std::mem::take(&mut self.pending_drafts) {
+            self.reopen_draft(field, draft, window, cx);
         }
         // The kept scroll and focus, once the loaded page has been laid
         // out (the drafts' reads come first: an editor may be the focus).

@@ -157,7 +157,7 @@ pub struct BrowserDock {
     /// whose browsers were read back.
     db: Db,
     restored: std::collections::HashSet<Owner>,
-    _restore: Task<()>,
+    restoring: HashMap<Owner, Task<()>>,
     _jobs: Task<()>,
     _pipe: Task<()>,
     clear_task: Task<()>,
@@ -209,7 +209,7 @@ impl BrowserDock {
             subs: HashMap::new(),
             db,
             restored: Default::default(),
-            _restore: Task::ready(()),
+            restoring: HashMap::new(),
             _jobs: listen,
             _pipe: pipe,
             clear_task: Task::ready(()),
@@ -366,8 +366,7 @@ impl BrowserDock {
             .keys_of(Holder::Page(owner))
             .into_iter()
             .filter_map(|k| self.panels.get(k))
-            .map(|p| p.read(cx).address().to_owned())
-            .filter(|a| !a.is_empty() && a != "about:blank")
+            .filter_map(|p| crate::resume::kept_address(p.read(cx).address()))
             .collect();
         let value = (!addresses.is_empty()).then(|| crate::resume::encode_addresses(&addresses));
         let key = crate::resume::browser_key(owner);
@@ -382,14 +381,27 @@ impl BrowserDock {
     /// last launch come back, each loading its address when shown
     /// (interaction.md 6.6).
     fn restore_addresses(&mut self, owner: Owner, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.restored.insert(owner) {
+        // Once per page and run, whatever other page becomes current while
+        // the read runs (one read per page).
+        if self.restored.contains(&owner) || self.restoring.contains_key(&owner) {
             return;
         }
         let key = crate::resume::browser_key(owner);
-        let task = self.db.run(cx, move |store| store.local_value(&key));
-        self._restore = cx.spawn_in(window, async move |dock, cx| {
-            let Ok(Some(raw)) = task.await else { return };
+        let task = self.db.run(cx, move |store| {
+            let raw = store.local_value(&key)?;
+            // A record gone for good leaves nothing to reopen.
+            if raw.is_some() && !store.record_exists(owner)? {
+                store.set_local_value(&key, None)?;
+                return Ok(None);
+            }
+            Ok(raw)
+        });
+        let read = cx.spawn_in(window, async move |dock, cx| {
+            let raw = task.await;
             let _ = dock.update_in(cx, |dock, window, cx| {
+                dock.restoring.remove(&owner);
+                dock.restored.insert(owner);
+                let Ok(Some(raw)) = raw else { return };
                 if !dock.panels.keys_of(Holder::Page(owner)).is_empty() {
                     return;
                 }
@@ -403,6 +415,7 @@ impl BrowserDock {
                 dock.sync(window, cx);
             });
         });
+        self.restoring.insert(owner, read);
     }
 
     /// Every browser in view or parked: the current page's selected one

@@ -56,6 +56,11 @@ pub struct Preferences {
     /// The record ids of the pages whose Claude Code session was running
     /// at quit: they restart with the page's conversation.
     pub sessions: Vec<String>,
+    /// A launch restarted those sessions and has not settled yet: set
+    /// before the restart, cleared once every restarted session settled.
+    /// Found set at launch, the last one never settled (a crash during the
+    /// restart), so this one does not restart them.
+    pub resuming: bool,
     /// Terminal text size, 11 to 18; `None` is the default 13.
     pub terminal_text_size: Option<u8>,
     /// The size of reading text (typography.md 3.2) and the width of the
@@ -109,6 +114,7 @@ pub fn forget_records(prefs: &mut Preferences, sign_out: bool) {
     prefs.overview_open.clear();
     prefs.pages.clear();
     prefs.sessions.clear();
+    prefs.resuming = false;
     if let Some(saved) = &prefs.layout {
         prefs.layout = Saved::from_value(&saved.to_value(), |key| {
             matches!(key, "trash" | "settings" | "shortcuts" | "contacts")
@@ -146,6 +152,8 @@ struct Stored {
     pages: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     sessions: Vec<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    resuming: bool,
     #[serde(default, skip_serializing)]
     sidebar_hidden: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -374,6 +382,7 @@ pub fn parse(text: &str) -> Result<Preferences, LoadError> {
         folds: crate::fold::read(stored.folds),
         pages: stored.pages.map(pages_of).unwrap_or_default(),
         sessions: crate::resume::read_sessions(stored.sessions),
+        resuming: stored.resuming,
         terminal_text_size: stored
             .terminal_text_size
             .filter(|size| (11..=18).contains(size)),
@@ -466,6 +475,7 @@ pub fn serialize(prefs: &Preferences) -> String {
         folds: prefs.folds.clone(),
         pages: (!prefs.pages.is_empty()).then(|| pages_value(&prefs.pages)),
         sessions: prefs.sessions.clone(),
+        resuming: prefs.resuming,
         sidebar_hidden: false,
         terminal_text_size: prefs.terminal_text_size,
         text_size: text_size_name(prefs.text_size),
@@ -744,6 +754,7 @@ mod tests {
             .into_iter()
             .collect(),
             sessions: vec!["T-42".into(), "P-1".into()],
+            resuming: true,
             terminal_text_size: Some(15),
             text_size: TextSize::Large,
             reading_width: ReadingWidth::Narrow,

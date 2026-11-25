@@ -54,6 +54,8 @@ pub struct QuestionsPage {
     data: Option<Loaded>,
     focus: FocusHandle,
     row_focus: Vec<FocusHandle>,
+    /// Scroll and focus across launches (interaction.md 6.6).
+    keep: Option<crate::page_keep::Keep>,
     /// An open question edited in place (`E`).
     edit: Option<Edit>,
     seen_revision: u64,
@@ -188,6 +190,10 @@ impl QuestionsPage {
             data: None,
             focus: cx.focus_handle(),
             row_focus: Vec::new(),
+            keep: Some(crate::page_keep::Keep::new(
+                crate::route::Route::Questions(scope).key(),
+                cx,
+            )),
             edit: None,
             seen_revision: 0,
             _load: Task::ready(()),
@@ -195,6 +201,45 @@ impl QuestionsPage {
         };
         page.reload(cx);
         page
+    }
+
+    /// What Resume keeps of this page (interaction.md 6.6): its route
+    /// key and the focused row.
+    pub fn kept_state(
+        &self,
+        window: &Window,
+        _: &gpui_kit::App,
+    ) -> Option<(String, Option<String>)> {
+        let keep = self.keep.as_ref()?;
+        let focus = self
+            .row_focus
+            .iter()
+            .position(|h| h.is_focused(window))
+            .map(crate::resume::row_key);
+        Some((keep.route().to_owned(), focus))
+    }
+
+    /// Once the content is there: the kept scroll, and the kept row when
+    /// the page has the keyboard, on the next frame (after layout).
+    fn restore_kept(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !(self.data.is_some()) {
+            return;
+        }
+        let Some(kept) = self.keep.as_mut().and_then(crate::page_keep::Keep::take) else {
+            return;
+        };
+        cx.on_next_frame(window, move |page, window, cx| {
+            if let Some(keep) = &page.keep {
+                keep.apply_scroll(&kept);
+            }
+            let row = kept.focus.as_deref().and_then(crate::resume::row_of);
+            if let Some(i) = row
+                && Focusable::focus_handle(page, cx).contains_focused(window, cx)
+                && let Some(h) = page.row_focus.get(i).cloned()
+            {
+                window.focus(&h, cx);
+            }
+        });
     }
 
     fn reload(&mut self, cx: &mut Context<Self>) {
@@ -886,7 +931,19 @@ impl Render for QuestionsPage {
                 index += 1;
             }
         }
+        self.restore_kept(window, cx);
         ui::page_scroll("questions-page")
+            .when_some(
+                self.keep.as_ref().map(|k| k.scroll().clone()),
+                |el, scroll| {
+                    el.track_scroll(&scroll)
+                        .on_scroll(cx.listener(|page, _, _, cx| {
+                            if let Some(keep) = page.keep.as_mut() {
+                                keep.scrolled(cx);
+                            }
+                        }))
+                },
+            )
             .track_focus(&self.focus)
             .child(column)
     }

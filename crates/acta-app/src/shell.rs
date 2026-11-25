@@ -266,6 +266,21 @@ pub fn bind_keys(cx: &mut App) {
 /// Quit Acta, unless an install runs and has not been confirmed: then the
 /// main window asks "Quit Acta?" first, whose Quit closes it (and the app
 /// with its last window). Every app-level quit goes through here.
+/// Before Acta quits, from any route (the window's close, the menu, the
+/// palette, `Cmd+Q`): every window keeps its pages' state, and the
+/// sessions that end now still restart next time (interaction.md 6.6).
+pub fn keep_all_for_quit(cx: &mut App) {
+    if crate::resume::quitting() {
+        return;
+    }
+    for handle in cx.windows() {
+        if let Some(shell) = handle.downcast::<Shell>() {
+            let _ = shell.update(cx, |shell, window, cx| shell.keep_resume_state(window, cx));
+        }
+    }
+    crate::resume::set_quitting();
+}
+
 pub fn request_quit(cx: &mut App) {
     if let Some(tool) = crate::ready::must_ask_quit(cx) {
         for handle in cx.windows() {
@@ -279,6 +294,7 @@ pub fn request_quit(cx: &mut App) {
             }
         }
     }
+    keep_all_for_quit(cx);
     cx.quit();
 }
 
@@ -441,6 +457,24 @@ enum PageView {
 }
 
 impl PageView {
+    /// The page's route key and its focused element, for Resume
+    /// (interaction.md 6.6).
+    fn kept_state(&self, window: &Window, cx: &App) -> Option<(String, Option<String>)> {
+        match self {
+            PageView::Record(p) => {
+                let page = p.read(cx);
+                Some((page.owner.to_string(), page.kept_focus(window, cx)))
+            }
+            PageView::Inbox(p) => p.read(cx).kept_state(window, cx),
+            PageView::Knowledge(p) => p.read(cx).kept_state(window, cx),
+            PageView::Doc(p) => p.read(cx).kept_state(window, cx),
+            PageView::Questions(p) => p.read(cx).kept_state(window, cx),
+            PageView::Contacts(p) => p.read(cx).kept_state(window, cx),
+            PageView::Contact(p) => p.read(cx).kept_state(window, cx),
+            _ => None,
+        }
+    }
+
     fn view(&self) -> AnyView {
         match self {
             PageView::FirstRun(v) => v.clone().into(),
@@ -2656,25 +2690,20 @@ impl Shell {
     /// page's focused element, and only the open tabs' states.
     pub(crate) fn keep_resume_state(&mut self, window: &Window, cx: &mut Context<Self>) {
         let Some(bench) = self.bench() else { return };
-        let open: Vec<String> = bench
-            .layout
-            .page_tabs()
-            .into_iter()
-            .filter_map(|id| {
-                if id == bench.current {
-                    bench.history.current()
-                } else {
-                    bench.slots.get(&id).and_then(|s| s.history.current())
-                }
-            })
-            .map(|r| r.key())
-            .collect();
-        let focus = match (&bench.page, bench.history.current()) {
-            (PageView::Record(page), Some(route)) => {
-                Some((route.key(), page.read(cx).kept_focus(window, cx)))
+        // Every route a tab can go back or forward to keeps its state.
+        let mut open: Vec<String> = Vec::new();
+        for id in bench.layout.page_tabs() {
+            let history = if id == bench.current {
+                Some(&bench.history)
+            } else {
+                bench.slots.get(&id).map(|s| &s.history)
+            };
+            if let Some(history) = history {
+                open.extend(history.routes().map(|r| r.key()));
             }
-            _ => None,
-        };
+        }
+        // The page's own route, whatever the history says by now.
+        let focus = bench.page.kept_state(window, cx);
         let mut pages = settings::current(cx).pages.clone();
         if let Some((key, focus)) = focus {
             crate::resume::set_focus(&mut pages, &key, focus);
@@ -2710,14 +2739,32 @@ impl Shell {
             });
         })
         .detach();
+        let kept = settings::current(cx).sessions.clone();
+        let unsettled = settings::current(cx).resuming;
+        if !crate::resume::restart_sessions(&kept, unsettled) {
+            if unsettled {
+                // The last launch stopped while restarting them: not again.
+                settings::change(cx, |p| p.resuming = false);
+                let message = text(settings::locale(cx), Key::ResumeSessionsSkipped);
+                if let Some(bench) = self.bench() {
+                    bench
+                        .ws
+                        .update(cx, |ws, cx| ws.toast(message, ToastKind::Error, cx));
+                }
+            }
+            return;
+        }
         let Some(bench) = self.bench() else { return };
         let projects = bench.ws.read(cx).projects.clone();
         let dock = bench.dock.clone();
-        for owner in owners {
-            if let Some(origin) = origin_of(&projects, owner) {
-                dock.update(cx, |dock, cx| dock.resume(origin, window, cx));
-            }
-        }
+        let origins: Vec<Origin> = owners
+            .into_iter()
+            .filter_map(|owner| origin_of(&projects, owner))
+            .collect();
+        // The marker is on disk before any session starts.
+        settings::change(cx, |p| p.resuming = true);
+        settings::flush(cx);
+        dock.update(cx, |dock, cx| dock.resume_all(origins, kept, window, cx));
     }
 
     /// The Terminal view follows the current page (layout.md 4.5.1): set
@@ -3623,10 +3670,14 @@ impl Shell {
                     if let Some(bench) = shell.bench() {
                         bench.capture_draft = draft.clone();
                         bench.capture_tray = tray.clone();
-                        let (db, text) = (bench.ws.read(cx).db.clone(), draft.clone());
-                        cx.background_executor()
-                            .spawn(async move { crate::capture::keep_draft(&db, &text) })
-                            .detach();
+                        let db = bench.ws.read(cx).db.clone();
+                        crate::drafts::write_now(
+                            &db,
+                            crate::resume::CAPTURE_DRAFT_KEY.into(),
+                            crate::capture::draft_of(draft),
+                            cx,
+                        )
+                        .detach();
                     }
                     shell.close_overlay(window, cx);
                 }

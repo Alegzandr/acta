@@ -284,7 +284,9 @@ impl Loaded {
         match section {
             // The page's own stamp moves with any field; the text is what
             // the section shows.
-            S::Description if claude(self.updated_by) => vec![(0, text_hash(&self.description))],
+            // Always the text's digest: the page decides whether a change
+            // is Claude Code's (its own stamp names the last writer).
+            S::Description => vec![(0, text_hash(&self.description))],
             S::Timeline => self
                 .entries
                 .iter()

@@ -138,6 +138,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `overview.to_check` | {n} memory to check · {n} memories to check | {n} mémoire à vérifier · {n} mémoires à vérifier |
 | `overview.questions_late` | {n} question past its answer date · {n} questions past their answer date | {n} question dont la date de réponse est passée · {n} questions dont la date de réponse est passée |
 | `section.timeline` | Timeline | Journal |
+| `resume.sessions_skipped` | Claude Code sessions were not restarted: Acta stopped while restarting them last time. | Les sessions Claude Code n’ont pas été relancées : Acta s’est arrêté pendant leur relance la dernière fois. |
 | `section.topics` | Topics | Sujets |
 | `section.fold` | Collapse {section} | Replier « {section} » |
 | `section.unfold` | Expand {section} | Déplier « {section} » |

@@ -159,6 +159,19 @@ pub fn wrote_inside(before: Option<&Stamps>, after: &Stamps) -> bool {
     after.iter().any(|s| !before.contains(s))
 }
 
+/// Whether a reload found a write by another process inside `section`:
+/// [`wrote_inside`], and for the description, whose one stamp is its
+/// text, only when Claude Code made the record's last write
+/// (`last_by_claude`), so the human's own edit never sets the dot.
+pub fn wrote_in(
+    section: Section,
+    before: Option<&Stamps>,
+    after: &Stamps,
+    last_by_claude: bool,
+) -> bool {
+    (section != Section::Description || last_by_claude) && wrote_inside(before, after)
+}
+
 /// The section that anchors Collapse all and Expand all: the one that holds
 /// the top of the viewport, that is the last header at or above `top`, else
 /// the first one. `headers` are the drawn headers with their y in the
@@ -313,6 +326,23 @@ mod tests {
         assert!(wrote_inside(Some(&before), &vec![(1, 100), (2, 250)]));
         // A removal, or the human taking an entry over, is no write to mark.
         assert!(!wrote_inside(Some(&before), &vec![(1, 100)]));
+    }
+
+    #[test]
+    fn a_description_changed_by_the_human_sets_no_dot() {
+        let before: Stamps = vec![(0, 11)];
+        let after: Stamps = vec![(0, 12)];
+        let same: Stamps = vec![(0, 11)];
+        assert!(!wrote_in(
+            Section::Description,
+            Some(&before),
+            &after,
+            false
+        ));
+        assert!(wrote_in(Section::Description, Some(&before), &after, true));
+        // Another field of a page Claude Code wrote: the text is the same.
+        assert!(!wrote_in(Section::Description, Some(&before), &same, true));
+        assert!(wrote_in(Section::Timeline, Some(&before), &after, false));
     }
 
     #[test]

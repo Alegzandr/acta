@@ -521,6 +521,10 @@ catalogue! {
         en: t("Timeline"),
         fr: t("Journal"),
     }
+    ResumeSessionsSkipped "resume.sessions_skipped" {
+        en: t("Claude Code sessions were not restarted: Acta stopped while restarting them last time."),
+        fr: t("Les sessions Claude Code n’ont pas été relancées\u{a0}: Acta s’est arrêté pendant leur relance la dernière fois."),
+    }
     SectionTopics "section.topics" {
         en: t("Topics"),
         fr: t("Sujets"),

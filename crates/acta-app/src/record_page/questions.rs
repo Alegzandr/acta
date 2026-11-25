@@ -16,6 +16,7 @@ use super::*;
 use crate::contact_picker::{ContactPicker, Mode, PickerEvent, Value};
 use crate::question_view::{self, RowLook};
 use crate::questions_model::{self as qm, Section};
+use crate::resume::{self, DraftField};
 use crate::workspace::{ReportState, WriteError, put_report, report_state, with_lifts};
 
 gpui_kit::actions!(
@@ -108,7 +109,7 @@ enum RItem {
 
 #[derive(Default)]
 pub(super) struct QuestionUi {
-    composer: Option<Composer>,
+    pub(super) composer: Option<Composer>,
     answer: Option<AnswerEdit>,
     /// A row's menu: the question and the highlighted item.
     menu: Option<(QuestionId, usize, usize)>,
@@ -267,8 +268,10 @@ impl RecordPage {
                             let clean = qm::clean_text(&value);
                             editor.update(cx, |s, cx| s.set_value(clean, window, cx));
                         }
+                        page.write_composer_draft(cx);
                         cx.notify();
                     }
+                    InputEvent::Focus => page.claim_field(DraftField::Question, cx),
                     _ => {}
                 },
             ),
@@ -307,8 +310,47 @@ impl RecordPage {
         cx.notify();
     }
 
+    /// The composer's text is kept as the page's draft (interaction.md
+    /// 6.6): a new question's text, or an edit that differs.
+    fn write_composer_draft(&mut self, cx: &mut Context<Self>) {
+        let Some(c) = &self.q.composer else { return };
+        let typed = c.text.read(cx).value().to_string();
+        let stored = c
+            .editing
+            .and_then(|id| self.question_by_id(id))
+            .map(|q| q.text)
+            .unwrap_or_default();
+        let id = c.editing.map_or(0, |id| id.0);
+        let value = resume::draft_value(&typed, &stored).map(|t| resume::encode_item(id, &t));
+        self.write_field(DraftField::Question, value, cx);
+    }
+
+    fn question_by_id(&self, id: QuestionId) -> Option<Question> {
+        let s = &self.data.as_ref()?.questions.section;
+        s.open.iter().chain(&s.closed).find(|q| q.id == id).cloned()
+    }
+
+    /// A kept composer draft: the composer opens again on it, for the
+    /// question it edited if that still exists, else as a new one.
+    pub(super) fn reopen_composer(
+        &mut self,
+        id: i64,
+        text: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let editing = (id > 0)
+            .then(|| self.question_by_id(QuestionId(id)))
+            .flatten();
+        self.open_composer(editing.as_ref(), None, window, cx);
+        if let Some(c) = &self.q.composer {
+            c.text.update(cx, |s, cx| s.set_value(text, window, cx));
+        }
+    }
+
     fn close_composer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.q.composer = None;
+        self.discard_field(DraftField::Question, cx);
         window.focus(&self.focus, cx);
         cx.notify();
     }

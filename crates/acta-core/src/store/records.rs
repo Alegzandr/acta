@@ -361,6 +361,21 @@ impl Store {
         Ok(id)
     }
 
+    /// Whether the record still has a row, in the trash or not (a purged
+    /// one has none): what keeps the values the app holds for its page.
+    pub fn record_exists(&self, owner: Owner) -> Result<bool> {
+        let (table, id) = match owner {
+            Owner::Project(id) => ("projects", id.0),
+            Owner::Epic(id) => ("epics", id.0),
+            Owner::Topic(id) => ("topics", id.0),
+        };
+        Ok(self.conn.query_row(
+            &format!("SELECT count(*) FROM {table} WHERE id = ?1"),
+            [id],
+            |r| r.get::<_, i64>(0).map(|n| n > 0),
+        )?)
+    }
+
     pub fn topic(&self, id: TopicId) -> Result<Topic> {
         read_topic(&self.conn, id)
     }

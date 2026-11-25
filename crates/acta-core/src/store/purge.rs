@@ -233,6 +233,22 @@ impl Store {
                 });
             }
         }
+        // What the app keeps per page in local values (interaction.md 6.6):
+        // drafts (`draft.T-42.state`), the agent browsers' addresses and
+        // the chats' list. Content, so it goes with its record.
+        for (table, prefix) in [("projects", "P"), ("epics", "E"), ("topics", "T")] {
+            for id in rows.get(table).into_iter().flatten() {
+                let route = format!("{prefix}-{id}");
+                globs.push(format!("local.draft.{route}.*"));
+                globs.push(format!("local.browser.addresses.{route}"));
+                globs.push(format!("local.chat.instances.{route}"));
+            }
+        }
+        for (table, prefix) in [("contacts", "C"), ("kb_entries", "K")] {
+            for id in rows.get(table).into_iter().flatten() {
+                globs.push(format!("local.draft.{prefix}-{id}.*"));
+            }
+        }
         for g in globs {
             tx.execute("DELETE FROM meta WHERE key GLOB ?1", [g])?;
         }
