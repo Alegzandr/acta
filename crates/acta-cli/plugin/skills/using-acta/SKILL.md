@@ -51,6 +51,7 @@ Acta holds the project's topics (T-n) in epics (E-n). Each topic has a current s
 - State: where things stand. Entry: what happened and why.
 - Memory: one durable fact worth not relearning (a convention, a pitfall, a preference, a constraint, where something lives), a few lines.
 - Document: long-form reference that is re-read (spec, architecture, research result).
+- Deliverable: anything the human asked you to produce for other people (a report, a proposal, slides, a client document) is a file in the working folder, never a `kb_write`. Log an entry naming its path.
 
 ## Durable memory goes to Acta
 - Save durable learnings with `kb_write`, not in your own memory files (MEMORY.md), so the human sees and can correct them.
