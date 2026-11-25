@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use crate::zoom::px;
+use acta_core::claude_settings::page;
 use acta_core::launch_plan::{LaunchPlan, LeftOut, PlanFolder, launch_plan};
 use acta_core::model::{Author, FolderId, Owner, ProjectId, Record};
 use acta_core::presence::SessionState;
@@ -40,7 +41,7 @@ use crate::theme::{Appearance, Mode, RADIUS_XS, Tokens};
 use crate::tools_model::{self as tm, Holder, InstanceKey, Instances};
 use crate::type_scale;
 use crate::ui::{self, Variant};
-use crate::workspace::{CommitColumns, FolderRef, Undo, Workspace};
+use crate::workspace::{CommitColumns, FolderRef, ToastKind, Undo, Workspace};
 
 /// Where a launch comes from: the page's record and its name.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -68,6 +69,8 @@ enum Pane {
         /// It holds the page's "last conversation" (the page's first
         /// session); further sessions start their own and record nothing.
         page_conversation: bool,
+        /// The page's commit rules for this session, ended with the pane.
+        grant: Option<SessionGrant>,
         _sub: Subscription,
     },
     /// No folder anywhere up the chain. `prompt`: a command the launch was
@@ -86,6 +89,38 @@ enum Pane {
     },
     /// The `claude` command was not found.
     NotFound { origin: Option<Origin> },
+}
+
+/// The commit settings a page uses in a folder, as columns: what the
+/// header compares to mark a session whose instruction is out of date.
+fn effective_columns(
+    store: &acta_core::Store,
+    owner: Owner,
+    path: &str,
+) -> acta_core::Result<CommitColumns> {
+    let s = page::effective(store, owner, path)?.settings;
+    Ok((s.mode, Some(s.as_user), s.on_default))
+}
+
+/// A session's launch record and settings file (ADR 0011 addendum
+/// 2026-11-23): dropped with its pane, it forgets both off the UI thread.
+struct SessionGrant {
+    db: crate::db::Db,
+    token: String,
+}
+
+impl Drop for SessionGrant {
+    fn drop(&mut self) {
+        let db = self.db.clone();
+        let token = std::mem::take(&mut self.token);
+        let _ = std::thread::Builder::new()
+            .name("acta-session-end".into())
+            .spawn(move || {
+                if page::end_session(&mut db.lock(), &token).is_err() {
+                    crate::log::line("sessions: a launch record could not be cleared");
+                }
+            });
+    }
 }
 
 impl Pane {
@@ -130,6 +165,9 @@ pub struct Start {
     pub left_out: Vec<PathBuf>,
     pub folder: Option<FolderId>,
     pub commit: Option<CommitColumns>,
+    /// The page's commit rules were not passed to the session (ADR 0011
+    /// addendum 2026-11-23): the header's mark says so.
+    pub rules_off: bool,
 }
 
 /// The folders of a session's page, as the header shows them: refreshed
@@ -141,6 +179,8 @@ struct SessionPage {
     disk: HashMap<String, fm::Disk>,
     /// The commit columns of the folder the session started in, now.
     commit: Option<CommitColumns>,
+    /// The session's folder still belongs to its page, so its rules hold.
+    rules_held: bool,
 }
 
 /// The folders Acta's terminal sessions were launched with (working
@@ -512,17 +552,18 @@ impl TerminalDock {
     /// folder was not found) read again off the UI thread, with the
     /// existence of each.
     fn refresh_pages(&mut self, cx: &mut Context<Self>) {
-        let wanted: Vec<(InstanceKey, Owner, Option<FolderId>)> = self
+        let wanted: Vec<(InstanceKey, Owner, Option<FolderId>, String)> = self
             .panes
             .iter()
             .filter_map(|(key, pane)| match pane {
                 Pane::Running {
                     origin: Some(origin),
                     start,
+                    token,
                     ..
-                } => Some((key, origin.owner, start.folder)),
+                } => Some((key, origin.owner, start.folder, token.clone())),
                 // The not-found message offers the page's other folders.
-                Pane::Missing { origin, .. } => Some((key, origin.owner, None)),
+                Pane::Missing { origin, .. } => Some((key, origin.owner, None, String::new())),
                 _ => None,
             })
             .collect();
@@ -531,20 +572,28 @@ impl TerminalDock {
             return;
         }
         let task = self.ws.read(cx).db.run(cx, move |store| {
+            // A session whose folder left its page (detached, removed,
+            // moved): its settings file is made strict now.
+            if page::restrict_detached_sessions(store).is_err() {
+                crate::log::line("sessions: detached sessions could not be checked");
+            }
             let mut out = Vec::new();
-            for (key, owner, folder) in wanted {
+            for (key, owner, folder, token) in wanted {
                 let Ok(folders) = crate::record::load_folders(store, owner) else {
                     continue;
                 };
                 let commit = folder
                     .and_then(|id| store.folder(id).ok())
-                    .map(|f| (f.commit_mode, f.commit_as_user, f.commit_on_default));
+                    .and_then(|f| effective_columns(store, owner, &f.path).ok());
+                let rules_held =
+                    token.is_empty() || page::session_rules_applied(store, &token).unwrap_or(false);
                 out.push((
                     key,
                     SessionPage {
                         folders,
                         disk: HashMap::new(),
                         commit,
+                        rules_held,
                     },
                 ));
             }
@@ -807,6 +856,7 @@ impl TerminalDock {
                             left_out: Vec::new(),
                             folder: None,
                             commit: None,
+                            rules_off: false,
                         };
                         dock.running(
                             key,
@@ -856,7 +906,23 @@ impl TerminalDock {
                 )
         });
         let new_conversations = settings::current(cx).new_conversations;
+        // Without a token the session could not carry its page: refused,
+        // never started as if outside Acta.
+        let Some(token) = acta_core::random_uuid() else {
+            crate::log::line("sessions: no random source for a launch token");
+            self.generations.remove(&key);
+            drop(self.panes.close(key));
+            self.publish_tokens(cx);
+            let message = text(settings::locale(cx), Key::TerminalNoRandom);
+            self.ws
+                .update(cx, |ws, cx| ws.toast(message, ToastKind::Error, cx));
+            cx.notify();
+            return;
+        };
+        let launch_token = token.clone();
+        let app = crate::db::app_instance();
         let ws = self.ws.read(cx);
+        let db = ws.db.clone();
         let folders = ws.db.run(cx, move |store| {
             // The page's folders in list order, the active one marked.
             let visible = store.visible_folders(owner)?;
@@ -882,14 +948,16 @@ impl TerminalDock {
                     active: true,
                 });
             }
-            let active = visible.active().map(|f| {
-                let c = &f.folder;
-                (
-                    f.origin,
-                    c.id,
-                    (c.commit_mode, c.commit_as_user, c.commit_on_default),
-                )
-            });
+            let active = visible
+                .active()
+                .map(|f| -> acta_core::Result<_> {
+                    Ok((
+                        f.origin,
+                        f.folder.id,
+                        effective_columns(store, owner, &f.folder.path)?,
+                    ))
+                })
+                .transpose()?;
             let config = acta_terminal::claude_config_dir();
             let conversation = match folders.iter().find(|f| f.active) {
                 Some(f) if page_conversation => {
@@ -898,14 +966,35 @@ impl TerminalDock {
                 Some(_) => acta_core::random_uuid().map(Conversation::New),
                 None => None,
             };
-            Ok((folders, active, epic, conversation))
+            // The page's commit mode in its working folder (ADR 0011
+            // addendum 2026-11-23): recorded under the token, with the
+            // session's own settings file. Without it the session still
+            // starts; the guard then treats its token as unknown.
+            let session_settings = match folders.iter().find(|f| f.active) {
+                Some(f) => match page::begin_session(store, &launch_token, owner, &f.path, app) {
+                    Ok(file) => Some(file),
+                    Err(_) => {
+                        crate::log::line("sessions: the page's commit rules were not written");
+                        None
+                    }
+                },
+                _ => None,
+            };
+            Ok((folders, active, epic, conversation, session_settings))
         });
+        let ended = token.clone();
         cx.spawn_in(window, async move |dock, cx| {
-            let Ok((folders, active, epic, conversation)) = folders.await else {
+            let Ok((folders, active, epic, conversation, session_settings)) = folders.await else {
                 return;
             };
-            let token = acta_core::random_uuid().unwrap_or_default();
-            let launch_token = token.clone();
+            // Ends the record and its file with the pane, whatever happens.
+            let grant = session_settings.is_some().then(|| SessionGrant {
+                db: db.clone(),
+                token: ended,
+            });
+            // The page's rules do not hold when they could not be written.
+            let rules_off = active.is_some() && session_settings.is_none();
+            let settings_file = session_settings.flatten();
             let conversation_id = match &conversation {
                 Some(Conversation::New(id)) | Some(Conversation::Resume(id)) => Some(id.clone()),
                 None => None,
@@ -915,6 +1004,7 @@ impl TerminalDock {
             let primary_from = active.map(|(from, _, _)| from);
             let start_folder = active.map(|(_, id, _)| id);
             let start_commit = active.map(|(_, _, c)| c);
+            let token_for_env = token.clone();
             let result = cx
                 .background_executor()
                 .spawn(async move {
@@ -924,7 +1014,8 @@ impl TerminalDock {
                     let options = ClaudeOptions {
                         plugin_dir: plugin_dir(),
                         conversation,
-                        token: (!launch_token.is_empty()).then_some(launch_token),
+                        token: Some(token_for_env),
+                        settings: settings_file,
                         prompt,
                     };
                     let mut launch = acta_terminal::launch_spec_for_claude(
@@ -968,8 +1059,12 @@ impl TerminalDock {
                             left_out: launch.left_out.clone(),
                             folder: start_folder,
                             commit: start_commit,
+                            rules_off: rules_off || launch.settings_left_out,
                         };
-                        dock.running(
+                        if start.rules_off {
+                            crate::log::line("sessions: the page's commit rules were not passed");
+                        }
+                        let mut pane = dock.running(
                             key,
                             Some(origin),
                             start,
@@ -979,7 +1074,11 @@ impl TerminalDock {
                             page_conversation,
                             window,
                             cx,
-                        )
+                        );
+                        if let Pane::Running { grant: g, .. } = &mut pane {
+                            *g = grant;
+                        }
+                        pane
                     }
                     Err(LaunchError::NoFolder) => Pane::Ask {
                         origin,
@@ -1061,6 +1160,7 @@ impl TerminalDock {
             token,
             conversation,
             page_conversation,
+            grant: None,
             _sub: sub,
         }
     }
@@ -2131,6 +2231,20 @@ impl TerminalDock {
                 .collect(),
             _ => Vec::new(),
         };
+        // The page's commit rules not passed, or no longer the page's: the
+        // same mark, one more line.
+        let mut left_out = left_out;
+        let rules_off = match self.panes.get(key) {
+            Some(Pane::Running {
+                start,
+                origin: Some(_),
+                ..
+            }) => start.rules_off || page.is_some_and(|p| !p.rules_held),
+            _ => false,
+        };
+        if rules_off {
+            left_out.push(text(locale, Key::TerminalRulesOff));
+        }
         let mark = if left_out.is_empty() { 0. } else { 14. + 6. };
         let context = Self::context(&origin, locale);
         let waiting_text = format!("\u{b7} {}", text(locale, Key::TerminalWaiting));

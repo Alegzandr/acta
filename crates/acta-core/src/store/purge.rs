@@ -215,6 +215,27 @@ impl Store {
         for sql in dependents {
             tx.execute(&sql, [])?;
         }
+        // Commit choices per page (ADR 0011 addendum 2026-11-23) of a
+        // purged folder or page: local values keyed by their ids.
+        let prefix = format!("local.{}", crate::claude_settings::page::PAGE_PREFIX);
+        let mut globs = Vec::new();
+        for (table, kind) in [
+            ("folders", ""),
+            ("projects", "p"),
+            ("epics", "e"),
+            ("topics", "t"),
+        ] {
+            for id in rows.get(table).into_iter().flatten() {
+                globs.push(if kind.is_empty() {
+                    format!("{prefix}*.{id}")
+                } else {
+                    format!("{prefix}{kind}{id}.*")
+                });
+            }
+        }
+        for g in globs {
+            tx.execute("DELETE FROM meta WHERE key GLOB ?1", [g])?;
+        }
 
         let mut counts = Vec::new();
         for (table, kind) in KINDS {

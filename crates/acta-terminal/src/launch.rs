@@ -57,6 +57,9 @@ pub struct ClaudeOptions {
     /// `ACTA_LAUNCH`: an opaque token naming this terminal, so the app can
     /// match the session's presence row to it.
     pub token: Option<String>,
+    /// A per-session settings file (`--settings`): the commit rules of the
+    /// page the session is started for (ADR 0011 addendum 2026-11-23).
+    pub settings: Option<PathBuf>,
     /// A first prompt Claude Code starts on (`/acta:triage`), passed as its
     /// positional argument, last. Left out on the `cmd` shim path when
     /// `cmd.exe` would interpret it.
@@ -70,6 +73,9 @@ pub struct ClaudeOptions {
 pub struct ClaudeLaunch {
     pub spec: LaunchSpec,
     pub left_out: Vec<PathBuf>,
+    /// The per-session settings file could not be passed: the page's
+    /// commit rules do not hold for this session.
+    pub settings_left_out: bool,
 }
 
 /// Why Claude Code cannot be started. Each maps to a state of the terminal
@@ -148,6 +154,25 @@ pub fn build_claude_launch(
         claude_args.push("--plugin-dir".to_owned());
         claude_args.push(dir.to_string_lossy().into_owned());
     }
+    // The page's commit rules. Through the `cmd` shim a path `cmd.exe`
+    // would interpret goes in its 8.3 form; without one it is left out and
+    // the launch says so.
+    let mut settings_left_out = false;
+    if let Some(file) = &options.settings {
+        let usable = |p: &Path| !(shim && has_cmd_metachar(&p.to_string_lossy()));
+        let file = if usable(file) {
+            Some(file.clone())
+        } else {
+            acta_core::fsutil::short_path(file).filter(|s| usable(s))
+        };
+        match file {
+            Some(f) => {
+                claude_args.push("--settings".to_owned());
+                claude_args.push(f.to_string_lossy().into_owned());
+            }
+            None => settings_left_out = true,
+        }
+    }
     match &options.conversation {
         Some(Conversation::New(id)) if is_uuid(id) => {
             claude_args.push("--session-id".to_owned());
@@ -217,6 +242,7 @@ pub fn build_claude_launch(
     };
 
     Ok(ClaudeLaunch {
+        settings_left_out,
         spec: LaunchSpec {
             program,
             args,
@@ -565,6 +591,7 @@ mod tests {
             plugin_dir: Some(plugin.clone()),
             conversation: Some(Conversation::Resume(id.into())),
             token: Some("tok-1".into()),
+            settings: None,
             prompt: None,
         };
         let program = ClaudeProgram::Exe(PathBuf::from("claude"));
@@ -597,11 +624,40 @@ mod tests {
             conversation: Some(Conversation::Resume("x & del".into())),
             plugin_dir: None,
             token: None,
+            settings: None,
             prompt: None,
         };
         let launch = build_claude_launch(&program, &folders, &focus(), &options, |_| true).unwrap();
         assert!(launch.spec.args.is_empty());
         assert!(!launch.spec.env.iter().any(|(k, _)| k == "ACTA_LAUNCH"));
+    }
+
+    /// A per-session settings file goes with `--settings`; on the `cmd`
+    /// shim path one whose name `cmd.exe` would interpret is left out.
+    #[test]
+    fn a_session_settings_file_is_passed() {
+        let file = alexandre("acta-data/claude-sessions/0a1b.json");
+        let options = ClaudeOptions {
+            settings: Some(file.clone()),
+            ..ClaudeOptions::default()
+        };
+        let folders = [alexandre("acta")];
+        let program = ClaudeProgram::Exe(PathBuf::from("claude"));
+        let launch = build_claude_launch(&program, &folders, &focus(), &options, |_| true).unwrap();
+        let f = file.to_string_lossy().into_owned();
+        assert_eq!(launch.spec.args, ["--settings", f.as_str()]);
+        let shim = ClaudeProgram::CmdShim {
+            comspec: "cmd.exe".into(),
+            shim: PathBuf::from("C:\\npm\\claude.cmd"),
+        };
+        let odd = ClaudeOptions {
+            settings: Some(PathBuf::from("C:\\100%\\s.json")),
+            ..ClaudeOptions::default()
+        };
+        // A file that does not exist has no 8.3 form: left out, and said.
+        let launch = build_claude_launch(&shim, &folders, &focus(), &odd, |_| true).unwrap();
+        assert!(!launch.spec.args.join(" ").contains("--settings"));
+        assert!(launch.settings_left_out);
     }
 
     #[test]
