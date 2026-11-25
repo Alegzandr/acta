@@ -532,10 +532,8 @@ mod tests {
     #[test]
     fn disguised_links_are_found_before_drawing() {
         let p = prepare(
-            "[github.com/acta](https://github.example.net/acta) and [docs](https://docs.example.com) and [ref][r]
-
-[r]: https://evil.example/
-",
+            "[github.com/acta](https://github.example.net/acta) and [docs](https://docs.example.com) \
+             and [ref][r]\n\n[r]: https://evil.example/\n",
         );
         assert_eq!(
             p.deceptive
@@ -545,12 +543,7 @@ mod tests {
         );
         assert!(!p.deceptive.contains_key("https://docs.example.com"));
         assert_eq!(p.links["r"], "https://evil.example/");
-        let p = prepare(
-            "[www.example.com][r]
-
-[r]: https://evil.example/
-",
-        );
+        let p = prepare("[www.example.com][r]\n\n[r]: https://evil.example/\n");
         assert!(p.deceptive.contains_key("https://evil.example/"));
     }
 

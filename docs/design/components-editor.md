@@ -62,29 +62,24 @@ Not yet verified (the conformance suite, Build steps, settles each): table colum
 | Entity, escape | `&amp;`, `&#8212;`, `\*` | The character (CommonMark). Unknown entities as typed. |
 | Anything else | definition lists, `^sup^`, `==mark==`, `:emoji:`, wiki links `[[a]]` | As typed, in the body role. |
 
-**Code.** `type.code` 13 / 20 on `bg.sunken`, padding 12 x 16, `radius.md` 8, no border, in every setting (3.3: 80 columns fit the measure). Tabs are 4 columns. Lines **never wrap**: a wide line scrolls the block horizontally (Long content). Highlighting: fenced blocks whose info string names a language syntect knows (gpui-kit's `syntect` feature with two-face's syntax set: Rust, TypeScript, JavaScript, JSON, TOML, YAML, Python, Go, C, C++, C#, Java, Kotlin, Swift, SQL, shell, PowerShell, HTML, CSS, Markdown, diff and the rest of that set) are coloured with five roles only:
+**Code.** `type.code` 13 / 20 (JetBrains Mono NL, its bundled Italic where Monokai italicises, never bold) on `syntax.monokai.bg`, padding 12 x 16, `radius.md` 8, no border, in every setting (3.3: 80 columns fit the measure). Tabs are 4 columns. Lines **never wrap**: a wide line scrolls the block horizontally (Long content). Highlighting: fenced blocks whose info string names a language syntect knows (two-face's syntax set: Rust, TypeScript, JavaScript, JSON, TOML, YAML, Python, Go, C, C++, C#, Java, Kotlin, Swift, SQL, shell, HTML, CSS, Markdown, diff and the rest of that set, plus PowerShell from the MIT-licensed SublimeText/PowerShell package) are coloured in the **classic Monokai palette**, the user's choice of 2026-11-25. The block is the same dark Monokai block in both themes: Monokai's yellow and green do not hold contrast on a light page, and code in Acta then reads like code in an editor set to Monokai.
 
-| Role | Scopes | Colour |
+| Role | Scopes (the innermost scope that names a role decides) | Colour |
 |---|---|---|
-| Default | everything not below: identifiers, types, functions, punctuation, operators | `text.primary` |
-| Keyword | `keyword`, `storage`, `storage.modifier` | `syntax.keyword` |
-| String | `string`, `string.escape`, `string.regex`, characters | `syntax.string` |
-| Constant | `constant.numeric`, `constant.language` (true, null), `constant.character` | `syntax.constant` |
-| Comment | `comment`, `comment.doc` | `text.tertiary`, italic of the mono |
+| Default | everything not below: identifiers, punctuation, `variable.language` | `syntax.monokai.fg` `#F8F8F2` |
+| Keyword | `keyword` (operators included), `storage` (modifiers), `entity.name.tag` | `syntax.monokai.keyword` `#F92672` |
+| String | `string` | `syntax.monokai.string` `#E6DB74` |
+| Constant | `constant` (numbers, `true`, `null`, characters), `constant.character.escape` | `syntax.monokai.constant` `#AE81FF` |
+| Function | `entity.name` (functions, classes, types being defined), `entity.other.inherited-class`, `entity.other.attribute-name` | `syntax.monokai.function` `#A6E22E` |
+| Type | `storage.type`, `support` (built-in types, functions, constants) | `syntax.monokai.type` `#66D9EF`, italic |
+| Parameter | `variable.parameter` | `syntax.monokai.parameter` `#FD971F`, italic |
+| Comment | `comment` | `syntax.monokai.comment` `#75715E` |
 
-A `diff` block (and a fence labelled `patch`) colours whole lines instead: lines starting `+` in `success`, `-` in `danger`, `@@` hunk headers in `text.tertiary`, others `text.primary`, no background tints (the History "Changes" view's rule). No language, an unknown language, `mermaid`, `math`, `text`, `plaintext`: plain `text.primary`, no guessing from content. A block over 2,000 lines or 200 KB draws unhighlighted. Bold of the mono is never used. Why five roles and three hues: highlighting earns its colour by separating code from prose inside the block; more roles turn a calm page into a theme showcase. The three hues are the terminal's blue, magenta and green slots (2.4), so code in a page and code in the terminal read alike, and none is the accent.
+A `diff` block (and a fence labelled `patch`) colours whole lines instead: lines starting `+` in `syntax.monokai.function`, `-` in `syntax.monokai.keyword`, `@@` hunk headers in `syntax.monokai.comment`, others `syntax.monokai.fg`, no background tints. No language, an unknown language, `mermaid`, `math`, `text`, `plaintext`: plain `syntax.monokai.fg`, no guessing from content. A block over 2,000 lines or 200 KB draws unhighlighted. Inline code is not a code block: it stays `type.code` on `bg.sunken`.
 
-New colour tokens, now in color.md 2.1 and 2.2 and in `Tokens` (branch `gpui-engineer/markdown-render`):
+Contrast on `syntax.monokai.bg` (WCAG 2.x, color.md 2.2): fg 13.94, string 10.44, function 9.58, type 9.01, parameter 6.81, constant 5.23, line numbers 4.63; keyword 3.93 and comment 3.03 are below 4.5 and kept as the user chose Monokai, with 3.0 as their floor (the test checks every role at 3.0 or more and each documented ratio).
 
-| Token | Dark | Light | Used for |
-|---|---|---|---|
-| `syntax.keyword` | `#BC96BC` (terminal 5) | `#844C86` (terminal 5) | Keywords in highlighted code blocks |
-| `syntax.string` | `#9BB26B` (terminal 2, = `success`) | `#4C6A24` (terminal 2, = `success`) | Strings in highlighted code blocks |
-| `syntax.constant` | `#7FA6CC` (terminal 4) | `#2F5F8F` (terminal 4) | Numbers and language constants in highlighted code blocks |
-
-Measured on the code block surface `bg.sunken` (and on `bg.base` / `bg.raised` for completeness; WCAG 2.x from the hex values): `syntax.keyword` 6.75 / 6.31 / 5.70 dark, 5.63 / 5.99 / 6.25 light; `syntax.string` 7.37 / 6.89 / 6.22 dark, 5.58 / 5.93 / 6.19 light; `syntax.constant` 6.75 / 6.31 / 5.71 dark, 6.00 / 6.38 / 6.66 light; comments (`text.tertiary`) 6.18 dark, 5.33 light; `text.primary` 13.42 dark, 12.08 light; diff `success` 7.37 / 5.58 and `danger` 5.89 / 5.21 on `bg.sunken`. All pass AA (4.5) for text.
-
-Code block chrome: hovering the block, or keyboard focus inside it, shows in its top-right corner, over the code, on a `bg.sunken` patch with 4 padding: the info string as written (`type.small` `text.tertiary`, at most 160 wide, truncated) and a compact ghost icon button 24 (`copy` 14, tooltip "Copy code" `md.copy_code`), which copies the block's text without the fences and reads "Copied" (`common.copied`) for 1.5 s. Nothing at rest.
+Code block chrome: hovering the block, or keyboard focus inside it, shows in its top-right corner, over the code, on a `syntax.monokai.bg` patch with 4 padding: the info string as written (`type.small` `syntax.monokai.line-number`, at most 160 wide, truncated) and a compact ghost icon button 24 in Monokai's text colours (`syntax.monokai.line-number` at rest, `syntax.monokai.fg` on hover) (`copy` 14, tooltip "Copy code" `md.copy_code`), which copies the block's text without the fences and reads "Copied" (`common.copied`) for 1.5 s. Nothing at rest.
 
 **Long content.** A code block or a table wider than the column scrolls horizontally **inside its own block**; the page never scrolls sideways and nothing is clipped without a way to reach it. While a block overflows, its horizontal scrollbar (5, Scrollbar) shows at rest at the bottom edge of the block, inside its padding, so the hidden part is announced without a fade or a gradient. Shift + wheel, a horizontal trackpad gesture and dragging the thumb scroll it; with keyboard focus in the block (its Copy button, or the caret while editing), `Left` / `Right` at the visible edge scroll it by 48. A table's header row stays with its columns. Paragraph text never scrolls: it wraps, breaking inside a word only when the word alone is wider than the line.
 

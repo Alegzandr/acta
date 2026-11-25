@@ -31,3 +31,17 @@ E = mc^2
 $$
 
 Costs $5 and $10, and a path: `C:\Users\Alexandre\AppData\Local\Acta`.
+
+```powershell
+param([string]$Name = "Alexandre")
+# Greets the person who asked.
+function Send-Greeting([string]$To) { Write-Host "Hello, $To" -ForegroundColor Green }
+Send-Greeting -To $Name
+```
+
+```ts
+export class Store implements Disposable {
+  constructor(private readonly path: string, retries = 3) {}
+  async open(key: Uint8Array): Promise<boolean> { return key.length === 32; }
+}
+```

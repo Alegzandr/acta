@@ -70,11 +70,19 @@ pub struct Tokens {
     pub caption_close_hover: Hsla,
     /// Glyph on `caption.close.hover` (the platform's white, per 2.1).
     pub caption_close_glyph: Hsla,
-    /// Keywords, strings and constants in highlighted code blocks
-    /// (components-editor.md 5, Code).
-    pub syntax_keyword: Hsla,
-    pub syntax_string: Hsla,
-    pub syntax_constant: Hsla,
+    /// The classic Monokai palette of code blocks, the same in both themes
+    /// (components-editor.md 5, Code; the user's choice of 2026-11-25).
+    pub syntax_monokai_bg: Hsla,
+    pub syntax_monokai_fg: Hsla,
+    pub syntax_monokai_keyword: Hsla,
+    pub syntax_monokai_string: Hsla,
+    pub syntax_monokai_constant: Hsla,
+    pub syntax_monokai_function: Hsla,
+    pub syntax_monokai_type: Hsla,
+    pub syntax_monokai_parameter: Hsla,
+    pub syntax_monokai_comment: Hsla,
+    pub syntax_monokai_selection: Hsla,
+    pub syntax_monokai_line_number: Hsla,
 }
 
 impl Global for Tokens {}
@@ -95,8 +103,6 @@ struct Palette {
     success: u32,
     scrim: (u32, f32),
     shadow: (u32, f32),
-    /// `syntax.keyword`, `syntax.string`, `syntax.constant`.
-    syntax: [u32; 3],
 }
 
 impl Tokens {
@@ -112,7 +118,6 @@ impl Tokens {
             success: 0x9BB26B,
             scrim: (0x000000, 0.45),
             shadow: (0x000000, 0.40),
-            syntax: [0xBC96BC, 0x9BB26B, 0x7FA6CC],
         })
     }
 
@@ -128,7 +133,6 @@ impl Tokens {
             success: 0x4C6A24,
             scrim: (0x24231F, 0.25),
             shadow: (0x24231F, 0.14),
-            syntax: [0x844C86, 0x4C6A24, 0x2F5F8F],
         })
     }
 
@@ -164,9 +168,17 @@ impl Tokens {
             shadow_overlay_color: hex(p.shadow.0).opacity(p.shadow.1),
             caption_close_hover: hex(0xC42B1C),
             caption_close_glyph: hex(0xFFFFFF),
-            syntax_keyword: hex(p.syntax[0]),
-            syntax_string: hex(p.syntax[1]),
-            syntax_constant: hex(p.syntax[2]),
+            syntax_monokai_bg: hex(0x272822),
+            syntax_monokai_fg: hex(0xF8F8F2),
+            syntax_monokai_keyword: hex(0xF92672),
+            syntax_monokai_string: hex(0xE6DB74),
+            syntax_monokai_constant: hex(0xAE81FF),
+            syntax_monokai_function: hex(0xA6E22E),
+            syntax_monokai_type: hex(0x66D9EF),
+            syntax_monokai_parameter: hex(0xFD971F),
+            syntax_monokai_comment: hex(0x75715E),
+            syntax_monokai_selection: hex(0x49483E),
+            syntax_monokai_line_number: hex(0x90908A),
         }
     }
 
@@ -182,7 +194,7 @@ impl Tokens {
     }
 
     /// Every token with its docs/design/color.md name, in table order (type specimen).
-    pub fn named(&self) -> [(&'static str, Hsla); 31] {
+    pub fn named(&self) -> [(&'static str, Hsla); 39] {
         [
             ("bg.sunken", self.bg_sunken),
             ("bg.base", self.bg_base),
@@ -212,9 +224,20 @@ impl Tokens {
             ("shadow.overlay", self.shadow_overlay_color),
             ("caption.close.hover", self.caption_close_hover),
             ("caption.close glyph", self.caption_close_glyph),
-            ("syntax.keyword", self.syntax_keyword),
-            ("syntax.string", self.syntax_string),
-            ("syntax.constant", self.syntax_constant),
+            ("syntax.monokai.bg", self.syntax_monokai_bg),
+            ("syntax.monokai.fg", self.syntax_monokai_fg),
+            ("syntax.monokai.keyword", self.syntax_monokai_keyword),
+            ("syntax.monokai.string", self.syntax_monokai_string),
+            ("syntax.monokai.constant", self.syntax_monokai_constant),
+            ("syntax.monokai.function", self.syntax_monokai_function),
+            ("syntax.monokai.type", self.syntax_monokai_type),
+            ("syntax.monokai.parameter", self.syntax_monokai_parameter),
+            ("syntax.monokai.comment", self.syntax_monokai_comment),
+            ("syntax.monokai.selection", self.syntax_monokai_selection),
+            (
+                "syntax.monokai.line-number",
+                self.syntax_monokai_line_number,
+            ),
         ]
     }
 }
@@ -670,31 +693,24 @@ mod tests {
                 let measured = ratio(rgb8(t.focus_ring), opaque(rgb8(*surface)));
                 check("focus.ring", measured, pick(&d, &l, i));
             }
-            // The syntax colours on bg.sunken / base / raised (2.2).
-            let syntax: [(&str, Hsla, Three, Three); 3] = [
-                (
-                    "syntax.keyword",
-                    t.syntax_keyword,
-                    [6.75, 6.31, 5.70],
-                    [5.63, 5.99, 6.25],
-                ),
-                (
-                    "syntax.string",
-                    t.syntax_string,
-                    [7.37, 6.89, 6.22],
-                    [5.58, 5.93, 6.19],
-                ),
-                (
-                    "syntax.constant",
-                    t.syntax_constant,
-                    [6.75, 6.31, 5.71],
-                    [6.00, 6.38, 6.66],
-                ),
+            // Monokai on its own background (2.2): every role at least
+            // 3:1, the documented ratio exactly.
+            let monokai = [
+                ("fg", t.syntax_monokai_fg, 13.94),
+                ("keyword", t.syntax_monokai_keyword, 3.93),
+                ("string", t.syntax_monokai_string, 10.44),
+                ("constant", t.syntax_monokai_constant, 5.23),
+                ("function", t.syntax_monokai_function, 9.58),
+                ("type", t.syntax_monokai_type, 9.01),
+                ("parameter", t.syntax_monokai_parameter, 6.81),
+                ("comment", t.syntax_monokai_comment, 3.03),
+                ("line-number", t.syntax_monokai_line_number, 4.63),
             ];
-            for (name, fg, d, l) in syntax {
-                for (i, surface) in four[..3].iter().enumerate() {
-                    check(name, ratio(rgb8(fg), opaque(*surface)), pick(&d, &l, i));
-                }
+            let under = opaque(rgb8(t.syntax_monokai_bg));
+            for (name, fg, documented) in monokai {
+                let measured = ratio(rgb8(fg), under);
+                check(name, measured, documented);
+                assert!(measured >= 3.0, "syntax.monokai.{name}");
             }
             let measured = ratio(
                 rgb8(t.caption_close_glyph),

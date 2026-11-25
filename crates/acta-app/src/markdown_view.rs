@@ -424,9 +424,10 @@ fn extensions(prep: &Arc<Prepared>, env: &Arc<Env>) -> MarkdownExtensions {
     ext
 }
 
-/// Code blocks: `type.code` 13 / 20 on `bg.sunken`, padding 12 x 16,
-/// radius 8; never wraps, scrolls sideways inside the block; the label
-/// and Copy show on hover (components-editor.md 5, Code).
+/// Code blocks: `type.code` 13 / 20 in the Monokai palette, the same dark
+/// block in both themes, padding 12 x 16, radius 8; never wraps, scrolls
+/// sideways inside the block; the label and Copy show on hover
+/// (components-editor.md 5, Code).
 fn render_code(node: &MarkdownNode, env: &Env, window: &mut Window, cx: &mut App) -> AnyElement {
     let Some(data) = node.data::<CodeData>() else {
         return div().into_any_element();
@@ -439,22 +440,45 @@ fn render_code(node: &MarkdownNode, env: &Env, window: &mut Window, cx: &mut App
         .clone();
     let copied = window.use_keyed_state(("md-code-copied", start), cx, |_, _| false);
     let is_copied = *copied.read(cx);
-    let runs = code_runs(data);
+    // Highlighting runs on a worker: plain text until it is done, then a
+    // frame later in colour, without waiting for input.
+    let runs = data
+        .lang
+        .as_deref()
+        .map(|lang| highlight::runs(&data.code, lang));
+    if matches!(runs, Some(None)) {
+        window.request_animation_frame();
+    }
     let highlights: Vec<(Range<usize>, HighlightStyle)> = runs
+        .flatten()
+        .unwrap_or_default()
         .iter()
         .map(|(range, role)| (range.clone(), role_style(*role, t)))
         .collect();
     let group: SharedString = format!("md-code-{start}").into();
     let locale = settings::locale(cx);
     let code = data.code.clone();
-    let copy = ui::ghost_icon_button(
-        format!("md-code-copy-{start}"),
-        if is_copied { Icon::Check } else { Icon::Copy },
-        24.,
-        false,
-        false,
-        true,
+    // A compact ghost icon button in Monokai's own text colours, on the
+    // block's background in both themes.
+    let (fg, dim) = (t.syntax_monokai_fg, t.syntax_monokai_line_number);
+    let copy_group: SharedString = format!("md-code-copy-{start}").into();
+    let copy = ui::focusable(
+        div()
+            .id(copy_group.clone())
+            .group(copy_group.clone())
+            .flex()
+            .items_center()
+            .justify_center()
+            .size(px(24.))
+            .rounded(px(crate::theme::RADIUS_SM))
+            .hover(move |s| s.bg(fg.opacity(0.10)))
+            .active(move |s| s.bg(fg.opacity(0.16)))
+            .child(
+                icon(if is_copied { Icon::Check } else { Icon::Copy }, 14., dim)
+                    .group_hover(copy_group, move |s| s.text_color(fg)),
+            ),
         t,
+        false,
     )
     .tooltip(ui::tip(text(
         locale,
@@ -492,7 +516,7 @@ fn render_code(node: &MarkdownNode, env: &Env, window: &mut Window, cx: &mut App
         .gap(px(4.))
         .p(px(4.))
         .rounded(px(RADIUS_MD))
-        .bg(t.bg_sunken)
+        .bg(t.syntax_monokai_bg)
         .when(!is_copied, |c| {
             c.invisible().group_hover(group.clone(), |s| s.visible())
         })
@@ -503,7 +527,7 @@ fn render_code(node: &MarkdownNode, env: &Env, window: &mut Window, cx: &mut App
                 .overflow_hidden()
                 .text_ellipsis()
                 .whitespace_nowrap()
-                .text_color(t.text_tertiary)
+                .text_color(t.syntax_monokai_line_number)
                 .child(label)
         }))
         .child(copy);
@@ -513,7 +537,7 @@ fn render_code(node: &MarkdownNode, env: &Env, window: &mut Window, cx: &mut App
         .relative()
         .w_full()
         .rounded(px(RADIUS_MD))
-        .bg(t.bg_sunken)
+        .bg(t.syntax_monokai_bg)
         .child(
             div()
                 .id(("md-code-x", start))
@@ -531,7 +555,7 @@ fn render_code(node: &MarkdownNode, env: &Env, window: &mut Window, cx: &mut App
                         .text_size(px(type_scale::CODE.size))
                         .line_height(px(type_scale::CODE.line))
                         .font_weight(FontWeight::NORMAL)
-                        .text_color(t.text_primary)
+                        .text_color(t.syntax_monokai_fg)
                         .whitespace_nowrap()
                         .child(StyledText::new(data.code.clone()).with_highlights(highlights)),
                 ),
@@ -541,62 +565,34 @@ fn render_code(node: &MarkdownNode, env: &Env, window: &mut Window, cx: &mut App
             div().absolute().inset_0().child(
                 Scrollbar::horizontal(&scroll)
                     .id(("md-code-bar", start))
-                    .mode(ScrollbarMode::Always),
+                    .mode(ScrollbarMode::Always)
+                    .styles(|s| {
+                        s.thumb(|th| th.bg(fg.opacity(0.30)))
+                            .thumb_hover(|th| th.bg(fg.opacity(0.45)))
+                    }),
             ),
         )
         .child(chrome)
         .into_any_element()
 }
 
-type Runs = Arc<Vec<(Range<usize>, Role)>>;
-
-thread_local! {
-    /// Highlighted runs per block, keyed by code and language; an entry
-    /// made while the syntax set was loading is replaced once it is ready.
-    static RUNS: RefCell<HashMap<u64, (bool, Runs)>> = RefCell::new(HashMap::new());
-}
-
-fn code_runs(data: &CodeData) -> Runs {
-    let Some(lang) = data.lang.as_deref() else {
-        return Arc::default();
-    };
-    let ready = highlight::ready();
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    (lang, &data.code).hash(&mut hasher);
-    let key = hasher.finish();
-    RUNS.with(|cache| {
-        let mut cache = cache.borrow_mut();
-        if let Some((was_ready, runs)) = cache.get(&key)
-            && (*was_ready || !ready)
-        {
-            return runs.clone();
-        }
-        if cache.len() > 256 {
-            cache.clear();
-        }
-        let runs = Arc::new(highlight::highlight(&data.code, lang));
-        cache.insert(key, (ready, runs.clone()));
-        runs
-    })
-}
-
+/// The Monokai colour of a role; storage and support types and
+/// parameters in the bundled JetBrains Mono NL Italic, as classic Monokai
+/// sets them; never bold (components-editor.md 5, Code).
 fn role_style(role: Role, t: &Tokens) -> HighlightStyle {
-    let color = |c| HighlightStyle {
-        color: Some(c),
-        ..HighlightStyle::default()
+    let color = match role {
+        Role::Keyword | Role::Removed => t.syntax_monokai_keyword,
+        Role::String => t.syntax_monokai_string,
+        Role::Constant => t.syntax_monokai_constant,
+        Role::Function | Role::Added => t.syntax_monokai_function,
+        Role::Type => t.syntax_monokai_type,
+        Role::Parameter => t.syntax_monokai_parameter,
+        Role::Comment | Role::Hunk => t.syntax_monokai_comment,
     };
-    match role {
-        Role::Keyword => color(t.syntax_keyword),
-        Role::String => color(t.syntax_string),
-        Role::Constant => color(t.syntax_constant),
-        Role::Comment => HighlightStyle {
-            color: Some(t.text_tertiary),
-            font_style: Some(FontStyle::Italic),
-            ..HighlightStyle::default()
-        },
-        Role::Added => color(t.success),
-        Role::Removed => color(t.danger),
-        Role::Hunk => color(t.text_tertiary),
+    HighlightStyle {
+        color: Some(color),
+        font_style: role.italic().then_some(FontStyle::Italic),
+        ..HighlightStyle::default()
     }
 }
 

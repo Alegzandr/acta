@@ -1,19 +1,29 @@
-//! Code block highlighting in five roles (docs/design/components-editor.md
-//! 5, Code): syntect's parser over two-face's syntax set, each scope mapped
-//! to Default, Keyword, String, Constant or Comment; `diff` and `patch`
-//! colour whole lines. Pure logic: the view maps roles to tokens.
+//! Code block highlighting in the classic Monokai roles (docs/design/
+//! components-editor.md 5, Code; the user's choice of 2026-11-25):
+//! syntect's parser over two-face's syntax set, each scope mapped to a
+//! Monokai role the way the Monokai theme does; `diff` and `patch` colour
+//! whole lines. Pure logic: the view maps roles to `syntax.monokai.*`.
 
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::ops::Range;
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex, OnceLock};
 
-use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxSet};
+use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxDefinition, SyntaxSet};
 
-/// A highlighted run's role. Default text has no run.
+/// A highlighted run's role. Default text (`syntax.monokai.fg`) has no run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Role {
+    /// Keywords, operators, storage, tags.
     Keyword,
     String,
+    /// Numbers, language constants, characters, escapes.
     Constant,
+    /// Names being defined (functions, classes, types), attribute names.
+    Function,
+    /// Storage types, support (built-in) types, functions and constants.
+    Type,
+    Parameter,
     Comment,
     /// A `diff` line starting `+`.
     Added,
@@ -21,6 +31,13 @@ pub enum Role {
     Removed,
     /// A `diff` hunk header `@@`.
     Hunk,
+}
+
+impl Role {
+    /// Whether classic Monokai sets the role in italic.
+    pub fn italic(self) -> bool {
+        matches!(self, Role::Type | Role::Parameter)
+    }
 }
 
 /// A block over either limit draws unhighlighted.
@@ -34,18 +51,71 @@ static WARMING: OnceLock<()> = OnceLock::new();
 /// block does not wait for it on the UI thread.
 pub fn warm() {
     WARMING.get_or_init(|| {
-        std::thread::Builder::new()
-            .name("acta-syntaxes".into())
-            .spawn(|| {
-                SYNTAXES.get_or_init(two_face::syntax::extra_newlines);
-            })
-            .ok();
+        spawn("acta-syntaxes", || {
+            SYNTAXES.get_or_init(load);
+        });
     });
 }
 
-/// Whether [`highlight`] can colour code yet.
-pub fn ready() -> bool {
-    SYNTAXES.get().is_some()
+/// A worker for the parser: fancy-regex backtracks recursively, which can
+/// outgrow a default stack (the UI thread's is 1 MB on Windows), so
+/// highlighting never runs on the UI thread and gets a large stack here.
+fn spawn(name: &str, f: impl FnOnce() + Send + 'static) {
+    std::thread::Builder::new()
+        .name(name.into())
+        .stack_size(16 * 1024 * 1024)
+        .spawn(f)
+        .ok();
+}
+
+/// The runs of a block, highlighted once on a worker.
+pub type Runs = Arc<Vec<(Range<usize>, Role)>>;
+
+/// Highlighted runs per block, keyed by language and code; `None` while
+/// the worker is on it.
+static RUNS: Mutex<Option<HashMap<u64, Option<Runs>>>> = Mutex::new(None);
+
+/// The runs of `code` in `lang`, or `None` while they are being worked
+/// out off the UI thread (the caller draws plain text and asks again).
+pub fn runs(code: &str, lang: &str) -> Option<Runs> {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    (lang, code).hash(&mut hasher);
+    let key = hasher.finish();
+    let mut cache = RUNS.lock().unwrap_or_else(|e| e.into_inner());
+    let cache = cache.get_or_insert_with(HashMap::new);
+    if let Some(entry) = cache.get(&key) {
+        return entry.clone();
+    }
+    if cache.len() > 512 {
+        cache.retain(|_, entry| entry.is_none());
+    }
+    cache.insert(key, None);
+    let (code, lang) = (code.to_string(), lang.to_string());
+    spawn("acta-highlight", move || {
+        SYNTAXES.get_or_init(load);
+        let runs = Arc::new(highlight(&code, &lang));
+        if let Some(cache) = RUNS.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+            cache.insert(key, Some(runs));
+        }
+    });
+    None
+}
+
+/// PowerShell, which two-face's set lacks: the SublimeText/PowerShell
+/// package's syntax (MIT, assets/syntaxes/powershell).
+const POWERSHELL: &str =
+    include_str!("../../../../assets/syntaxes/powershell/PowerShell.sublime-syntax");
+
+/// two-face's syntax set with PowerShell added. Linking the set again
+/// takes a moment, so it runs on the warm-up thread.
+fn load() -> SyntaxSet {
+    let set = two_face::syntax::extra_newlines();
+    let Ok(powershell) = SyntaxDefinition::load_from_str(POWERSHELL, true, None) else {
+        return set;
+    };
+    let mut builder = set.into_builder();
+    builder.add(powershell);
+    builder.build()
 }
 
 /// The language a fence's info string names: its first word, lower case.
@@ -145,60 +215,46 @@ fn diff_lines(code: &str) -> Vec<(Range<usize>, Role)> {
     runs
 }
 
-/// The scope prefixes of the five roles.
-struct RoleScopes {
-    comment: Scope,
-    string: Scope,
-    escape: Scope,
-    numeric: Scope,
-    language: Scope,
-    character: Scope,
-    operator: Scope,
-    keyword: Scope,
-    storage: Scope,
-}
+/// The scope prefixes of the roles, the most specific first: the
+/// innermost scope that matches one decides, as in the Monokai theme.
+struct RoleScopes(Vec<(Scope, Role)>);
 
 impl RoleScopes {
     fn get() -> &'static RoleScopes {
         static ROLES: OnceLock<RoleScopes> = OnceLock::new();
         ROLES.get_or_init(|| {
-            let s = |name: &str| Scope::new(name).expect("a valid scope");
-            RoleScopes {
-                comment: s("comment"),
-                string: s("string"),
-                escape: s("constant.character.escape"),
-                numeric: s("constant.numeric"),
-                language: s("constant.language"),
-                character: s("constant.character"),
-                operator: s("keyword.operator"),
-                keyword: s("keyword"),
-                storage: s("storage"),
-            }
+            let table = [
+                ("comment", Role::Comment),
+                ("punctuation.definition.comment", Role::Comment),
+                ("constant.character.escape", Role::Constant),
+                ("string", Role::String),
+                ("constant", Role::Constant),
+                ("variable.parameter", Role::Parameter),
+                ("entity.name.tag", Role::Keyword),
+                ("entity.name", Role::Function),
+                ("entity.other.inherited-class", Role::Function),
+                ("entity.other.attribute-name", Role::Function),
+                ("storage.type", Role::Type),
+                ("support", Role::Type),
+                ("keyword", Role::Keyword),
+                ("storage", Role::Keyword),
+            ];
+            RoleScopes(
+                table
+                    .into_iter()
+                    .map(|(name, role)| (Scope::new(name).expect("a valid scope"), role))
+                    .collect(),
+            )
         })
     }
 
-    /// The innermost scope that names a role decides; an operator is
-    /// default text, an escape belongs to its string.
     fn role(&self, stack: &ScopeStack) -> Option<Role> {
-        for scope in stack.as_slice().iter().rev() {
-            let is = |prefix: Scope| prefix.is_prefix_of(*scope);
-            if is(self.comment) {
-                return Some(Role::Comment);
-            }
-            if is(self.string) || is(self.escape) {
-                return Some(Role::String);
-            }
-            if is(self.numeric) || is(self.language) || is(self.character) {
-                return Some(Role::Constant);
-            }
-            if is(self.operator) {
-                return None;
-            }
-            if is(self.keyword) || is(self.storage) {
-                return Some(Role::Keyword);
-            }
-        }
-        None
+        stack.as_slice().iter().rev().find_map(|scope| {
+            self.0
+                .iter()
+                .find(|(prefix, _)| prefix.is_prefix_of(*scope))
+                .map(|(_, role)| *role)
+        })
     }
 }
 
@@ -234,7 +290,7 @@ mod tests {
     use super::*;
 
     fn load() {
-        SYNTAXES.get_or_init(two_face::syntax::extra_newlines);
+        SYNTAXES.get_or_init(super::load);
     }
 
     fn roles_of<'a>(code: &'a str, lang: &str) -> Vec<(&'a str, Role)> {
@@ -245,25 +301,25 @@ mod tests {
     }
 
     #[test]
-    fn rust_in_five_roles() {
+    fn rust_in_monokai_roles() {
         load();
         let code = "// Alexandre's store\npub fn open(n: u32) -> bool {\n    let s = \"a\\n\";\n    n > 42 && true\n}\n";
         let runs = roles_of(code, "rust");
         let has = |text: &str, role: Role| runs.iter().any(|(t, r)| t.contains(text) && *r == role);
         assert!(has("// Alexandre's store", Role::Comment), "{runs:?}");
         assert!(has("pub", Role::Keyword), "{runs:?}");
-        assert!(has("fn", Role::Keyword), "{runs:?}");
-        assert!(has("let", Role::Keyword), "{runs:?}");
-        assert!(has("\"a\\n\"", Role::String), "{runs:?}");
+        // `fn` and `let` are storage types in the Rust syntax: cyan and
+        // italic, as Monokai draws them.
+        assert!(has("let", Role::Type), "{runs:?}");
+        assert!(has("open", Role::Function), "{runs:?}");
+        assert!(runs.contains(&("n", Role::Parameter)), "{runs:?}");
+        assert!(has("u32", Role::Type), "{runs:?}");
         assert!(has("42", Role::Constant), "{runs:?}");
         assert!(has("true", Role::Constant), "{runs:?}");
-        // Operators and identifiers stay default text.
-        assert!(
-            !runs
-                .iter()
-                .any(|(t, _)| t.contains("&&") || t.contains("open")),
-            "{runs:?}"
-        );
+        assert!(has("\"a", Role::String), "{runs:?}");
+        // Operators are keywords in Monokai.
+        assert!(has("&&", Role::Keyword), "{runs:?}");
+        assert!(Role::Type.italic() && Role::Parameter.italic() && !Role::Keyword.italic());
     }
 
     #[test]
@@ -279,10 +335,26 @@ mod tests {
             ("html", "<a href=\"x\">y</a>"),
             ("go", "func main() { return }"),
             ("sql", "SELECT 1"),
+            (
+                "powershell",
+                "$name = \"Alexandre\"; Write-Host $name # greet",
+            ),
+            (
+                "ps1",
+                "Get-ChildItem -Path . | Where-Object { $_.Length -gt 0 }",
+            ),
         ] {
             assert!(!highlight(code, lang).is_empty(), "{lang}");
         }
         assert!(highlight("anything", "no-such-language").is_empty());
+        let code = "$name = \"Alexandre\" # greet\n";
+        let runs = roles_of(code, "powershell");
+        assert!(runs.contains(&("\"Alexandre\"", Role::String)), "{runs:?}");
+        assert!(
+            runs.iter()
+                .any(|(t, r)| t.starts_with("# greet") && *r == Role::Comment),
+            "{runs:?}"
+        );
     }
 
     #[test]

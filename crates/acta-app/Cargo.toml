@@ -30,10 +30,11 @@ serde = { version = "1", features = ["derive"] }
 # destinations of links in Markdown, with internationalised hosts in ASCII
 # (markdown_view/policy.rs).
 url = "2"
-# Code block highlighting in five roles (components-editor.md 5, Code): syntect's
-# parser with two-face's syntax set, the pair gpui-component's `syntect` feature
-# uses, without its theme layer.
-syntect = { version = "5.3", default-features = false, features = ["parsing", "regex-fancy"] }
+# Code block highlighting in the Monokai roles (components-editor.md 5, Code):
+# syntect's parser with two-face's syntax set, the pair gpui-component's `syntect`
+# feature uses, without its theme layer; `yaml-load` reads the bundled PowerShell
+# syntax (assets/syntaxes/powershell), which two-face lacks.
+syntect = { version = "5.3", default-features = false, features = ["parsing", "regex-fancy", "yaml-load"] }
 two-face = { version = "0.4.5", default-features = false, features = ["syntect-fancy"] }
 serde_json = "1"
 # public-utils only makes modules public: `bundle::Manifest` is in the signature of
