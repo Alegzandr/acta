@@ -162,6 +162,7 @@ dependencies = [
  "chrono",
  "getrandom 0.4.3",
  "hmac 0.13.0",
+ "ignore",
  "image",
  "keyring",
  "libc",

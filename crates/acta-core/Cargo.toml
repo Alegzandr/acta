@@ -45,6 +45,9 @@ base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 getrandom = "0.4"
 hmac = "0.13"
+# Files view (components-repo.md 5.R.10): git's ignore rules matched in Rust,
+# no process, and the name search walk. MIT or Unlicense.
+ignore = "0.4.34"
 # Attachments (ADR 0012): pixel size, thumbnails and the agent's re-encoded
 # image, decoded in memory only. The formats GPUI shows.
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }

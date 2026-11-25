@@ -54,6 +54,9 @@ pub enum GitError {
     InvalidBranchName,
     /// The branch is checked out in another worktree.
     CheckedOutElsewhere,
+    /// A partial clone does not have the object and a read never fetches
+    /// it (`GIT_NO_LAZY_FETCH`, the Files and Commits reads).
+    NotDownloaded,
     Other(String),
 }
 
@@ -73,6 +76,7 @@ impl std::fmt::Display for GitError {
             GitError::BranchExists => "a branch with this name exists",
             GitError::InvalidBranchName => "not a valid branch name",
             GitError::CheckedOutElsewhere => "the branch is checked out in another worktree",
+            GitError::NotDownloaded => "not downloaded in this clone",
             GitError::Other(m) => m,
         };
         f.write_str(s)
@@ -81,7 +85,13 @@ impl std::fmt::Display for GitError {
 
 /// The base command: see the module comment.
 pub fn command(dir: &Path) -> Command {
-    let mut c = Command::new("git");
+    command_with(std::ffi::OsStr::new("git"), dir)
+}
+
+/// [`command`] with another program in place of `git` (an absolute path to
+/// git, or a test's stand-in).
+pub fn command_with(program: &std::ffi::OsStr, dir: &Path) -> Command {
+    let mut c = Command::new(program);
     c.current_dir(dir)
         .arg("--no-optional-locks")
         .args(["-c", "core.fsmonitor=false"])
