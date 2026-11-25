@@ -19,6 +19,8 @@ base64 = "0.22"
 clap = { version = "4.6", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
 # ADR 0005: rmcp pinned by Cargo.lock, transport kept behind `mcp.rs`.
 rmcp = { version = "3.11.0", default-features = false, features = ["server", "macros", "schemars", "transport-io"] }
+# The backup passphrase, read from the terminal without echo (ADR 0006).
+rpassword = "7.5.4"
 schemars = "1"
 serde = { version = "1", features = ["derive"] }
 # preserve_order: `acta setup` edits the user's settings.json and must keep
