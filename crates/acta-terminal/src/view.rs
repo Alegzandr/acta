@@ -948,6 +948,10 @@ impl Element for TerminalElement {
             let view = self.view.read(cx);
             (view.text_size, view.theme.clone())
         };
+        // The window's zoom rides on its rem size (16 at 100%, Acta's
+        // layout.md 4.9): the cell grows with it and the grid reflows as
+        // on a resize.
+        let text_size = text_size * f32::from(window.rem_size()) / 16.0;
         let font_size = px(text_size);
         let base_font = terminal_font();
         let text_system = window.text_system().clone();

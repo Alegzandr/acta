@@ -14,6 +14,9 @@ pub enum Group {
     Topics,
     Epics,
     Knowledge,
+    /// Records found by a word in their content (a description, a state,
+    /// an entry, a note, an answer, a contact's details, a file).
+    Content,
     Commands,
     Projects,
     /// The rows of a picker (a destination, a heading): one group.
@@ -22,11 +25,12 @@ pub enum Group {
 
 /// The order groups appear in, fixed so results do not jump, except that a
 /// title equal to the query leads (see [`arrange`]).
-pub const ORDER: [Group; 7] = [
+pub const ORDER: [Group; 8] = [
     Group::Recent,
     Group::Topics,
     Group::Epics,
     Group::Knowledge,
+    Group::Content,
     Group::Commands,
     Group::Projects,
     Group::Choices,
@@ -41,6 +45,34 @@ pub enum Target {
     Command(Command),
     /// The row of a picker, by its index in the choices given.
     Choice(usize),
+    /// A record found in content: where it opens, and what it is.
+    Found(crate::route::Route, Found),
+}
+
+/// What a content hit is, for its leading glyph.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Found {
+    Topic(Status),
+    Entry,
+    Note,
+    Project,
+    Epic,
+    Question,
+    Contact,
+    File,
+}
+
+impl Found {
+    /// The route a title row of the same record opens, so a content row
+    /// the title groups already show is not shown twice.
+    pub fn same_as(route: crate::route::Route, target: &Target) -> bool {
+        use crate::route::Route;
+        matches!(
+            (route, target),
+            (Route::Topic(a), Target::Topic(b, _)) if a == *b
+        ) || matches!((route, target), (Route::Epic(a), Target::Epic(b)) if a == *b)
+            || matches!((route, target), (Route::Project(a), Target::Project(b)) if a == *b)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]

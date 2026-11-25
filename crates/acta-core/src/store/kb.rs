@@ -127,6 +127,10 @@ pub struct KbRevisionSummary {
     pub section: Option<String>,
     pub size: i64,
     pub created_at: i64,
+    /// The Claude Code session that wrote it, and its branch (ADR 0015,
+    /// 5): opaque, local, for the history's tooltip.
+    pub session: Option<String>,
+    pub branch: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -244,7 +248,8 @@ impl Store {
             |r| r.get(0),
         )?;
         let mut stmt = self.conn.prepare(&format!(
-            "SELECT rev, author, change, section, length(CAST(body AS BLOB)), created_at
+            "SELECT rev, author, change, section, length(CAST(body AS BLOB)), created_at,
+                    session, branch
              FROM kb_revisions WHERE entry_id = ?1 ORDER BY rev DESC LIMIT {limit} OFFSET {offset}"
         ))?;
         let rows = stmt.query_map([id.0], |r| {
@@ -255,6 +260,8 @@ impl Store {
                 section: r.get(3)?,
                 size: r.get(4)?,
                 created_at: r.get(5)?,
+                session: r.get(6)?,
+                branch: r.get(7)?,
             })
         })?;
         Ok(Page {

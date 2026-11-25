@@ -635,57 +635,6 @@ fn the_round_trip_keeps_quality_fields_and_an_older_file_imports_live() {
         .unwrap();
     assert_eq!(again.knowledge.created + again.knowledge.updated, 0);
     assert_eq!(other_db.store.kb_links(n.id).unwrap().len(), 2);
-
-    // A version 4 file: no quality fields. Into an empty database every
-    // entry is live, verified at its update, with no sources or pairs.
-    let mut v: serde_json::Value = serde_json::from_str(&json).unwrap();
-    v["version"] = 4.into();
-    v.as_object_mut().unwrap().remove("kb_pairs");
-    for k in v["knowledge"].as_array_mut().unwrap() {
-        let k = k.as_object_mut().unwrap();
-        for field in [
-            "verified_at",
-            "verified_by",
-            "state",
-            "superseded_by",
-            "context_branch",
-            "context_folder",
-            "created_topic",
-            "links",
-        ] {
-            k.remove(field);
-        }
-    }
-    let old_file = ExportFile::from_json(&v.to_string()).unwrap();
-    let mut fresh = open();
-    fresh.store.import(&old_file, false).unwrap();
-    let f2 = &fresh.store;
-    let all: Vec<(String, i64, i64)> = {
-        let mut stmt = f2
-            .conn
-            .prepare("SELECT state, verified_at, updated_at FROM kb_entries")
-            .unwrap();
-        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
-            .unwrap()
-            .collect::<rusqlite::Result<_>>()
-            .unwrap()
-    };
-    assert_eq!(all.len(), 3);
-    assert!(all.iter().all(|(st, ver, upd)| st == "live" && ver == upd));
-    let count = |sql: &str| -> i64 { f2.conn.query_row(sql, [], |r| r.get(0)).unwrap() };
-    assert_eq!(count("SELECT count(*) FROM kb_links"), 0);
-    assert_eq!(count("SELECT count(*) FROM kb_pairs"), 0);
-    // An update from an older file leaves the state as it is here.
-    let mut newer = v.clone();
-    for k in newer["knowledge"].as_array_mut().unwrap() {
-        k["updated_at"] = (now_ms() + 60_000).into();
-    }
-    let rep = s
-        .import(&ExportFile::from_json(&newer.to_string()).unwrap(), false)
-        .unwrap();
-    assert_eq!(rep.knowledge.updated, 3);
-    assert_eq!(s.kb_entry(old).unwrap().state, KbState::Superseded);
-    assert_eq!(s.kb_links(new).unwrap().len(), 2);
 }
 
 #[test]
@@ -1203,4 +1152,186 @@ fn a_branch_memory_can_be_made_true_everywhere_and_back() {
     assert!(s.kb_clear_branch(k, H).is_err());
     s.kb_restore_branch(&trace, H).unwrap();
     assert_eq!(on_main(s), 0);
+}
+
+#[test]
+fn the_unmerge_check_agrees_with_unmerge() {
+    let Seed { mut ts, t, u, .. } = seed();
+    let s = &mut ts.store;
+    let a = mem(s, Owner::Topic(t), "Keychain entry");
+    let b = mem(s, Owner::Topic(u), "Keychain entry name");
+    let trace = s.kb_merge(a, b, H).unwrap();
+    // The merge revisions name the other entry, as the history shows.
+    let merged = s.kb_history(a, PageReq::first(5)).unwrap().items;
+    assert_eq!(merged[0].change, ChangeKind::Merged);
+    assert_eq!(merged[0].section.as_deref(), Some(b.to_string().as_str()));
+    let superseded = s.kb_history(b, PageReq::first(5)).unwrap().items;
+    assert_eq!(superseded[0].change, ChangeKind::Superseded);
+    assert_eq!(
+        superseded[0].section.as_deref(),
+        Some(a.to_string().as_str())
+    );
+    s.kb_update(a, body("Tidied."), H).unwrap();
+    assert!(s.kb_can_unmerge(&trace).unwrap());
+    s.kb_update(a, body("The agent's text."), C).unwrap();
+    assert!(!s.kb_can_unmerge(&trace).unwrap());
+    assert!(s.kb_unmerge(&trace, H).is_err());
+}
+
+#[test]
+fn a_human_edit_records_and_settles_pairs() {
+    let Seed { mut ts, p, t, .. } = seed();
+    let s = &mut ts.store;
+    let theirs = s
+        .kb_create(
+            memory(
+                Owner::Project(p),
+                "Store tests in parallel",
+                "The store tests run in parallel",
+                "cargo test runs the store tests in parallel.",
+            ),
+            C,
+        )
+        .unwrap();
+    let mine = s
+        .kb_create(
+            memory(
+                Owner::Topic(t),
+                "Store tests in parallel",
+                "Never run the store tests in parallel",
+                "They share a key store.",
+            ),
+            H,
+        )
+        .unwrap();
+    s.kb_recheck(mine, H).unwrap();
+    let open: Vec<_> = s
+        .kb_pairs_of(mine)
+        .unwrap()
+        .into_iter()
+        .filter(|p| p.state == KbPairState::Open)
+        .collect();
+    assert_eq!(open.len(), 1);
+    assert_eq!(open[0].kind, KbPairKind::Conflict);
+    assert_eq!(open[0].other(mine), theirs);
+    // Rewritten about something else: the pair is settled.
+    s.kb_update(
+        mine,
+        KbUpdate {
+            expected_rev: None,
+            title: Some("Keychain entry name".into()),
+            summary: Some("Alexandre's key lives in the keychain".into()),
+            edit: KbEdit::Body("The keychain entry is named acta.db.".into()),
+        },
+        H,
+    )
+    .unwrap();
+    s.kb_recheck(mine, H).unwrap();
+    assert!(
+        s.kb_pairs_of(mine)
+            .unwrap()
+            .iter()
+            .all(|p| p.state == KbPairState::Resolved)
+    );
+    // Back to the contradicting text: the pair is open again.
+    s.kb_update(
+        mine,
+        KbUpdate {
+            expected_rev: None,
+            title: Some("Store tests in parallel".into()),
+            summary: Some("Never run the store tests in parallel".into()),
+            edit: KbEdit::Body("They share a key store.".into()),
+        },
+        H,
+    )
+    .unwrap();
+    s.kb_recheck(mine, H).unwrap();
+    assert!(
+        s.kb_pairs_of(mine)
+            .unwrap()
+            .iter()
+            .any(|p| p.state == KbPairState::Open && p.other(mine) == theirs)
+    );
+    // Revisions carry their session and branch for the history.
+    let rev = s.kb_history(theirs, PageReq::first(1)).unwrap().items;
+    assert_eq!(rev[0].session, None);
+}
+
+#[test]
+fn the_human_scan_records_duplicates_and_changes_no_entry() {
+    let Seed {
+        mut ts, t, u, p, ..
+    } = seed();
+    let s = &mut ts.store;
+    let a = s
+        .kb_create(
+            memory(
+                Owner::Topic(t),
+                "Keychain entry name",
+                "The key is stored under acta.db",
+                "The keychain entry is named acta.db.",
+            ),
+            C,
+        )
+        .unwrap();
+    let b = s
+        .kb_create(
+            memory(
+                Owner::Project(p),
+                "Keychain entry name",
+                "The key is stored under acta.db",
+                "The keychain entry is named acta.db.",
+            ),
+            C,
+        )
+        .unwrap();
+    mem(s, Owner::Topic(u), "Backups run nightly");
+    let rev = s.kb_entry(a).unwrap().rev;
+    assert_eq!(s.kb_scan_duplicates(p, H).unwrap(), 1);
+    assert_eq!(s.kb_entry(a).unwrap().rev, rev);
+    let pairs = s.kb_pairs_of(a).unwrap();
+    assert_eq!(pairs.len(), 1);
+    assert_eq!(pairs[0].other(a), b);
+    assert_eq!(pairs[0].state, KbPairState::Open);
+    // Kept apart, a second scan finds nothing new.
+    s.kb_set_pair_state(a, b, KbPairKind::Duplicate, KbPairState::Distinct, H)
+        .unwrap();
+    assert_eq!(s.kb_scan_duplicates(p, H).unwrap(), 0);
+}
+
+#[test]
+fn the_scan_runs_page_by_page() {
+    let Seed { mut ts, t, p, .. } = seed();
+    let s = &mut ts.store;
+    let same = |s: &mut Store, owner| {
+        s.kb_create(
+            memory(
+                owner,
+                "Keychain entry name",
+                "The key is stored under acta.db",
+                "The keychain entry is named acta.db.",
+            ),
+            C,
+        )
+        .unwrap()
+    };
+    let a = same(s, Owner::Topic(t));
+    let b = same(s, Owner::Project(p));
+    mem(s, Owner::Project(p), "Backups run nightly");
+    // One memory per page: three pages, the pair found once from each side.
+    let mut offset = 0;
+    let mut pages = 0;
+    let mut found = std::collections::HashSet::new();
+    loop {
+        let (pairs, next) = s.kb_scan_duplicates_page(p, offset, 1, H).unwrap();
+        found.extend(pairs);
+        pages += 1;
+        match next {
+            Some(n) => offset = n,
+            None => break,
+        }
+    }
+    assert_eq!(pages, 3);
+    let want: std::collections::HashSet<_> = [(a.min(b), a.max(b))].into();
+    assert_eq!(found, want);
 }

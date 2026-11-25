@@ -69,6 +69,10 @@ pub fn config() -> Option<StoreConfig> {
     Some(config)
 }
 
+/// A requested reset could not be done at this start (shown once as a
+/// toast by the shell).
+pub static RESET_FAILED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// Open the store (blocking: call it off the UI thread).
 pub fn open(config: Option<StoreConfig>) -> Opened {
     let Some(config) = config else {
@@ -76,6 +80,28 @@ pub fn open(config: Option<StoreConfig>) -> Opened {
         return Opened::Failed { db: None };
     };
     let db = config.data_dir.join(acta_core::store::DB_FILE);
+    // Reset Acta (Settings, Data): erased now, before anything opens the
+    // database. When another process holds it nothing is erased, and the
+    // folder settings come back with the sync below.
+    match acta_core::reset::wipe_if_requested(&config.data_dir, &config.keys) {
+        Ok(None) => {}
+        Ok(Some(wiped)) => crate::log::line(&format!(
+            "reset: data erased ({} item(s) could not be deleted{})",
+            wiped.left.len(),
+            if wiped.db_reappeared {
+                "; a database appeared meanwhile and keeps its key"
+            } else {
+                ""
+            }
+        )),
+        // A session still runs: tried again at the next start.
+        Err(acta_core::reset::ResetError::InUse) => {
+            crate::log::line("reset: not done: a Claude Code session holds the data");
+            RESET_FAILED.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        // A request this database did not make: dropped, nothing erased.
+        Err(err) => crate::log::line(&format!("reset: request dropped: {err}")),
+    }
     match Store::open(&config) {
         Ok(mut store) => {
             // Folders changed while Acta was closed (a commit mode set

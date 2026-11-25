@@ -580,21 +580,73 @@ fn link_remove_restores_auto_memory_and_export_import_round_trip() {
     assert!(ok);
     let (ok, _, _) = cli(&data, &repo, &["create", "topic"], "Exported topic");
     assert!(ok);
-    let file = tmp.path().join("out.acta.json");
-    let (ok, out, err) = cli(&data, &repo, &["export", file.to_str().unwrap()], "");
-    assert!(ok && out.contains("plaintext"), "{out}{err}");
-    let (ok, _, err) = cli(&data, &repo, &["export", file.to_str().unwrap()], "");
-    assert!(
-        !ok && err.contains("exists"),
-        "an export never overwrites: {err}"
-    );
-    let (ok, out, _) = cli(
+    let f = |p: &Path| p.to_str().unwrap().to_owned();
+    // Without a terminal the passphrase must come with --passphrase-stdin:
+    // it is never an argument.
+    let file = tmp.path().join("out.acta-backup");
+    let (ok, _, err) = cli(&data, &repo, &["export", &f(&file)], "");
+    assert!(!ok && err.contains("--passphrase-stdin"), "{err}");
+    assert!(!file.exists());
+    let (ok, _, err) = cli(
         &data,
         &repo,
-        &["import", file.to_str().unwrap(), "--dry-run"],
-        "",
+        &["export", &f(&file), "--passphrase-stdin"],
+        "short\n",
     );
-    assert!(ok && out.contains("0 created"), "{out}");
+    assert!(!ok && err.contains("at least 8"), "{err}");
+    assert!(!file.exists());
+    let (ok, out, err) = cli(
+        &data,
+        &repo,
+        &["export", &f(&tmp.path().join("out")), "--passphrase-stdin"],
+        "Alexandre's long passphrase\r\n",
+    );
+    assert!(
+        ok && out.contains("to out.acta-backup") && out.contains("cannot recover"),
+        "{out}{err}"
+    );
+    let bytes = std::fs::read(&file).unwrap();
+    assert!(bytes.starts_with(b"age-encryption.org/v1\n"));
+    assert!(!bytes.windows(14).any(|w| w == b"Exported topic"));
+    let (ok, _, err) = cli(
+        &data,
+        &repo,
+        &["export", &f(&file), "--passphrase-stdin"],
+        "Alexandre's long passphrase\n",
+    );
+    assert!(
+        !ok && err.contains("exists"),
+        "a backup never overwrites: {err}"
+    );
+    let (ok, _, err) = cli(
+        &data,
+        &repo,
+        &["import", &f(&file), "--dry-run", "--passphrase-stdin"],
+        "Alexandre's wrong passphrase\n",
+    );
+    assert!(!ok && err.contains("wrong passphrase"), "{err}");
+    let (ok, out, err) = cli(
+        &data,
+        &repo,
+        &["import", &f(&file), "--dry-run", "--passphrase-stdin"],
+        "Alexandre's long passphrase\n",
+    );
+    assert!(ok && out.contains("0 created"), "{out}{err}");
+    // A truncated backup is refused whole.
+    let cut = tmp.path().join("cut.acta-backup");
+    std::fs::write(&cut, &bytes[..bytes.len() - 40]).unwrap();
+    let (ok, _, err) = cli(
+        &data,
+        &repo,
+        &["import", &f(&cut), "--passphrase-stdin"],
+        "Alexandre's long passphrase\n",
+    );
+    assert!(!ok && err.contains("damaged"), "{err}");
+    // A plaintext export of an earlier Acta is not a backup.
+    let old = tmp.path().join("old.acta.json");
+    std::fs::write(&old, "{\"format\":\"acta\",\"version\":4}").unwrap();
+    let (ok, _, err) = cli(&data, &repo, &["import", &f(&old)], "");
+    assert!(!ok && err.contains("not an Acta backup"), "{err}");
     // Under Claude Code, import is refused: it could set commit modes.
     let out = base_cmd(&data)
         .env("CLAUDECODE", "1")
@@ -610,7 +662,7 @@ fn link_remove_restores_auto_memory_and_export_import_round_trip() {
     );
     // Export and restore are the user's too, whichever Claude Code
     // variable gives the agent away; the snapshot list stays open.
-    let other = tmp.path().join("other.acta.json");
+    let other = tmp.path().join("other.acta-backup");
     for (var, value) in [
         ("CLAUDECODE", "1"),
         ("CLAUDE_CODE_ENTRYPOINT", "cli"),

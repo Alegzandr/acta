@@ -5,9 +5,10 @@
 //! parent and position, so a restore puts them back where they were, with
 //! everything that was deleted together with them. The trash lists what was
 //! deleted on its own, not the descendants that went with it. Records stay
-//! restorable for 30 days; there is no purge and no "empty trash" in v1,
-//! except for attachments: their rows and content are purged when the 30
-//! days are over (ADR 0012, 4; [`Store::purge_attachments`]).
+//! restorable for 30 days. The human may delete them for good before that,
+//! a selection or the whole trash ([`Store::trash_purge`], purge.rs; ADR
+//! 0006, amendment of 2026-11-22). Attachments' rows and content are purged
+//! when the 30 days are over (ADR 0012, 4; [`Store::purge_attachments`]).
 
 use super::Store;
 use crate::error::{Error, Result};
@@ -38,7 +39,7 @@ pub struct TrashItem {
 }
 
 /// The tables under a record, as `(table, condition)` pairs on its local id.
-fn cascade(record: Record) -> Vec<(&'static str, String)> {
+pub(super) fn cascade(record: Record) -> Vec<(&'static str, String)> {
     match record {
         Record::Project(ProjectId(id)) => [
             "projects",
@@ -119,7 +120,7 @@ fn cascade(record: Record) -> Vec<(&'static str, String)> {
     }
 }
 
-fn table_of(record: Record) -> (&'static str, i64) {
+pub(super) fn table_of(record: Record) -> (&'static str, i64) {
     match record {
         Record::Project(id) => ("projects", id.0),
         Record::Epic(id) => ("epics", id.0),

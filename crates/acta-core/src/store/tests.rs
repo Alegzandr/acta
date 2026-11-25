@@ -1271,7 +1271,7 @@ fn search_reports_whether_the_total_is_capped() {
 #[test]
 fn a_fresh_database_has_entry_numbers_unique_and_trash_batches() {
     let t = open();
-    assert_eq!(crate::schema::SCHEMA_VERSION, 7);
+    assert_eq!(crate::schema::SCHEMA_VERSION, 8);
     let count = |sql: &str| -> i64 { t.store.conn.query_row(sql, [], |r| r.get(0)).unwrap() };
     assert_eq!(
         count("SELECT count(*) FROM sqlite_master WHERE name = 'entries_topic_seq'"),
@@ -2264,55 +2264,29 @@ fn schema_4_keeps_every_old_primary_as_the_active_folder_and_adds_no_date() {
 }
 
 #[test]
-fn an_old_export_imports_with_the_defaults() {
+fn an_old_export_is_refused_with_a_clear_message() {
     let mut a = open();
     populate(&mut a.store, a.dir.path());
     let file = a.store.export(None).unwrap();
-    // The same data as a version 1 file: no new field, and the dropped
-    // `include_inherited_folders` still present.
-    let mut v1: serde_json::Value = serde_json::from_str(&file.to_json().unwrap()).unwrap();
-    v1["version"] = 1.into();
-    for kind in ["projects", "epics", "topics"] {
-        for x in v1[kind].as_array_mut().unwrap() {
-            let o = x.as_object_mut().unwrap();
-            o.remove("active_folder");
-            o.remove("due_on");
-            if kind != "projects" {
-                o.insert("include_inherited_folders".into(), true.into());
-            }
-        }
+    // Versions 1 to 4 were plaintext `.acta.json` files: none is read.
+    for version in 1..OLDEST_FORMAT_VERSION {
+        let mut v: serde_json::Value = serde_json::from_str(&file.to_json().unwrap()).unwrap();
+        v["version"] = version.into();
+        let err = ExportFile::from_json(&v.to_string()).unwrap_err();
+        assert!(
+            matches!(err, Error::FormatTooOld { found, oldest: 5 } if found == version),
+            "{err:?}"
+        );
+        assert!(err.to_string().contains("plaintext export"), "{err}");
+        // A document made in memory is refused at import too.
+        let mut old = file.clone();
+        old.version = version;
+        let mut b = open();
+        assert!(matches!(
+            b.store.import(&old, true),
+            Err(Error::FormatTooOld { .. })
+        ));
     }
-    for x in v1["folders"].as_array_mut().unwrap() {
-        let o = x.as_object_mut().unwrap();
-        for k in [
-            "name",
-            "icon",
-            "commit_mode",
-            "commit_as_user",
-            "commit_on_default",
-        ] {
-            o.remove(k);
-        }
-    }
-    let parsed = ExportFile::from_json(&v1.to_string()).unwrap();
-    assert_eq!(parsed.version, 1);
-    let mut b = open();
-    let report = b.store.import(&parsed, false).unwrap();
-    assert_eq!(report.topics.created, 4);
-    let again = b.store.export(None).unwrap();
-    assert!(again.folders.iter().all(|f| f.name.is_empty()
-        && f.icon.is_empty()
-        && f.commit_mode == CommitMode::Manual
-        && f.commit_as_user.is_none()
-        && !f.commit_on_default));
-    assert!(
-        again
-            .topics
-            .iter()
-            .all(|t| t.due_on.is_none() && t.active_folder.is_none())
-    );
-    assert!(again.epics.iter().all(|e| e.due_on.is_none()));
-    assert!(again.projects.iter().all(|p| p.due_on.is_none()));
 }
 
 #[test]
@@ -2462,86 +2436,6 @@ fn the_main_connection_has_a_16_mib_page_cache() {
         .pragma_query_value(None, "cache_size", |r| r.get(0))
         .unwrap();
     assert_eq!(kib, -16_384);
-}
-
-#[test]
-fn a_version_1_import_leaves_what_version_1_does_not_know() {
-    let mut a = open();
-    populate(&mut a.store, a.dir.path());
-    let file = a.store.export(None).unwrap();
-    // The same records, newer, as a version 1 file would carry them.
-    let mut v1: serde_json::Value = serde_json::from_str(&file.to_json().unwrap()).unwrap();
-    v1["version"] = 1.into();
-    for kind in ["projects", "epics", "topics", "folders"] {
-        for x in v1[kind].as_array_mut().unwrap() {
-            let o = x.as_object_mut().unwrap();
-            for k in [
-                "active_folder",
-                "due_on",
-                "name",
-                "icon",
-                "commit_mode",
-                "commit_as_user",
-                "commit_on_default",
-            ] {
-                o.remove(k);
-            }
-            let at = o["updated_at"].as_i64().unwrap();
-            o.insert("updated_at".into(), (at + 1_000).into());
-            if let Some(title) = o.get("title").and_then(|t| t.as_str()).map(str::to_owned) {
-                o.insert("title".into(), format!("{title} (v1)").into());
-            }
-        }
-    }
-    let old = ExportFile::from_json(&v1.to_string()).unwrap();
-    let report = a.store.import(&old, false).unwrap();
-    assert!(report.topics.updated > 0 && report.folders.updated > 0);
-    let after = a.store.export(None).unwrap();
-    // Updated...
-    assert!(after.topics.iter().any(|t| t.title == "Keys (v1)"));
-    // ...without losing the due days, the pointer or the folder settings.
-    let strip = |f: &ExportFile| -> Vec<String> {
-        let mut out = Vec::new();
-        for p in &f.projects {
-            out.push(format!(
-                "{} {:?} {:?}",
-                p.stamp.uuid, p.due_on, p.active_folder
-            ));
-        }
-        for e in &f.epics {
-            out.push(format!(
-                "{} {:?} {:?}",
-                e.stamp.uuid, e.due_on, e.active_folder
-            ));
-        }
-        for t in &f.topics {
-            out.push(format!(
-                "{} {:?} {:?}",
-                t.stamp.uuid, t.due_on, t.active_folder
-            ));
-        }
-        for x in &f.folders {
-            out.push(format!(
-                "{} {} {} {:?} {:?} {}",
-                x.stamp.uuid, x.name, x.icon, x.commit_mode, x.commit_as_user, x.commit_on_default
-            ));
-        }
-        out
-    };
-    assert_eq!(strip(&after), strip(&file));
-    let keys = after
-        .topics
-        .iter()
-        .find(|t| t.title == "Keys (v1)")
-        .unwrap();
-    assert_eq!(keys.due_on.as_deref(), Some("2026-12-15"));
-    assert!(keys.active_folder.is_some());
-    assert!(
-        after
-            .folders
-            .iter()
-            .any(|f| f.commit_mode == CommitMode::Push)
-    );
 }
 
 #[test]
@@ -2742,16 +2636,8 @@ fn a_pointer_to_a_left_out_network_folder_is_cleared() {
 }
 
 #[test]
-fn an_import_refuses_a_file_over_the_cap_before_reading_it() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("big.acta.json");
-    std::fs::write(&path, vec![b' '; 2 * 1024 * 1024]).unwrap();
-    match super::exchange::read_capped(&path, 1024 * 1024) {
-        Err(Error::FileTooLarge { size, limit }) => {
-            assert_eq!((size, limit), (2 * 1024 * 1024, 1024 * 1024));
-        }
-        other => panic!("expected FileTooLarge, got {other:?}"),
-    }
+fn the_too_large_message_names_both_sizes() {
+    // The cap itself is checked while a backup is decrypted (backup.rs).
     let message = Error::FileTooLarge {
         size: 600 * 1024 * 1024,
         limit: MAX_IMPORT_BYTES,
@@ -2761,13 +2647,9 @@ fn an_import_refuses_a_file_over_the_cap_before_reading_it() {
         message.contains("600 MiB") && message.contains("512 MiB"),
         "{message}"
     );
-    // Under the cap it reads and parses as before.
-    let mut t = open();
-    t.store.create_project("Acta", "", H).unwrap();
-    let small = dir.path().join("small.acta.json");
-    std::fs::write(&small, t.store.export(None).unwrap().to_json().unwrap()).unwrap();
-    assert_eq!(ExportFile::read(&small).unwrap().projects.len(), 1);
-    // A broken file still says what is wrong with it.
-    std::fs::write(&small, "{\"format\":\"acta\",\"version\":2}").unwrap();
-    assert!(matches!(ExportFile::read(&small), Err(Error::Json(_))));
+    // A broken payload still says what is wrong with it.
+    assert!(matches!(
+        ExportFile::from_json("{\"format\":\"acta\",\"version\":5}"),
+        Err(Error::Json(_))
+    ));
 }

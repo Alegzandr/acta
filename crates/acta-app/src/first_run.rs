@@ -5,10 +5,11 @@
 //! is not ready, the Ready for Claude Code block heads the column (ADR
 //! 0013; components-app.md 5).
 
+use crate::zoom::px;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     Context, EventEmitter, InteractiveElement, IntoElement, ParentElement, Render,
-    StatefulInteractiveElement, Styled, Window, div, px,
+    StatefulInteractiveElement, Styled, Window, div,
 };
 
 use crate::i18n::{Key, KeyName, text};

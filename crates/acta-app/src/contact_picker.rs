@@ -10,6 +10,7 @@
 //! question composer, quick capture) the list floats under the input; in
 //! a popover (Report to) it is part of the popover.
 
+use crate::zoom::px;
 use acta_core::model::{ContactId, Place};
 use acta_core::store::ContactSummary;
 use gpui_kit::component::input::{
@@ -19,7 +20,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, ParentElement, Render, Styled, Subscription, Task, Window,
-    div, px,
+    div,
 };
 
 use crate::contacts_model::{self, NAME_MAX, Pick, PickerList};
@@ -535,7 +536,7 @@ impl ContactPicker {
                 .min_w(px(240.))
                 .w(px(self.anchor_width().max(300.)))
                 .bg(t.bg_overlay)
-                .border_1()
+                .border(px(1.))
                 .border_color(t.border_default)
                 .rounded(px(RADIUS_LG))
                 .shadow(vec![t.shadow_overlay()])
@@ -566,7 +567,7 @@ impl Render for ContactPicker {
             .gap(px(8.))
             .rounded(px(RADIUS_SM))
             .bg(t.bg_raised)
-            .border_1()
+            .border(px(1.))
             .border_color(if self.error.is_some() {
                 t.danger
             } else {

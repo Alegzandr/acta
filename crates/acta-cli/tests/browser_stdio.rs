@@ -27,6 +27,9 @@ impl Mcp {
             .env("ACTA_DEV_APP", data.join("no-such-app.exe"))
             .env_remove("ACTA_DEV_KEYSTORE")
             .env_remove("ACTA_TOPIC")
+            // The page the session belongs to (created by `key_of`).
+            .env("ACTA_PROJECT", "P-1")
+            .env_remove("ACTA_LAUNCH")
             .env_remove("CLAUDE_CODE_SESSION_ID")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -135,7 +138,10 @@ fn nine_tools_and_a_small_listing() {
         .collect();
     assert_eq!(always, ["snapshot"]);
     let size = list["result"].to_string().len();
-    assert!(size < 5_500, "tools/list is {size} chars");
+    println!("tools/list: {size} chars");
+    // Not larger than before the `browser` number (4,584 chars,
+    // layout.md 4.5.1: tools/list must not grow).
+    assert!(size <= 4_584, "tools/list is {size} chars");
     for t in tools {
         let schema = t["inputSchema"].to_string();
         assert!(
@@ -163,7 +169,7 @@ mod windows {
     use acta_browser::events::{Events, Notice};
     use acta_browser::ops::{Activity, Handoff, Host};
     use acta_browser::policy::Policy;
-    use acta_browser::server::{Server, Status};
+    use acta_browser::server::{BrowserOf, Pages, Server};
     use acta_browser::wire::Conn;
     use acta_core::keys::{KEY_FILE, KeyFile, KeyStores};
     use acta_core::{Store, StoreConfig};
@@ -243,21 +249,52 @@ mod windows {
         }
     }
 
-    struct Quiet;
+    /// The app's pages: project P-1 with the one test page, opened for
+    /// the first session that calls.
+    struct OnePage {
+        page: Arc<Page>,
+        opener: std::sync::Mutex<Option<String>>,
+    }
 
-    impl Status for Quiet {
-        fn driver(&self, _: Option<&str>, _: bool) {}
-        fn busy(&self, _: bool) {}
+    impl Pages for OnePage {
+        type Host = Page;
+        fn browsers(&self, page: &str) -> Vec<BrowserOf> {
+            let opener = self.opener.lock().unwrap().clone();
+            if page != "P-1" || opener.is_none() {
+                return Vec::new();
+            }
+            vec![BrowserOf { n: 1, opener }]
+        }
+        fn host(&self, page: &str, n: u8) -> Option<Arc<Page>> {
+            (page == "P-1" && n == 1).then(|| self.page.clone())
+        }
+        fn open(&self, page: &str, opener: &str, _: Option<&str>) -> Result<u8, String> {
+            if page != "P-1" {
+                return Err("not this page".into());
+            }
+            *self.opener.lock().unwrap() = Some(opener.into());
+            Ok(1)
+        }
+        fn page_of_launch(&self, _: &str) -> Option<String> {
+            None
+        }
+        fn driver(&self, _: &str, _: u8, _: Option<&str>, _: bool) {}
+        fn busy(&self, _: &str, _: u8, _: bool) {}
     }
 
     /// The key `acta mcp browser` derives for `data`: from the database key
     /// in the key file there (created by this open).
     fn key_of(data: &Path) -> [u8; 32] {
-        let store = Store::open(&StoreConfig {
+        let mut store = Store::open(&StoreConfig {
             data_dir: data.to_path_buf(),
             keys: KeyStores(vec![Arc::new(KeyFile::new(data.join(KEY_FILE)))]),
         })
         .unwrap();
+        if store.project(acta_core::model::ProjectId(1)).is_err() {
+            store
+                .create_project("Acta", "", acta_core::model::Author::Human)
+                .unwrap();
+        }
         *store.derive_secret(acta_browser::auth::KEY_LABEL)
     }
 
@@ -273,7 +310,10 @@ mod windows {
         });
         page.events
             .notice(Notice::Download("http://127.0.0.1:5173".into()));
-        let server = Server::new(page, Arc::new(Quiet));
+        let server = Server::new(Arc::new(OnePage {
+            page,
+            opener: std::sync::Mutex::new(None),
+        }));
         std::thread::spawn(move || {
             let accepted = pipe.accept().unwrap();
             let writer = accepted.file.try_clone().unwrap();
@@ -287,8 +327,20 @@ mod windows {
         let key = key_of(tmp.path());
         let app = serve(tmp.path(), key, key);
         let mut m = Mcp::start(tmp.path());
+        // Every reply starts with the page's browsers (layout.md 4.5.1).
+        let mut call = |tool: &str, args: Value| {
+            let (err, text, images) = m.call(tool, args);
+            let rest = text
+                .strip_prefix(
+                    "browsers: 1 (yours)
+",
+                )
+                .unwrap_or_else(|| panic!("{text}"))
+                .to_owned();
+            (err, rest, images)
+        };
 
-        let (err, text, _) = m.call("open", json!({"url": "http://127.0.0.1:5173/"}));
+        let (err, text, _) = call("open", json!({"url": "http://127.0.0.1:5173/"}));
         assert!(!err, "{text}");
         assert!(text.starts_with("ok loaded\n[web page "), "{text}");
         assert!(
@@ -298,18 +350,18 @@ mod windows {
         assert!(text.lines().any(|l| l.starts_with("blocked: [web page ")));
         assert!(text.len() <= 400 + 240);
 
-        let (err, text, _) = m.call("open", json!({"url": "file:///C:/Windows/win.ini"}));
+        let (err, text, _) = call("open", json!({"url": "file:///C:/Windows/win.ini"}));
         assert!(err && text.starts_with("refused: file:"), "{text}");
 
-        let (err, text, _) = m.call("snapshot", json!({"filter": "interactive"}));
+        let (err, text, _) = call("snapshot", json!({"filter": "interactive"}));
         assert!(!err && text.contains("e2 textbox \"Name\""), "{text}");
 
-        let (err, text, _) = m.call("type", json!({"ref": "e3", "text": "hunter2"}));
+        let (err, text, _) = call("type", json!({"ref": "e3", "text": "hunter2"}));
         assert!(err && text.contains("handoff"), "{text}");
-        let (err, text, _) = m.call("type", json!({"ref": "e2", "text": "Alexandre"}));
+        let (err, text, _) = call("type", json!({"ref": "e2", "text": "Alexandre"}));
         assert!(!err && text == "ok typed 9 chars into e2", "{text}");
 
-        let (err, text, images) = m.call("screenshot", json!({}));
+        let (err, text, images) = call("screenshot", json!({}));
         assert!(
             !err && text.starts_with("screenshot 1024x700 jpeg"),
             "{text}"
@@ -317,9 +369,10 @@ mod windows {
         assert_eq!(images.len(), 1);
         assert_eq!(images[0]["mimeType"], "image/jpeg");
 
-        let (err, text, _) = m.call("handoff", json!({"message": "Sign in, then press Done."}));
+        let (err, text, _) = call("handoff", json!({"message": "Sign in, then press Done."}));
         assert!(!err && text.starts_with("done"), "{text}");
 
+        drop(call);
         drop(m);
         app.join().unwrap();
     }

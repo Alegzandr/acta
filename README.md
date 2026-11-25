@@ -109,7 +109,8 @@ Everything is in one encrypted file on your computer. The key is in Windows Cred
 Manager or the Linux Secret Service; on macOS it is a private file beside the data,
 because unsigned builds would otherwise ask for your password after every update
 ([why](docs/decisions/0003-storage.md)). No account, no Acta server, no telemetry.
-Export to an open JSON format at any time.
+Back up at any time to one file locked with a passphrase you choose; it opens with
+Acta, or with any [age](https://age-encryption.org) tool.
 
 ## Status
 

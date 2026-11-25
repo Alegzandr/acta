@@ -280,6 +280,22 @@ impl Presence {
         since: i64,
         now: i64,
     ) -> Result<Vec<(Option<Owner>, i64)>> {
+        Ok(self
+            .kb_touches_elsewhere(me, entry, since, now)?
+            .into_iter()
+            .map(|(_, focus, at)| (focus, at))
+            .collect())
+    }
+
+    /// [`Presence::kb_touched_elsewhere`] with each session's id, so a
+    /// reader can tell a write (a revision of that session) from a read.
+    pub fn kb_touches_elsewhere(
+        &mut self,
+        me: Option<&str>,
+        entry: KbId,
+        since: i64,
+        now: i64,
+    ) -> Result<Vec<(String, Option<Owner>, i64)>> {
         let recent: Vec<(String, Option<String>)> = {
             let mut stmt = self
                 .conn
@@ -302,10 +318,10 @@ impl Presence {
                 .map(|t| t.at)
                 .max();
             if let Some(at) = at {
-                out.push((s.focus, at));
+                out.push((id, s.focus, at));
             }
         }
-        out.sort_by_key(|x| std::cmp::Reverse(x.1));
+        out.sort_by_key(|x| std::cmp::Reverse(x.2));
         Ok(out)
     }
 

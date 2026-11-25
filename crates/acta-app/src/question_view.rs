@@ -4,12 +4,13 @@
 //! the meta line, then the author mark and the unread dot. Each host adds
 //! its own listeners, keys and hover buttons.
 
+use crate::zoom::px;
 use acta_core::date::{Date, due_state};
 use acta_core::model::{ContactId, Question, QuestionStatus};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, ClickEvent, Div, InteractiveElement, IntoElement, ParentElement, Stateful,
-    StatefulInteractiveElement, Styled, Window, div, px,
+    StatefulInteractiveElement, Styled, Window, div,
 };
 
 use crate::due::{self, Tone};

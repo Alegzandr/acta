@@ -756,3 +756,205 @@ pub fn attachments(store: &mut Store, folder: &Path) -> acta_core::Result<()> {
     store.add_note(acta, "Ask Alexandre about the snapshot retention.", me)?;
     Ok(())
 }
+
+/// [`seed`] with memory quality to show (components-knowledge.md 5,
+/// screens.md 8.31 to 8.33): a duplicate pair whose newer side names a
+/// topic, a commit and two files (one changed since, one gone), a conflict
+/// pair, a memory not checked for 140 days, one of a done topic, a branch
+/// memory, a superseded one and a retired one with its reason. Claude
+/// Code's writes carry a session, a focus topic and a branch.
+#[cfg(debug_assertions)]
+pub fn quality(store: &mut Store, folder: &Path) -> acta_core::Result<()> {
+    use acta_core::model::{KbPairKind, Record};
+    use acta_core::store::{KbEdit, KbSource, KbUpdate, KbWriteCtx};
+    if !store.projects()?.is_empty() {
+        return Ok(());
+    }
+    seed(store, folder)?;
+    let (me, claude) = (Author::Human, Author::Claude);
+    let tree = store.tree(store.projects()?[0].id)?;
+    let acta = tree.project.id;
+    let topics: Vec<_> = tree
+        .loose_topics
+        .iter()
+        .chain(tree.epics.iter().flat_map(|(_, t)| t))
+        .cloned()
+        .collect();
+    let find = |title: &str| {
+        topics
+            .iter()
+            .find(|t| t.title.starts_with(title))
+            .map(|t| t.id)
+    };
+    let Some(embed) = find("Embed the terminal") else {
+        return Ok(());
+    };
+    let other_topic = find("Sidebar tree").unwrap_or(embed);
+    let folder_id = store.all_folders()?.first().map(|f| f.id);
+    let memory = |owner: Owner, title: &str, summary: &str, body: &str| NewKb {
+        owner,
+        kind: KbKind::Memory,
+        title: title.into(),
+        summary: summary.into(),
+        body: body.into(),
+        from_file: false,
+    };
+    let session = |topic| KbWriteCtx {
+        session: Some("seed-session".into()),
+        topic: Some(topic),
+        branch: Some("feature/terminal".into()),
+        ..KbWriteCtx::default()
+    };
+    // A duplicate pair: the older survives a merge.
+    let older = store.kb_create_with(
+        memory(
+            Owner::Topic(embed),
+            "Shell detection",
+            "Use COMSPEC on Windows, SHELL elsewhere",
+            "COMSPEC names cmd.exe on every Windows install; read it before falling back to powershell.exe.",
+        ),
+        &session(embed),
+        claude,
+    )?;
+    let mut sources = vec![
+        KbSource::Record(Record::Topic(embed)),
+        KbSource::Commit("9e92ba4c1d7f".into()),
+    ];
+    if let Some(f) = folder_id {
+        for path in ["src/terminal/shell.rs", "src/terminal/conpty.rs"] {
+            sources.push(KbSource::File {
+                folder: f,
+                path: path.into(),
+                blob: None,
+            });
+        }
+    }
+    let newer = store.kb_create_with(
+        memory(
+            Owner::Topic(embed),
+            "Shell detection on Windows",
+            "Read COMSPEC first on Windows",
+            "On Windows, COMSPEC names cmd.exe; read it before falling back to powershell.exe.",
+        ),
+        &KbWriteCtx {
+            links: sources,
+            ..session(other_topic)
+        },
+        claude,
+    )?;
+    store.kb_update(
+        newer,
+        KbUpdate {
+            expected_rev: None,
+            title: None,
+            summary: None,
+            edit: KbEdit::Body(
+                "On Windows, COMSPEC names cmd.exe; read it before falling back to powershell.exe. Alexandre's machine sets it to cmd.exe.".into(),
+            ),
+        },
+        me,
+    )?;
+    store.kb_record_pair(older, newer, KbPairKind::Duplicate, 0.62, claude)?;
+    // One source changed since it was checked (outside git: modified after
+    // the verified date); the other was never there.
+    let dir = folder.join("src").join("terminal");
+    if std::fs::create_dir_all(&dir).is_ok() {
+        let _ = std::fs::write(dir.join("shell.rs"), "// Alexandre's shell detection\n");
+    }
+    // A conflict pair, one side also not checked for 140 days.
+    let parallel = store.kb_create_with(
+        memory(
+            Owner::Project(acta),
+            "Tests in parallel",
+            "cargo test runs all tests concurrently",
+            "cargo test runs every test of the workspace concurrently.",
+        ),
+        &session(embed),
+        claude,
+    )?;
+    let serial = store.kb_create(
+        memory(
+            Owner::Topic(embed),
+            "Store tests run serially",
+            "Never run the store tests in parallel",
+            "They share one key store; run them with --test-threads=1.",
+        ),
+        claude,
+    )?;
+    store.kb_record_pair(parallel, serial, KbPairKind::Conflict, 0.41, claude)?;
+    store.dev_backdate(Record::Kb(parallel), 140)?;
+    let old = store.kb_create(
+        memory(
+            Owner::Project(acta),
+            "Credential entry",
+            "Credential Manager entry name",
+            "The database key is the Credential Manager entry Acta / database-key-v1.",
+        ),
+        claude,
+    )?;
+    store.dev_backdate(Record::Kb(old), 140)?;
+    // A memory of a done topic.
+    if let Some(done) = find("App shell") {
+        store.kb_create(
+            memory(
+                Owner::Topic(done),
+                "Window chrome",
+                "The titlebar is drawn by Acta on Windows",
+                "Acta draws its own titlebar on Windows and Linux.",
+            ),
+            claude,
+        )?;
+    }
+    // A branch memory.
+    store.kb_create_with(
+        memory(
+            Owner::Topic(embed),
+            "Schema at V7",
+            "On this branch the schema is V7",
+            "The migration to V7 lives on this branch only.",
+        ),
+        &KbWriteCtx {
+            context_folder: folder_id,
+            context_branch: Some("feature/kb".into()),
+            ..session(embed)
+        },
+        claude,
+    )?;
+    // Superseded and retired.
+    let path_old = store.kb_create(
+        memory(
+            Owner::Project(acta),
+            "Store path",
+            "Data lives under APPDATA",
+            "The database lives under the roaming APPDATA folder.",
+        ),
+        claude,
+    )?;
+    let path_new = store.kb_create(
+        memory(
+            Owner::Project(acta),
+            "Data directory",
+            "Data lives under LOCALAPPDATA, in ActaData",
+            "The database lives under LOCALAPPDATA in ActaData, outside the Velopack root.",
+        ),
+        claude,
+    )?;
+    store.kb_replace_with(path_new, &[path_old], claude)?;
+    let gone = store.kb_create(
+        memory(
+            Owner::Project(acta),
+            "Schema 6 columns",
+            "kb_entries has no state column",
+            "Schema 6 has no state column on kb_entries.",
+        ),
+        claude,
+    )?;
+    store.kb_retire(
+        gone,
+        None,
+        "The store moved to schema 7; this no longer applies.",
+        &KbWriteCtx::default(),
+        claude,
+    )?;
+    Ok(())
+}

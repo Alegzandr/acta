@@ -430,15 +430,60 @@ pub unsafe fn scrub_claude_session() {
     let names: Vec<String> = std::env::vars_os()
         .filter_map(|(name, _)| name.into_string().ok())
         .collect();
-    for name in claude_session_vars(&names) {
+    let mut drop = claude_session_vars(&names);
+    drop.extend(acta_session_vars(&names));
+    for name in drop {
         // SAFETY: the caller guarantees no other thread runs yet.
         unsafe { std::env::remove_var(name) };
     }
 }
 
+/// The variables Acta's terminal gives the sessions it starts (`ACTA_*`
+/// of a page session) among `names`. An Acta started from such a session
+/// (by hand, or by `acta mcp browser`) must not pass them on: Claude Code
+/// (no project) would carry another page's focus or launch token.
+/// Development variables (`ACTA_DEV_*`) are not among them.
+pub fn acta_session_vars<S: AsRef<str>>(names: &[S]) -> Vec<String> {
+    names
+        .iter()
+        .map(AsRef::as_ref)
+        .filter(|name| {
+            matches!(
+                name.to_ascii_uppercase().as_str(),
+                "ACTA_PROJECT" | "ACTA_EPIC" | "ACTA_TOPIC" | "ACTA_TERMINAL" | "ACTA_LAUNCH"
+            )
+        })
+        .map(str::to_owned)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn acta_drops_the_page_variables_it_inherited() {
+        let names = [
+            "PATH",
+            "ACTA_PROJECT",
+            "acta_topic",
+            "ACTA_LAUNCH",
+            "ACTA_TERMINAL",
+            "ACTA_EPIC",
+            "ACTA_DEV_DATA_DIR",
+            "ACTA_DEV_SEED",
+        ];
+        assert_eq!(
+            acta_session_vars(&names),
+            [
+                "ACTA_PROJECT",
+                "acta_topic",
+                "ACTA_LAUNCH",
+                "ACTA_TERMINAL",
+                "ACTA_EPIC"
+            ]
+        );
+    }
 
     #[test]
     fn a_claude_code_session_is_not_passed_on() {

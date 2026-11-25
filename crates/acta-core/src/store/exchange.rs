@@ -1,9 +1,10 @@
-//! Export and import of the open `.acta.json` format (ADR 0006).
-//!
-//! One JSON document with every record of the database, or of one project,
-//! trashed records included and flagged by `deleted_at`. Records refer to
-//! each other by UUID; local ids and short ids are never exported. Arrays are
-//! sorted by UUID so the same data always gives the same file.
+//! The payload of a backup (ADR 0006, amended 2026-11-22): one JSON
+//! document with every record of the database, or of one project, trashed
+//! records included and flagged by `deleted_at`. It only ever leaves Acta
+//! encrypted, inside an `.acta-backup` file (`backup.rs`); there is no
+//! plaintext export or import. Records refer to each other by UUID; local
+//! ids and short ids are never exported. Arrays are sorted by UUID so the
+//! same data always gives the same document.
 //!
 //! Import is a merge keyed on UUID, in one transaction: unknown records are
 //! created, known records are updated only when the file's `updated_at` is
@@ -19,37 +20,20 @@
 //! Commit settings are exported but never imported: a folder new here, or
 //! given a new path, is Manual; a known folder keeps its local settings.
 //!
-//! Versions: 1 (0.3.0 to 0.4.x); 2 adds a folder's name, icon and commit
-//! settings, the active folder of projects, epics and topics (as the
-//! folder's UUID, ADR 0011) and their due day (`YYYY-MM-DD`, data.md
-//! request 16), and drops `include_inherited_folders`. A version 1 file
-//! imports with the defaults: no active folder, no due day, Manual.
-//! 3 adds the `questions` array (request 18), the `contacts` array and
-//! the Report to of notes, topics and epics as a contact UUID, with the
-//! reported time and author of topics and epics (requests 19 and 22), and
-//! the profile in an "Everything" export (request 23). Name keys are
-//! recomputed on import, never read from a file. An older file imports
-//! with no questions and no contacts, and an update from it leaves the
-//! Report to columns as they are. A reference that is a name rather than
-//! a UUID (a file written before contacts) resolves by key among the
-//! project's own contacts, else creates one at the project level.
-//! 4 adds attachments (ADR 0012, 9): a `blobs` array (one per distinct
-//! content: SHA-256, size, media type, and the content in base64 unless
-//! the export left files out) and an `attachments` array (owner, blob
-//! hash, name, size, order, the note a filing moved it from), and a note's
-//! `filed_entry`. Import checks each blob's hash, links content this
-//! database already holds, and leaves out attachment rows whose content is
-//! neither here nor in the file (named as "not in the export"). An older
-//! file imports with no attachments and leaves `filed_entry` as it is.
-//! 5 adds memory quality (ADR 0015, 9): a knowledge entry's verified date
-//! and author, state and successor (UUID), branch context and context
-//! folder (UUID), the topic it was created from (UUID) and its sources
-//! (`links`, records by UUID); a revision's branch; a `kb_pairs` array
-//! (entries by UUID). Claude Code session ids are local and never
-//! exported, nor is the quality log. An older file imports with the
-//! verified date set to `updated_at`, live, with no sources or pairs, and
-//! an update from it moves the verified date to its `updated_at` and
-//! leaves the state, context and sources as they are.
+//! Versions: the payload carries its own version, [`FORMAT_VERSION`]. 5
+//! is the first one a backup holds (versions 1 to 4 were the plaintext
+//! `.acta.json` files of 0.3 to 0.6, which no Acta reads any more: an
+//! older payload is refused with [`Error::FormatTooOld`], a newer one with
+//! [`Error::FormatTooNew`]). It holds the records, contacts and the
+//! profile (in an "Everything" export only), questions, attachments (a
+//! `blobs` array, one per distinct content with its SHA-256, size, media
+//! type and base64 content unless the export left files out, and an
+//! `attachments` array) and memory quality (ADR 0015, 9: verified date,
+//! state, successor, context, creating topic, sources and pairs). Claude
+//! Code session ids are local and never exported, nor is the quality log.
+//! Import checks each blob's hash, links content this database already
+//! holds, and leaves out attachment rows whose content is neither here nor
+//! in the file (named as "not in the export").
 
 use super::Store;
 use crate::date::Date;
@@ -64,10 +48,11 @@ use serde::{Deserialize, Serialize};
 
 /// The format name written in every file.
 pub const FORMAT_NAME: &str = "acta";
-/// The format version this build writes and the newest it reads.
+/// The payload version this build writes and the newest it reads.
 pub const FORMAT_VERSION: i64 = 5;
-/// The file extension, without the leading dot.
-pub const FILE_EXTENSION: &str = "acta.json";
+/// The oldest payload version this build reads: the first one a backup
+/// held. Older versions only existed as plaintext files.
+pub const OLDEST_FORMAT_VERSION: i64 = 5;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ExportFile {
@@ -407,80 +392,72 @@ pub struct XFolder {
 }
 
 impl ExportFile {
+    /// The payload as pretty JSON ending with a newline.
     pub fn to_json(&self) -> Result<String> {
         let mut s = serde_json::to_string_pretty(self)?;
         s.push('\n');
         Ok(s)
     }
 
-    /// Parses a file, refusing a newer format with a clear error. The text
-    /// is parsed whole once; only a file that does not parse is read again
-    /// for its header, to tell a foreign or newer file from a broken one.
+    /// [`ExportFile::to_json`], written as it is produced: a backup
+    /// encrypts it chunk by chunk and never holds the whole text.
+    pub fn write_json(&self, mut out: impl std::io::Write) -> Result<()> {
+        serde_json::to_writer_pretty(&mut out, self)?;
+        out.write_all(b"\n")?;
+        Ok(())
+    }
+
+    /// Parses a payload, refusing a newer or older format with a clear
+    /// error. The text is parsed whole once; only a payload that does not
+    /// parse is read again for its header, to tell a foreign, newer or
+    /// older document from a broken one.
     pub fn from_json(text: &str) -> Result<ExportFile> {
-        #[derive(Deserialize)]
-        struct Header {
-            format: String,
-            version: i64,
-        }
-        let check = |format: &str, version: i64| {
-            if format != FORMAT_NAME {
-                return Err(Error::Invalid("this is not an Acta export".into()));
-            }
-            if version > FORMAT_VERSION {
-                return Err(Error::FormatTooNew {
-                    found: version,
-                    supported: FORMAT_VERSION,
-                });
-            }
-            Ok(())
-        };
         match serde_json::from_str::<ExportFile>(text) {
             Ok(file) => {
-                check(&file.format, file.version)?;
+                check_header(&file.format, file.version)?;
                 Ok(file)
             }
             Err(err) => {
-                // A foreign or newer file says so rather than which field
-                // failed.
                 if let Ok(header) = serde_json::from_str::<Header>(text) {
-                    check(&header.format, header.version)?;
+                    check_header(&header.format, header.version)?;
                 }
                 Err(err.into())
             }
         }
     }
-
-    /// Reads and parses an export file, refusing one larger than
-    /// [`MAX_IMPORT_BYTES`] before reading it.
-    pub fn read(path: &std::path::Path) -> Result<ExportFile> {
-        ExportFile::from_json(&read_capped(path, MAX_IMPORT_BYTES)?)
-    }
 }
 
-/// A text file of at most `cap` bytes; the size is checked before reading.
-pub(super) fn read_capped(path: &std::path::Path, cap: u64) -> Result<String> {
-    use std::io::Read as _;
-    let file = std::fs::File::open(path)?;
-    let size = file.metadata()?.len();
-    if size > cap {
-        return Err(too_large(size, cap));
-    }
-    let mut bytes = Vec::new();
-    // The file may grow between the check and the read: never more than
-    // the cap and one byte is read.
-    file.take(cap + 1).read_to_end(&mut bytes)?;
-    if bytes.len() as u64 > cap {
-        return Err(too_large(bytes.len() as u64, cap));
-    }
-    String::from_utf8(bytes).map_err(|_| Error::Invalid("this is not an Acta export".into()))
+/// The two fields that say what a payload is; the rest is skipped
+/// without being kept.
+#[derive(Deserialize)]
+pub(super) struct Header {
+    pub format: String,
+    pub version: i64,
 }
 
-/// The largest file an import reads: 512 MiB.
+/// Refuses a payload that is not Acta's, or of a version this build does
+/// not read.
+pub(super) fn check_header(format: &str, version: i64) -> Result<()> {
+    if format != FORMAT_NAME {
+        return Err(Error::Invalid("this is not an Acta backup".into()));
+    }
+    if version > FORMAT_VERSION {
+        return Err(Error::FormatTooNew {
+            found: version,
+            supported: FORMAT_VERSION,
+        });
+    }
+    if version < OLDEST_FORMAT_VERSION {
+        return Err(Error::FormatTooOld {
+            found: version,
+            oldest: OLDEST_FORMAT_VERSION,
+        });
+    }
+    Ok(())
+}
+
+/// The largest payload an import reads: 512 MiB.
 pub const MAX_IMPORT_BYTES: u64 = 512 * 1024 * 1024;
-
-fn too_large(size: u64, limit: u64) -> Error {
-    Error::FileTooLarge { size, limit }
-}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ImportCounts {
@@ -1094,12 +1071,7 @@ impl Store {
         dry_run: bool,
         author: Author,
     ) -> Result<ImportReport> {
-        if file.version > FORMAT_VERSION {
-            return Err(Error::FormatTooNew {
-                found: file.version,
-                supported: FORMAT_VERSION,
-            });
-        }
+        check_header(&file.format, file.version)?;
         if !dry_run {
             self.check_writable()?;
             self.snapshot(SnapshotKind::Import)?;
@@ -1152,68 +1124,26 @@ fn seen_marker(tx: &rusqlite::Connection, kind: &str, id: i64, at: i64) -> Resul
     Ok(())
 }
 
-/// A contact reference from a file: a contact UUID (followed through
-/// merges to the contact that holds its uses now), or (a file written
-/// before contacts) a name, which resolves by key among the project's own
-/// contacts and otherwise creates one at the project level, by the
-/// importing author.
-fn contact_id(
-    tx: &rusqlite::Connection,
-    text: &Option<String>,
-    project: i64,
-    created: &mut i64,
-    author: Author,
-) -> Result<Option<i64>> {
+/// A contact reference from a file: a contact UUID, followed through
+/// merges to the contact that holds its uses now.
+fn contact_id(tx: &rusqlite::Connection, text: &Option<String>) -> Result<Option<i64>> {
     let Some(t) = text.as_deref() else {
         return Ok(None);
     };
     let known: Option<i64> = tx
         .query_row("SELECT id FROM contacts WHERE uuid = ?1", [t], |r| r.get(0))
         .optional()?;
-    if let Some(id) = known {
-        return Ok(Some(super::people::follow_merges(tx, id)?));
-    }
-    if uuid::Uuid::parse_str(t).is_ok() {
-        return Err(Error::Invalid(format!(
+    match known {
+        Some(id) => Ok(Some(super::people::follow_merges(tx, id)?)),
+        None => Err(Error::Invalid(format!(
             "the file refers to a missing record {t} in contacts"
-        )));
+        ))),
     }
-    let Some(name) = crate::person::clean(t).map_err(Error::Invalid)? else {
-        return Ok(None);
-    };
-    let key = crate::person::person_key(&name);
-    let found: Option<i64> = tx
-        .query_row(
-            "SELECT id FROM contacts WHERE project_id = ?1 AND epic_id IS NULL AND name_key = ?2
-               AND deleted_at IS NULL ORDER BY id LIMIT 1",
-            params![project, key],
-            |r| r.get(0),
-        )
-        .optional()?;
-    if found.is_some() {
-        return Ok(found);
-    }
-    let now = crate::time::now_ms();
-    tx.execute(
-        "INSERT INTO contacts (uuid, project_id, name, name_key, created_by, created_at, updated_at, updated_by)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, ?5)",
-        params![super::new_uuid(), project, name, key, author, now],
-    )?;
-    *created += 1;
-    Ok(Some(tx.last_insert_rowid()))
 }
 
 /// The Report to of an imported topic or epic.
-fn write_report(
-    tx: &rusqlite::Connection,
-    table: &str,
-    id: i64,
-    project: i64,
-    r: &XReport,
-    created: &mut i64,
-    author: Author,
-) -> Result<()> {
-    let to = contact_id(tx, &r.report_to, project, created, author)?;
+fn write_report(tx: &rusqlite::Connection, table: &str, id: i64, r: &XReport) -> Result<()> {
+    let to = contact_id(tx, &r.report_to)?;
     let (at, by) = if to.is_some() {
         (r.reported_at, r.reported_by)
     } else {
@@ -1349,16 +1279,9 @@ fn count(c: &mut ImportCounts, action: &Action) {
 
 fn merge(tx: &rusqlite::Connection, f: &ExportFile, author: Author) -> Result<ImportReport> {
     let mut rep = ImportReport::default();
-    // A version 1 file knows nothing of due days, active folders and folder
-    // settings: an update from it leaves them as they are here.
-    let old_format = f.version < 2;
-    // Before version 3 there were no contacts: an update keeps the Report
-    // to columns as they are here.
-    let no_people = f.version < 3;
-    let mut contacts_made = 0i64;
     // Epics name contacts, and contacts live in epics: an epic's Report to
     // is written once the contacts exist.
-    let mut epic_reports: Vec<(i64, i64, &XReport)> = Vec::new();
+    let mut epic_reports: Vec<(i64, &XReport)> = Vec::new();
     let by_claude = author == Author::Claude;
     // Active folders are set once the folders exist: (table, local id,
     // folder UUID) of every project, epic and topic the merge wrote.
@@ -1388,9 +1311,9 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile, author: Author) -> Result<Im
                     "UPDATE projects SET title = ?2, description = ?3, position = ?4, updated_at = ?5, updated_by = ?6,
                             deleted_at = ?7, deleted_by = ?8,
                             deleted_batch = CASE WHEN deleted_at IS ?7 THEN deleted_batch ELSE NULL END,
-                            due_on = CASE WHEN ?10 THEN due_on ELSE ?9 END WHERE id = ?1",
+                            due_on = ?9 WHERE id = ?1",
                     params![l.id, x.title, x.description, x.position, s.updated_at, s.updated_by, d, db,
-                            due(&s.uuid, &x.due_on)?, old_format],
+                            due(&s.uuid, &x.due_on)?],
                 )?;
                 pointers.push(("projects", l.id, x.active_folder.as_deref()));
             }
@@ -1413,23 +1336,21 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile, author: Author) -> Result<Im
                             s.created_at, s.updated_at, s.updated_by, s.deleted_at, s.deleted_by],
                 )?;
                 let id = tx.last_insert_rowid();
-                epic_reports.push((id, project, &x.report));
+                epic_reports.push((id, &x.report));
                 pointers.push(("epics", id, x.active_folder.as_deref()));
             }
             Action::Update(l) => {
                 let (d, db) = merged_deleted(&l, s);
                 tx.execute(
                     "UPDATE epics SET project_id = ?2, title = ?3, description = ?4, state = ?5, position = ?6,
-                            due_on = CASE WHEN ?12 THEN due_on ELSE ?7 END,
+                            due_on = ?7,
                             updated_at = ?8, updated_by = ?9, deleted_at = ?10, deleted_by = ?11,
                             deleted_batch = CASE WHEN deleted_at IS ?10 THEN deleted_batch ELSE NULL END
                      WHERE id = ?1",
                     params![l.id, project, x.title, x.description, x.state, x.position, due(&s.uuid, &x.due_on)?,
-                            s.updated_at, s.updated_by, d, db, old_format],
+                            s.updated_at, s.updated_by, d, db],
                 )?;
-                if !no_people {
-                    epic_reports.push((l.id, project, &x.report));
-                }
+                epic_reports.push((l.id, &x.report));
                 pointers.push(("epics", l.id, x.active_folder.as_deref()));
             }
             Action::Skip => {}
@@ -1499,8 +1420,8 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile, author: Author) -> Result<Im
             )?;
         }
     }
-    for (id, project, r) in epic_reports {
-        write_report(tx, "epics", id, project, r, &mut contacts_made, author)?;
+    for (id, r) in epic_reports {
+        write_report(tx, "epics", id, r)?;
     }
 
     for x in &f.topics {
@@ -1521,15 +1442,7 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile, author: Author) -> Result<Im
                             s.created_at, s.updated_at, s.updated_by, s.deleted_at, s.deleted_by],
                 )?;
                 let id = tx.last_insert_rowid();
-                write_report(
-                    tx,
-                    "topics",
-                    id,
-                    project,
-                    &x.report,
-                    &mut contacts_made,
-                    author,
-                )?;
+                write_report(tx, "topics", id, &x.report)?;
                 pointers.push(("topics", id, x.active_folder.as_deref()));
                 seen_on_import(tx, "topic", id, s.updated_at)?;
             }
@@ -1538,25 +1451,15 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile, author: Author) -> Result<Im
                 tx.execute(
                     "UPDATE topics SET project_id = ?2, epic_id = ?3, title = ?4, description = ?5, status = ?6, state = ?7,
                             state_updated_at = ?8, state_updated_by = ?9, position = ?10,
-                            due_on = CASE WHEN ?16 THEN due_on ELSE ?11 END,
+                            due_on = ?11,
                             updated_at = ?12, updated_by = ?13, deleted_at = ?14, deleted_by = ?15,
                             deleted_batch = CASE WHEN deleted_at IS ?14 THEN deleted_batch ELSE NULL END
                      WHERE id = ?1",
                     params![l.id, project, epic, x.title, x.description, x.status, x.state, x.state_updated_at,
                             x.state_updated_by, x.position, due(&s.uuid, &x.due_on)?,
-                            s.updated_at, s.updated_by, d, db, old_format],
+                            s.updated_at, s.updated_by, d, db],
                 )?;
-                if !no_people {
-                    write_report(
-                        tx,
-                        "topics",
-                        l.id,
-                        project,
-                        &x.report,
-                        &mut contacts_made,
-                        author,
-                    )?;
-                }
+                write_report(tx, "topics", l.id, &x.report)?;
                 pointers.push(("topics", l.id, x.active_folder.as_deref()));
                 seen_on_import(tx, "topic", l.id, s.updated_at)?;
             }
@@ -1644,7 +1547,7 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile, author: Author) -> Result<Im
                     ],
                 )?;
                 let id = tx.last_insert_rowid();
-                let to = contact_id(tx, &x.report_to, project, &mut contacts_made, author)?;
+                let to = contact_id(tx, &x.report_to)?;
                 tx.execute(
                     "UPDATE notes SET report_contact_id = ?2 WHERE id = ?1",
                     params![id, to],
@@ -1659,13 +1562,11 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile, author: Author) -> Result<Im
                             filed_epic_id = ?9, filed_by = ?10 WHERE id = ?1",
                     params![l.id, x.text, filed, x.filed_at, s.updated_at, s.updated_by, d, db, filed_epic, x.filed_by],
                 )?;
-                if !no_people {
-                    let to = contact_id(tx, &x.report_to, project, &mut contacts_made, author)?;
-                    tx.execute(
-                        "UPDATE notes SET report_contact_id = ?2 WHERE id = ?1",
-                        params![l.id, to],
-                    )?;
-                }
+                let to = contact_id(tx, &x.report_to)?;
+                tx.execute(
+                    "UPDATE notes SET report_contact_id = ?2 WHERE id = ?1",
+                    params![l.id, to],
+                )?;
             }
             Action::Skip => {}
         }
@@ -1674,7 +1575,6 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile, author: Author) -> Result<Im
     // Version 5: memory quality (ADR 0015). Entries the file wrote get
     // their successor, context folder and creating topic once every
     // entry and folder is in (`merge_kb_quality`).
-    let quality = f.version >= 5;
     let mut applied: Vec<(&XKb, i64)> = Vec::new();
     for x in &f.knowledge {
         let s = &x.stamp;
@@ -1683,16 +1583,10 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile, author: Author) -> Result<Im
         let project = local_id(tx, "projects", &x.project)?;
         let epic = opt_id(tx, "epics", &x.epic)?;
         let topic = opt_id(tx, "topics", &x.topic)?;
-        // Before version 5 an entry had no verified date: its update is
-        // the best value there is (as the schema 7 backfill).
-        let (verified_at, verified_by) = if quality {
-            (
-                x.verified_at.unwrap_or(s.updated_at),
-                x.verified_by.unwrap_or(s.updated_by),
-            )
-        } else {
-            (s.updated_at, s.updated_by)
-        };
+        let (verified_at, verified_by) = (
+            x.verified_at.unwrap_or(s.updated_at),
+            x.verified_by.unwrap_or(s.updated_by),
+        );
         let id = match action {
             Action::Insert => {
                 tx.execute(
@@ -1723,13 +1617,11 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile, author: Author) -> Result<Im
                     "UPDATE kb_entries SET verified_at = ?2, verified_by = ?3 WHERE id = ?1",
                     params![l.id, verified_at, verified_by],
                 )?;
-                if quality {
-                    tx.execute(
-                        "UPDATE kb_entries SET state = ?2, context_branch = ?3 WHERE id = ?1",
-                        params![l.id, x.state, x.context_branch],
-                    )?;
-                    applied.push((x, l.id));
-                }
+                tx.execute(
+                    "UPDATE kb_entries SET state = ?2, context_branch = ?3 WHERE id = ?1",
+                    params![l.id, x.state, x.context_branch],
+                )?;
+                applied.push((x, l.id));
                 seen_on_import(tx, "kb", l.id, s.updated_at)?;
                 l.id
             }
@@ -1830,18 +1722,18 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile, author: Author) -> Result<Im
                 let (d, db) = merged_deleted(&l, s);
                 tx.execute(
                     "UPDATE folders SET project_id = ?2, epic_id = ?3, topic_id = ?4,
-                            path = CASE WHEN ?18 THEN path ELSE ?5 END, position = ?6,
+                            path = CASE WHEN ?17 THEN path ELSE ?5 END, position = ?6,
                             updated_at = ?7, updated_by = ?8, deleted_at = ?9, deleted_by = ?10,
                             deleted_batch = CASE WHEN deleted_at IS ?9 THEN deleted_batch ELSE NULL END,
-                            name = CASE WHEN ?16 THEN name ELSE ?11 END,
-                            icon = CASE WHEN ?16 THEN icon ELSE ?12 END,
-                            commit_mode = CASE WHEN ?17 THEN commit_mode ELSE ?13 END,
-                            commit_as_user = CASE WHEN ?17 THEN commit_as_user ELSE ?14 END,
-                            commit_on_default = CASE WHEN ?17 THEN commit_on_default ELSE ?15 END
+                            name = ?11,
+                            icon = ?12,
+                            commit_mode = CASE WHEN ?16 THEN commit_mode ELSE ?13 END,
+                            commit_as_user = CASE WHEN ?16 THEN commit_as_user ELSE ?14 END,
+                            commit_on_default = CASE WHEN ?16 THEN commit_on_default ELSE ?15 END
                      WHERE id = ?1",
                     params![l.id, project, epic, topic, x.path, x.position, s.updated_at, s.updated_by, d, db,
                             x.name, icon(&x.icon), mode, as_user, on_default,
-                            old_format, keep_commit, by_claude],
+                            keep_commit, by_claude],
                 )?;
             }
             Action::Skip => {}
@@ -1863,7 +1755,7 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile, author: Author) -> Result<Im
                 .optional()?,
             None => None,
         };
-        let asked = contact_id(tx, &x.asked_to, project, &mut contacts_made, author)?;
+        let asked = contact_id(tx, &x.asked_to)?;
         let expected = due(&s.uuid, &x.expected_on)?;
         let (epic, topic) = if topic.is_some() {
             (None, topic)
@@ -1904,7 +1796,6 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile, author: Author) -> Result<Im
 
     merge_attachments(tx, f, &mut rep)?;
 
-    rep.contacts.created += contacts_made;
     // Records of this database that still name a contact the file merged
     // away now name the one that holds its uses; and every reference the
     // merge left out of its contact's scope lifts that contact.
@@ -1935,12 +1826,10 @@ fn merge(tx: &rusqlite::Connection, f: &ExportFile, author: Author) -> Result<Im
     // default rule applies, as it does to a pointer nobody can see. A
     // version 1 file has no pointers to give, and Claude Code never sets
     // one: the local choice stays.
-    if old_format || by_claude {
+    if by_claude {
         pointers.clear();
     }
-    if quality {
-        merge_kb_quality(tx, f, &applied)?;
-    }
+    merge_kb_quality(tx, f, &applied)?;
     for (table, id, folder) in pointers {
         let folder: Option<i64> = match folder {
             Some(uuid) => tx
@@ -2058,9 +1947,6 @@ fn merge_attachments(
     rep: &mut ImportReport,
 ) -> Result<()> {
     use base64::Engine as _;
-    if f.version < 4 {
-        return Ok(());
-    }
     for x in &f.notes {
         let Some(e) = &x.filed_entry else { continue };
         let entry: Option<i64> = tx

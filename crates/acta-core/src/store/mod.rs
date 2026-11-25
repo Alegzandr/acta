@@ -8,12 +8,14 @@
 //! (ADR 0005); bodies are read one record at a time.
 
 mod attachments;
+mod backup;
 mod exchange;
 mod folders;
 mod kb;
 mod kb_quality;
 mod overview;
 mod people;
+mod purge;
 mod questions;
 mod records;
 mod search;
@@ -25,10 +27,14 @@ pub use attachments::{
     AttachSource, AttachmentReader, CHUNK_BYTES, FileTotals, LARGE_FILE_BYTES, MAX_FILE_BYTES,
     MAX_FILES_PER_OWNER, NAME_MAX, Purged, Staged, clean_name, stage_with,
 };
+pub use backup::{
+    BACKUP_EXTENSION, MIN_PASSPHRASE_CHARS, Passphrase, Strength, check_backup_file, is_backup,
+    strength,
+};
 pub use exchange::{
-    ExportFile, FILE_EXTENSION, FORMAT_NAME, FORMAT_VERSION, ImportCounts, ImportReport,
-    MAX_IMPORT_BYTES, XAttachment, XBlob, XContact, XEntry, XEpic, XFolder, XKb, XKbLink, XKbPair,
-    XNote, XProfile, XProject, XQuestion, XReport, XRevision, XStamp, XTopic,
+    ExportFile, FORMAT_NAME, FORMAT_VERSION, ImportCounts, ImportReport, MAX_IMPORT_BYTES,
+    OLDEST_FORMAT_VERSION, XAttachment, XBlob, XContact, XEntry, XEpic, XFolder, XKb, XKbLink,
+    XKbPair, XNote, XProfile, XProject, XQuestion, XReport, XRevision, XStamp, XTopic,
 };
 pub use folders::{AUTO_MEMORY_PREFIX, FolderResolution, VisibleFolder, VisibleFolders};
 pub use kb::{
@@ -37,7 +43,8 @@ pub use kb::{
 pub use kb_quality::{
     CANDIDATES, KbBranchTrace, KbCandidate, KbFinding, KbLink, KbLinkTarget, KbLogRow,
     KbMergeTrace, KbPair, KbQualityReport, KbSource, KbStateTrace, KbSuccessor, KbVerifyTrace,
-    MAX_SUPERSEDES, QUALITY_LOG_DAYS, RETIRE_REASON_MAX, SOURCE_TEXT_MAX, UNMERGE_WINDOW_MS,
+    MAX_SUPERSEDES, QUALITY_LOG_DAYS, RETIRE_REASON_MAX, SCAN_PAGE, SOURCE_TEXT_MAX, ScanPage,
+    UNMERGE_WINDOW_MS,
 };
 pub use overview::{
     IDLE_DAYS, INBOX_DAYS, Overview, OverviewEpic, OverviewFilter, OverviewItem, STALE_MEMORY_DAYS,
@@ -46,6 +53,7 @@ pub use overview::{
 pub use people::{
     ADDRESS_MAX, ContactPatch, ContactSummary, DETAIL_MAX, MergeTrace, ReportTargets, level_name,
 };
+pub use purge::PurgeReport;
 pub use questions::{ANSWER_MAX, NewQuestion, QUESTION_MAX, QuestionFilter, decision_body};
 pub use records::{EpicPatch, NewTopic, ProjectPatch, TopicFilter, TopicPatch};
 pub use search::{SNIPPET_CLOSE, SNIPPET_OPEN, SearchHit, SearchKind, SearchQuery};
@@ -543,6 +551,10 @@ mod attachments_tests;
 #[cfg(test)]
 mod kb_quality_tests;
 #[cfg(test)]
+mod purge_tests;
+#[cfg(test)]
 mod questions_tests;
+#[cfg(test)]
+mod search_tests;
 #[cfg(test)]
 mod tests;

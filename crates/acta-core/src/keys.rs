@@ -44,8 +44,8 @@ impl Key {
     /// `HMAC-SHA256(self, label)`: a secret for another purpose that reveals
     /// nothing of the key.
     pub fn derive(&self, label: &[u8]) -> Zeroizing<[u8; 32]> {
-        use hmac::{Hmac, Mac};
-        let mut mac = <Hmac<sha2::Sha256> as Mac>::new_from_slice(&self.0)
+        use hmac::{Hmac, KeyInit, Mac};
+        let mut mac = <Hmac<sha2::Sha256> as KeyInit>::new_from_slice(&self.0)
             .expect("HMAC takes a key of any length");
         mac.update(label);
         Zeroizing::new(mac.finalize().into_bytes().into())
@@ -110,6 +110,8 @@ pub trait KeyStore: Send + Sync {
     /// from an error (for example a Secret Service that does not answer).
     fn load(&self) -> Result<Option<Key>, KeyStoreError>;
     fn save(&self, key: &Key) -> Result<(), KeyStoreError>;
+    /// Deletes the key (Reset Acta, ADR 0006). No key is not an error.
+    fn delete(&self) -> Result<(), KeyStoreError>;
 }
 
 /// The stores a database may use, in order of preference for a new database.
@@ -202,6 +204,13 @@ impl KeyStore for OsKeychain {
             .set_password(&key.to_hex())
             .map_err(keyring_error)
     }
+
+    fn delete(&self) -> Result<(), KeyStoreError> {
+        match self.entry()?.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(e) => Err(keyring_error(e)),
+        }
+    }
 }
 
 /// A key file: mode 0600 in a 0700 directory on Unix, the profile ACL on
@@ -239,6 +248,14 @@ impl KeyStore for KeyFile {
         let mut file = crate::fsutil::create_new_private_file(&self.path).map_err(err)?;
         file.write_all(key.to_hex().as_bytes()).map_err(err)?;
         file.sync_all().map_err(err)
+    }
+
+    fn delete(&self) -> Result<(), KeyStoreError> {
+        match fs::remove_file(&self.path) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(KeyStoreError(format!("key file: {e}"))),
+        }
     }
 }
 
@@ -297,6 +314,12 @@ impl KeyStore for MemoryKeyStore {
         self.set(key.clone());
         Ok(())
     }
+
+    fn delete(&self) -> Result<(), KeyStoreError> {
+        self.check()?;
+        self.forget();
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -317,6 +340,22 @@ mod tests {
             *Key::from_bytes([8; 32]).derive(b"acta agent-browser ipc v1")
         );
         assert_ne!(&a[..], &[7u8; 32][..]);
+    }
+
+    /// Known answer, computed with an independent HMAC-SHA256: a crate
+    /// upgrade must never change the secrets derived from a stored key.
+    #[test]
+    fn derive_is_hmac_sha256_of_the_label() {
+        let key = Key::from_bytes([7; 32]);
+        let hex: String = key
+            .derive(b"acta agent-browser ipc v1")
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        assert_eq!(
+            hex,
+            "8377a154c994913b00a76a8a786052aa317cb5333c9feca05328e6d637ef508b"
+        );
     }
 
     #[test]

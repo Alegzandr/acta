@@ -6,13 +6,17 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::zoom::px;
 use acta_core::model::ProjectId;
 use acta_core::snapshots::{Snapshot, SnapshotKind};
-use acta_core::store::{ExportFile, FileTotals, ImportReport};
+use acta_core::store::{ExportFile, FileTotals, ImportReport, Passphrase, Strength};
+use gpui_kit::AppContext as _;
+use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
-    IntoElement, ParentElement, Render, StatefulInteractiveElement, Styled, Window, div, px,
+    IntoElement, ParentElement, Render, StatefulInteractiveElement, Styled, Subscription, Window,
+    div,
 };
 
 use crate::i18n::{Arg, Key, Locale, number, text, tr};
@@ -48,6 +52,15 @@ pub enum Kind {
         /// The attached files of everything and of the project, once read.
         files: Option<(FileTotals, Option<FileTotals>)>,
     },
+    /// "Import": the backup's passphrase, asked before the preview.
+    ImportPassphrase {
+        path: PathBuf,
+        file_name: String,
+        /// "Wrong passphrase.", under the field.
+        error: Option<String>,
+        /// Decrypting (about a second): the button waits.
+        opening: bool,
+    },
     Import {
         file_name: String,
         file: Arc<ExportFile>,
@@ -68,6 +81,20 @@ pub enum Kind {
         selected: Option<usize>,
     },
     RestartTerminal,
+    /// "Reset Acta?" (Settings, Data): confirmed by typing a word.
+    Reset {
+        /// "Also sign out of the chat and browser", off by default.
+        sign_out: bool,
+        /// "Also delete the voice models", off by default.
+        voice_models: bool,
+        /// Voice models are on this computer (the checkbox shows).
+        has_models: bool,
+        /// What is erased, once counted.
+        counts: Option<acta_core::reset::ResetCounts>,
+        /// Folders that could not be reached keep Acta's settings for
+        /// Claude Code: asked before resetting anyway.
+        unreachable: Option<usize>,
+    },
     /// A page's own confirmation (a git action where a session works).
     Confirm(Confirm),
     /// "Remove Acta from Claude Code?" (Settings, Claude Code).
@@ -106,6 +133,11 @@ pub enum DialogEvent {
     Recover(Arc<ExportFile>),
     /// The terminal restart was confirmed.
     RestartTerminal,
+    /// "Back up first..." from the reset confirmation.
+    BackUpFirst,
+    /// "Reset Acta" confirmed on the key-loss screen: erase in this
+    /// process, before any database is opened (`acta_core::reset`).
+    ResetHere(acta_core::reset::ResetOptions),
     /// A page's confirmation was confirmed: run its action.
     Confirmed(crate::palette::OnPick),
     /// Removing Acta from Claude Code was confirmed.
@@ -137,6 +169,15 @@ pub struct Dialog {
     safe: FocusHandle,
     /// The install confirmation's "Details" are unfolded.
     details_open: bool,
+    /// The passphrase fields of "Back up" (passphrase, repeat) and of
+    /// "Import" (one), masked. Dropped as soon as the dialog moves on.
+    fields: Vec<Entity<InputState>>,
+    /// Which field has focus, read at render for its ring.
+    focused_field: Option<usize>,
+    /// What the fields hold, read once per change, never per frame: the
+    /// passphrase hint and readiness, or whether the reset word is typed.
+    typed: Typed,
+    _subs: Vec<Subscription>,
 }
 
 impl EventEmitter<DialogEvent> for Dialog {}
@@ -157,14 +198,86 @@ pub fn size_mb(locale: Locale, bytes: u64) -> String {
     tr(locale, Key::SnapshotSize, &[("size", Arg::Text(&size))])
 }
 
-/// `acta-2026-11-21.acta.json`, the export's default name.
+/// `acta-2026-11-21.acta-backup`, the backup's default name.
 pub fn export_name(now_ms: i64) -> String {
     let day = acta_core::time::day_number(now_ms);
     let (y, m, d) = acta_core::time::civil_from_days(day);
     format!(
         "acta-{y:04}-{m:02}-{d:02}.{}",
-        acta_core::store::FILE_EXTENSION
+        acta_core::store::BACKUP_EXTENSION
     )
+}
+
+/// Why a backup cannot be imported, as the dialog says it.
+pub fn import_refusal(locale: Locale, err: acta_core::Error) -> String {
+    match err {
+        acta_core::Error::FormatTooNew { found, .. } => tr(
+            locale,
+            Key::ImportNewer,
+            &[("n", Arg::Text(&found.to_string()))],
+        ),
+        acta_core::Error::FileTooLarge { size, limit } => import_too_large(locale, size, limit),
+        acta_core::Error::WrongPassphrase => text(locale, Key::ImportWrongPassphrase),
+        acta_core::Error::BackupDamaged => text(locale, Key::ImportDamaged),
+        _ => text(locale, Key::ImportNotActa),
+    }
+}
+
+/// The line under the passphrase fields of "Back up": how strong the
+/// passphrase is, or that the two differ. `None` before anything is typed.
+pub fn passphrase_hint(first: &str, repeat: &str) -> Option<(Key, bool)> {
+    if first.is_empty() {
+        return None;
+    }
+    // The repeat is judged once it is as long as the first.
+    if !repeat.is_empty() && repeat != first && repeat.chars().count() >= first.chars().count() {
+        return Some((Key::ExportPassphraseMismatch, true));
+    }
+    Some(match acta_core::store::strength(first) {
+        Strength::TooShort => (Key::ExportPassphraseShort, false),
+        Strength::Weak => (Key::ExportPassphraseWeak, true),
+        Strength::Fair => (Key::ExportPassphraseFair, false),
+        Strength::Strong => (Key::ExportPassphraseStrong, false),
+    })
+}
+
+/// "4 projects · 120 topics · 2 files": what a reset erases, kinds with
+/// none left out.
+pub fn reset_counts_line(locale: Locale, c: &acta_core::reset::ResetCounts) -> String {
+    [
+        (Key::CountProjects, c.projects),
+        (Key::CountTopics, c.topics),
+        (Key::CountNotes, c.notes),
+        (Key::CountDocuments, c.documents),
+        (Key::CountMemories, c.memories),
+        (Key::CountFiles, c.files),
+        (Key::CountContacts, c.contacts),
+    ]
+    .into_iter()
+    .filter(|(_, n)| *n > 0)
+    .map(|(key, n)| tr(locale, key, &[("n", Arg::Count(n))]))
+    .collect::<Vec<_>>()
+    .join(" \u{b7} ")
+}
+
+/// What the dialog's fields hold, read once per change.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct Typed {
+    /// The line under "Back up"'s fields, and whether it is a warning.
+    hint: Option<(Key, bool)>,
+    /// The confirming button may be used.
+    ready: bool,
+}
+
+/// The reset's confirmation word, typed in either case, spaces around it
+/// ignored.
+pub fn reset_word_matches(locale: Locale, typed: &str) -> bool {
+    typed.trim().to_lowercase() == text(locale, Key::ResetWord)
+}
+
+/// A new backup may be saved: long enough, and repeated exactly.
+pub fn passphrase_ready(first: &str, repeat: &str) -> bool {
+    first.chars().count() >= acta_core::store::MIN_PASSPHRASE_CHARS && first == repeat
 }
 
 /// The result line of an import (components-app.md 5, Import).
@@ -303,13 +416,6 @@ pub fn report_into_empty(file: &ExportFile) -> ImportReport {
     }
 }
 
-/// Write `bytes` to `path` without ever leaving half a file, readable by
-/// the user only (the export is plaintext): see
-/// [`acta_core::fsutil::write_private_atomic`].
-pub fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
-    acta_core::fsutil::write_private_atomic(path, bytes)
-}
-
 /// The label of a snapshot kind (components-app.md 5, Snapshot restore).
 pub fn snapshot_label(locale: Locale, kind: SnapshotKind) -> String {
     match kind {
@@ -335,7 +441,8 @@ impl Dialog {
         cx: &mut Context<Self>,
     ) -> Self {
         let focus = cx.focus_handle();
-        // components.md 5, Dialog: focus starts on the safe button.
+        // components.md 5, Dialog: focus starts on the safe button, except
+        // in a passphrase dialog, where it starts in the field.
         let safe = cx.focus_handle().tab_index(0).tab_stop(true);
         window.focus(&safe, cx);
         // The export's checkbox says what the files add.
@@ -361,17 +468,124 @@ impl Dialog {
             })
             .detach();
         }
+        // The reset says what it erases, in numbers.
+        if let (Kind::Reset { .. }, Some(ws)) = (&kind, &ws) {
+            let task = ws
+                .read(cx)
+                .db
+                .run(cx, |store| acta_core::reset::counts(store));
+            cx.spawn(async move |dialog, cx| {
+                if let Ok(found) = task.await {
+                    let _ = dialog.update(cx, |d, cx| {
+                        if let Kind::Reset { counts, .. } = &mut d.kind {
+                            *counts = Some(found);
+                        }
+                        cx.notify();
+                    });
+                }
+            })
+            .detach();
+        }
+        let locale = settings::locale(cx);
+        let placeholders: &[Key] = match &kind {
+            Kind::Export { .. } => &[Key::ExportPassphrase, Key::ExportPassphraseRepeat],
+            Kind::ImportPassphrase { .. } => &[Key::ExportPassphrase],
+            Kind::Reset { .. } => &[Key::ResetWord],
+            _ => &[],
+        };
+        let masked = !matches!(kind, Kind::Reset { .. });
+        let mut fields = Vec::new();
+        let mut subs = Vec::new();
+        for (i, key) in placeholders.iter().enumerate() {
+            let placeholder = text(locale, *key);
+            let field = cx.new(|cx| {
+                InputState::new(window, cx)
+                    .masked(masked)
+                    .placeholder(placeholder)
+            });
+            subs.push(cx.subscribe_in(
+                &field,
+                window,
+                move |d: &mut Dialog, _, event: &InputEvent, window, cx| match event {
+                    InputEvent::PressEnter { .. } => match &d.kind {
+                        Kind::Export { .. } if i + 1 < d.fields.len() => {
+                            let next = d.fields[i + 1].clone();
+                            next.update(cx, |s, cx| s.focus(window, cx));
+                        }
+                        Kind::Export { .. } => d.export(cx),
+                        Kind::ImportPassphrase { .. } => d.open_backup(window, cx),
+                        Kind::Reset { .. } => d.reset(cx),
+                        _ => {}
+                    },
+                    InputEvent::Change => {
+                        d.read_fields(cx);
+                        cx.notify();
+                    }
+                    _ => {}
+                },
+            ));
+            fields.push(field);
+        }
+        // The reset starts on Cancel, as every destructive confirmation.
+        if let (Some(first), true) = (fields.first(), masked) {
+            first.update(cx, |s, cx| s.focus(window, cx));
+        }
         Self {
             ws,
             kind,
             focus,
             safe,
             details_open: false,
+            fields,
+            focused_field: None,
+            typed: Typed::default(),
+            _subs: subs,
         }
+    }
+
+    /// Reads the fields once, after a change.
+    fn read_fields(&mut self, cx: &App) {
+        let locale = settings::locale(cx);
+        let first = self.field(0, cx);
+        self.typed = match &self.kind {
+            Kind::Export { .. } => {
+                let repeat = self.field(1, cx);
+                Typed {
+                    hint: passphrase_hint(&first, &repeat),
+                    ready: passphrase_ready(&first, &repeat),
+                }
+            }
+            Kind::ImportPassphrase { .. } => Typed {
+                hint: None,
+                ready: !first.is_empty(),
+            },
+            Kind::Reset { .. } => Typed {
+                hint: None,
+                ready: reset_word_matches(locale, &first),
+            },
+            _ => Typed::default(),
+        };
     }
 
     fn close(&mut self, cx: &mut Context<Self>) {
         cx.emit(DialogEvent::Close);
+    }
+
+    /// The text of passphrase field `i`, empty when there is none.
+    fn field(&self, i: usize, cx: &App) -> gpui_kit::SharedString {
+        self.fields
+            .get(i)
+            .map(|f| f.read(cx).value())
+            .unwrap_or_default()
+    }
+
+    /// The passphrase fields are dropped once read: the text lives no
+    /// longer than the dialog step that needs it.
+    fn drop_fields(&mut self) {
+        self.fields.clear();
+        self._subs.clear();
+        self.focused_field = None;
+        self.typed = Typed::default();
     }
 
     fn export(&mut self, cx: &mut Context<Self>) {
@@ -384,6 +598,10 @@ impl Dialog {
         else {
             return;
         };
+        if !self.typed.ready {
+            return;
+        }
+        let pass = Passphrase::new(self.field(0, cx).to_string());
         let include_files = *include_files;
         let Some(ws) = self.ws.clone() else { return };
         let scope = if *this_project {
@@ -391,6 +609,7 @@ impl Dialog {
         } else {
             None
         };
+        self.drop_fields();
         let name = export_name(acta_core::time::now_ms());
         let dir = crate::paths_view::home()
             .map(PathBuf::from)
@@ -405,16 +624,14 @@ impl Dialog {
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            // Read under the store, write the file without it.
+            // Read under the store, encrypt and write without it.
             let read = ws.update(cx, |ws, cx| {
-                ws.db.run(cx, move |store| {
-                    let file = store.export_with(scope, include_files)?;
-                    Ok((file.projects.len() as u64, file.to_json()?))
-                })
+                ws.db
+                    .run(cx, move |store| store.export_with(scope, include_files))
             });
-            let (count, json) = match read.await {
-                Ok(read) => read,
-                // Too large with its files to import back: export without
+            let file = match read.await {
+                Ok(file) => file,
+                // Too large with its files to import back: back up without
                 // them (ADR 0012, amendment).
                 Err(acta_core::Error::ExportTooLarge { size, limit }) => {
                     ws.update(cx, |ws, cx| {
@@ -428,9 +645,10 @@ impl Dialog {
                     return;
                 }
             };
+            let count = file.projects.len() as u64;
             let written = cx
                 .background_executor()
-                .spawn(async move { write_atomic(&path, json.as_bytes()) })
+                .spawn(async move { file.save_backup(&path, &pass) })
                 .await;
             if written.is_err() {
                 ws.update(cx, |ws, cx| ws.toast_error(Key::ErrorSave, cx));
@@ -445,6 +663,78 @@ impl Dialog {
                     &[("n", Arg::Count(count)), ("file", Arg::Text(&file_name))],
                 );
                 ws.toast(message, ToastKind::Done, cx);
+            });
+        })
+        .detach();
+    }
+
+    /// Decrypts the backup with the typed passphrase, then shows the
+    /// preview. A wrong passphrase stays in this dialog; nothing is read
+    /// into the store before Import.
+    fn open_backup(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.typed.ready {
+            return;
+        }
+        let typed = self.field(0, cx);
+        let Kind::ImportPassphrase {
+            path,
+            file_name,
+            error,
+            opening,
+        } = &mut self.kind
+        else {
+            return;
+        };
+        if *opening || typed.is_empty() {
+            return;
+        }
+        *opening = true;
+        *error = None;
+        cx.notify();
+        let pass = Passphrase::new(typed.to_string());
+        let path = path.clone();
+        let file_name = file_name.clone();
+        let db = self.ws.as_ref().map(|ws| ws.read(cx).db.clone());
+        let task = cx.background_spawn(async move {
+            let file = ExportFile::read_backup(&path, &pass)?;
+            drop(pass);
+            let report = match db {
+                Some(db) => db.lock().import(&file, true)?,
+                None => report_into_empty(&file),
+            };
+            Ok::<_, acta_core::Error>((file, report))
+        });
+        cx.spawn_in(window, async move |dialog, cx| {
+            let result = task.await;
+            let _ = dialog.update_in(cx, |d, window, cx| {
+                let locale = settings::locale(cx);
+                match result {
+                    Ok((file, report)) => {
+                        d.drop_fields();
+                        d.kind = Kind::Import {
+                            file_name,
+                            file: Arc::new(file),
+                            report,
+                            recovery: d.ws.is_none(),
+                        };
+                        window.focus(&d.safe, cx);
+                    }
+                    Err(acta_core::Error::WrongPassphrase) => {
+                        if let Kind::ImportPassphrase { error, opening, .. } = &mut d.kind {
+                            *error = Some(text(locale, Key::ImportWrongPassphrase));
+                            *opening = false;
+                        }
+                    }
+                    Err(err) => {
+                        d.drop_fields();
+                        d.kind = Kind::ImportRefused {
+                            file_name,
+                            message: import_refusal(locale, err),
+                        };
+                        window.focus(&d.safe, cx);
+                    }
+                }
+                cx.notify();
             });
         })
         .detach();
@@ -480,6 +770,87 @@ impl Dialog {
             });
         })
         .detach();
+    }
+
+    /// "Reset Acta": Acta's entries leave the folders' Claude Code
+    /// settings, the request is recorded, and Acta restarts; the data is
+    /// erased at the start, before the database is opened
+    /// (`acta_core::reset`).
+    fn reset(&mut self, cx: &mut Context<Self>) {
+        let Kind::Reset {
+            sign_out,
+            voice_models,
+            ..
+        } = self.kind
+        else {
+            return;
+        };
+        let anyway = matches!(
+            self.kind,
+            Kind::Reset {
+                unreachable: Some(_),
+                ..
+            }
+        );
+        if !self.typed.ready {
+            return;
+        }
+        let options = acta_core::reset::ResetOptions {
+            sign_out,
+            voice_models,
+        };
+        // The key-loss screen: no store, no request; erased here.
+        let Some(ws) = self.ws.clone() else {
+            cx.emit(DialogEvent::ResetHere(options));
+            return;
+        };
+        let task = ws.update(cx, |ws, cx| {
+            ws.write(cx, Key::ErrorSave, move |store| {
+                acta_core::reset::request(store, options, anyway)
+            })
+        });
+        cx.spawn(async move |dialog, cx| match task.await {
+            Ok(acta_core::reset::Requested::Done { .. }) => {
+                let _ = dialog.update(cx, |_, cx| cx.emit(DialogEvent::Close));
+                cx.update(|cx| {
+                    crate::settings::change(cx, |prefs| {
+                        crate::preferences::forget_records(prefs, sign_out)
+                    });
+                    crate::settings::flush(cx);
+                    cx.restart();
+                });
+            }
+            Ok(acta_core::reset::Requested::Unreachable { kept }) => {
+                let _ = dialog.update(cx, |d, cx| {
+                    if let Kind::Reset { unreachable, .. } = &mut d.kind {
+                        *unreachable = Some(kept);
+                    }
+                    cx.notify();
+                });
+            }
+            Err(_) => {}
+        })
+        .detach();
+    }
+
+    /// Cancel. After "could not be reached", the reachable folders get
+    /// Acta's settings back: nothing is reset.
+    fn cancel(&mut self, cx: &mut Context<Self>) {
+        if let (
+            Kind::Reset {
+                unreachable: Some(_),
+                ..
+            },
+            Some(ws),
+        ) = (&self.kind, &self.ws)
+        {
+            ws.update(cx, |ws, cx| {
+                ws.write_detached(cx, Key::ErrorSave, |store| {
+                    acta_core::claude_settings::sync_all(store).map(|_| ())
+                })
+            });
+        }
+        self.close(cx);
     }
 
     fn restore_snapshot(&mut self, cx: &mut Context<Self>) {
@@ -592,12 +963,9 @@ impl Dialog {
                     .gap(px(16.))
                     .children(scope)
                     .children(checkbox.map(|c| ui::focusable(c, t, false)))
-                    .child(ui::notice(
-                        Some((Icon::TriangleAlert, t.warning)),
-                        text(locale, Key::ExportWarning),
-                        t,
-                    ))
+                    .child(self.passphrase_fields(locale, t))
                     .into_any_element();
+                let ready = self.typed.ready;
                 let buttons = vec![
                     ui::button(
                         "dialog-cancel",
@@ -613,13 +981,210 @@ impl Dialog {
                         "export-choose",
                         text(locale, Key::ExportChoose),
                         Variant::Primary,
-                        false,
+                        !ready,
                         t,
                     )
                     .on_click(cx.listener(|d, _, _, cx| d.export(cx)))
                     .into_any_element(),
                 ];
                 (text(locale, Key::ExportTitle), body, buttons, 440.)
+            }
+            Kind::ImportPassphrase {
+                file_name,
+                error,
+                opening,
+                ..
+            } => {
+                let title = tr(locale, Key::ImportTitle, &[("file", Arg::Text(file_name))]);
+                let invalid = error.is_some();
+                let body = div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .children(
+                        self.fields
+                            .first()
+                            .map(|f| text_field(f, self.focused_field == Some(0), invalid, t)),
+                    )
+                    .children(error.clone().map(|message| {
+                        type_scale::SMALL
+                            .el()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(4.))
+                            .text_color(t.danger)
+                            .child(crate::icons::icon(Icon::TriangleAlert, 14., t.danger))
+                            .child(message)
+                    }))
+                    .into_any_element();
+                let blocked = *opening || !self.typed.ready;
+                let buttons = vec![
+                    ui::button(
+                        "dialog-cancel",
+                        text(locale, Key::CommonCancel),
+                        Variant::Secondary,
+                        false,
+                        t,
+                    )
+                    .track_focus(&self.safe)
+                    .on_click(cx.listener(|d, _, _, cx| d.close(cx)))
+                    .into_any_element(),
+                    ui::button(
+                        "import-open",
+                        text(locale, Key::ImportOpen),
+                        Variant::Primary,
+                        blocked,
+                        t,
+                    )
+                    .on_click(cx.listener(|d, _, window, cx| d.open_backup(window, cx)))
+                    .into_any_element(),
+                ];
+                (title, body, buttons, 440.)
+            }
+            Kind::Reset {
+                sign_out,
+                voice_models,
+                has_models,
+                counts,
+                unreachable,
+            } => {
+                let unreachable = *unreachable;
+                let counted = counts.map(|c| reset_counts_line(locale, &c));
+                let (sign_out, voice_models, has_models) = (*sign_out, *voice_models, *has_models);
+                let check = |id: &'static str, on: bool, label: String| {
+                    div()
+                        .id(id)
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(8.))
+                        .h(px(28.))
+                        .cursor_pointer()
+                        .child(ui::checkbox(on, t))
+                        .child(type_scale::UI.el().text_color(t.text_primary).child(label))
+                };
+                let sign_out_box =
+                    check("reset-sign-out", sign_out, text(locale, Key::ResetSignOut)).on_click(
+                        cx.listener(|d, _, _, cx| {
+                            if let Kind::Reset { sign_out, .. } = &mut d.kind {
+                                *sign_out = !*sign_out;
+                            }
+                            cx.notify();
+                        }),
+                    );
+                let models_box = has_models.then(|| {
+                    check(
+                        "reset-voice-models",
+                        voice_models,
+                        text(locale, Key::ResetVoiceModels),
+                    )
+                    .on_click(cx.listener(|d, _, _, cx| {
+                        if let Kind::Reset { voice_models, .. } = &mut d.kind {
+                            *voice_models = !*voice_models;
+                        }
+                        cx.notify();
+                    }))
+                });
+                let word = text(locale, Key::ResetWord);
+                let body =
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(12.))
+                        .child(
+                            type_scale::UI
+                                .el()
+                                .text_color(t.text_primary)
+                                .child(text(locale, Key::ResetBody)),
+                        )
+                        .children(counted.filter(|line| !line.is_empty()).map(|line| {
+                            type_scale::UI
+                                .el()
+                                .font_features(type_scale::tabular())
+                                .text_color(t.text_primary)
+                                .child(line)
+                        }))
+                        .child(
+                            type_scale::SMALL
+                                .el()
+                                .text_color(t.text_secondary)
+                                .child(text(locale, Key::ResetKept)),
+                        )
+                        .child(
+                            div().flex().flex_row().child(
+                                ui::button(
+                                    "reset-backup",
+                                    text(locale, Key::ResetBackup),
+                                    Variant::Secondary,
+                                    false,
+                                    t,
+                                )
+                                .on_click(
+                                    cx.listener(|_, _, _, cx| cx.emit(DialogEvent::BackUpFirst)),
+                                ),
+                            ),
+                        )
+                        .child(ui::focusable(sign_out_box, t, false))
+                        .children(models_box.map(|b| ui::focusable(b, t, false)))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap(px(4.))
+                                .child(type_scale::SMALL.el().text_color(t.text_secondary).child(
+                                    tr(locale, Key::ResetType, &[("word", Arg::Text(&word))]),
+                                ))
+                                .children(self.fields.first().map(|f| {
+                                    text_field(f, self.focused_field == Some(0), false, t)
+                                })),
+                        )
+                        .into_any_element();
+                let body = div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(12.))
+                    .child(body)
+                    .children(unreachable.map(|n| {
+                        ui::notice(
+                            Some((Icon::TriangleAlert, t.warning)),
+                            tr(
+                                locale,
+                                Key::ResetUnreachable,
+                                &[("n", Arg::Count(n as u64))],
+                            ),
+                            t,
+                        )
+                    }))
+                    .into_any_element();
+                let ready = self.typed.ready;
+                let confirm = if unreachable.is_some() {
+                    Key::ResetAnyway
+                } else {
+                    Key::ResetConfirm
+                };
+                let buttons = vec![
+                    ui::button(
+                        "dialog-cancel",
+                        text(locale, Key::CommonCancel),
+                        Variant::Secondary,
+                        false,
+                        t,
+                    )
+                    .track_focus(&self.safe)
+                    .on_click(cx.listener(|d, _, _, cx| d.cancel(cx)))
+                    .into_any_element(),
+                    ui::button(
+                        "reset-confirm",
+                        text(locale, confirm),
+                        Variant::Primary,
+                        !ready,
+                        t,
+                    )
+                    .on_click(cx.listener(|d, _, _, cx| d.reset(cx)))
+                    .into_any_element(),
+                ];
+                (text(locale, Key::ResetTitle), body, buttons, 480.)
             }
             Kind::Import {
                 file_name,
@@ -1154,9 +1719,89 @@ impl Dialog {
     }
 }
 
+impl Dialog {
+    /// "Back up": the two masked fields, the hint line under them, and
+    /// that a lost passphrase cannot be recovered.
+    fn passphrase_fields(&self, locale: Locale, t: &Tokens) -> AnyElement {
+        let hint = self.typed.hint;
+        let mismatch = matches!(hint, Some((Key::ExportPassphraseMismatch, _)));
+        let line = |message: String, color| {
+            type_scale::SMALL
+                .el()
+                .text_color(color)
+                .child(message)
+                .into_any_element()
+        };
+        let hint = hint.map(|(key, alarm)| {
+            let message = tr(
+                locale,
+                key,
+                &[(
+                    "n",
+                    Arg::Count(acta_core::store::MIN_PASSPHRASE_CHARS as u64),
+                )],
+            );
+            let color = match key {
+                Key::ExportPassphraseMismatch => t.danger,
+                _ if alarm => t.warning,
+                _ => t.text_secondary,
+            };
+            line(message, color)
+        });
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(8.))
+            .children(
+                self.fields.iter().enumerate().map(|(i, f)| {
+                    text_field(f, self.focused_field == Some(i), i == 1 && mismatch, t)
+                }),
+            )
+            .children(hint)
+            .child(line(
+                text(locale, Key::ExportPassphraseLost),
+                t.text_secondary,
+            ))
+            .into_any_element()
+    }
+}
+
+/// A text input (components.md, Text input): 28 high, `bg.raised`,
+/// `border.strong`, the focus ring drawn inside, `danger` when invalid.
+fn text_field(input: &Entity<InputState>, focused: bool, invalid: bool, t: &Tokens) -> AnyElement {
+    let border = if invalid {
+        t.danger
+    } else if focused {
+        t.focus_ring
+    } else {
+        t.border_strong
+    };
+    div()
+        .h(px(28.))
+        .px(px(if focused { 7. } else { 8. }))
+        .flex()
+        .items_center()
+        .rounded(px(RADIUS_SM))
+        .bg(t.bg_raised)
+        .when(focused, |d| d.border_2())
+        .when(!focused, |d| d.border_1())
+        .border_color(border)
+        .child(
+            Input::new(input)
+                .appearance(false)
+                .px(px(0.))
+                .text_size(px(type_scale::UI.size())),
+        )
+        .into_any_element()
+}
+
 impl Render for Dialog {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.global::<Tokens>().clone();
+        self.focused_field = self
+            .fields
+            .iter()
+            .position(|f| f.read(cx).focus_handle(cx).is_focused(window));
         let locale = settings::locale(cx);
         let (title, body, mut buttons, width) = self.body(locale, &t, cx);
         // The confirming action is last, first on Windows (platform order).
@@ -1183,7 +1828,7 @@ impl Render for Dialog {
                     .flex_col()
                     .p(px(24.))
                     .bg(t.bg_overlay)
-                    .border_1()
+                    .border(px(1.))
                     .border_color(t.border_default)
                     .rounded(px(RADIUS_XL))
                     .shadow(vec![t.shadow_overlay()])
@@ -1212,24 +1857,103 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_export_is_named_after_the_day() {
+    fn the_backup_is_named_after_the_day() {
         // 2026-11-20T12:00:00Z
-        assert_eq!(export_name(1_795_176_000_000), "acta-2026-11-20.acta.json");
+        assert_eq!(
+            export_name(1_795_176_000_000),
+            "acta-2026-11-20.acta-backup"
+        );
     }
 
     #[test]
-    fn an_export_is_written_whole_and_leaves_no_temporary_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("acta-2026-11-21.acta.json");
-        std::fs::write(&path, "old").unwrap();
-        write_atomic(&path, b"{\"format\":\"acta\"}").unwrap();
+    fn the_passphrase_line_hints_and_only_length_and_repeat_block() {
+        assert_eq!(passphrase_hint("", ""), None);
         assert_eq!(
-            std::fs::read_to_string(&path).unwrap(),
-            "{\"format\":\"acta\"}"
+            passphrase_hint("short", ""),
+            Some((Key::ExportPassphraseShort, false))
         );
-        let names: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
-        assert_eq!(names.len(), 1);
-        assert!(write_atomic(&dir.path().join("missing").join("x.json"), b"x").is_err());
+        assert_eq!(
+            passphrase_hint("12345678", ""),
+            Some((Key::ExportPassphraseWeak, true))
+        );
+        assert_eq!(
+            passphrase_hint("Password1!", "Pass"),
+            Some((Key::ExportPassphraseFair, false)),
+            "a repeat still being typed is not judged"
+        );
+        assert_eq!(
+            passphrase_hint("Password1!", "Password1?"),
+            Some((Key::ExportPassphraseMismatch, true))
+        );
+        assert_eq!(
+            passphrase_hint("correct horse battery staple", ""),
+            Some((Key::ExportPassphraseStrong, false))
+        );
+        // A weak passphrase may be used: the hint is not a rule.
+        assert!(passphrase_ready("12345678", "12345678"));
+        assert!(!passphrase_ready("1234567", "1234567"));
+        assert!(!passphrase_ready("12345678", "12345679"));
+        assert_eq!(
+            tr(
+                Locale::Fr,
+                Key::ExportPassphraseShort,
+                &[("n", Arg::Count(8))]
+            ),
+            "Au moins 8 caractères"
+        );
+    }
+
+    #[test]
+    fn the_reset_counts_name_each_kind_once() {
+        let c = acta_core::reset::ResetCounts {
+            projects: 4,
+            topics: 1,
+            files: 2,
+            ..Default::default()
+        };
+        assert_eq!(
+            reset_counts_line(Locale::En, &c),
+            "4 projects \u{b7} 1 topic \u{b7} 2 files"
+        );
+        assert_eq!(reset_counts_line(Locale::Fr, &Default::default()), "");
+    }
+
+    #[test]
+    fn the_reset_word_is_the_language_s_own() {
+        assert!(reset_word_matches(Locale::En, " Reset "));
+        assert!(reset_word_matches(Locale::Fr, "Réinitialiser"));
+        assert!(!reset_word_matches(Locale::Fr, "reset"));
+        assert!(!reset_word_matches(Locale::En, "reset acta"));
+        assert!(!reset_word_matches(Locale::En, ""));
+    }
+
+    #[test]
+    fn every_refusal_reads_as_a_sentence() {
+        use acta_core::Error;
+        let say = |e| import_refusal(Locale::En, e);
+        assert_eq!(say(Error::WrongPassphrase), "Wrong passphrase.");
+        assert_eq!(
+            say(Error::BackupDamaged),
+            "This backup is damaged or incomplete. Nothing was imported."
+        );
+        assert_eq!(
+            say(Error::Invalid("this is not an Acta backup".into())),
+            "This is not an Acta backup."
+        );
+        assert_eq!(
+            say(Error::FormatTooOld {
+                found: 4,
+                oldest: 5
+            }),
+            "This is not an Acta backup."
+        );
+        assert!(
+            say(Error::FormatTooNew {
+                found: 6,
+                supported: 5
+            })
+            .contains("format 6")
+        );
     }
 
     #[test]
@@ -1306,7 +2030,7 @@ mod tests {
         assert_eq!(
             import_too_large(Locale::En, 600 * 1024 * 1024, 512 * 1024 * 1024),
             "This file is too large to import (600.0 MB). The limit is 512 MB. \
-             Export one project at a time, then import each file."
+             Back up one project at a time, then import each backup."
         );
     }
 

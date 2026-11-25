@@ -50,7 +50,13 @@ fn down(key: u16) -> bool {
     (unsafe { GetKeyState(i32::from(key)) } as u16 & 0x8000) != 0
 }
 
-pub fn install(web: &wry::WebView, signals: Sender<Signal>) -> windows::core::Result<Hooks> {
+/// `agent`: the agent browser's view, which keeps `F12` for its developer
+/// tools; the chat passes it to the page.
+pub fn install(
+    web: &wry::WebView,
+    signals: Sender<Signal>,
+    agent: bool,
+) -> windows_core::Result<Hooks> {
     let controller = web.controller();
     let webview = web.webview();
     let (mut keys, mut focus, mut navigation) = (0i64, 0i64, 0i64);
@@ -79,7 +85,7 @@ pub fn install(web: &wry::WebView, signals: Sender<Signal>) -> windows::core::Re
             cmd: down(VK_LWIN) || down(VK_RWIN),
         };
         let key = chat::windows_key(virtual_key, status.ScanCode);
-        if let Some(kept) = chat::kept(key, mods) {
+        if let Some(kept) = chat::kept(key, mods, agent) {
             // SAFETY: as above.
             unsafe { args.SetHandled(true)? };
             // Auto-repeat is swallowed, not repeated.
@@ -98,7 +104,7 @@ pub fn install(web: &wry::WebView, signals: Sender<Signal>) -> windows::core::Re
 
     let navigation_handler = NavigationCompletedEventHandler::create(Box::new(move |_, args| {
         let Some(args) = args else { return Ok(()) };
-        let mut success = windows::core::BOOL::default();
+        let mut success = windows_core::BOOL::default();
         let mut error = COREWEBVIEW2_WEB_ERROR_STATUS::default();
         // SAFETY: out-parameters of the event's own arguments.
         unsafe {

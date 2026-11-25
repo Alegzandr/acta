@@ -47,9 +47,12 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `time.short.yesterday` | Yesterday | Hier |
 | `count.projects` | {n} project · {n} projects | {n} projet · {n} projets |
 | `count.topics` | {n} topic · {n} topics | {n} sujet · {n} sujets |
+| `count.items` | {n} item · {n} items | {n} élément · {n} éléments |
 | `count.notes` | {n} note · {n} notes | {n} note · {n} notes |
 | `count.documents` | {n} document · {n} documents | {n} document · {n} documents |
 | `count.memories` | {n} memory · {n} memories | {n} mémoire · {n} mémoires |
+| `count.files` | {n} file · {n} files | {n} fichier · {n} fichiers |
+| `count.contacts` | {n} contact · {n} contacts | {n} contact · {n} contacts |
 | `tree.inbox` | Inbox | Boîte de réception |
 | `tree.knowledge` | Knowledge | Connaissances |
 | `tree.trash` | Trash | Corbeille |
@@ -132,7 +135,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `overview.epics` | Epics | Epics |
 | `overview.epics.more` | {n} more epic · {n} more epics | {n} autre epic · {n} autres epics |
 | `overview.epics.complete` | {n} complete epic · {n} complete epics | {n} epic terminé · {n} epics terminés |
-| `overview.memories` | {n} memory not updated for 90 days · {n} memories not updated for 90 days | {n} mémoire non mise à jour depuis 90 jours · {n} mémoires non mises à jour depuis 90 jours |
+| `overview.to_check` | {n} memory to check · {n} memories to check | {n} mémoire à vérifier · {n} mémoires à vérifier |
 | `overview.questions_late` | {n} question past its answer date · {n} questions past their answer date | {n} question dont la date de réponse est passée · {n} questions dont la date de réponse est passée |
 | `section.timeline` | Timeline | Journal |
 | `state.updated` | Updated {when} by {author} | Modifié {when} par {author} |
@@ -193,7 +196,8 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `filter.done_week` | Done in the last 7 days | Terminés ces 7 derniers jours |
 | `filter.decided_week` | Decided in the last 7 days | Décidés ces 7 derniers jours |
 | `filter.created_week` | Created in the last 7 days | Créés ces 7 derniers jours |
-| `filter.stale_memories` | Not updated for 90 days | Non mises à jour depuis 90 jours |
+| `filter.to_check` | To check | À vérifier |
+| `filter.inactive` | Superseded and retired | Remplacés et obsolètes |
 | `filter.clear` | Clear filter | Effacer le filtre |
 | `table.group_progress` | {done} of {total} done | {done} sur {total} terminé · {done} sur {total} terminés (form chosen by {done}) |
 | `inbox.count` | {n} note · {n} notes | {n} note · {n} notes |
@@ -355,6 +359,67 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `kb.value.memories` | Memories | Mémoires |
 | `kb.results` | {n} result for "{query}" · {n} results for "{query}" | {n} résultat pour « {query} » · {n} résultats pour « {query} » |
 | `kb.no_results` | Nothing in this project mentions "{query}". | Rien dans ce projet ne mentionne « {query} ». |
+| `kb.inactive_row` | {n} superseded or retired | {n} élément remplacé ou obsolète · {n} éléments remplacés ou obsolètes |
+| `kb.to_check_empty` | Nothing to check. | Rien à vérifier. |
+| `kb.inactive_empty` | Nothing is superseded or retired. | Aucun élément remplacé ou obsolète. |
+| `kb.reason.conflict` | May contradict {id} | Contredit peut-être {id} |
+| `kb.reason.duplicate` | Possible duplicate of {id} | Doublon possible de {id} |
+| `kb.reason.file_gone` | {file} was deleted or moved | {file} a été supprimé ou déplacé |
+| `kb.reason.file_gone_more` | {file} and {n} more file were deleted or moved · {file} and {n} more files were deleted or moved | {file} et {n} autre fichier ont été supprimés ou déplacés · {file} et {n} autres fichiers ont été supprimés ou déplacés |
+| `kb.reason.file_changed` | {file} changed since it was checked | {file} a changé depuis la dernière vérification |
+| `kb.reason.file_changed_more` | {file} and {n} more file changed since they were checked · {file} and {n} more files changed since they were checked | {file} et {n} autre fichier ont changé depuis la dernière vérification · {file} et {n} autres fichiers ont changé depuis la dernière vérification |
+| `kb.reason.branch_gone` | Branch {branch} no longer exists | La branche {branch} n'existe plus |
+| `kb.reason.branch_merged` | Branch {branch} was merged | La branche {branch} a été fusionnée |
+| `kb.reason.folder_removed` | Its folder was removed from Acta | Son dossier a été retiré d'Acta |
+| `kb.reason.topic_done` | Its topic is done | Son sujet est terminé |
+| `kb.reason.topic_dropped` | Its topic was dropped | Son sujet a été abandonné |
+| `kb.reason.old` | Not checked for {days} days | Non vérifiée depuis {days} jours |
+| `kb.verify` | Mark as still true | Marquer comme toujours valable |
+| `kb.retire` | Mark as no longer true | Marquer comme obsolète |
+| `kb.retired_toast.document` | Marked as no longer true. | Marqué comme obsolète. |
+| `kb.retired_toast.memory` | Marked as no longer true. | Marquée comme obsolète. |
+| `kb.make_live` | Make live again | Rétablir |
+| `kb.notice.superseded.document` | Superseded by {title} on {date}. | Remplacé le {date} par {title}. |
+| `kb.notice.superseded.memory` | Superseded by {title} on {date}. | Remplacée le {date} par {title}. |
+| `kb.notice.retired.document` | Retired by {author} on {date}. | Rendu obsolète le {date} par {author}. |
+| `kb.notice.retired.memory` | Retired by {author} on {date}. | Rendue obsolète le {date} par {author}. |
+| `kb.notice.conflict` | May contradict {id}. | Contredit peut-être {id}. |
+| `kb.notice.duplicate` | Possible duplicate of {id}. | Doublon possible de {id}. |
+| `kb.this_replaces` | This replaces it | Celle-ci la remplace |
+| `kb.replaced_toast` | {id} is now superseded by this. | {id} est désormais remplacée par celle-ci. |
+| `kb.merge_into_id` | Merge into {id} | Fusionner dans {id} |
+| `kb.merge_here` | Merge {id} into this | Fusionner {id} dans celle-ci |
+| `kb.merge_into` | Merge into... | Fusionner dans... |
+| `kb.merged` | Merged into {id}. | Fusionnée dans {id}. |
+| `kb.prop.branch` | Branch | Branche |
+| `kb.prop.sources` | Sources | Sources |
+| `kb.branch.merged` | merged | fusionnée |
+| `kb.branch.gone` | no longer exists | n'existe plus |
+| `kb.branch.tip` | True only on this branch, in {folder}. | Valable seulement sur cette branche, dans {folder}. |
+| `kb.source.entry` | {topic}, entry of {date} | {topic}, entrée du {date} |
+| `kb.source.missing` | A record not in this database | Un élément absent de cette base |
+| `kb.source.commit` | Commit {sha} | Commit {sha} |
+| `kb.source.copy_commit` | Copy commit id | Copier l'identifiant du commit |
+| `kb.source.copy_path` | {folder} · Copy path | {folder} · Copier le chemin |
+| `kb.source.changed` | changed since checked | modifié depuis la vérification |
+| `kb.source.gone` | deleted or moved | supprimé ou déplacé |
+| `kb.prov.from` | From topic {id} | Depuis le sujet {id} |
+| `kb.prov.branch` | On branch {branch} | Sur la branche {branch} |
+| `kb.prov.checked.document` | Checked {when} by {author} | Vérifié {when} par {author} |
+| `kb.prov.checked.memory` | Checked {when} by {author} | Vérifiée {when} par {author} |
+| `kb.session.on` | A Claude Code session on {topic} | Une session Claude Code sur {topic} |
+| `kb.session.any` | A Claude Code session | Une session Claude Code |
+| `kb.session.branch` | Branch {branch} | Branche {branch} |
+| `kb.also_open.memory` | Claude Code is working with this memory on {topic} | Claude Code travaille avec cette mémoire sur {topic} |
+| `kb.also_open.document` | Claude Code is working with this document on {topic} | Claude Code travaille avec ce document sur {topic} |
+| `kb.also_open.memory_any` | Claude Code is working with this memory | Claude Code travaille avec cette mémoire |
+| `kb.also_open.document_any` | Claude Code is working with this document | Claude Code travaille avec ce document |
+| `kb.also_open.read` | Last read {when} | Dernière lecture {when} |
+| `kb.also_open.wrote` | Last changed {when} | Dernière modification {when} |
+| `kb.save_merged` | Saved. Claude Code's changes to other sections are kept. | Enregistré. Les modifications de Claude Code dans les autres sections sont conservées. |
+| `kb.scan_found` | Found {n} possible duplicate. · Found {n} possible duplicates. | {n} doublon possible trouvé. · {n} doublons possibles trouvés. |
+| `kb.scan_show` | Show | Afficher |
+| `kb.scan_none` | No possible duplicates found. | Aucun doublon possible trouvé. |
 | `questions.new` | New question | Nouvelle question |
 | `questions.closed` | {n} closed | {n} close · {n} closes |
 | `questions.more_epic` | {n} more open in the topics of this epic | {n} autre en suspens dans les sujets de cet epic · {n} autres en suspens dans les sujets de cet epic |
@@ -479,6 +544,17 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `history.from_file.memory` | Created from file | Créée depuis un fichier |
 | `history.created.document` | Created | Créé |
 | `history.created.memory` | Created | Créée |
+| `history.verified.document` | Marked as still true | Marqué comme toujours valable |
+| `history.verified.memory` | Marked as still true | Marquée comme toujours valable |
+| `history.superseded.document` | Superseded by {id} | Remplacé par {id} |
+| `history.superseded.memory` | Superseded by {id} | Remplacée par {id} |
+| `history.retired.document` | Retired | Rendu obsolète |
+| `history.retired.memory` | Retired | Rendue obsolète |
+| `history.retired_reason.document` | Retired: {reason} | Rendu obsolète : {reason} |
+| `history.retired_reason.memory` | Retired: {reason} | Rendue obsolète : {reason} |
+| `history.made_live.document` | Made live again | Rétabli |
+| `history.made_live.memory` | Made live again | Rétablie |
+| `history.merged` | Merged {id} into this | Fusion de {id} |
 | `folders.title` | Working folders | Dossiers de travail |
 | `folders.from_epic` | from epic {name} | de l'epic {name} |
 | `folders.from_project` | from project {name} | du projet {name} |
@@ -596,7 +672,6 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `terminal.on_topic` | {id} {name} | {id} {name} |
 | `terminal.on_epic` | {id} {name} | {id} {name} |
 | `terminal.on_project` | project {name} | projet {name} |
-| `terminal.restart_here` | Restart here | Redémarrer ici |
 | `terminal.ended` | Session ended. {keys} to restart. | Session terminée. {keys} pour relancer. |
 | `terminal.ended_once` | Session ended. | Session terminée. |
 | `terminal.ask.title` | Where should Claude Code start? | Où Claude Code doit-il démarrer ? |
@@ -618,7 +693,6 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `terminal.missing.body.project` | Claude Code was not started: the active folder of project {name} is not on this computer. | Claude Code n'a pas été lancé : le dossier actif du projet {name} n'est pas sur cet ordinateur. |
 | `terminal.missing.other` | Or start in another folder: | Ou démarrer dans un autre dossier : |
 | `terminal.running_in` | (running in {name}) | (lancé dans {name}) |
-| `terminal.restart_in` | Restart in {name} | Redémarrer dans {name} |
 | `terminal.close.title` | Close the terminal? | Fermer le terminal ? |
 | `terminal.close.body` | Claude Code is still running in it. | Claude Code y est encore en cours d'exécution. |
 | `terminal.close.confirm` | Close terminal | Fermer le terminal |
@@ -687,6 +761,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `palette.commands` | Commands | Commandes |
 | `palette.projects` | Projects | Projets |
 | `palette.epics` | Epics | Epics |
+| `palette.content` | In content | Dans le contenu |
 | `palette.hint.open` | {keys} open | {keys} ouvrir |
 | `palette.hint.tab` | {keys} open in new tab | {keys} ouvrir dans un nouvel onglet |
 | `palette.hint.create` | {keys} create | {keys} créer |
@@ -703,7 +778,8 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `cmd.show_done_week` | Show topics done in the last 7 days | Afficher les sujets terminés ces 7 derniers jours |
 | `cmd.show_decided_week` | Show topics with a decision in the last 7 days | Afficher les sujets avec une décision ces 7 derniers jours |
 | `cmd.show_created_week` | Show topics created in the last 7 days | Afficher les sujets créés ces 7 derniers jours |
-| `cmd.show_stale_memories` | Show memories not updated for 90 days | Afficher les mémoires non mises à jour depuis 90 jours |
+| `cmd.show_to_check` | Show knowledge to check | Afficher les connaissances à vérifier |
+| `cmd.show_inactive` | Show superseded and retired | Afficher les éléments remplacés et obsolètes |
 | `cmd.show_questions_late` | Show questions past their answer date | Afficher les questions dont la date de réponse est passée |
 | `cmd.overview_more` | Overview: Show more | Vue d'ensemble : afficher plus |
 | `cmd.overview_less` | Overview: Show less | Vue d'ensemble : afficher moins |
@@ -745,6 +821,10 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `cmd.theme` | Theme: {value} | Thème : {value} |
 | `cmd.text_size` | Text size: {value} | Taille du texte : {value} |
 | `cmd.reading_width` | Reading width: {value} | Largeur de lecture : {value} |
+| `cmd.zoom_in` | Zoom in | Zoom avant |
+| `cmd.zoom_out` | Zoom out | Zoom arrière |
+| `cmd.zoom_reset` | Reset zoom | Réinitialiser le zoom |
+| `cmd.zoom_to` | Zoom: {value} | Zoom : {value} |
 | `cmd.language` | Language: {value} | Langue : {value} |
 | `cmd.new_project` | New project... | Nouveau projet... |
 | `cmd.tree_collapse_all` | Projects: Collapse all | Projets : tout replier |
@@ -755,7 +835,6 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `cmd.toggle_chat` | Toggle chat | Afficher ou masquer le chat |
 | `cmd.toggle_right` | Toggle right sidebar | Afficher ou masquer la barre latérale droite |
 | `cmd.toggle_bottom` | Toggle bottom panel | Afficher ou masquer le panneau du bas |
-| `cmd.restart_terminal` | Restart terminal here | Redémarrer le terminal ici |
 | `cmd.view_show` | {view}: Show | {view} : afficher |
 | `cmd.view_hide` | {view}: Hide | {view} : masquer |
 | `cmd.view_left` | {view}: Move to left sidebar | {view} : déplacer dans la barre latérale gauche |
@@ -788,11 +867,18 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `cmd.kb_from_file` | New document from file... | Nouveau document depuis un fichier... |
 | `cmd.kb_to_memory` | Change kind to memory | Convertir en mémoire |
 | `cmd.kb_to_document` | Change kind to document | Convertir en document |
+| `cmd.kb_verify` | Mark as still true | Marquer comme toujours valable |
+| `cmd.kb_retire` | Mark as no longer true | Marquer comme obsolète |
+| `cmd.kb_make_live` | Make live again | Rétablir |
+| `cmd.kb_merge` | Merge into... | Fusionner dans... |
+| `cmd.kb_keep_both` | Keep both {a} and {b} | Garder les deux : {a} et {b} |
+| `cmd.kb_replace` | Replace {id} with this | Remplacer {id} par celle-ci |
+| `cmd.kb_find_duplicates` | Find duplicate memories | Trouver les mémoires en double |
 | `cmd.go_heading` | Go to heading... | Aller au titre... |
 | `cmd.save_file` | Save as file... | Enregistrer comme fichier... |
 | `cmd.attach` | Attach files... | Joindre des fichiers... |
 | `cmd.attachment_save` | Save file as... | Enregistrer le fichier sous... |
-| `cmd.export` | Export... | Exporter... |
+| `cmd.export` | Back up... | Sauvegarder... |
 | `cmd.import` | Import... | Importer... |
 | `cmd.trash` | Open trash | Ouvrir la corbeille |
 | `cmd.snapshot` | Restore from snapshot... | Restaurer depuis un instantané... |
@@ -911,6 +997,8 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `settings.theme.dark` | Dark | Sombre |
 | `settings.language` | Language | Langue |
 | `settings.language.hint` | What you and Claude Code write is never translated. | Ce que vous et Claude Code écrivez n'est jamais traduit. |
+| `settings.zoom` | Zoom | Zoom |
+| `settings.zoom.hint` | Everything in the window. | Tout le contenu de la fenêtre. |
 | `settings.text_size` | Text size | Taille du texte |
 | `settings.text_size.hint` | Timelines, notes and documents. | Journaux, notes et documents. |
 | `settings.text_size.small` | Small | Petit |
@@ -949,8 +1037,10 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `settings.remove.body` | Removes Acta's plugin, permissions and status line from Claude Code, and turns its own memory back on. Your projects stay in Acta. | Retire de Claude Code le plugin, les autorisations et la ligne d'état d'Acta, et réactive sa propre mémoire. Vos projets restent dans Acta. |
 | `settings.remove.confirm` | Remove | Retirer |
 | `settings.data` | Data | Données |
-| `settings.export.last` | Last export: {days} (`time.days` or `time.today_word`) | Dernier export : {days} |
-| `settings.export.never` | Never exported | Jamais exporté |
+| `settings.export.last` | Last backup: {days} (`time.days` or `time.today_word`) | Dernière sauvegarde : {days} |
+| `settings.export.never` | Never backed up | Jamais sauvegardé |
+| `settings.reset.label` | All data | Toutes les données |
+| `settings.reset` | Reset Acta... | Réinitialiser Acta... |
 | `settings.snapshots.today` | {n} snapshot, from today, {time} · {n} snapshots, newest today, {time} | {n} instantané, d'aujourd'hui à {time} · {n} instantanés, le plus récent d'aujourd'hui à {time} |
 | `settings.snapshots.older` | {n} snapshot, from {datetime} · {n} snapshots, newest {datetime} | {n} instantané, du {datetime} · {n} instantanés, le plus récent du {datetime} |
 | `settings.snapshots` | Snapshots | Instantanés |
@@ -972,6 +1062,9 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `statusbar.last_wrote` | Last wrote {when} in {topic} | Dernière écriture {when} dans {topic} |
 | `statusbar.version` | Acta {version} | Acta {version} |
 | `status.claude.missing` | Claude Code: not installed | Claude Code : non installé |
+| `zoom.status` | Zoom {value} | Zoom {value} |
+| `zoom.status.tip` | Reset to 100% | Revenir à 100 % |
+| `zoom.limited` | You chose {chosen}. {applied} is the most this window can show. | Vous avez choisi {chosen}. Cette fenêtre ne peut pas afficher plus de {applied}. |
 | `status.claude.signed_out` | Claude Code: not signed in | Claude Code : non connecté |
 | `update.ready` | Restart to update | Redémarrer pour mettre à jour |
 | `update.done` | Updated to {version} | Mise à jour {version} installée |
@@ -980,20 +1073,25 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `updater.checking` | Checking for updates... | Recherche de mises à jour... |
 | `updater.downloading` | Downloading update... | Téléchargement de la mise à jour... |
 | `updater.restarting` | Restarting... | Redémarrage... |
-| `export.title` | Export | Exporter |
+| `export.title` | Back up | Sauvegarder |
 | `export.scope.all` | Everything | Tout |
 | `export.scope.project` | This project | Ce projet |
-| `export.warning` | The file is not encrypted: anyone who opens it can read these projects. | Le fichier n'est pas chiffré : quiconque l'ouvre peut lire ces projets. |
 | `export.include_files` | Include attached files ({size}) | Inclure les fichiers joints ({size}) |
-| `export.too_large` | With its files this export would be about {size}, more than an import can read ({limit}). Export without files: their names and sizes stay. | Avec ses fichiers, cet export ferait environ {size}, plus qu'un import ne peut en lire ({limit}). Exportez sans les fichiers : leurs noms et tailles sont conservés. |
-| `export.passphrase` | Protect with a passphrase | Protéger par une phrase secrète |
+| `export.too_large` | With its files this backup would be about {size}, more than an import can read ({limit}). Back up without files: their names and sizes stay. | Avec ses fichiers, cette sauvegarde ferait environ {size}, plus qu'un import ne peut en lire ({limit}). Sauvegardez sans les fichiers : leurs noms et tailles sont conservés. |
+| `export.passphrase` | Passphrase | Phrase secrète |
+| `export.passphrase.repeat` | Repeat the passphrase | Répétez la phrase secrète |
+| `export.passphrase.short` | At least {n} characters | Au moins {n} caractères |
+| `export.passphrase.weak` | Weak: a longer passphrase is safer | Faible : une phrase plus longue est plus sûre |
+| `export.passphrase.fair` | Fair: a few more words make it strong | Moyenne : quelques mots de plus la rendent solide |
+| `export.passphrase.strong` | Strong | Solide |
+| `export.passphrase.mismatch` | The two passphrases differ. | Les deux phrases secrètes diffèrent. |
 | `export.passphrase.lost` | Acta cannot recover a lost passphrase. | Acta ne peut pas retrouver une phrase secrète perdue. |
-| `export.choose` | Choose location... | Choisir l'emplacement... |
-| `export.done` | Exported {n} project to {file}. · Exported {n} projects to {file}. | {n} projet exporté vers {file}. · {n} projets exportés vers {file}. |
+| `export.choose` | Save backup... | Enregistrer la sauvegarde... |
+| `export.done` | Backed up {n} project to {file}. · Backed up {n} projects to {file}. | {n} projet sauvegardé dans {file}. · {n} projets sauvegardés dans {file}. |
 | `export.show` | Show in folder | Afficher dans le dossier |
-| `export.suggest` | Everything is on this computer only. An export is your copy if the keychain is lost. | Tout est sur cet ordinateur uniquement. Un export est votre copie si le trousseau est perdu. |
+| `export.suggest` | Everything is on this computer only. A backup is your copy if the keychain is lost. | Tout est sur cet ordinateur uniquement. Une sauvegarde est votre copie si le trousseau est perdu. |
 | `import.title` | Import "{file}" | Importer « {file} » |
-| `import.meta` | Exported {date} · format {n} · {projects} (`count.projects`) | Exporté le {date} · format {n} · {projects} |
+| `import.meta` | Backed up {date} · format {n} · {projects} (`count.projects`) | Sauvegardé le {date} · format {n} · {projects} |
 | `import.created` | Created | Créés |
 | `import.updated` | Updated | Mis à jour |
 | `import.skipped` | Skipped | Ignorés |
@@ -1012,12 +1110,26 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `import.count.updated` | {n} updated | {n} mis à jour |
 | `import.folders` | {n} working folder was not found on this computer. Locate it from its project, epic or topic. · {n} working folders were not found on this computer. Locate each one from its project, epic or topic. | {n} dossier de travail est introuvable sur cet ordinateur. Localisez-le depuis son projet, son epic ou son sujet. · {n} dossiers de travail sont introuvables sur cet ordinateur. Localisez chacun depuis son projet, son epic ou son sujet. |
 | `import.network_folders` | {n} working folder on a network path was left out. Add it again from its project, epic or topic. · {n} working folders on a network path were left out. Add each one again from its project, epic or topic. | {n} dossier de travail sur un chemin réseau a été écarté. Ajoutez-le de nouveau depuis son projet, son epic ou son sujet. · {n} dossiers de travail sur un chemin réseau ont été écartés. Ajoutez chacun de nouveau depuis son projet, son epic ou son sujet. |
-| `import.files_missing` | {n} file was not in the export. · {n} files were not in the export. | {n} fichier n'était pas dans l'export. · {n} fichiers n'étaient pas dans l'export. |
+| `import.files_missing` | {n} file was not in the backup. · {n} files were not in the backup. | {n} fichier n'était pas dans la sauvegarde. · {n} fichiers n'étaient pas dans la sauvegarde. |
 | `import.recovered_manual` | Commit modes come back as Manual: set them again in each folder's settings. | Les modes de commit reviennent en Manuel : redéfinissez-les dans les réglages de chaque dossier. |
 | `import.newer` | This file was made by a newer Acta (format {n}). Update Acta, then import it. | Ce fichier a été créé par une version plus récente d'Acta (format {n}). Mettez Acta à jour, puis importez-le. |
-| `import.not_acta` | This is not an Acta export. | Ce n'est pas un export Acta. |
-| `import.too_large` | This file is too large to import ({size}). The limit is {limit}. Export one project at a time, then import each file. | Ce fichier est trop volumineux pour être importé ({size}). La limite est de {limit}. Exportez un projet à la fois, puis importez chaque fichier. |
+| `import.not_acta` | This is not an Acta backup. | Ce n'est pas une sauvegarde Acta. |
+| `import.too_large` | This file is too large to import ({size}). The limit is {limit}. Back up one project at a time, then import each backup. | Ce fichier est trop volumineux pour être importé ({size}). La limite est de {limit}. Sauvegardez un projet à la fois, puis importez chaque sauvegarde. |
 | `import.wrong_passphrase` | Wrong passphrase. | Phrase secrète incorrecte. |
+| `import.damaged` | This backup is damaged or incomplete. Nothing was imported. | Cette sauvegarde est endommagée ou incomplète. Rien n'a été importé. |
+| `import.open` | Open | Ouvrir |
+| `reset.title` | Reset Acta? | Réinitialiser Acta ? |
+| `reset.body` | Erases everything in Acta. This cannot be undone. | Efface tout ce que contient Acta. C'est irréversible. |
+| `reset.kept` | The snapshots go too. Your settings, layout and voice models stay. | Les instantanés aussi. Vos réglages, votre disposition et les modèles vocaux sont conservés. |
+| `reset.backup` | Back up first... | Sauvegarder d'abord... |
+| `reset.sign_out` | Also sign out of the chat and browser | Me déconnecter aussi du chat et du navigateur |
+| `reset.voice_models` | Also delete the voice models | Supprimer aussi les modèles vocaux |
+| `reset.type` | Type {word} to confirm | Tapez {word} pour confirmer |
+| `reset.word` | reset | réinitialiser |
+| `reset.confirm` | Reset Acta | Réinitialiser Acta |
+| `reset.anyway` | Reset anyway | Réinitialiser quand même |
+| `reset.unreachable` | {n} folder could not be reached; it keeps Acta's settings for Claude Code. · {n} folders could not be reached; they keep Acta's settings for Claude Code. | {n} dossier est injoignable ; il garde les réglages d'Acta pour Claude Code. · {n} dossiers sont injoignables ; ils gardent les réglages d'Acta pour Claude Code. |
+| `reset.failed` | Acta could not reset: a Claude Code session still uses its data. Close Claude Code, then reset again. | Acta n'a pas pu se réinitialiser : une session Claude Code utilise encore ses données. Fermez Claude Code, puis recommencez. |
 | `trash.hint` | Deleted things stay here for 30 days. | Les éléments supprimés restent ici 30 jours. |
 | `trash.by` | by {author} | par {author} |
 | `trash.project_content` | {topics}, {notes} (`count.topics`, `count.notes`) | {topics}, {notes} |
@@ -1027,6 +1139,20 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `trash.empty` | Trash is empty. | La corbeille est vide. |
 | `trash.merged_into` | Merged into {name} | Fusionné avec : {name} |
 | `trash.kept_named` | Kept: still named in {n} place · Kept: still named in {n} places | Conservé : encore cité à {n} endroit · Conservé : encore cité à {n} endroits |
+| `trash.selected` | {n} selected | {n} sélectionné · {n} sélectionnés |
+| `trash.delete_selected` | Delete permanently... | Supprimer définitivement... |
+| `trash.empty_all` | Empty trash... | Vider la corbeille... |
+| `trash.restored_n` | {n} item restored. · {n} items restored. | {n} élément restauré. · {n} éléments restaurés. |
+| `trash.confirm_title` | Delete {n} item permanently? · Delete {n} items permanently? | Supprimer définitivement {n} élément ? · Supprimer définitivement {n} éléments ? |
+| `trash.confirm_empty_title` | Empty the trash? | Vider la corbeille ? |
+| `trash.confirm_body` | They are removed from Acta's database now and cannot be restored. Snapshots made before now still hold them until they are replaced. | Ils sont retirés dès maintenant de la base de données d'Acta et ne pourront pas être restaurés. Les sauvegardes déjà faites les gardent jusqu'à leur remplacement. |
+| `trash.confirm_project` | {n} project with {content} · {n} projects with {content} | {n} projet avec {content} · {n} projets avec {content} |
+| `trash.confirm_delete` | Delete permanently | Supprimer définitivement |
+| `trash.delete_failed` | Could not delete. The database is busy; try again. | Suppression impossible. La base de données est occupée ; réessayez. |
+| `trash.kept_tip` | Still named in Acta, so it cannot be deleted. | Encore cité dans Acta : il ne peut pas être supprimé. |
+| `cmd.trash_restore` | Restore selected | Restaurer la sélection |
+| `cmd.trash_delete` | Delete selected permanently... | Supprimer définitivement la sélection... |
+| `cmd.trash_empty` | Empty trash... | Vider la corbeille... |
 | `snapshot.daily` | Daily | Quotidien |
 | `snapshot.weekly` | Weekly | Hebdomadaire |
 | `snapshot.before_update` | Before update to {version} | Avant la mise à jour vers {version} |
@@ -1046,8 +1172,8 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `keychain.m` | the macOS Keychain | du trousseau macOS |
 | `keychain.l` | the Secret Service keyring | du service Secret Service |
 | `keyloss.untouched` | Acta has not changed the file: | Acta n'a pas modifié le fichier : |
-| `keyloss.import` | Import an export... | Importer un export... |
-| `keyloss.limit` | Without the key or an export, the content cannot be read. You can start empty; the file is kept as {file}. | Sans la clé ni export, le contenu ne peut pas être lu. Vous pouvez repartir de zéro ; le fichier est conservé sous le nom {file}. |
+| `keyloss.import` | Import a backup... | Importer une sauvegarde... |
+| `keyloss.limit` | Without the key or a backup, the content cannot be read. You can start empty; the file is kept as {file}. | Sans la clé ni sauvegarde, le contenu ne peut pas être lu. Vous pouvez repartir de zéro ; le fichier est conservé sous le nom {file}. |
 | `keyloss.start_empty` | Start empty | Repartir de zéro |
 | `openfail.title` | Acta could not open its database | Acta n'a pas pu ouvrir sa base de données |
 | `openfail.body` | Something on this computer kept Acta from reading its data. Nothing was changed. Try again; if it keeps failing, the log in the data folder says what failed. | Quelque chose sur cet ordinateur empêche Acta de lire ses données. Rien n'a été modifié. Réessayez ; si l'échec se répète, le journal du dossier de données indique la cause. |
@@ -1119,6 +1245,31 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `browser.failed.title` | The browser could not be started | Le navigateur n'a pas pu être démarré |
 | `browser.pipe.taken` | Claude Code cannot reach this browser: another copy of Acta, or another program, already serves it. Close it and restart Acta. | Claude Code ne peut pas joindre ce navigateur : une autre copie d'Acta, ou un autre programme, le sert déjà. Fermez-le et redémarrez Acta. |
 | `browser.pipe.failed` | Claude Code cannot reach this browser. Restart Acta; the log says why. | Claude Code ne peut pas joindre ce navigateur. Redémarrez Acta ; le journal indique pourquoi. |
+| `browser.devtools` | Open developer tools | Ouvrir les outils de développement |
+| `cmd.browser_devtools` | Agent browser: Open developer tools | Navigateur de l'agent : ouvrir les outils de développement |
+| `tool.owner` | {level} {id} {title} | {level} {id} {title} |
+| `tool.claude_n` | Claude {n} | Claude {n} |
+| `tool.chat_n` | Chat {n} | Chat {n} |
+| `tool.browser_n` | Browser {n} | Navigateur {n} |
+| `tool.browser_for` | Browser for Claude {n} | Navigateur de Claude {n} |
+| `tool.driven_by` | driven by Claude {n} | piloté par Claude {n} |
+| `tool.claude_start` | Start Claude Code here | Démarrer Claude Code ici |
+| `tool.claude_new` | New Claude Code session here | Nouvelle session Claude Code ici |
+| `tool.claude_none` | No Claude Code on this {level_lower} | Pas de Claude Code sur ce {level_lower} · Pas de Claude Code sur cet {level_lower} |
+| `tool.claude_none_body` | Starts in {folder} with what this {level_lower} knows. | Démarre dans {folder} avec ce que sait ce {level_lower}. |
+| `tool.no_owner` | Claude Code belongs to a project, an epic or a topic. Open one to start it or see its sessions. | Claude Code appartient à un projet, un epic ou un sujet. Ouvrez-en un pour le démarrer ou voir ses sessions. |
+| `tool.chat_new` | New chat here | Nouveau chat ici |
+| `tool.browser_new` | New browser here | Nouveau navigateur ici |
+| `tool.restart_in` | Restart in {folder} | Redémarrer dans {folder} |
+| `tool.limit` | {n} is the most on one page. | {n} au maximum sur une même page. |
+| `tool.free` | Claude Code (no project) | Claude Code (sans projet) |
+| `tool.free_context` | In your home folder, without Acta's context | Dans votre dossier personnel, sans le contexte d'Acta |
+| `tool.free_title` | Claude Code without a project | Claude Code sans projet |
+| `tool.free_body` | For work that needs no project: it starts in your home folder and knows nothing about Acta. | Pour un travail sans projet : il démarre dans votre dossier personnel et ne sait rien d'Acta. |
+| `tool.free_start` | Start | Démarrer |
+| `tool.free_new` | New Claude Code (no project) | Nouveau Claude Code (sans projet) |
+| `cmd.claude_restart` | Restart Claude Code | Redémarrer Claude Code |
+| `chat.clear_all_body` | This deletes the cookies and site data of every chat from this computer. Your conversations stay in your Claude account. | Cela supprime de cet ordinateur les cookies et données de site de tous les chats. Vos conversations restent dans votre compte Claude. |
 | `terminal.claude` | Claude | Claude |
 | `terminal.waiting` | waiting for you | vous attend |
 | `view.sessions` | Claude Code sessions | Sessions Claude Code |
@@ -1296,148 +1447,37 @@ In French, *contact* is masculine ("ajouté", "supprimé", "fusionné"); a conta
 
 ### 10.4.12 Keys of memory quality (ADR 0015)
 
-New with memory quality (2026-11-22; components-knowledge.md 5, Memory quality; components-records.md 5, Overview; screens.md 8.31 to 8.33). Pending: to be moved into 10.4 and `catalogue.rs` when the UI is implemented (PLAN.md, Memory quality, phase 5): `overview.to_check` in the place of `overview.memories`, `filter.to_check` and `filter.inactive` in the place of `filter.stale_memories`, `cmd.show_to_check` and `cmd.show_inactive` in the place of `cmd.show_stale_memories`, the other `cmd.kb_*` keys after `cmd.kb_to_document`, `history.*` after `history.created.memory`, the `kb.*` keys after `kb.no_results`.
+New with memory quality (2026-11-22; components-knowledge.md 5, Memory quality; components-records.md 5, Overview; screens.md 8.31 to 8.33). Moved into 10.4 and `catalogue.rs` when the UI was implemented (PLAN.md, Memory quality, phase 5; branch `gpui-engineer/memory-quality-ui`): `overview.to_check` in the place of `overview.memories`, `filter.to_check` and `filter.inactive` in the place of `filter.stale_memories`, `cmd.show_to_check` and `cmd.show_inactive` in the place of `cmd.show_stale_memories`, the other `cmd.kb_*` keys after `cmd.kb_to_document`, `history.*` after `history.created.memory`, the `kb.*` keys after `kb.no_results`.
 
-**Removed** from 10.4 when they move: `overview.memories`, `filter.stale_memories`, `cmd.show_stale_memories` (the 90-day count became "to check", which counts every reason the store computes and reads the verified date, not the last update).
+**Removed** from 10.4 when they moved: `overview.memories`, `filter.stale_memories`, `cmd.show_stale_memories` (the 90-day count became "to check", which counts every reason the store computes and reads the verified date, not the last update).
 
 **Reused**, not duplicated: Keep both is `contact.keep_both`; Move to epic / project in the notice are `kb.move_epic` and `kb.move_project`; Copied is `common.copied`; the stale-save notice is `conflict.notice`, `conflict.theirs`, `conflict.mine`; "Written by" is `kb.written.*`.
-
-| Key | English | French |
-|---|---|---|
-| `overview.to_check` | {n} memory to check · {n} memories to check | {n} mémoire à vérifier · {n} mémoires à vérifier |
-| `filter.to_check` | To check | À vérifier |
-| `filter.inactive` | Superseded and retired | Remplacés et obsolètes |
-| `kb.inactive_row` | {n} superseded or retired | {n} élément remplacé ou obsolète · {n} éléments remplacés ou obsolètes |
-| `kb.to_check_empty` | Nothing to check. | Rien à vérifier. |
-| `kb.inactive_empty` | Nothing is superseded or retired. | Aucun élément remplacé ou obsolète. |
-| `kb.reason.conflict` | May contradict {id} | Contredit peut-être {id} |
-| `kb.reason.duplicate` | Possible duplicate of {id} | Doublon possible de {id} |
-| `kb.reason.file_gone` | {file} was deleted or moved | {file} a été supprimé ou déplacé |
-| `kb.reason.file_gone_more` | {file} and {n} more file were deleted or moved · {file} and {n} more files were deleted or moved | {file} et {n} autre fichier ont été supprimés ou déplacés · {file} et {n} autres fichiers ont été supprimés ou déplacés |
-| `kb.reason.file_changed` | {file} changed since it was checked | {file} a changé depuis la dernière vérification |
-| `kb.reason.file_changed_more` | {file} and {n} more file changed since they were checked · {file} and {n} more files changed since they were checked | {file} et {n} autre fichier ont changé depuis la dernière vérification · {file} et {n} autres fichiers ont changé depuis la dernière vérification |
-| `kb.reason.branch_gone` | Branch {branch} no longer exists | La branche {branch} n'existe plus |
-| `kb.reason.branch_merged` | Branch {branch} was merged | La branche {branch} a été fusionnée |
-| `kb.reason.folder_removed` | Its folder was removed from Acta | Son dossier a été retiré d'Acta |
-| `kb.reason.topic_done` | Its topic is done | Son sujet est terminé |
-| `kb.reason.topic_dropped` | Its topic was dropped | Son sujet a été abandonné |
-| `kb.reason.old` | Not checked for {days} days | Non vérifiée depuis {days} jours |
-| `kb.verify` | Mark as still true | Marquer comme toujours valable |
-| `kb.retire` | Mark as no longer true | Marquer comme obsolète |
-| `kb.retired_toast.document` | Marked as no longer true. | Marqué comme obsolète. |
-| `kb.retired_toast.memory` | Marked as no longer true. | Marquée comme obsolète. |
-| `kb.make_live` | Make live again | Rétablir |
-| `kb.notice.superseded.document` | Superseded by {title} on {date}. | Remplacé le {date} par {title}. |
-| `kb.notice.superseded.memory` | Superseded by {title} on {date}. | Remplacée le {date} par {title}. |
-| `kb.notice.retired.document` | Retired by {author} on {date}. | Rendu obsolète le {date} par {author}. |
-| `kb.notice.retired.memory` | Retired by {author} on {date}. | Rendue obsolète le {date} par {author}. |
-| `kb.notice.conflict` | May contradict {id}. | Contredit peut-être {id}. |
-| `kb.notice.duplicate` | Possible duplicate of {id}. | Doublon possible de {id}. |
-| `kb.this_replaces` | This replaces it | Celle-ci la remplace |
-| `kb.replaced_toast` | {id} is now superseded by this. | {id} est désormais remplacée par celle-ci. |
-| `kb.merge_into_id` | Merge into {id} | Fusionner dans {id} |
-| `kb.merge_here` | Merge {id} into this | Fusionner {id} dans celle-ci |
-| `kb.merge_into` | Merge into... | Fusionner dans... |
-| `kb.merged` | Merged into {id}. | Fusionnée dans {id}. |
-| `kb.prop.branch` | Branch | Branche |
-| `kb.prop.sources` | Sources | Sources |
-| `kb.branch.merged` | merged | fusionnée |
-| `kb.branch.gone` | no longer exists | n'existe plus |
-| `kb.branch.tip` | True only on this branch, in {folder}. | Valable seulement sur cette branche, dans {folder}. |
-| `kb.source.entry` | {topic}, entry of {date} | {topic}, entrée du {date} |
-| `kb.source.missing` | A record not in this database | Un élément absent de cette base |
-| `kb.source.commit` | Commit {sha} | Commit {sha} |
-| `kb.source.copy_commit` | Copy commit id | Copier l'identifiant du commit |
-| `kb.source.copy_path` | {folder} · Copy path | {folder} · Copier le chemin |
-| `kb.source.changed` | changed since checked | modifié depuis la vérification |
-| `kb.source.gone` | deleted or moved | supprimé ou déplacé |
-| `kb.prov.from` | From topic {id} | Depuis le sujet {id} |
-| `kb.prov.branch` | On branch {branch} | Sur la branche {branch} |
-| `kb.prov.checked.document` | Checked {when} by {author} | Vérifié {when} par {author} |
-| `kb.prov.checked.memory` | Checked {when} by {author} | Vérifiée {when} par {author} |
-| `kb.session.on` | A Claude Code session on {topic} | Une session Claude Code sur {topic} |
-| `kb.session.any` | A Claude Code session | Une session Claude Code |
-| `kb.session.branch` | Branch {branch} | Branche {branch} |
-| `kb.also_open.memory` | Claude Code is working with this memory on {topic} | Claude Code travaille avec cette mémoire sur {topic} |
-| `kb.also_open.document` | Claude Code is working with this document on {topic} | Claude Code travaille avec ce document sur {topic} |
-| `kb.also_open.memory_any` | Claude Code is working with this memory | Claude Code travaille avec cette mémoire |
-| `kb.also_open.document_any` | Claude Code is working with this document | Claude Code travaille avec ce document |
-| `kb.also_open.read` | Last read {when} | Dernière lecture {when} |
-| `kb.also_open.wrote` | Last changed {when} | Dernière modification {when} |
-| `kb.save_merged` | Saved. Claude Code's changes to other sections are kept. | Enregistré. Les modifications de Claude Code dans les autres sections sont conservées. |
-| `kb.scan_found` | Found {n} possible duplicate. · Found {n} possible duplicates. | {n} doublon possible trouvé. · {n} doublons possibles trouvés. |
-| `kb.scan_show` | Show | Afficher |
-| `kb.scan_none` | No possible duplicates found. | Aucun doublon possible trouvé. |
-| `history.verified.document` | Marked as still true | Marqué comme toujours valable |
-| `history.verified.memory` | Marked as still true | Marquée comme toujours valable |
-| `history.superseded.document` | Superseded by {id} | Remplacé par {id} |
-| `history.superseded.memory` | Superseded by {id} | Remplacée par {id} |
-| `history.retired.document` | Retired | Rendu obsolète |
-| `history.retired.memory` | Retired | Rendue obsolète |
-| `history.retired_reason.document` | Retired: {reason} | Rendu obsolète : {reason} |
-| `history.retired_reason.memory` | Retired: {reason} | Rendue obsolète : {reason} |
-| `history.made_live.document` | Made live again | Rétabli |
-| `history.made_live.memory` | Made live again | Rétablie |
-| `history.merged` | Merged {id} into this | Fusion de {id} |
-| `cmd.show_to_check` | Show knowledge to check | Afficher les connaissances à vérifier |
-| `cmd.show_inactive` | Show superseded and retired | Afficher les éléments remplacés et obsolètes |
-| `cmd.kb_verify` | Mark as still true | Marquer comme toujours valable |
-| `cmd.kb_retire` | Mark as no longer true | Marquer comme obsolète |
-| `cmd.kb_make_live` | Make live again | Rétablir |
-| `cmd.kb_merge` | Merge into... | Fusionner dans... |
-| `cmd.kb_keep_both` | Keep both {a} and {b} | Garder les deux : {a} et {b} |
-| `cmd.kb_replace` | Replace {id} with this | Remplacer {id} par celle-ci |
-| `cmd.kb_find_duplicates` | Find duplicate memories | Trouver les mémoires en double |
 
 Notes. *Mémoire* is feminine and *document* masculine, hence the `.document` / `.memory` pairs wherever a participle agrees; conflicts, duplicates and merges concern memories only, so their strings are written in the feminine ("Celle-ci la remplace", "Fusionnée dans"). *Remplacés et obsolètes* and *élément* agree with a mixed set of documents and memories (masculine plural, as `import.safe` already uses *éléments*). "Retired" is the English state word and "Mark as no longer true" the act that produces it; French uses *obsolète* for both, since a literal "retirée" collides with *Retirer* (remove a folder). "Still true" is *toujours valable* rather than *vraie* so that one form fits both kinds. `{id}` is a knowledge id (`K-4`) in `type.code` as the meta line shows it, never translated; `{title}` and `{reason}` are what Claude Code or the human wrote, as written; `{file}` is a file name (the last path segment) and `{branch}` a branch as git has it, both in `type.code`; `{folder}` a working folder's name; `{topic}` a topic id (`T-12`) with its title as the tooltip; `{date}` the absolute date and `{when}` the long form of 10.2; `{days}` is always 90 or more, so the singular form is not needed. The reason lines have no final full stop (they are tooltip and notice lines, one per reason); the notice messages that are sentences do. Agent-facing text (`?old 140d`, `?dup K-4`, `ok K-4 verified (rev 3)`, `K-9 superseded by K-21 on 11-20`) is protocol, English only, and not in this catalogue (10).
 
 ### 10.4.13 Keys of zoom and section folds
 
-New with zoom and section folds (2026-11-22; layout.md 4.9, components-records.md 5 Section fold, screens.md 8.34 and 8.35). Pending: to be moved into 10.4 and `catalogue.rs` when they are implemented, `cmd.zoom*` and `cmd.sections_*` after `cmd.reading_width`, `settings.zoom*` after `settings.language.hint`, `zoom.*` beside the status bar's keys, `section.*` after `section.timeline`. `{value}`, `{applied}` and `{chosen}` are percents in the form of 10.2 ("150%", "150 %" with U+202F). `{section}` is the section's own label key (`section.timeline`, ...), in French between « » because it is a name inside a sentence.
+New with zoom and section folds (2026-11-22; layout.md 4.9, components-records.md 5 Section fold, screens.md 8.34 and 8.35). The zoom keys are in 10.4 and `catalogue.rs` since `gpui-engineer/zoom-trash`, "Zoom: {value}" as `cmd.zoom_to` because `cmd.zoom` was already "Maximize focused area"; the `cmd.sections_*` and `section.*` keys are still pending, to be moved into 10.4 and `catalogue.rs` when they are implemented, `cmd.zoom*` and `cmd.sections_*` after `cmd.reading_width`, `settings.zoom*` after `settings.language.hint`, `zoom.*` beside the status bar's keys, `section.*` after `section.timeline`. `{value}`, `{applied}` and `{chosen}` are percents in the form of 10.2 ("150%", "150 %" with U+202F). `{section}` is the section's own label key (`section.timeline`, ...), in French between « » because it is a name inside a sentence.
 
 **Reused**, not duplicated: the folded Topics count is `table.count`; the stepper of the Zoom row is the Terminal text size row's.
 
 | Key | English | French |
 |---|---|---|
-| `cmd.zoom_in` | Zoom in | Zoom avant |
-| `cmd.zoom_out` | Zoom out | Zoom arrière |
-| `cmd.zoom_reset` | Reset zoom | Réinitialiser le zoom |
-| `cmd.zoom` | Zoom: {value} | Zoom : {value} |
 | `cmd.sections_collapse` | Collapse all sections | Replier toutes les sections |
 | `cmd.sections_expand` | Expand all sections | Déplier toutes les sections |
-| `settings.zoom` | Zoom | Zoom |
-| `settings.zoom.hint` | Everything in the window. | Tout le contenu de la fenêtre. |
-| `zoom.status` | Zoom {value} | Zoom {value} |
-| `zoom.status.tip` | Reset to 100% | Revenir à 100 % |
-| `zoom.limited` | You chose {chosen}. {applied} is the most this window can show. | Vous avez choisi {chosen}. Cette fenêtre ne peut pas afficher plus de {applied}. |
 | `section.fold` | Collapse {section} | Replier « {section} » |
 | `section.unfold` | Expand {section} | Déplier « {section} » |
 | `section.count.entries` | {n} entry · {n} entries | {n} entrée · {n} entrées |
 
 ### 10.4.14 Keys of the trash's selection and purge
 
-New with the user's ruling of 2026-11-22 (components-app.md 5, Trash page; data.md 11, request 25; ADR 0006 amendment). Pending: to be moved into 10.4 and `catalogue.rs` with the `trash.*` family when implemented. Palette commands follow the toolbar: "Restore selected", "Delete selected permanently...", "Empty trash..." (on the trash page only).
+New with the user's ruling of 2026-11-22 (components-app.md 5, Trash page; data.md 11, request 25; ADR 0006 amendment). In `catalogue.rs` with the `trash.*` family since `gpui-engineer/zoom-trash`, with one key the build needed and this table lacked: `count.items` "{n} item · {n} items" / « {n} élément · {n} éléments », the total that opens the body of "Empty the trash?". The project line uses `trash.project_content` for `{content}` ("31 topics, 12 notes"). Palette commands follow the toolbar: "Restore selected", "Delete selected permanently...", "Empty trash..." (on the trash page only).
 
-| Key | English | French |
-|---|---|---|
-| `trash.selected` | {n} selected | {n} sélectionné · {n} sélectionnés |
-| `trash.delete_selected` | Delete permanently... | Supprimer définitivement... |
-| `trash.empty_all` | Empty trash... | Vider la corbeille... |
-| `trash.restored_n` | {n} item restored. · {n} items restored. | {n} élément restauré. · {n} éléments restaurés. |
-| `trash.confirm_title` | Delete {n} item permanently? · Delete {n} items permanently? | Supprimer définitivement {n} élément ? · Supprimer définitivement {n} éléments ? |
-| `trash.confirm_empty_title` | Empty the trash? | Vider la corbeille ? |
-| `trash.confirm_body` | They are removed from Acta's database now and cannot be restored. Snapshots made before today still hold them until they are replaced. | Ils sont retirés dès maintenant de la base de données d'Acta et ne pourront pas être restaurés. Les sauvegardes faites avant aujourd'hui les conservent jusqu'à leur remplacement. |
-| `trash.confirm_project` | {n} project with {content} · {n} projects with {content} | {n} projet avec {content} · {n} projets avec {content} |
-| `trash.confirm_delete` | Delete permanently | Supprimer définitivement |
-| `trash.delete_failed` | Could not delete. The database is busy; try again. | Suppression impossible. La base de données est occupée ; réessayez. |
-| `trash.kept_tip` | Still named in Acta, so it cannot be deleted. | Encore cité dans Acta : il ne peut pas être supprimé. |
-| `cmd.trash_restore` | Restore selected | Restaurer la sélection |
-| `cmd.trash_delete` | Delete selected permanently... | Supprimer définitivement la sélection... |
-| `cmd.trash_empty` | Empty trash... | Vider la corbeille... |
+Every row is now in 10.4.
 
 ### 10.4.15 Keys of the agent browser's developer tools
 
-New with the user's request of 2026-11-22 (components-app.md 5, Agent browser). Pending: into 10.4 after the `browser.*` keys when implemented.
+New with the user's request of 2026-11-22 (components-app.md 5, Agent browser). **Moved into 10.4** after the `browser.*` keys (branch `gpui-engineer/page-sessions`).
 
 | Key | English | French |
 |---|---|---|
@@ -1460,7 +1500,7 @@ From the user's rule of 2026-11-22 (components-records.md 5, Who writes what; da
 
 ### 10.4.17 Keys of page-bound tools and Claude Code (no project)
 
-From the user's decisions of 2026-11-22 (layout.md 4.5.1, data.md 11 request 27). Pending until implemented. `{level}` is the `level.*` word ("Topic", "Epic", "Project"; in French « Sujet », « Epic », « Projet »), `{id}` the short id, `{title}` the record's title as written, `{folder}` a folder's name, `{n}` the instance number.
+From the user's decisions of 2026-11-22 (layout.md 4.5.1, data.md 11 request 27). **Moved into 10.4** after `cmd.browser_devtools` (branch `gpui-engineer/page-sessions`); `terminal.restart_here`, `terminal.restart_in` and `cmd.restart_terminal` were removed. `tool.claude_none` is a two-form key in French, chosen by elision (one: « ce », other: « cet »). `{level}` is the `level.*` word ("Topic", "Epic", "Project"; in French « Sujet », « Epic », « Projet »), `{id}` the short id, `{title}` the record's title as written, `{folder}` a folder's name, `{n}` the instance number.
 
 **Replaced** when it lands: `cmd.restart_terminal` ("Restart terminal here") by `cmd.claude_restart`; the terminal header's "Restart here" by `tool.restart_in` alone.
 
@@ -1656,3 +1696,7 @@ From the user's request of 2026-11-22 (components-editor.md 5). Pending until im
 | `kb.rev_unchecked` | Unchecked “{item}” | « {item} » décoché |
 
 The palette lists the `cmd.md_*` commands, the heading and list commands and Quote only while a Markdown editor has focus, each with its key from components-editor.md 5. In French the alert word Attention is the usual rendering of GitHub's "Warning" and Prudence of "Caution"; `md.image_blocked` agrees with *image* (feminine).
+
+### 10.4.22 Keys of backups and reset
+
+From the user's decisions of 2026-11-22 (ADR 0006 amendment; components-app.md 5, Back up dialog, Import and Reset). Moved into 10.4 and `catalogue.rs` with the implementation (branch `integration-engineer/passphrase-backup`). A backup is the only export and is always encrypted, so "export" becomes "back up" / *sauvegarder* in what the human reads: `cmd.export`, `settings.export.last`, `settings.export.never`, `export.title`, `export.too_large`, `export.choose`, `export.done`, `export.suggest`, `import.meta`, `import.files_missing`, `import.not_acta`, `import.too_large`, `keyloss.import` and `keyloss.limit` changed; `export.passphrase` is now the field's placeholder. Retired: `export.warning` (no plaintext file is written any more; the row in 10.4.10 above is history). New after `export.passphrase`: `export.passphrase.repeat`, `.short`, `.weak`, `.fair`, `.strong`, `.mismatch`; after `import.wrong_passphrase`: `import.damaged`, `import.open`, then the `reset.*` keys (with `reset.anyway` and `reset.unreachable` for unreachable folders); `count.files` and `count.contacts` after `count.memories` (the reset's counts); after `settings.export.never`: `settings.reset.label` and `settings.reset`. In French *sauvegarde* is feminine ("Une sauvegarde est votre copie"); the strength words agree with *phrase* (« Moyenne », « Solide »). `{n}` in `export.passphrase.short` is always 8. `{word}` in `reset.type` is `reset.word`, the word the human types, which is the language's own (« réinitialiser »), matched in either case.

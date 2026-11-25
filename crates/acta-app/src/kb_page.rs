@@ -2,24 +2,26 @@
 //! with its editor and history (docs/design/components-knowledge.md 5;
 //! screens.md 8.7, 8.10).
 
+use crate::zoom::px;
 use acta_core::model::{
     Author, ChangeKind, KbEntry, KbId, KbKind, KbSummary, Level, Owner, PageReq, ProjectId, Record,
 };
 use acta_core::store::{
-    KbEdit, KbFilter, KbRevisionSummary, KbUpdate, NewKb, SearchKind, SearchQuery,
+    KbEdit, KbFilter, KbRevisionSummary, KbStates, KbUpdate, NewKb, SearchKind, SearchQuery,
 };
 use gpui_kit::component::input::{Escape, Input, InputEvent, InputState, Textarea, TextareaState};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, ParentElement, Render, StatefulInteractiveElement, Styled,
-    Subscription, Task, Window, div, px,
+    Subscription, Task, Window, div,
 };
 
 use crate::diff::{self, Change};
 use crate::i18n::{Arg, Key, KeyName, Locale, number, text, tr};
 use crate::icons::{Icon, icon};
-use crate::kb_model::{self, Filters};
+use crate::kb_model::{self, Chip, Filters};
+use crate::kbq_model::by_kind;
 use crate::markdown_view;
 use crate::menu;
 use crate::record_page::PageEvent;
@@ -73,13 +75,39 @@ fn owner_route(owner: Owner) -> Route {
     }
 }
 
-/// A knowledge row: kind icon, title, summary (or excerpt), the unread
-/// dot, compact time (docs/design/components-knowledge.md 5). Under a column of
-/// 520 the summary takes a second line and the row is 52.
+/// What a knowledge row's signal slot holds (components-knowledge.md 5):
+/// at most one mark, the unread dot winning while it is there.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Signal {
+    None,
+    Unread,
+    /// The to-check mark, its tooltip the reasons, one per line.
+    Flag(Vec<String>),
+}
+
+impl Signal {
+    /// The slot of a row: the dot while unread, else the mark of its
+    /// reasons.
+    pub(crate) fn of(unread: bool, reasons: &[crate::kbq_model::Reason], locale: Locale) -> Self {
+        if unread {
+            Signal::Unread
+        } else if reasons.is_empty() {
+            Signal::None
+        } else {
+            Signal::Flag(crate::kbq_ui::reason_lines(reasons, locale))
+        }
+    }
+}
+
+/// A knowledge row: kind icon, title, summary (or excerpt), the signal
+/// slot, compact time (docs/design/components-knowledge.md 5). Under a
+/// column of 520 the summary takes a second line and the row is 52. A
+/// superseded or retired entry's title is `text.secondary` (`dimmed`).
 pub(crate) fn kb_row(
     entry: &KbSummary,
     excerpt: Option<&str>,
-    unread: bool,
+    signal: Signal,
+    dimmed: bool,
     index: usize,
     locale: Locale,
     t: &Tokens,
@@ -126,14 +154,18 @@ pub(crate) fn kb_row(
     let title = type_scale::UI
         .el()
         .truncate()
-        .text_color(t.text_primary)
+        .text_color(if dimmed {
+            t.text_secondary
+        } else {
+            t.text_primary
+        })
         .child(entry.title.clone());
     let title = if two_line {
         title.flex_1().min_w_0()
     } else {
         title.flex_shrink_0().max_w(gpui_kit::relative(0.4))
     };
-    // The unread dot, then the time; who wrote it last is the time's
+    // The signal slot, then the time; who wrote it last is the time's
     // tooltip (clarity review 2026-11-22: no author mark on rows).
     let tip = {
         let when = when::long(locale, entry.updated_at);
@@ -145,11 +177,26 @@ pub(crate) fn kb_row(
         )
     };
     let trailing = || -> Vec<AnyElement> {
-        let mut out = Vec::new();
-        if unread {
-            out.push(ui::unread_dot(t).into_any_element());
-        }
-        out.push(
+        // Always reserved (16), so nothing moves when it fills.
+        let slot = div()
+            .id(("kb-row-signal", index))
+            .w(px(16.))
+            .h(px(16.))
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .justify_center();
+        let slot = match signal.clone() {
+            Signal::None => slot,
+            Signal::Unread => slot.child(ui::unread_dot(t)),
+            Signal::Flag(lines) => slot.tooltip(ui::tip(lines.join("\n"))).child(icon(
+                Icon::Flag,
+                14.,
+                t.text_secondary,
+            )),
+        };
+        vec![
+            slot.into_any_element(),
             type_scale::SMALL
                 .el()
                 .id(("kb-row-time", index))
@@ -161,8 +208,7 @@ pub(crate) fn kb_row(
                 .tooltip(ui::tip(tip.clone()))
                 .child(when::compact(locale, entry.updated_at))
                 .into_any_element(),
-        );
-        out
+        ]
     };
     let row = ui::focusable(div().id(("kb-row", index)), t, false)
         .px(px(8.))
@@ -204,6 +250,85 @@ pub(crate) fn kb_row(
     }
 }
 
+/// What an unfolded memory shows under its row (components-knowledge.md
+/// 5): its one notice, inset 32 like the body, then the body and Open.
+/// `q` is the entry's quality facts once loaded.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn unfolded<T: EventEmitter<PageEvent> + 'static>(
+    id: KbId,
+    index: usize,
+    q: Option<&crate::kbq_ui::EntryQuality>,
+    reasons: &[crate::kbq_model::Reason],
+    ws: &Entity<Workspace>,
+    locale: Locale,
+    t: &Tokens,
+    cx: &mut Context<T>,
+) -> AnyElement {
+    let notice = q
+        .filter(|q| q.entry.id == id)
+        .and_then(|q| crate::kbq_ui::NoticeFacts::of(q, reasons))
+        .map(|f| {
+            let page = cx.entity().downgrade();
+            let on_merged: crate::kbq_ui::OnMerged = std::rc::Rc::new(move |survivor, _, cx| {
+                let _ = page.update(cx, |_, cx| cx.emit(PageEvent::EditKb(survivor)));
+            });
+            crate::kbq_ui::notice_el(&f, ws, on_merged, locale, t, cx)
+        });
+    let body = q
+        .filter(|q| q.entry.id == id)
+        .map(|q| q.entry.body.clone())
+        .unwrap_or_default();
+    div()
+        .pl(px(32.))
+        .pb(px(8.))
+        .flex()
+        .flex_col()
+        .gap(px(4.))
+        .children(notice.map(|n| div().pb(px(8.)).child(n)))
+        .child(
+            type_scale::READING
+                .el()
+                .text_color(t.text_primary)
+                .child(body),
+        )
+        .child(
+            div().ml(px(-12.)).child(
+                ui::button(
+                    ("kb-open", index),
+                    text(locale, Key::CommonOpen),
+                    Variant::Ghost,
+                    false,
+                    t,
+                )
+                .on_click(cx.listener(move |_, _, _, cx| cx.emit(PageEvent::Open(Route::Kb(id))))),
+            ),
+        )
+        .into_any_element()
+}
+
+/// What the palette offers on a knowledge entry (interaction.md 6.1).
+pub(crate) fn focused_kb(
+    entry: &KbSummary,
+    reasons: &[crate::kbq_model::Reason],
+) -> crate::commands::FocusedKb {
+    use crate::kbq_model::Reason;
+    crate::commands::FocusedKb {
+        id: entry.id,
+        rev: entry.rev,
+        owner: entry.owner,
+        memory: entry.kind == KbKind::Memory,
+        live: entry.state == acta_core::model::KbState::Live,
+        conflict: reasons.iter().find_map(|r| match r {
+            Reason::Conflict(id) => Some(*id),
+            _ => None,
+        }),
+        duplicate: reasons.iter().find_map(|r| match r {
+            Reason::Duplicate(id) => Some(*id),
+            _ => None,
+        }),
+    }
+}
+
 // ---- knowledge base page ----
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -217,6 +342,8 @@ pub struct KnowledgePage {
     ws: Entity<Workspace>,
     pub project: ProjectId,
     entries: Vec<KbSummary>,
+    /// Superseded and retired entries, the most recent state change first.
+    inactive: Vec<KbSummary>,
     /// Search hits: entry id and its excerpt; `None` when not searching.
     hits: Option<Vec<(KbId, String)>>,
     search: Entity<InputState>,
@@ -225,19 +352,30 @@ pub struct KnowledgePage {
     /// Where the open filter menu hangs.
     menu_anchor: menu::AnchorBounds,
     open_memory: Option<KbId>,
+    /// The unfolded memory's notice facts and body, once loaded.
+    open_q: Option<crate::kbq_ui::EntryQuality>,
     /// Shown as the Knowledge view (workbench.md 4.8.3): no title, no
     /// meta line, following the active project.
     as_view: bool,
-    /// The Overview's chip "Not updated for 90 days" (components-records.md
-    /// 5): only these memories, oldest first; `None` without the chip.
-    stale: Option<Vec<KbId>>,
+    /// The chip "To check" or "Superseded and retired" (components-
+    /// knowledge.md 5), and the rows it lists: a row never leaves under
+    /// the reader until the chip changes.
+    chip: Option<Chip>,
+    listed: Vec<KbId>,
+    /// The chip's list arrived (its empty line may show).
+    listed_ready: bool,
+    flags: crate::kbq_model::FlagSet,
     /// One focus handle per row in the order drawn: `Up` / `Down` move
     /// between them; opened from the Overview, the first takes the focus
     /// once the list is loaded (as the topic table does).
     row_focus: Vec<FocusHandle>,
+    /// The entry of each row drawn, in order (the palette's target).
+    row_ids: Vec<KbId>,
     focus_first_row: bool,
     seen_revision: u64,
     _load: Task<()>,
+    _git: Task<()>,
+    _open: Task<()>,
     _search: Task<()>,
     _subs: Vec<Subscription>,
 }
@@ -261,22 +399,24 @@ impl KnowledgePage {
         Self::build(ws, project, filters, false, window, cx)
     }
 
-    /// The Overview's memory line: Kind Memories with the chip "Not
-    /// updated for 90 days", oldest first. The chip is not saved (4.7).
-    pub fn new_stale(
+    /// The page with a chip set: "To check" from the Overview (Kind:
+    /// Memories) or the palette (every kind), "Superseded and retired"
+    /// from the palette. The chip is not saved (4.7).
+    pub fn new_chip(
         ws: Entity<Workspace>,
         project: ProjectId,
+        chip: Chip,
+        kind: Option<KbKind>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let filters = Filters {
-            kind: Some(KbKind::Memory),
+            kind,
             ..Filters::default()
         };
         let mut page = Self::build(ws, project, filters, false, window, cx);
-        page.stale = Some(Vec::new());
+        page.chip = Some(chip);
         page.focus_first_row = true;
-        page.reload(cx);
         page
     }
 
@@ -320,18 +460,26 @@ impl KnowledgePage {
             ws,
             project,
             entries: Vec::new(),
+            inactive: Vec::new(),
             hits: None,
             search,
             filters,
             menu: None,
             menu_anchor: Default::default(),
             open_memory: None,
+            open_q: None,
             as_view,
-            stale: None,
+            chip: None,
+            listed: Vec::new(),
+            listed_ready: false,
+            flags: Default::default(),
             row_focus: Vec::new(),
+            row_ids: Vec::new(),
             focus_first_row: false,
             seen_revision: 0,
             _load: Task::ready(()),
+            _git: Task::ready(()),
+            _open: Task::ready(()),
             _search: Task::ready(()),
             _subs: subs,
         };
@@ -341,53 +489,181 @@ impl KnowledgePage {
 
     fn reload(&mut self, cx: &mut Context<Self>) {
         let project = self.project;
-        let stale = self.stale.is_some();
         let today = crate::due::today(cx);
         let task = self.ws.read(cx).db.run(cx, move |store| {
-            let entries = store.kb_rollup(
-                Owner::Project(project),
-                &KbFilter::default(),
-                PageReq::first(PageReq::MAX_LIMIT),
-            )?;
-            // The chip's list is the Overview's own query.
-            let stale = if stale {
-                let items = store.overview_list(
-                    acta_core::store::Scope::Project(project),
-                    acta_core::store::OverviewFilter::StaleMemories,
-                    today,
-                    acta_core::date::Zone::system(),
-                )?;
-                Some(
-                    items
-                        .into_iter()
-                        .filter_map(|i| match i.record {
-                            Record::Kb(id) => Some(id),
-                            _ => None,
-                        })
-                        .collect::<Vec<_>>(),
-                )
-            } else {
-                None
-            };
-            Ok((entries, stale))
+            let entries = store
+                .kb_rollup(
+                    Owner::Project(project),
+                    &KbFilter::default(),
+                    PageReq::first(PageReq::MAX_LIMIT),
+                )?
+                .items;
+            let mut inactive = store
+                .kb_rollup(
+                    Owner::Project(project),
+                    &KbFilter {
+                        states: KbStates::Inactive,
+                        ..KbFilter::default()
+                    },
+                    PageReq::first(PageReq::MAX_LIMIT),
+                )?
+                .items;
+            // A state change is a revision: the newest one first.
+            inactive.sort_by_key(|a| std::cmp::Reverse(a.updated_at));
+            let ids: Vec<KbId> = entries.iter().map(|e| e.id).collect();
+            let flags = crate::kbq_ui::store_flags_of(store, &ids, today)?;
+            Ok((entries, inactive, flags))
         });
         self._load = cx.spawn(async move |page, cx| {
             let loaded = task.await;
             let _ = page.update(cx, |page, cx| {
-                if let Ok((entries, stale)) = loaded {
-                    page.entries = entries.items;
-                    if page.stale.is_some() {
-                        page.stale = stale;
-                    }
+                if let Ok((entries, inactive, flags)) = loaded {
+                    let ids: Vec<KbId> = entries.iter().map(|e| e.id).collect();
+                    page.entries = entries;
+                    page.inactive = inactive;
+                    page.flags.set_store(flags);
+                    page.relist();
+                    page.read_git(ids, cx);
                 }
+                cx.notify();
+            });
+        });
+        if let Some(id) = self.open_memory {
+            self.load_open(id, cx);
+        }
+    }
+
+    /// Git's flags of the listed entries arrive later, without moving
+    /// anything (the signal slot is reserved).
+    fn read_git(&mut self, ids: Vec<KbId>, cx: &mut Context<Self>) {
+        let task = crate::kbq_ui::list_git(&self.ws, ids, cx);
+        self._git = cx.spawn(async move |page, cx| {
+            let flags = task.await;
+            let _ = page.update(cx, |page, cx| {
+                page.flags.set_git(flags);
+                page.relist();
                 cx.notify();
             });
         });
     }
 
-    /// The filter chip "Not updated for 90 days" (components-records.md 5,
-    /// Filter chip): after the dropdowns; its `x` or `Backspace` clears it.
-    fn render_stale_chip(&self, locale: Locale, t: &Tokens, cx: &mut Context<Self>) -> AnyElement {
+    /// The unfolded memory's notice and body.
+    fn load_open(&mut self, id: KbId, cx: &mut Context<Self>) {
+        let task = crate::kbq_ui::load_entry(&self.ws, id, cx);
+        self._open = cx.spawn(async move |page, cx| {
+            if let Ok(q) = task.await {
+                let _ = page.update(cx, |page, cx| {
+                    if page.open_memory == Some(q.entry.id) {
+                        page.open_q = Some(q);
+                    }
+                    cx.notify();
+                });
+            }
+        });
+    }
+
+    /// The chip's rows: the ones listed stay, new ones join in their
+    /// place (components-knowledge.md 5).
+    fn relist(&mut self) {
+        let fresh: Vec<KbId> = match self.chip {
+            None => {
+                self.listed.clear();
+                return;
+            }
+            Some(Chip::ToCheck) => {
+                let mut flagged: Vec<(KbId, Vec<crate::kbq_model::Reason>, i64)> = self
+                    .entries
+                    .iter()
+                    .filter_map(|e| {
+                        let r = self.flags.reasons(e.id);
+                        (!r.is_empty()).then_some((e.id, r, e.verified_at))
+                    })
+                    .collect();
+                crate::kbq_model::to_check_order(&mut flagged);
+                flagged.into_iter().map(|f| f.0).collect()
+            }
+            Some(Chip::Inactive) => self.inactive.iter().map(|e| e.id).collect(),
+        };
+        let known = |id: &KbId| {
+            self.entries.iter().any(|e| e.id == *id) || self.inactive.iter().any(|e| e.id == *id)
+        };
+        let kept: Vec<KbId> = self.listed.iter().copied().filter(known).collect();
+        self.listed = crate::kbq_model::keep_listed(&kept, &fresh);
+        self.listed_ready = true;
+    }
+
+    fn set_chip(&mut self, chip: Option<Chip>, cx: &mut Context<Self>) {
+        self.chip = chip;
+        self.listed.clear();
+        self.listed_ready = false;
+        self.relist();
+        cx.notify();
+    }
+
+    fn summary_of(&self, id: KbId) -> Option<&KbSummary> {
+        self.entries
+            .iter()
+            .chain(self.inactive.iter())
+            .find(|e| e.id == id)
+    }
+
+    /// The focused row's entry, for the palette (interaction.md 6.1).
+    pub fn kb_context(&self, window: &Window) -> Option<crate::commands::FocusedKb> {
+        let i = self.row_focus.iter().position(|h| h.is_focused(window))?;
+        let id = *self.row_ids.get(i)?;
+        let entry = self.summary_of(id)?;
+        Some(focused_kb(entry, &self.flags.reasons(id)))
+    }
+
+    #[cfg(debug_assertions)]
+    /// Captures: unfold the first memory row.
+    pub fn dev_unfold_first(&mut self, cx: &mut Context<Self>) {
+        let first = self.row_ids.iter().copied().find(|id| {
+            self.summary_of(*id)
+                .is_some_and(|e| e.kind == KbKind::Memory)
+        });
+        if let Some(id) = first {
+            self.open_memory = Some(id);
+            self.load_open(id, cx);
+            cx.notify();
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    /// Captures: `V` on the first row (its mark goes, the row stays).
+    pub fn dev_verify_first(&mut self, cx: &mut Context<Self>) {
+        if let Some(id) = self.row_ids.first().copied() {
+            self.verify_row(id, cx);
+        }
+    }
+
+    /// "Mark as still true" on a row: its mark goes at once.
+    pub fn verify_row(&mut self, id: KbId, cx: &mut Context<Self>) {
+        let Some(entry) = self.summary_of(id) else {
+            return;
+        };
+        if entry.state != acta_core::model::KbState::Live {
+            return;
+        }
+        let owner = entry.owner;
+        self.flags.mark_verified(id);
+        crate::kbq_ui::verify(&self.ws, id, Some(owner), cx);
+        cx.notify();
+    }
+
+    /// The filter chip (components-records.md 5, Filter chip): after the
+    /// dropdowns; its `x` or `Backspace` clears it.
+    fn render_chip(
+        &self,
+        chip: Chip,
+        locale: Locale,
+        t: &Tokens,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let label = match chip {
+            Chip::ToCheck => Key::FilterToCheck,
+            Chip::Inactive => Key::FilterInactive,
+        };
         ui::focusable(div().id("kb-chip"), t, false)
             .flex()
             .flex_row()
@@ -401,30 +677,26 @@ impl KnowledgePage {
             .bg(t.fill_selected)
             .on_key_down(cx.listener(|page, event: &gpui_kit::KeyDownEvent, _, cx| {
                 if event.keystroke.key == "backspace" {
-                    page.stale = None;
+                    page.set_chip(None, cx);
                     cx.stop_propagation();
-                    cx.notify();
                 }
             }))
             .child(
                 type_scale::UI
                     .el()
                     .text_color(t.text_primary)
-                    .child(text(locale, Key::FilterStaleMemories)),
+                    .child(text(locale, label)),
             )
             .child(
                 ui::ghost_icon_button("kb-chip-clear", Icon::X, 16., false, false, true, t)
                     .tooltip(ui::tip(text(locale, Key::FilterClear)))
-                    .on_click(cx.listener(|page, _, _, cx| {
-                        page.stale = None;
-                        cx.notify();
-                    })),
+                    .on_click(cx.listener(|page, _, _, cx| page.set_chip(None, cx))),
             )
             .into_any_element()
     }
 
-    /// Keys on a row: `Up` / `Down` move between rows, `Esc` clears the
-    /// chip "Not updated for 90 days" (components-records.md 5, Filter chip).
+    /// Keys on a row: `Up` / `Down` (and `J` / `K`) move between rows,
+    /// `V` marks the entry as still true, `Esc` clears the chip.
     fn row_key(
         &mut self,
         index: usize,
@@ -437,12 +709,18 @@ impl KnowledgePage {
             return;
         }
         let to = match event.keystroke.key.as_str() {
-            "down" => (index + 1 < rows).then_some(index + 1),
-            "up" => index.checked_sub(1),
-            "escape" if self.stale.is_some() => {
-                self.stale = None;
+            "down" | "j" => (index + 1 < rows).then_some(index + 1),
+            "up" | "k" => index.checked_sub(1),
+            "v" => {
+                if let Some(id) = self.row_ids.get(index).copied() {
+                    self.verify_row(id, cx);
+                }
                 cx.stop_propagation();
-                cx.notify();
+                return;
+            }
+            "escape" if self.chip.is_some() => {
+                self.set_chip(None, cx);
+                cx.stop_propagation();
                 return;
             }
             _ => return,
@@ -637,12 +915,69 @@ impl Render for KnowledgePage {
         let locale = settings::locale(cx);
         let ws = self.ws.read(cx);
         let project_title = owner_name(ws, Owner::Project(self.project));
-        let documents = self
-            .entries
+        let query = self.search.read(cx).value().to_string();
+        let searching = self.hits.is_some();
+        let excerpt_of = |id: KbId| -> Option<String> {
+            self.hits
+                .as_ref()
+                .and_then(|h| h.iter().find(|(x, _)| *x == id).map(|(_, s)| s.clone()))
+        };
+        // Under a chip: its rows, ungrouped, in its order; search and the
+        // dropdowns still narrow them (an inactive entry is not in the
+        // index, so it matches on its title and summary).
+        let needle = query.trim().to_lowercase();
+        let shown: Vec<(KbSummary, Option<String>)> = match self.chip {
+            Some(_) => self
+                .listed
+                .iter()
+                .filter_map(|id| self.summary_of(*id))
+                .filter(|e| self.filters.keeps(e))
+                .filter_map(|e| {
+                    if !searching {
+                        return Some((e.clone(), None));
+                    }
+                    match excerpt_of(e.id) {
+                        Some(x) => Some((e.clone(), Some(x))),
+                        None if e.state != acta_core::model::KbState::Live
+                            && (e.title.to_lowercase().contains(&needle)
+                                || e.summary.to_lowercase().contains(&needle)) =>
+                        {
+                            Some((e.clone(), None))
+                        }
+                        None => None,
+                    }
+                })
+                .collect(),
+            None => match &self.hits {
+                Some(hits) => hits
+                    .iter()
+                    .filter_map(|(id, snippet)| {
+                        self.entries
+                            .iter()
+                            .find(|e| e.id == *id)
+                            .map(|e| (e.clone(), Some(snippet.clone())))
+                    })
+                    .filter(|(e, _)| self.filters.keeps(e))
+                    .collect(),
+                None => self
+                    .entries
+                    .iter()
+                    .filter(|e| self.filters.keeps(e))
+                    .map(|e| (e.clone(), None))
+                    .collect(),
+            },
+        };
+        // The scope line counts what the page holds, or under a chip, what
+        // it lists.
+        let counted: Vec<&KbSummary> = match self.chip {
+            Some(_) => shown.iter().map(|(e, _)| e).collect(),
+            None => self.entries.iter().collect(),
+        };
+        let documents = counted
             .iter()
             .filter(|e| e.kind == KbKind::Document)
             .count();
-        let memories = self.entries.len() - documents;
+        let memories = counted.len() - documents;
         let scope = tr(
             locale,
             Key::KbScope,
@@ -666,32 +1001,6 @@ impl Render for KnowledgePage {
                 ),
             ],
         );
-        let shown: Vec<(KbSummary, Option<String>)> = match &self.hits {
-            Some(hits) => hits
-                .iter()
-                .filter_map(|(id, snippet)| {
-                    self.entries
-                        .iter()
-                        .find(|e| e.id == *id)
-                        .map(|e| (e.clone(), Some(snippet.clone())))
-                })
-                .filter(|(e, _)| self.filters.keeps(e))
-                .collect(),
-            None => match &self.stale {
-                Some(ids) => ids
-                    .iter()
-                    .filter_map(|id| self.entries.iter().find(|e| e.id == *id))
-                    .filter(|e| self.filters.keeps(e))
-                    .map(|e| (e.clone(), None))
-                    .collect(),
-                None => self
-                    .entries
-                    .iter()
-                    .filter(|e| self.filters.keeps(e))
-                    .map(|e| (e.clone(), None))
-                    .collect(),
-            },
-        };
         let names: Vec<(Owner, String)> = {
             let ws = self.ws.read(cx);
             shown
@@ -699,7 +1008,6 @@ impl Render for KnowledgePage {
                 .map(|(e, _)| (e.owner, owner_name(ws, e.owner)))
                 .collect()
         };
-        let query = self.search.read(cx).value().to_string();
         let as_view = self.as_view;
         let mut column = if as_view {
             ui::view_column()
@@ -730,7 +1038,7 @@ impl Render for KnowledgePage {
                 .px(px(8.))
                 .rounded(px(RADIUS_SM))
                 .bg(t.bg_raised)
-                .border_1()
+                .border(px(1.))
                 .border_color(t.border_strong)
                 .child(icon(Icon::Search, 16., t.text_tertiary))
                 .child(
@@ -754,10 +1062,8 @@ impl Render for KnowledgePage {
                 .child(self.filter_button(FilterMenu::Level, locale, &t, cx))
                 .child(self.filter_button(FilterMenu::Kind, locale, &t, cx))
                 .child(self.filter_button(FilterMenu::Author, locale, &t, cx))
-                .when(self.stale.is_some(), |this| {
-                    this.child(self.render_stale_chip(locale, &t, cx))
-                })
-                .when(!self.filters.is_default(), |this| {
+                .children(self.chip.map(|chip| self.render_chip(chip, locale, &t, cx)))
+                .when(!self.filters.is_default() || self.chip.is_some(), |this| {
                     this.child(
                         ui::button(
                             "kb-clear",
@@ -768,13 +1074,12 @@ impl Render for KnowledgePage {
                         )
                         .on_click(cx.listener(|page, _, _, cx| {
                             page.filters = Filters::default();
-                            page.stale = None;
-                            cx.notify();
+                            page.set_chip(None, cx);
                         })),
                     )
                 }),
         );
-        if self.hits.is_some() {
+        if searching {
             let line = if shown.is_empty() {
                 tr(
                     locale,
@@ -798,78 +1103,113 @@ impl Render for KnowledgePage {
                     .text_color(t.text_tertiary)
                     .child(line),
             );
+        } else if let Some(chip) = self.chip
+            && self.listed_ready
+            && shown.is_empty()
+        {
+            let empty = match chip {
+                Chip::ToCheck => Key::KbToCheckEmpty,
+                Chip::Inactive => Key::KbInactiveEmpty,
+            };
+            column = column.child(
+                type_scale::UI
+                    .el()
+                    .mt(px(24.))
+                    .text_color(t.text_tertiary)
+                    .child(text(locale, empty)),
+            );
         }
-        type Group = (Owner, Vec<(KbSummary, Option<String>)>);
+        type Group = (Option<Owner>, Vec<(KbSummary, Option<String>)>);
         let mut groups: Vec<Group> = Vec::new();
-        for item in shown {
-            match groups.iter_mut().find(|(o, _)| *o == item.0.owner) {
-                Some((_, g)) => g.push(item),
-                None => groups.push((item.0.owner, vec![item])),
+        if self.chip.is_some() {
+            // Ungrouped, in the chip's order.
+            groups.push((None, shown));
+        } else {
+            for item in shown {
+                match groups.iter_mut().find(|(o, _)| *o == Some(item.0.owner)) {
+                    Some((_, g)) => g.push(item),
+                    None => groups.push((Some(item.0.owner), vec![item])),
+                }
             }
+            groups.sort_by_key(|(o, _)| match o.map(|o| o.level()) {
+                Some(Level::Project) => 0,
+                Some(Level::Epic) => 1,
+                _ => 2,
+            });
         }
-        groups.sort_by_key(|(o, _)| match o.level() {
-            Level::Project => 0,
-            Level::Epic => 1,
-            Level::Topic => 2,
-        });
         let rows = groups.iter().map(|(_, e)| e.len()).sum::<usize>();
         while self.row_focus.len() < rows {
             self.row_focus.push(cx.focus_handle());
         }
+        self.row_ids = groups
+            .iter()
+            .flat_map(|(_, e)| e.iter().map(|(x, _)| x.id))
+            .collect();
         // The Overview's figure was opened: the first row takes the focus
         // once the chip's list has arrived.
-        let loaded = self.stale.as_ref().is_some_and(|ids| !ids.is_empty());
-        if self.focus_first_row && loaded && rows > 0 {
+        if self.focus_first_row && self.listed_ready && rows > 0 {
             self.focus_first_row = false;
             window.focus(&self.row_focus[0], cx);
         }
+        let ws_entity = self.ws.clone();
         let mut index = 0;
         for (owner, entries) in groups {
-            let name = names
-                .iter()
-                .find(|(o, _)| *o == owner)
-                .map(|(_, n)| n.clone())
-                .unwrap_or_default();
-            let route = owner_route(owner);
-            column = column.child(
-                div()
-                    .id(("kb-group", index))
-                    .mt(px(16.))
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
-                    .h(px(28.))
-                    .px(px(8.))
-                    .mx(px(-8.))
-                    .child(
-                        type_scale::SMALL
-                            .el()
-                            .id(("kb-group-link", index))
-                            .text_color(t.text_tertiary)
-                            .cursor_pointer()
-                            .hover(|s| s.underline())
-                            .on_click(
-                                cx.listener(move |_, _, _, cx| cx.emit(PageEvent::Open(route))),
-                            )
-                            .child(level_label(locale, owner, &name)),
-                    )
-                    .child(
-                        type_scale::SMALL
-                            .el()
-                            .font_features(type_scale::tabular())
-                            .text_color(t.text_tertiary)
-                            .child(number(locale, entries.len() as u64)),
-                    ),
-            );
+            if let Some(owner) = owner {
+                let name = names
+                    .iter()
+                    .find(|(o, _)| *o == owner)
+                    .map(|(_, n)| n.clone())
+                    .unwrap_or_default();
+                let route = owner_route(owner);
+                column = column.child(
+                    div()
+                        .id(("kb-group", index))
+                        .mt(px(16.))
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .justify_between()
+                        .h(px(28.))
+                        .px(px(8.))
+                        .mx(px(-8.))
+                        .child(
+                            type_scale::SMALL
+                                .el()
+                                .id(("kb-group-link", index))
+                                .text_color(t.text_tertiary)
+                                .cursor_pointer()
+                                .hover(|s| s.underline())
+                                .on_click(
+                                    cx.listener(move |_, _, _, cx| cx.emit(PageEvent::Open(route))),
+                                )
+                                .child(level_label(locale, owner, &name)),
+                        )
+                        .child(
+                            type_scale::SMALL
+                                .el()
+                                .font_features(type_scale::tabular())
+                                .text_color(t.text_tertiary)
+                                .child(number(locale, entries.len() as u64)),
+                        ),
+                );
+            } else {
+                column = column.child(div().h(px(16.)));
+            }
             for (entry, excerpt) in entries {
                 let id = entry.id;
                 let kind = entry.kind;
                 let open = self.open_memory == Some(id);
+                let live = entry.state == acta_core::model::KbState::Live;
                 let unread = self.ws.read(cx).is_unread(acta_core::model::Record::Kb(id));
+                let reasons = if live {
+                    self.flags.reasons(id)
+                } else {
+                    Vec::new()
+                };
+                let signal = Signal::of(unread, &reasons, locale);
                 let handle = self.row_focus[index].clone();
                 column = column.child(
-                    kb_row(&entry, excerpt.as_deref(), unread, index, locale, &t)
+                    kb_row(&entry, excerpt.as_deref(), signal, !live, index, locale, &t)
                         .track_focus(&handle)
                         .on_key_down(cx.listener(
                             move |page, event: &gpui_kit::KeyDownEvent, window, cx| {
@@ -880,12 +1220,14 @@ impl Render for KnowledgePage {
                             KbKind::Document => cx.emit(PageEvent::Open(Route::Kb(id))),
                             KbKind::Memory => {
                                 page.open_memory = if page.open_memory == Some(id) {
+                                    page.open_q = None;
                                     None
                                 } else {
                                     // Unfolded is shown: the dot goes.
                                     page.ws.update(cx, |ws, cx| {
                                         ws.mark_seen(acta_core::model::Record::Kb(id), cx)
                                     });
+                                    page.load_open(id, cx);
                                     Some(id)
                                 };
                                 cx.notify();
@@ -893,37 +1235,48 @@ impl Render for KnowledgePage {
                         })),
                 );
                 if open {
-                    column = column.child(
-                        div()
-                            .pl(px(32.))
-                            .pb(px(8.))
-                            .flex()
-                            .flex_col()
-                            .gap(px(4.))
-                            .child(
-                                type_scale::READING
-                                    .el()
-                                    .text_color(t.text_primary)
-                                    .child(entry.summary.clone()),
-                            )
-                            .child(
-                                div().ml(px(-12.)).child(
-                                    ui::button(
-                                        ("kb-open", index),
-                                        text(locale, Key::CommonOpen),
-                                        Variant::Ghost,
-                                        false,
-                                        &t,
-                                    )
-                                    .on_click(cx.listener(
-                                        move |_, _, _, cx| cx.emit(PageEvent::Open(Route::Kb(id))),
-                                    )),
-                                ),
-                            ),
-                    );
+                    column = column.child(unfolded(
+                        id,
+                        index,
+                        self.open_q.as_ref(),
+                        &reasons,
+                        &ws_entity,
+                        locale,
+                        &t,
+                        cx,
+                    ));
                 }
                 index += 1;
             }
+        }
+        // The list ends with the superseded and retired, one ghost row
+        // that sets their chip (the pattern of the tree's "N closed").
+        if self.chip.is_none() && !searching && !self.inactive.is_empty() {
+            let n = self.inactive.len() as u64;
+            column = column.child(
+                div().mt(px(8.)).child(
+                    ui::focusable(div().id("kb-inactive-row"), &t, false)
+                        .flex()
+                        .items_center()
+                        .h(px(28.))
+                        .px(px(8.))
+                        .mx(px(-8.))
+                        .rounded(px(RADIUS_SM))
+                        .cursor_pointer()
+                        .hover({
+                            let hover = t.fill_hover;
+                            move |s| s.bg(hover)
+                        })
+                        .on_click(
+                            cx.listener(|page, _, _, cx| page.set_chip(Some(Chip::Inactive), cx)),
+                        )
+                        .child(type_scale::SMALL.el().text_color(t.text_tertiary).child(tr(
+                            locale,
+                            Key::KbInactiveRow,
+                            &[("n", Arg::Count(n))],
+                        ))),
+                ),
+            );
         }
         if as_view {
             ui::view_scroll("knowledge-view")
@@ -984,8 +1337,20 @@ pub struct DocPage {
     /// The reading view's focus: where the keyboard goes when the editor
     /// closes, so `Mod+Z` reaches the window (interaction.md 6.4).
     focus: FocusHandle,
+    /// Memory quality (ADR 0015): the entry's flags, sources, provenance
+    /// and presence, and git's flags and default branches read later.
+    quality: Option<crate::kbq_ui::EntryQuality>,
+    flags: crate::kbq_model::FlagSet,
+    defaults: Vec<String>,
+    /// A source whose id or path was just copied ("Copied" for 1.5 s).
+    copied: Option<usize>,
+    /// Open the editor once the entry is loaded (a merge's survivor).
+    pending_edit: bool,
+    loading: bool,
     seen_revision: u64,
     _load: Task<()>,
+    _git: Task<()>,
+    _copied: Task<()>,
     _subs: Vec<Subscription>,
 }
 
@@ -1080,34 +1445,143 @@ impl DocPage {
             headings: Default::default(),
             focus: cx.focus_handle(),
             show_theirs: false,
+            quality: None,
+            flags: Default::default(),
+            defaults: Vec::new(),
+            copied: None,
+            pending_edit: false,
+            loading: false,
             seen_revision: 0,
             _load: Task::ready(()),
+            _git: Task::ready(()),
+            _copied: Task::ready(()),
             _subs: vec![sub],
         }
     }
 
     fn reload(&mut self, cx: &mut Context<Self>) {
         let Some(id) = self.id else { return };
-        let task = self.ws.read(cx).db.run(cx, move |store| {
-            Ok((
-                store.kb_entry(id)?,
-                store
-                    .kb_history(id, PageReq::first(PageReq::MAX_LIMIT))?
-                    .items,
-            ))
-        });
+        let task = crate::kbq_ui::load_entry(&self.ws, id, cx);
+        self.loading = true;
         self._load = cx.spawn(async move |page, cx| {
             let loaded = task.await;
             let _ = page.update(cx, |page, cx| {
-                if let Ok((entry, history)) = loaded {
-                    cx.emit(PageEvent::Located(entry.project));
-                    page.project = Some(entry.project);
-                    page.entry = Some(entry);
-                    page.history = history;
+                page.loading = false;
+                if let Ok(q) = loaded {
+                    cx.emit(PageEvent::Located(q.entry.project));
+                    page.project = Some(q.entry.project);
+                    page.entry = Some(q.entry.clone());
+                    page.history = q.history.clone();
+                    page.flags.set_store(q.store_flags.clone());
+                    let (facts, dirs) = (q.facts.clone(), q.dirs.clone());
+                    page.quality = Some(q);
+                    let task =
+                        crate::kbq_ui::read_git(&page.ws, facts.into_iter().collect(), dirs, cx);
+                    page._git = cx.spawn(async move |page, cx| {
+                        let (flags, defaults) = task.await;
+                        let _ = page.update(cx, |page, cx| {
+                            page.flags.set_git(flags);
+                            page.defaults = defaults;
+                            cx.notify();
+                        });
+                    });
                 }
                 cx.notify();
             });
         });
+    }
+
+    /// The entry's reasons to check (none once superseded or retired).
+    fn reasons(&self) -> Vec<crate::kbq_model::Reason> {
+        match (&self.entry, self.id) {
+            (Some(e), Some(id)) if e.state == acta_core::model::KbState::Live => {
+                self.flags.reasons(id)
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// The open entry, for the palette (interaction.md 6.1).
+    pub fn kb_context(&self) -> Option<crate::commands::FocusedKb> {
+        let e = self.entry.as_ref()?;
+        if self.mode == Mode::Edit {
+            return None;
+        }
+        let summary = KbSummary {
+            id: e.id,
+            kind: e.kind,
+            owner: e.owner,
+            title: e.title.clone(),
+            summary: e.summary.clone(),
+            rev: e.rev,
+            size: 0,
+            created_by: e.created_by,
+            updated_at: e.stamp.updated_at,
+            updated_by: e.stamp.updated_by,
+            verified_at: e.verified_at,
+            state: e.state,
+        };
+        Some(focused_kb(&summary, &self.reasons()))
+    }
+
+    /// "Mark as still true" (`V`): the reasons it clears go at once.
+    pub fn verify(&mut self, cx: &mut Context<Self>) {
+        let (Some(id), Some(e)) = (self.id, &self.entry) else {
+            return;
+        };
+        if e.state != acta_core::model::KbState::Live || self.mode == Mode::Edit {
+            return;
+        }
+        let owner = e.owner;
+        self.flags.mark_verified(id);
+        crate::kbq_ui::verify(&self.ws, id, Some(owner), cx);
+        cx.notify();
+    }
+
+    #[cfg(debug_assertions)]
+    /// Captures: `Esc` in the editor.
+    pub fn dev_cancel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.cancel(window, cx);
+    }
+
+    #[cfg(debug_assertions)]
+    /// Captures: the history, its newest revision selected.
+    pub fn dev_history(&mut self, cx: &mut Context<Self>) {
+        self.mode = Mode::History;
+        if let Some(rev) = self.history.first().map(|h| h.rev) {
+            self.select_revision(rev, cx);
+        }
+        cx.notify();
+    }
+
+    #[cfg(debug_assertions)]
+    /// Captures: the duplicate notice's merge, as a click would run it.
+    pub fn dev_merge(&mut self, cx: &mut Context<Self>) {
+        let (Some(id), Some(e)) = (self.id, &self.entry) else {
+            return;
+        };
+        let Some(other) = self.reasons().iter().find_map(|r| match r {
+            crate::kbq_model::Reason::Duplicate(o) => Some(*o),
+            _ => None,
+        }) else {
+            return;
+        };
+        let (survivor, merged) = crate::kbq_model::merge_direction(id, other);
+        let task = crate::kbq_ui::merge(&self.ws, survivor, merged, Some(e.owner), cx);
+        cx.spawn(async move |page, cx| {
+            if task.await.is_ok() {
+                let _ = page.update(cx, |_, cx| cx.emit(PageEvent::EditKb(survivor)));
+            }
+        })
+        .detach();
+    }
+
+    /// Open the editor once the entry is (re)loaded: a merge's survivor,
+    /// so the person can tidy the joined text.
+    pub fn edit_when_loaded(&mut self, cx: &mut Context<Self>) {
+        self.pending_edit = true;
+        self.reload(cx);
+        cx.notify();
     }
 
     pub fn start_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1194,6 +1668,9 @@ impl DocPage {
         self.title = None;
         self.summary = None;
         self.body = None;
+        // Changes made while the editor was open (an undo, Claude Code)
+        // were not loaded under it (interaction.md 6.5 rule 4).
+        self.reload(cx);
         window.focus(&self.focus, cx);
         cx.notify();
     }
@@ -1242,6 +1719,9 @@ impl DocPage {
                         },
                         Author::Human,
                     )?;
+                    // Checked as Claude Code's writes are, never refused
+                    // (components-knowledge.md 5).
+                    store.kb_recheck(id, Author::Human)?;
                     Ok((Undo::KbRevision { id, back, expect }, ()))
                 })
             });
@@ -1254,7 +1734,7 @@ impl DocPage {
                             page.close_editor(cx);
                             window.focus(&page.focus, cx);
                         }
-                        Err(WriteError::Stale) => page.load_conflict(cx),
+                        Err(WriteError::Stale) => page.load_conflict(window, cx),
                         Err(WriteError::Failed | WriteError::OutOfScope) => {}
                     }
                     cx.notify();
@@ -1275,6 +1755,7 @@ impl DocPage {
                         },
                         Author::Human,
                     )?;
+                    store.kb_recheck(id, Author::Human)?;
                     Ok((Undo::Delete(Record::Kb(id)), id))
                 })
             });
@@ -1306,17 +1787,102 @@ impl DocPage {
         self.reload(cx);
     }
 
-    /// Someone else saved first: keep the editor, fetch their version.
-    fn load_conflict(&mut self, cx: &mut Context<Self>) {
+    /// Someone else saved first (components-knowledge.md 5, Saving over a
+    /// newer revision): when the two changes touch different sections,
+    /// the save is merged over theirs and toasted; otherwise the editor
+    /// keeps the human's text and shows the edit-conflict notice.
+    fn load_conflict(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(id) = self.id else { return };
+        let read = |s: &Option<Entity<InputState>>, cx: &Context<Self>| {
+            s.as_ref()
+                .map(|s| s.read(cx).value().trim().to_owned())
+                .unwrap_or_default()
+        };
+        let mine = (
+            read(&self.title, cx),
+            read(&self.summary, cx),
+            self.body
+                .as_ref()
+                .map(|b| b.read(cx).value().to_string())
+                .unwrap_or_default(),
+        );
+        let base = self
+            .entry
+            .as_ref()
+            .map(|e| (e.title.clone(), e.summary.clone(), e.body.clone()));
         let task = self.ws.read(cx).db.run(cx, move |store| store.kb_entry(id));
-        cx.spawn(async move |page, cx| {
-            if let Ok(theirs) = task.await {
-                let _ = page.update(cx, |page, cx| {
-                    page.conflict = Some(theirs);
-                    cx.notify();
+        cx.spawn_in(window, async move |page, cx| {
+            let Ok(theirs) = task.await else {
+                return;
+            };
+            let _ = page.update_in(cx, |page, window, cx| {
+                let merged = base.as_ref().and_then(|b| {
+                    crate::kbq_model::merge_over(
+                        (&b.0, &b.1, &b.2),
+                        (&mine.0, &mine.1, &mine.2),
+                        (&theirs.title, &theirs.summary, &theirs.body),
+                    )
                 });
-            }
+                match merged {
+                    Some(body) => page.save_merged(theirs.rev, mine.0, mine.1, body, window, cx),
+                    None => page.conflict = Some(theirs),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// The merged text saved over the newer revision, one undo step.
+    fn save_merged(
+        &mut self,
+        rev: i64,
+        title: String,
+        summary: String,
+        body: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(id) = self.id else { return };
+        let locale = settings::locale(cx);
+        let project = self.project;
+        self.saving = true;
+        let task = self.ws.update(cx, |ws, cx| {
+            ws.write_undoable(
+                cx,
+                project,
+                Some(text(locale, Key::KbSaveMerged)),
+                move |store| {
+                    let back = store.kb_entry(id)?.rev;
+                    let expect = store.kb_update(
+                        id,
+                        KbUpdate {
+                            expected_rev: Some(rev),
+                            title: Some(title),
+                            summary: Some(summary),
+                            edit: KbEdit::Body(body),
+                        },
+                        Author::Human,
+                    )?;
+                    store.kb_recheck(id, Author::Human)?;
+                    Ok((Undo::KbRevision { id, back, expect }, ()))
+                },
+            )
+        });
+        cx.spawn_in(window, async move |page, cx| {
+            let result = task.await;
+            let _ = page.update_in(cx, |page, window, cx| {
+                page.saving = false;
+                match result {
+                    Ok(()) => {
+                        page.close_editor(cx);
+                        window.focus(&page.focus, cx);
+                    }
+                    Err(WriteError::Stale) => page.load_conflict(window, cx),
+                    Err(WriteError::Failed | WriteError::OutOfScope) => {}
+                }
+                cx.notify();
+            });
         })
         .detach();
     }
@@ -1528,6 +2094,7 @@ impl DocPage {
                 ws.undoable(cx, project, Some(message), move |store| {
                     let back = store.kb_entry(id)?.owner;
                     store.kb_move(id, owner, Author::Human)?;
+                    store.kb_recheck(id, Author::Human)?;
                     Ok((
                         Undo::KbOwner {
                             id,
@@ -1585,6 +2152,53 @@ impl DocPage {
                     KbKind::Memory => Key::HistoryFromFileMemory,
                 },
             ),
+            // The state changes of memory quality (components-knowledge.md
+            // 5, History labels).
+            ChangeKind::Verified => text(
+                locale,
+                by_kind(
+                    kind,
+                    Key::HistoryVerifiedDocument,
+                    Key::HistoryVerifiedMemory,
+                ),
+            ),
+            ChangeKind::Superseded => tr(
+                locale,
+                by_kind(
+                    kind,
+                    Key::HistorySupersededDocument,
+                    Key::HistorySupersededMemory,
+                ),
+                &[("id", Arg::Text(section.unwrap_or_default()))],
+            ),
+            ChangeKind::Retired => match section.filter(|s| !s.is_empty()) {
+                Some(reason) => tr(
+                    locale,
+                    by_kind(
+                        kind,
+                        Key::HistoryRetiredReasonDocument,
+                        Key::HistoryRetiredReasonMemory,
+                    ),
+                    &[("reason", Arg::Text(reason))],
+                ),
+                None => text(
+                    locale,
+                    by_kind(kind, Key::HistoryRetiredDocument, Key::HistoryRetiredMemory),
+                ),
+            },
+            ChangeKind::MadeLive => text(
+                locale,
+                by_kind(
+                    kind,
+                    Key::HistoryMadeLiveDocument,
+                    Key::HistoryMadeLiveMemory,
+                ),
+            ),
+            ChangeKind::Merged => tr(
+                locale,
+                Key::HistoryMerged,
+                &[("id", Arg::Text(section.unwrap_or_default()))],
+            ),
             _ => text(
                 locale,
                 match kind {
@@ -1603,9 +2217,29 @@ impl DocPage {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let human = when::initial(&when::human_name(locale));
+        let sessions = self
+            .quality
+            .as_ref()
+            .map(|q| q.sessions.clone())
+            .unwrap_or_default();
+        let defaults = self.defaults.clone();
         let rows = self.history.iter().enumerate().map(|(i, h)| {
             let rev = h.rev;
             let selected = self.selected.as_ref().is_some_and(|s| s.0 == rev);
+            // On a Claude Code revision, the name's tooltip says which
+            // session wrote it, one fact per line.
+            let session_tip = (h.author == Author::Claude).then(|| {
+                let topic = crate::kbq_model::session_topic(h.session.as_deref(), entry, &sessions);
+                let mut lines = vec![crate::kbq_ui::session_line(topic, locale)];
+                if let Some(b) = h.branch.as_ref().filter(|b| !defaults.contains(b)) {
+                    lines.push(tr(
+                        locale,
+                        Key::KbSessionBranch,
+                        &[("branch", Arg::Text(b))],
+                    ));
+                }
+                lines.join("\n")
+            });
             div()
                 .id(("history-row", i))
                 .flex()
@@ -1626,7 +2260,9 @@ impl DocPage {
                 .child(
                     type_scale::UI
                         .el()
+                        .id(("history-author", i))
                         .text_color(t.text_primary)
+                        .when_some(session_tip, |this, tip| this.tooltip(ui::tip(tip)))
                         .child(when::author(locale, h.author)),
                 )
                 .child(
@@ -1660,6 +2296,16 @@ impl DocPage {
         );
         if let Some((rev, body, before)) = &self.selected {
             let meta = self.history.iter().find(|h| h.rev == *rev);
+            // A revision that changed no text is not offered for restore.
+            let restorable = meta.is_none_or(|h| {
+                !matches!(
+                    h.change,
+                    ChangeKind::Verified
+                        | ChangeKind::Superseded
+                        | ChangeKind::Retired
+                        | ChangeKind::MadeLive
+                )
+            });
             let version = meta
                 .map(|h| {
                     tr(
@@ -1697,25 +2343,26 @@ impl DocPage {
                         cx.notify();
                     })),
                 );
-            out = out.child(
-                div().mt(px(24.)).child(
+            out =
+                out.child(div().mt(px(24.)).child(
                     // Narrow windows wrap the controls under the version
                     // line instead of clipping it.
-                    ui::notice(None, version, t)
-                        .flex_wrap()
-                        .child(toggle)
-                        .child(
-                            ui::button(
-                                "history-restore",
-                                text(locale, Key::HistoryRestore),
-                                Variant::Secondary,
-                                false,
-                                t,
+                    ui::notice(None, version, t).flex_wrap().child(toggle).when(
+                        restorable,
+                        |this| {
+                            this.child(
+                                ui::button(
+                                    "history-restore",
+                                    text(locale, Key::HistoryRestore),
+                                    Variant::Secondary,
+                                    false,
+                                    t,
+                                )
+                                .on_click(cx.listener(|page, _, _, cx| page.restore_selected(cx))),
                             )
-                            .on_click(cx.listener(|page, _, _, cx| page.restore_selected(cx))),
-                        ),
-                ),
-            );
+                        },
+                    ),
+                ));
             let shown: AnyElement = if self.show_changes {
                 div()
                     .flex()
@@ -1750,6 +2397,30 @@ impl DocPage {
 }
 
 impl DocPage {
+    /// Git's file flags of the entry (for "changed since checked" beside a
+    /// source's path).
+    fn file_states(&self) -> Vec<acta_core::agent::kbq::Flag> {
+        let Some(id) = self.id else {
+            return Vec::new();
+        };
+        self.flags.git_of(id)
+    }
+
+    /// "Copied" on a source for 1.5 s.
+    fn show_copied(&mut self, i: usize, cx: &mut Context<Self>) {
+        self.copied = Some(i);
+        cx.notify();
+        self._copied = cx.spawn(async move |page, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(1500))
+                .await;
+            let _ = page.update(cx, |page, cx| {
+                page.copied = None;
+                cx.notify();
+            });
+        });
+    }
+
     /// The body in parts cut at its headings, each heading's place kept
     /// for "Go to heading"; 16 between parts, as between paragraphs.
     fn render_body(&self, body: &str, t: &Tokens) -> AnyElement {
@@ -1779,7 +2450,12 @@ impl DocPage {
 }
 
 impl Render for DocPage {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // A merge's survivor: its editor opens once the merged text is in.
+        if self.pending_edit && !self.loading && self.entry.is_some() && self.mode != Mode::Edit {
+            self.pending_edit = false;
+            self.start_edit(window, cx);
+        }
         let t = cx.global::<Tokens>().clone();
         let locale = settings::locale(cx);
         let entry = self.entry.clone();
@@ -1831,7 +2507,7 @@ impl Render for DocPage {
                             .mb(px(16.))
                             .p(px(12.))
                             .rounded(px(crate::theme::RADIUS_LG))
-                            .border_1()
+                            .border(px(1.))
                             .border_color(t.border_subtle)
                             .child(markdown_view::document(
                                 "conflict-theirs-body",
@@ -1849,7 +2525,7 @@ impl Render for DocPage {
                         .child(
                             type_scale::TITLE
                                 .el()
-                                .border_b_1()
+                                .border_b(px(1.))
                                 .border_color(t.border_strong)
                                 .child(ui::role_input(Input::new(title), type_scale::TITLE)),
                         )
@@ -1936,10 +2612,47 @@ impl Render for DocPage {
                         .tooltip(ui::tip(full))
                         .child(after),
                 );
-            let labels = [text(locale, Key::PropKind), text(locale, Key::PropLevel)];
+            // Memory quality (components-knowledge.md 5): the Branch and
+            // Sources rows, the provenance and presence lines under the
+            // meta line, then the one notice.
+            let reasons = self.reasons();
+            let q = self.quality.clone().filter(|q| q.entry.id == entry.id);
+            let branch = q
+                .as_ref()
+                .and_then(|q| crate::kbq_ui::branch_value(q, &reasons, locale, &t));
+            let file_states = self.file_states();
+            let page = cx.entity().downgrade();
+            let on_copied: crate::kbq_ui::OnCopied = std::rc::Rc::new(move |i, cx| {
+                let _ = page.update(cx, |page, cx| page.show_copied(i, cx));
+            });
+            let sources = q.as_ref().and_then(|q| {
+                crate::kbq_ui::sources_el(q, &file_states, self.copied, on_copied, locale, &t, cx)
+            });
+            let provenance = q
+                .as_ref()
+                .and_then(|q| crate::kbq_ui::provenance_el(q, &self.defaults, locale, &t, cx));
+            let also_open = q
+                .as_ref()
+                .and_then(|q| crate::kbq_ui::also_open_el(q, locale, &t));
+            let notice = q
+                .as_ref()
+                .and_then(|q| crate::kbq_ui::NoticeFacts::of(q, &reasons))
+                .map(|f| {
+                    let weak = cx.entity().downgrade();
+                    let on_merged: crate::kbq_ui::OnMerged =
+                        std::rc::Rc::new(move |survivor, _, cx| {
+                            let _ = weak.update(cx, |_, cx| cx.emit(PageEvent::EditKb(survivor)));
+                        });
+                    crate::kbq_ui::notice_el(&f, &self.ws, on_merged, locale, &t, cx)
+                });
+            let mut labels = vec![text(locale, Key::PropKind), text(locale, Key::PropLevel)];
+            if branch.is_some() {
+                labels.push(text(locale, Key::KbPropBranch));
+            }
+            if sources.is_some() {
+                labels.push(text(locale, Key::KbPropSources));
+            }
             let width = ui::label_width(&labels.iter().map(String::as_str).collect::<Vec<_>>(), cx);
-            let macos = cfg!(target_os = "macos");
-            let _ = macos;
             column = column
                 .child(
                     type_scale::TITLE
@@ -1979,8 +2692,21 @@ impl Render for DocPage {
                                 .child(level),
                             &t,
                         ))
-                        .child(meta),
+                        .children(
+                            branch.map(|b| {
+                                ui::property(text(locale, Key::KbPropBranch), width, b, &t)
+                            }),
+                        )
+                        .children(
+                            sources.map(|s| {
+                                ui::property(text(locale, Key::KbPropSources), width, s, &t)
+                            }),
+                        )
+                        .child(meta)
+                        .children(provenance)
+                        .children(also_open),
                 )
+                .children(notice.map(|n| div().mt(px(16.)).child(n)))
                 .child(
                     div()
                         .mt(px(12.))
@@ -2157,7 +2883,7 @@ impl Render for DocPage {
                 .h(px(44.))
                 .px(px(16.))
                 .bg(t.bg_base)
-                .border_t_1()
+                .border_t(px(1.))
                 .border_color(t.border_subtle)
                 .child(
                     type_scale::SMALL
@@ -2213,6 +2939,17 @@ impl Render for DocPage {
             .flex()
             .flex_col()
             .track_focus(&self.focus)
+            .on_key_down(cx.listener(|page, event: &gpui_kit::KeyDownEvent, _, cx| {
+                // `V`: Mark as still true, in the reading view only (in the
+                // editor it types).
+                if page.mode == Mode::Read
+                    && !event.keystroke.modifiers.modified()
+                    && event.keystroke.key == "v"
+                {
+                    page.verify(cx);
+                    cx.stop_propagation();
+                }
+            }))
             .on_action(cx.listener(|page, _: &Escape, window, cx| {
                 if page.mode == Mode::History {
                     page.mode = Mode::Read;
