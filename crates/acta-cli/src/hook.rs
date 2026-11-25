@@ -7,9 +7,10 @@
 
 use crate::open::Opener;
 use acta_core::agent::{Agent, Launch, PRE_COMPACT, Session, hook_json};
+use acta_core::claude_settings::page;
 use acta_core::model::Author;
 use acta_core::paths::Os;
-use acta_core::{claude_settings, folder_path, git_guard};
+use acta_core::{folder_path, git_guard};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
@@ -75,7 +76,9 @@ pub fn run(event: Event, stdin: &str, opener: &Opener) -> Option<String> {
         }
         let cwd = launch.dir?;
         let session = project.unwrap_or_else(|| cwd.clone());
-        return pre_git(&command?, &cwd, &session, opener);
+        // The session's page comes from its launch token alone: `ACTA_TOPIC`
+        // and the like say where to focus, not what may be committed.
+        return pre_git(&command?, &cwd, &session, launch.token.as_deref(), opener);
     }
     if !launch.worth_opening(&data_dir) {
         return None;
@@ -98,13 +101,24 @@ pub fn run(event: Event, stdin: &str, opener: &Opener) -> Option<String> {
 }
 
 /// The guard, in a session the pre-check links to Acta: each commit or push
-/// is judged in the folder it acts in. It answers deny or nothing, never
-/// allow; when Acta cannot read the folders, it denies (fail closed).
-fn pre_git(command: &str, cwd: &Path, session: &Path, opener: &Opener) -> Option<String> {
+/// is judged in the folder it acts in, with the commit settings of the
+/// session's page (ADR 0011 addendum 2026-11-23). It answers deny, ask or
+/// nothing, never allow; when Acta cannot read the folders, it denies (fail
+/// closed).
+fn pre_git(
+    command: &str,
+    cwd: &Path,
+    session: &Path,
+    token: Option<&str>,
+    opener: &Opener,
+) -> Option<String> {
     let Ok(store) = opener.open() else {
         return Some(git_guard::fail_closed());
     };
-    let place = |dir: &Path| place(&store, dir);
+    let Ok(page) = page::session_page(&store, token) else {
+        return Some(git_guard::fail_closed());
+    };
+    let place = |dir: &Path| place(&store, &page, dir);
     let alias = |dir: &Path, name: &str| match acta_core::git_cmd::alias(dir, name) {
         Ok(Some(v)) => git_guard::Alias::Value(v),
         Ok(None) => git_guard::Alias::None,
@@ -116,22 +130,24 @@ fn pre_git(command: &str, cwd: &Path, session: &Path, opener: &Opener) -> Option
         place: &place,
         alias: &alias,
     };
-    git_guard::check(command, &cx).map(|r| git_guard::deny_json(&r))
+    git_guard::judge(command, &cx).map(|v| v.json())
 }
 
-/// The attached folder containing `dir`, with its commit settings (from
-/// the store's columns) and git state.
-fn place(store: &acta_core::Store, dir: &Path) -> git_guard::Place {
+/// The attached folder containing `dir`, with the commit settings the
+/// session's page gives it and its git state.
+fn place(store: &acta_core::Store, page: &page::SessionPage, dir: &Path) -> git_guard::Place {
     use git_guard::Place;
     let stored = folder_path::canonical(dir)
         .unwrap_or_else(|_| folder_path::normalize(Os::CURRENT, &dir.to_string_lossy()));
-    match claude_settings::commit_settings_for(store, &stored) {
+    match page::guard_view(store, &stored, page) {
         Err(_) => Place::Unreadable,
         Ok(None) => Place::Unlinked,
-        Ok(Some(f)) => Place::Folder {
-            name: f.name,
-            settings: f.settings,
+        Ok(Some(v)) => Place::Folder {
+            name: v.folder.name,
+            settings: v.folder.settings,
             git: acta_core::agent::git::inspect(dir).map(Box::new),
+            permitted: v.permitted,
+            granted: v.granted,
         },
     }
 }

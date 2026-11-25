@@ -24,6 +24,7 @@ pub mod person;
 pub mod prereqs;
 pub mod presence;
 pub mod process;
+pub mod repo;
 pub mod reset;
 pub mod schema;
 pub mod snapshots;
@@ -32,6 +33,7 @@ pub mod store;
 pub mod time;
 pub mod usage;
 pub mod voice;
+pub mod vscode;
 
 pub use db::ChangeWatcher;
 pub use error::{Error, OpenError, Result};

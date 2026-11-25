@@ -119,6 +119,9 @@ pub struct Session {
     /// Started by Acta's terminal (`ACTA_LAUNCH`), so with the launch
     /// plan's `--add-dir` folders.
     pub in_acta: bool,
+    /// Its `ACTA_LAUNCH` token: the page it was started for, so whose
+    /// commit mode applies (ADR 0011 addendum 2026-11-23).
+    pub launch_token: Option<String>,
     /// Memory quality state kept between calls (ADR 0015).
     pub kb: super::kbq::KbSession,
 }
@@ -140,6 +143,7 @@ impl Session {
             today: None,
             dir: None,
             in_acta: false,
+            launch_token: None,
             kb: Default::default(),
         }
     }
@@ -155,6 +159,7 @@ impl Session {
         s.session_id = launch.session_id.clone();
         s.dir = launch.dir.clone();
         s.in_acta = launch.token.is_some();
+        s.launch_token = launch.token.clone();
 
         // 1. The environment.
         if let Some(t) = launch.topic.as_deref().and_then(TopicId::parse)

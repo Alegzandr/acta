@@ -84,6 +84,38 @@ pub fn make_private(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// The 8.3 short form of an existing path on Windows (`None` when the
+/// volume has no short names, or elsewhere): a path `cmd.exe` would
+/// otherwise interpret (`%`, `&`, `!`) may still be passed this way.
+pub fn short_path(path: &Path) -> Option<std::path::PathBuf> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::{OsStrExt, OsStringExt};
+        let wide: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
+        let mut buf = vec![0u16; 1024];
+        // SAFETY: a NUL-terminated wide string and a buffer of the length
+        // given.
+        let n = unsafe {
+            windows_sys::Win32::Storage::FileSystem::GetShortPathNameW(
+                wide.as_ptr(),
+                buf.as_mut_ptr(),
+                buf.len() as u32,
+            )
+        } as usize;
+        if n == 0 || n >= buf.len() {
+            return None;
+        }
+        Some(std::path::PathBuf::from(std::ffi::OsString::from_wide(
+            &buf[..n],
+        )))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

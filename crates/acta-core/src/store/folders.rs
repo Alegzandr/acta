@@ -543,6 +543,15 @@ impl Store {
         visible(&self.conn, owner)
     }
 
+    /// The page and the levels above it, nearest first: a topic, its epic
+    /// (if any), its project.
+    pub fn page_levels(&self, owner: Owner) -> Result<Vec<Owner>> {
+        Ok(chain(&self.conn, owner)?
+            .into_iter()
+            .map(|(level, _)| level)
+            .collect())
+    }
+
     /// Makes a folder the page sees its active folder (`Some`), or goes back
     /// to the default rule (`None`). One write, carried by an export.
     pub fn set_active_folder(

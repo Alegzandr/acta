@@ -379,11 +379,30 @@ fn parent_of(store: &Store, owner: Owner) -> Result<Option<Owner>> {
 /// caller checks the disk with [`Folders::paths`] once the store is
 /// released.
 pub fn load_folders(store: &Store, owner: Owner) -> Result<Folders> {
+    use acta_core::claude_settings::page;
     let visible = store.visible_folders(owner)?;
+    let source = |s: page::Source| match s {
+        page::Source::Folder => None,
+        page::Source::Page(o) => Some(o),
+    };
+    let mut commits = Vec::new();
+    for v in &visible.folders {
+        let effective = page::effective(store, owner, &v.folder.path)?;
+        let inherited = page::inherited(store, owner, &v.folder.path)?;
+        commits.push((
+            page::page_commit(store, owner, v.folder.id)?,
+            effective.settings.mode,
+            (inherited.settings.mode, source(inherited.source)),
+        ));
+    }
     let items = visible
         .folders
         .iter()
-        .map(|v| FolderItem {
+        .zip(commits)
+        .map(|(v, (page_commit, effective, inherited))| FolderItem {
+            page_commit,
+            effective,
+            inherited,
             id: v.folder.id,
             path: v.folder.path.clone(),
             name: v.folder.display_name().to_owned(),

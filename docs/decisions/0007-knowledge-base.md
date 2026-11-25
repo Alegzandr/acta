@@ -3,6 +3,9 @@
 Status: accepted
 Date: 2026-11-20
 
+## Addendum (2026-11-25): deliverables are files in the folder
+The user: "What Claude retains about the subject stays in Acta, but if I ask Claude to produce a document to present to my clients, I want to find it in the folder, not in Acta." The knowledge base holds what the work needs to remember (memories, reference documents). Anything produced for other people is written as an ordinary file in the working folder, where the human and git see it; the session logs an entry naming the path. The using-acta skill says so ("Deliverable"). Acta shows such files in place (Files view, Markdown rendering) and never copies them into the database.
+
 ## Context
 The user wants documents attached to a project, an epic or a topic: a list Claude Code can pick from when it needs to, and that it can add to. This is the documentation side of a piece of work.
 

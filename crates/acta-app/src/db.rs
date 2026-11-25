@@ -114,6 +114,16 @@ pub fn open(config: Option<StoreConfig>) -> Opened {
                 Ok(_) => {}
                 Err(_) => crate::log::line("folders: Claude Code settings could not be checked"),
             }
+            // Sessions started by an Acta that is no longer running: their
+            // records and per-session settings files go (ADR 0011 addendum
+            // 2026-11-23). Another running Acta keeps its own.
+            let ended = acta_core::claude_settings::page::end_sessions_of_gone_apps(
+                &mut store,
+                &app_running,
+            );
+            if ended.is_err() {
+                crate::log::line("sessions: launch records could not be cleared");
+            }
             Opened::Ready(store)
         }
         Err(OpenError::KeyMissing { db, .. }) => {
@@ -219,4 +229,34 @@ mod tests {
         drop(temp.store);
         assert!(matches!(open(Some(config)), Opened::Ready(_)));
     }
+}
+
+/// This app process, as session launch records name it: its id and start
+/// time, so a reused process id is never taken for it. `None` when the
+/// start time cannot be read.
+pub fn app_instance() -> Option<acta_core::claude_settings::page::AppInstance> {
+    static ME: std::sync::OnceLock<Option<acta_core::claude_settings::page::AppInstance>> =
+        std::sync::OnceLock::new();
+    *ME.get_or_init(|| {
+        let pid = std::process::id();
+        started(pid).map(|started| acta_core::claude_settings::page::AppInstance { pid, started })
+    })
+}
+
+/// The start time of process `pid`, in seconds since the epoch.
+fn started(pid: u32) -> Option<u64> {
+    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
+    let pid = Pid::from_u32(pid);
+    let mut sys = System::new().ok()?;
+    sys.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&[pid]),
+        true,
+        ProcessRefreshKind::nothing(),
+    );
+    sys.process(pid).map(|p| p.start_time())
+}
+
+/// Whether the app that recorded a session still runs.
+fn app_running(app: acta_core::claude_settings::page::AppInstance) -> bool {
+    started(app.pid) == Some(app.started)
 }

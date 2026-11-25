@@ -26,6 +26,36 @@ pub fn deny_json(reason: &str) -> String {
     .to_string()
 }
 
+/// The hook's answer when a commit or push is put to the user: Claude Code
+/// prompts even where a settings file allows it.
+pub fn ask_json(reason: &str) -> String {
+    serde_json::json!({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": "ask",
+        "permissionDecisionReason": reason
+    }})
+    .to_string()
+}
+
+/// The guard's answer: never "allow", so it only makes Claude Code
+/// stricter.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Verdict {
+    Deny(String),
+    /// The user confirms first (a page whose mode is stricter than what a
+    /// settings file of the session allows; ADR 0011 addendum 2026-11-23).
+    Ask(String),
+}
+
+impl Verdict {
+    pub fn json(&self) -> String {
+        match self {
+            Verdict::Deny(r) => deny_json(r),
+            Verdict::Ask(r) => ask_json(r),
+        }
+    }
+}
+
 /// What the guard knows about a directory a git call acts in.
 #[derive(Clone, Debug)]
 pub enum Place {
@@ -37,6 +67,11 @@ pub enum Place {
         name: String,
         settings: CommitSettings,
         git: Option<Box<GitInfo>>,
+        /// What the session's page wants here: a commit or push it does
+        /// not allow, but `granted` does, is put to the user.
+        permitted: CommitMode,
+        /// The most a settings file of the session may allow here.
+        granted: CommitMode,
     },
     /// Attached, but Acta cannot read its settings (store or keychain).
     Unreadable,
@@ -69,6 +104,32 @@ pub struct Context<'a> {
 /// `--work-tree`, `--git-dir`, `env -C`. A directory that cannot be worked
 /// out is refused when the session folder is automatic.
 pub fn check(command: &str, cx: &Context) -> Option<String> {
+    match judge(command, cx) {
+        Some(Verdict::Deny(r)) => Some(r),
+        _ => None,
+    }
+}
+
+/// [`check`], with the commits and pushes the user must confirm: a deny
+/// first, else an ask, else `None`.
+pub fn judge(command: &str, cx: &Context) -> Option<Verdict> {
+    judge_inner(command, cx)
+}
+
+fn deny(reason: impl Into<String>) -> Option<Verdict> {
+    Some(Verdict::Deny(reason.into()))
+}
+
+fn ask_reason(name: &str, push: bool) -> String {
+    format!(
+        "Acta: {} in {} is not automatic from this page. The user confirms.",
+        if push { "pushing" } else { "committing" },
+        short(name)
+    )
+}
+
+fn judge_inner(command: &str, cx: &Context) -> Option<Verdict> {
+    let mut ask: Option<String> = None;
     let mut a = Analysis::default();
     analyze(command, 0, &mut a);
     let session = (cx.place)(cx.session);
@@ -106,31 +167,42 @@ pub fn check(command: &str, cx: &Context) -> Option<String> {
         for cand in &c.candidates {
             let Some(steps) = cand else {
                 if session_auto || unreadable {
-                    return Some(DIR.to_owned());
+                    return deny(DIR);
                 }
                 continue;
             };
             let dir = walk(cx.cwd, steps);
             match (cx.place)(&dir) {
-                Place::Unreadable => return Some(FAIL.to_owned()),
+                Place::Unreadable => return deny(FAIL),
                 Place::Unlinked => {
                     if unreadable {
-                        return Some(FAIL.to_owned());
+                        return deny(FAIL);
                     }
                     if let Place::Folder { name, .. } = &session
                         && session_auto
                     {
-                        return Some(outside(name));
+                        return deny(outside(name));
                     }
                 }
                 Place::Folder {
                     name,
                     settings,
                     git,
+                    permitted,
+                    granted,
                 } => {
+                    let push = c.sub == "push";
+                    let beyond = if push {
+                        permitted != CommitMode::Push && granted == CommitMode::Push
+                    } else {
+                        !permitted.automatic() && granted.automatic()
+                    };
+                    if beyond && ask.is_none() {
+                        ask = Some(ask_reason(&name, push));
+                    }
                     if !settings.mode.automatic() {
                         if session_auto {
-                            return Some(manual(&name));
+                            return deny(manual(&name));
                         }
                         continue;
                     }
@@ -141,16 +213,16 @@ pub fn check(command: &str, cx: &Context) -> Option<String> {
                             .chain(&c.env)
                             .any(|n| n.to_ascii_uppercase().starts_with("GIT_CONFIG"))
                     {
-                        return Some(CONFIG.to_owned());
+                        return deny(CONFIG);
                     }
                     if a.env.iter().chain(&c.env).any(|n| !env_allowed(n)) {
-                        return Some(ENV.to_owned());
+                        return deny(ENV);
                     }
                     if c.open_args {
-                        return Some(DIRECT.to_owned());
+                        return deny(DIRECT);
                     }
                     let Some(git) = git else {
-                        return Some(UNKNOWN.to_owned());
+                        return deny(UNKNOWN);
                     };
                     let reason = if c.sub == "commit" {
                         check_commit(
@@ -166,35 +238,35 @@ pub fn check(command: &str, cx: &Context) -> Option<String> {
                     } else {
                         check_push(&c.args, &settings, &git)
                     };
-                    if reason.is_some() {
-                        return reason;
+                    if let Some(r) = reason {
+                        return deny(r);
                     }
                 }
             }
         }
     }
     if a.alias_failed && (session_auto || unreadable) {
-        return Some(DIRECT.to_owned());
+        return deny(DIRECT);
     }
     if session_auto {
         for c in &a.calls {
             if c.sub.contains('$') && mentions {
-                return Some(DIRECT.to_owned());
+                return deny(DIRECT);
             }
             if c.config && !is_own(&c.sub) {
-                return Some(CONFIG.to_owned());
+                return deny(CONFIG);
             }
         }
     }
     if a.opaque && mentions {
         if unreadable {
-            return Some(FAIL.to_owned());
+            return deny(FAIL);
         }
         if any_auto {
-            return Some(DIRECT.to_owned());
+            return deny(DIRECT);
         }
     }
-    None
+    ask.map(Verdict::Ask)
 }
 
 /// The hook's answer when the folder is linked but Acta cannot read it.
@@ -1480,6 +1552,8 @@ mod tests {
             name: "acta".into(),
             settings: *f,
             git: Some(Box::new(g.clone())),
+            permitted: f.mode,
+            granted: f.mode,
         };
         let alias = |_: &Path, n: &str| alias(n).map_or(Alias::None, Alias::Value);
         let cwd = PathBuf::from("/w/acta");
@@ -1964,12 +2038,16 @@ mod tests {
                     name: "auto".into(),
                     settings: auto,
                     git: Some(Box::new(git(Some("t")))),
+                    permitted: auto.mode,
+                    granted: auto.mode,
                 }
             } else if dir.starts_with("/ws/manual") {
                 Place::Folder {
                     name: "manual".into(),
                     settings: folder(MANUAL, false),
                     git: Some(Box::new(git(Some("t")))),
+                    permitted: CommitMode::Manual,
+                    granted: CommitMode::Manual,
                 }
             } else if dir.starts_with("/ws/locked") {
                 Place::Unreadable

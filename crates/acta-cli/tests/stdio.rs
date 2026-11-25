@@ -19,6 +19,7 @@ fn base_cmd(data: &Path) -> Command {
         .env_remove("ACTA_PROJECT")
         .env_remove("ACTA_EPIC")
         .env_remove("ACTA_TOPIC")
+        .env_remove("ACTA_LAUNCH")
         .env_remove("CLAUDE_CODE_SESSION_ID")
         .env_remove("CLAUDECODE")
         .env_remove("CLAUDE_CODE_ENTRYPOINT")
@@ -1348,6 +1349,181 @@ fn commit_modes_and_the_pre_git_guard() {
     let (ok, out, err) = cli(&data, &repo, &["link", "--remove"], "");
     assert!(ok, "{out}{err}");
     assert!(!repo.join(".claude").exists());
+}
+
+/// ADR 0011 addendum 2026-11-23: one folder, Manual from one topic and
+/// commit and push from another. Sessions Acta starts carry their page in
+/// their launch token; `acta hook pre-git` and the MCP briefing follow that
+/// page, a session started outside Acta keeps the folder's setting, and a
+/// session cannot claim another page's mode.
+#[test]
+fn commit_mode_per_page_through_the_hook_and_mcp() {
+    use acta_core::claude_settings::page::{self, PageCommit};
+    use acta_core::keys::{KEY_FILE, KeyFile, KeyStores};
+    use acta_core::model::{Author, CommitMode, Owner, Status};
+    const T_A: &str = "0f2e4a10-1c2d-4f00-8a00-00000000000a";
+    const T_B: &str = "0f2e4a10-1c2d-4f00-8a00-00000000000b";
+    let tmp = tempfile::tempdir().unwrap();
+    let data = tmp.path().join("data");
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    git(
+        &repo,
+        &[
+            "-c",
+            "user.name=Alexandre",
+            "-c",
+            "user.email=alexandre@example.com",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "First",
+        ],
+    );
+    git(&repo, &["switch", "-q", "-c", "feature"]);
+    let (ok, out, err) = cli(&data, &repo, &["link"], "");
+    assert!(ok, "{out}{err}");
+    let (ok, out, err) = cli(&data, &repo, &["folders", "commit", "commit"], "");
+    assert!(ok, "{out}{err}");
+
+    // Two topics on the project's folder, and two sessions as Acta's
+    // terminal starts them (the app's part, done here on the store).
+    let (a, b, file_a, file_b) = {
+        let keys = KeyStores(vec![std::sync::Arc::new(KeyFile::new(data.join(KEY_FILE)))]);
+        let mut store = acta_core::Store::open(&acta_core::StoreConfig {
+            data_dir: data.clone(),
+            keys,
+        })
+        .unwrap();
+        let project = store.resolve_folder(&repo).unwrap().unwrap().project;
+        let folder = store.folders(Owner::Project(project)).unwrap()[0].id;
+        let mut topic = |title: &str| {
+            store
+                .create_topic(
+                    acta_core::store::NewTopic {
+                        project,
+                        epic: None,
+                        title: title.into(),
+                        description: String::new(),
+                        status: Status::Planned,
+                    },
+                    Author::Human,
+                )
+                .unwrap()
+        };
+        let (a, b) = (topic("Embed the terminal"), topic("Release notes"));
+        let mode = |mode| {
+            Some(PageCommit {
+                mode,
+                as_user: None,
+                on_default: false,
+            })
+        };
+        let h = Author::Human;
+        let s = &mut store;
+        page::set_page_commit(s, Owner::Topic(a), folder, mode(CommitMode::Manual), h).unwrap();
+        page::set_page_commit(s, Owner::Topic(b), folder, mode(CommitMode::Push), h).unwrap();
+        let fa = page::begin_session(s, T_A, Owner::Topic(a), &repo, None).unwrap();
+        let fb = page::begin_session(s, T_B, Owner::Topic(b), &repo, None).unwrap();
+        (a, b, fa.unwrap(), fb.unwrap())
+    };
+    let doc =
+        |p: &Path| -> Value { serde_json::from_str(&std::fs::read_to_string(p).unwrap()).unwrap() };
+    assert_eq!(doc(&file_b)["permissions"]["allow"][2], "Bash(git push)");
+    assert!(
+        doc(&file_a)["permissions"]["ask"]
+            .to_string()
+            .contains("git commit")
+    );
+    // The folder's own file never gets B's push rule.
+    let local = std::fs::read_to_string(repo.join(".claude/settings.local.json")).unwrap();
+    assert!(!local.contains("\"Bash(git push)\""), "{local}");
+
+    // `token`: the session's ACTA_LAUNCH; `topic`: what it says it works on.
+    let hook = |token: Option<&str>, topic: Option<&str>, command: &str| {
+        let input = json!({
+            "session_id": "s1", "cwd": repo, "hook_event_name": "PreToolUse",
+            "tool_name": "Bash", "tool_input": {"command": command}
+        })
+        .to_string();
+        let mut cmd = base_cmd(&data);
+        cmd.args(["hook", "pre-git"])
+            .current_dir(&repo)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        if let Some(t) = token {
+            cmd.env("ACTA_LAUNCH", t);
+        }
+        if let Some(t) = topic {
+            cmd.env("ACTA_TOPIC", t);
+        }
+        let mut child = cmd.spawn().unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(input.as_bytes())
+            .unwrap();
+        let out = child.wait_with_output().unwrap();
+        let text = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+        assert!(out.status.success() && chars(&text) <= 200, "{text}");
+        if text.is_empty() {
+            return "none".to_owned();
+        }
+        let v: Value = serde_json::from_str(&text).unwrap();
+        v["hookSpecificOutput"]["permissionDecision"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    let (ta, tb) = (a.to_string(), b.to_string());
+    let (ta, tb) = (Some(ta.as_str()), Some(tb.as_str()));
+    // B pushes; only a plain push.
+    assert_eq!(hook(Some(T_B), tb, "git commit -m x && git push"), "none");
+    assert_eq!(hook(Some(T_B), tb, "git push origin feature"), "deny");
+    // A: the folder file allows commits, the page does not: the user
+    // confirms.
+    assert_eq!(hook(Some(T_A), ta, "git commit -m x"), "ask");
+    // A claiming B (its variables say B): still A's page.
+    assert_eq!(hook(Some(T_A), tb, "git commit -m x && git push"), "ask");
+    // A forged token: the strictest.
+    let forged = "0f2e4a10-1c2d-4f00-8a00-0000000000ff";
+    assert_eq!(hook(Some(forged), tb, "git push"), "ask");
+    assert_eq!(hook(Some(forged), tb, "git commit -n -m x"), "deny");
+    // Outside Acta: the folder's setting (commit), even with B's topic set.
+    assert_eq!(hook(None, None, "git commit -m x"), "none");
+    assert_eq!(hook(None, tb, "git commit -m x"), "none");
+    assert_eq!(hook(None, None, "git commit -n -m x"), "deny");
+
+    // The MCP briefing of B's session says commit and push; A's says only
+    // when the user asks.
+    for (token, topic, want) in [
+        (T_B, b.to_string(), "commit and push"),
+        (T_A, a.to_string(), "only when the user asks"),
+    ] {
+        let mut m = Mcp::start_with(
+            &data,
+            &repo,
+            false,
+            &[("ACTA_LAUNCH", token), ("ACTA_TOPIC", &topic)],
+        );
+        let (_, hook) = m.call("hook", json!({"event": "compact", "session": "e2e-pc"}));
+        let v: Value = serde_json::from_str(&hook).unwrap();
+        let ctx = v["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap();
+        assert!(ctx.contains(want), "{ctx}");
+        drop(m);
+    }
+    // `acta folders list` names the page's choice.
+    let (ok, out, err) = cli(&data, &repo, &["folders", "list", &b.to_string()], "");
+    assert!(
+        ok && out.contains("commit and push automatically"),
+        "{out}{err}"
+    );
 }
 
 /// ADR 0011: `acta folders list|active`, and the session-start briefing's

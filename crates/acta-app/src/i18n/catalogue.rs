@@ -2513,6 +2513,34 @@ catalogue! {
         en: t("Also on {branch}"),
         fr: t("Aussi sur {branch}"),
     }
+    FoldersForPage "folders.for_page" {
+        en: t("For this page"),
+        fr: t("Pour cette page"),
+    }
+    FoldersForPageInherit "folders.for_page.inherit" {
+        en: t("Use folder setting"),
+        fr: t("Réglage du dossier"),
+    }
+    FoldersForPageFolder "folders.for_page.folder" {
+        en: t("Folder setting: {mode}."),
+        fr: t("Réglage du dossier\u{a0}: {mode}."),
+    }
+    FoldersForPageFrom "folders.for_page.from" {
+        en: t("{from}: {mode}."),
+        fr: t("{from}\u{a0}: {mode}."),
+    }
+    FoldersForPageMenu "folders.for_page.menu" {
+        en: t("Commits for this page\u{2026}"),
+        fr: t("Commits pour cette page\u{2026}"),
+    }
+    TerminalRulesOff "terminal.rules_off" {
+        en: t("This page’s commit rules do not apply to this session."),
+        fr: t("Les règles de commit de cette page ne s’appliquent pas à cette session."),
+    }
+    TerminalNoRandom "terminal.no_random" {
+        en: t("Claude Code was not started: the system could not make a session id. Try again."),
+        fr: t("Claude Code n’a pas été lancé : le système n’a pas pu créer d’identifiant de session. Réessayez."),
+    }
     FoldersCommitIdentity "folders.commit.identity" {
         en: t("Commits as {name}."),
         fr: t("Commits au nom de\u{a0}: {name}."),

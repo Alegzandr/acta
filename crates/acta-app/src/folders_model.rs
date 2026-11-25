@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use acta_core::agent::git;
+use acta_core::claude_settings::page::PageCommit;
 use acta_core::folder_path;
 use acta_core::git_cmd::{GitError, StatusSummary};
 use acta_core::launch_plan::{LeftOut, PlanFolder, launch_plan};
@@ -39,6 +40,16 @@ pub struct FolderItem {
     pub commit_mode: CommitMode,
     pub commit_as_user: Option<bool>,
     pub commit_on_default: bool,
+    /// This page's own commit choice for the folder ("For this page"), if
+    /// it made one (ADR 0011 addendum 2026-11-23).
+    pub page_commit: Option<PageCommit>,
+    /// What this page uses here: its choice, else the nearest page above's,
+    /// else the folder's. The row's mark shows it.
+    pub effective: CommitMode,
+    /// What "Use folder setting" stands for here: the mode the page has
+    /// without a choice of its own, and the page above it gives it (`None`:
+    /// the folder's own setting).
+    pub inherited: (CommitMode, Option<Owner>),
 }
 
 /// What the files say about a folder's checkout (no process is run).
@@ -271,7 +282,7 @@ pub fn git_error_text(locale: Locale, err: &GitError, branch: &str, folder: &str
         GitError::InvalidBranchName => tr(locale, Key::FoldersGitErrInvalidName, &b),
         GitError::BranchNotFound => tr(locale, Key::FoldersGitErrNoBranch, &b),
         GitError::CheckedOutElsewhere => tr(locale, Key::FoldersGitErrElsewhere, &b),
-        GitError::NotARepository => other(&err.to_string()),
+        GitError::NotARepository | GitError::NotDownloaded => other(&err.to_string()),
         GitError::Other(message) => other(message),
     }
 }
@@ -371,6 +382,9 @@ mod tests {
             origin,
             own,
             active,
+            page_commit: None,
+            effective: CommitMode::Manual,
+            inherited: (CommitMode::Manual, None),
             commit_mode: CommitMode::Manual,
             commit_as_user: None,
             commit_on_default: false,
