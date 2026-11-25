@@ -958,3 +958,68 @@ pub fn quality(store: &mut Store, folder: &Path) -> acta_core::Result<()> {
     )?;
     Ok(())
 }
+
+/// The Markdown corpus of the renderer's conformance suite
+/// (components-editor.md 5): a topic whose description is Claude Code
+/// output (a short surface) and a document holding the whole corpus.
+#[cfg(debug_assertions)]
+pub fn markdown(store: &mut Store, folder: &Path) -> acta_core::Result<()> {
+    if !store.projects()?.is_empty() {
+        return Ok(());
+    }
+    const CORPUS: [&str; 6] = [
+        include_str!("markdown_view/testdata/corpus/spec-table-br.md"),
+        include_str!("markdown_view/testdata/corpus/nested-lists.md"),
+        include_str!("markdown_view/testdata/corpus/alerts-quotes.md"),
+        include_str!("markdown_view/testdata/corpus/code-long.md"),
+        include_str!("markdown_view/testdata/corpus/html-links-images.md"),
+        include_str!("markdown_view/testdata/corpus/front-matter-footnotes.md"),
+    ];
+    let me = Author::Human;
+    let acta = store.create_project("Acta", "", me)?;
+    store.add_folder(Owner::Project(acta), folder, me)?;
+    store.create_topic(
+        NewTopic {
+            project: acta,
+            epic: None,
+            title: "Markdown corpus".into(),
+            description: format!("{}\n{}", CORPUS[0], CORPUS[4]),
+            status: Status::Active,
+        },
+        me,
+    )?;
+    store.kb_create(
+        NewKb {
+            owner: Owner::Project(acta),
+            kind: KbKind::Document,
+            title: "Markdown corpus".into(),
+            summary: "Every case of the renderer's corpus".into(),
+            body: CORPUS[1..3].join("\n"),
+            from_file: false,
+        },
+        Author::Claude,
+    )?;
+    store.kb_create(
+        NewKb {
+            owner: Owner::Project(acta),
+            kind: KbKind::Document,
+            title: "Code blocks".into(),
+            summary: "Highlighting, diff, long lines".into(),
+            body: CORPUS[3].into(),
+            from_file: false,
+        },
+        Author::Claude,
+    )?;
+    store.kb_create(
+        NewKb {
+            owner: Owner::Project(acta),
+            kind: KbKind::Document,
+            title: "Encrypted storage".into(),
+            summary: "Front matter and footnotes".into(),
+            body: CORPUS[5].into(),
+            from_file: false,
+        },
+        Author::Claude,
+    )?;
+    Ok(())
+}

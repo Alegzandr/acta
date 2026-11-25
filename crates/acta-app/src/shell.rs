@@ -6468,7 +6468,8 @@ fn seed_if_asked(store: &mut acta_core::Store) {
             || seed == "questions"
             || seed == "people"
             || seed == "attachments"
-            || seed == "quality")
+            || seed == "quality"
+            || seed == "markdown")
         && let Some(dir) = crate::launch_dir()
         && let Err(err) = match seed.as_str() {
             "bare" => crate::dev_seed::bare(store, &dir),
@@ -6483,6 +6484,8 @@ fn seed_if_asked(store: &mut acta_core::Store) {
             "attachments" => crate::dev_seed::attachments(store, &dir),
             #[cfg(debug_assertions)]
             "quality" => crate::dev_seed::quality(store, &dir),
+            #[cfg(debug_assertions)]
+            "markdown" => crate::dev_seed::markdown(store, &dir),
             _ => crate::dev_seed::seed(store, &dir),
         }
     {
