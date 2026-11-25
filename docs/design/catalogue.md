@@ -632,6 +632,11 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `folders.commit.push_hint` | Then pushes to the upstream branch, never forced. It stops if a push fails. | Puis pousse vers la branche amont, jamais en force. Il s'arrête si un push échoue. |
 | `folders.commit.as_user` | Commit in my name, without Co-Authored-By Claude | Commiter en mon nom, sans Co-Authored-By Claude |
 | `folders.commit.on_default` | Also on {branch} | Aussi sur {branch} |
+| `folders.for_page` | For this page | Pour cette page |
+| `folders.for_page.inherit` | Use folder setting | Réglage du dossier |
+| `folders.for_page.folder` | Folder setting: {mode}. | Réglage du dossier : {mode}. |
+| `folders.for_page.from` | {from}: {mode}. | {from} : {mode}. |
+| `folders.for_page.menu` | Commits for this page... | Commits pour cette page... |
 | `folders.commit.identity` | Commits as {name}. | Commits au nom de : {name}. |
 | `folders.commit.no_identity` | Git has no user name here, so commits will fail. | Git n'a pas de nom d'utilisateur ici : les commits échoueront. |
 | `folders.commit.file` | Saved in .claude/settings.local.json, kept out of git. | Enregistré dans .claude/settings.local.json, exclu de git. |

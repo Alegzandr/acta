@@ -14,6 +14,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use acta_core::claude_settings::page::{self, PageCommit};
 use acta_core::folder_identity::{self, Known, Monitor};
 use acta_core::model::{
     Author, CommitMode, ContactId, ContactLevel, EpicId, FolderId, KbId, KbPairKind, KbPairState,
@@ -104,6 +105,14 @@ pub enum Undo {
         id: FolderId,
         back: CommitColumns,
         expect: CommitColumns,
+    },
+    /// A page's own commit choice for a folder ("For this page"; `None`:
+    /// the page uses what it inherits).
+    PageCommit {
+        owner: Owner,
+        folder: FolderId,
+        back: Option<PageCommit>,
+        expect: Option<PageCommit>,
     },
     /// A folder set or located: put the old path back as stored.
     FolderPath {
@@ -385,6 +394,12 @@ impl Undo {
             Undo::FolderName { id, expect, .. } => store.folder(*id)?.name == *expect,
             Undo::FolderIcon { id, expect, .. } => store.folder(*id)?.icon == *expect,
             Undo::FolderCommit { id, expect, .. } => commit_columns(store, *id)? == *expect,
+            Undo::PageCommit {
+                owner,
+                folder,
+                expect,
+                ..
+            } => page::page_commit(store, *owner, *folder)? == *expect,
             Undo::FolderPath { id, expect, .. } => store.folder(*id)?.path == *expect,
             Undo::KbRevision { id, expect, .. } => store.kb_entry(*id)?.rev == *expect,
             Undo::KbOwner { id, expect, .. } => store.kb_entry(*id)?.owner == *expect,
@@ -595,6 +610,20 @@ impl Undo {
                     id: *id,
                     back: *expect,
                     expect: commit_columns(store, *id)?,
+                }
+            }
+            Undo::PageCommit {
+                owner,
+                folder,
+                back,
+                expect,
+            } => {
+                page::set_page_commit(store, *owner, *folder, *back, me)?;
+                Undo::PageCommit {
+                    owner: *owner,
+                    folder: *folder,
+                    back: *expect,
+                    expect: page::page_commit(store, *owner, *folder)?,
                 }
             }
             Undo::FolderPath { id, back, expect } => {
@@ -2511,6 +2540,37 @@ mod tests {
         store
             .set_active_folder(owner, Some(folders[0]), Author::Human)
             .unwrap();
+        assert!(step.apply(store).unwrap().is_none());
+    }
+
+    /// "For this page" is one undoable step, skipped once changed since.
+    #[test]
+    fn a_page_commit_choice_is_undone_and_redone() {
+        let mut temp = temp_store();
+        let dir = tempfile::tempdir().unwrap();
+        let store = &mut temp.store;
+        let (project, id) = topic(store);
+        let owner = Owner::Topic(id);
+        let folder = store
+            .add_folder(Owner::Project(project), dir.path(), Author::Human)
+            .unwrap();
+        let push = Some(PageCommit {
+            mode: CommitMode::Push,
+            as_user: None,
+            on_default: false,
+        });
+        page::set_page_commit(store, owner, folder, push, Author::Human).unwrap();
+        let step = Undo::PageCommit {
+            owner,
+            folder,
+            back: None,
+            expect: push,
+        };
+        let redo = step.apply(store).unwrap().expect("undone");
+        assert_eq!(page::page_commit(store, owner, folder).unwrap(), None);
+        assert!(redo.apply(store).unwrap().is_some());
+        assert_eq!(page::page_commit(store, owner, folder).unwrap(), push);
+        page::set_page_commit(store, owner, folder, None, Author::Human).unwrap();
         assert!(step.apply(store).unwrap().is_none());
     }
 

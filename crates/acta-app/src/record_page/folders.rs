@@ -9,6 +9,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
+use acta_core::claude_settings::page::{self as page_commit, PageCommit};
 use acta_core::claude_settings::{self, FileState};
 use acta_core::folder_path;
 use acta_core::git_cmd::{self, Branches, GitError, Pulled, StatusSummary, SwitchTo};
@@ -334,6 +335,7 @@ impl RecordPage {
                 self.focus_folder(id, window, cx);
             }
             FolderKey::Settings if own => self.open_folder_settings(id, window, cx),
+            FolderKey::Settings => self.open_page_commit(id, cx),
             FolderKey::Other if own => self.choose_other(id, cx),
             FolderKey::Remove if own => {
                 self.remove_folder(id, cx);
@@ -830,6 +832,62 @@ impl RecordPage {
             }
         })
         .detach();
+    }
+
+    /// "For this page" on a folder the page sees (ADR 0011 addendum
+    /// 2026-11-23): the page's own choice, `None` to use what it inherits.
+    /// One undoable step; no settings file changes (sessions started from
+    /// this page get the rules with their own launch).
+    pub(super) fn set_page_commit(
+        &mut self,
+        id: FolderId,
+        value: Option<PageCommit>,
+        cx: &mut Context<Self>,
+    ) {
+        let project = self.project_id();
+        let owner = self.owner;
+        let task = self.ws.update(cx, |ws, cx| {
+            ws.write_folders(cx, project, None, move |store| {
+                let back = page_commit::page_commit(store, owner, id)?;
+                page_commit::set_page_commit(store, owner, id, value, Author::Human)?;
+                Ok((
+                    Undo::PageCommit {
+                        owner,
+                        folder: id,
+                        back,
+                        expect: value,
+                    },
+                    (),
+                ))
+            })
+        });
+        task.detach();
+    }
+
+    /// "Commits for this page..." on an inherited folder: the page's own
+    /// commit choice unfolds under the row (the rest is edited at the
+    /// folder's own level).
+    pub fn open_page_commit(&mut self, id: FolderId, cx: &mut Context<Self>) {
+        let Some(folder) = self.folder(id).filter(|f| !f.own) else {
+            return;
+        };
+        // Commit modes exist only for a folder in a git repository.
+        if !self
+            .folder_ui
+            .disk
+            .get(&folder.path)
+            .is_some_and(|d| d.git.is_some())
+        {
+            return;
+        }
+        self.folder_ui.open = true;
+        self.folder_ui.row_menu = None;
+        self.folder_ui.switcher = None;
+        self.folder_ui.settings = Some(id);
+        self.folder_ui.name_input = None;
+        self.folder_ui._name_sub = None;
+        self.read_form_facts(folder.path, cx);
+        cx.notify();
     }
 
     /// "Folder settings..." (own folders only): the form unfolds under the
@@ -1388,7 +1446,7 @@ impl RecordPage {
         fm::git_line(
             self.folder_ui.disk.get(&f.path),
             self.folder_ui.status.get(&f.path),
-            f.commit_mode,
+            f.effective,
         )
     }
 
@@ -1915,8 +1973,12 @@ impl RecordPage {
                 let f = folders.items[i].clone();
                 order.push(f.id);
                 list = list.child(self.render_folder_row(&f, folders, &active_name, locale, t, cx));
-                if self.folder_ui.settings == Some(f.id) && f.own {
-                    list = list.child(self.render_folder_form(&f, folders, locale, t, cx));
+                if self.folder_ui.settings == Some(f.id) {
+                    list = list.child(if f.own {
+                        self.render_folder_form(&f, folders, locale, t, cx)
+                    } else {
+                        self.render_page_commit_form(&f, folders, locale, t, cx)
+                    });
                 }
             }
         }
@@ -2393,6 +2455,17 @@ impl RecordPage {
                 ),
                 _ => tr(locale, Key::FoldersEditIn, &[("name", Arg::Text(&level))]),
             };
+            let in_git = self
+                .folder_ui
+                .disk
+                .get(&f.path)
+                .is_some_and(|d| d.git.is_some());
+            if in_git {
+                panel = panel
+                    .child(item("fm-for-page", Key::FoldersForPageMenu).on_click(
+                        cx.listener(move |page, _, _, cx| page.open_page_commit(id, cx)),
+                    ));
+            }
             panel = panel.child(
                 menu::item("fm-edit-in", None, label, None, false, t).on_click(cx.listener(
                     move |page, _, _, cx| {
@@ -2688,6 +2761,187 @@ impl RecordPage {
                         .max_w(px(480.))
                         .text_color(t.text_tertiary)
                         .child(line),
+                );
+            }
+        }
+        form.into_any_element()
+    }
+}
+
+impl RecordPage {
+    /// "For this page" (ADR 0011 addendum 2026-11-23), unfolded under an
+    /// inherited git folder: Use folder setting / Manual / Commit / Commit
+    /// and push, one line saying what applies, and with an automatic choice
+    /// its two options.
+    fn render_page_commit_form(
+        &self,
+        f: &FolderItem,
+        folders: &Folders,
+        locale: Locale,
+        t: &Tokens,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let id = f.id;
+        let checkout = self
+            .folder_ui
+            .disk
+            .get(&f.path)
+            .and_then(|d| d.git.as_ref());
+        let mode_name = |m: CommitMode| {
+            text(
+                locale,
+                match m {
+                    CommitMode::Manual => Key::FoldersCommitManual,
+                    CommitMode::Commit => Key::FoldersCommitCommit,
+                    CommitMode::Push => Key::FoldersCommitPush,
+                },
+            )
+        };
+        let chosen = f.page_commit;
+        let mut segments = ui::segmented(t).child(
+            ui::segment(
+                SharedString::from(format!("fp-inherit-{}", id.0)),
+                text(locale, Key::FoldersForPageInherit),
+                chosen.is_none(),
+                t,
+            )
+            .on_click(cx.listener(move |page, _, _, cx| {
+                if chosen.is_some() {
+                    page.set_page_commit(id, None, cx)
+                }
+            })),
+        );
+        for (m, key) in [
+            (CommitMode::Manual, Key::FoldersCommitManual),
+            (CommitMode::Commit, Key::FoldersCommitCommit),
+            (CommitMode::Push, Key::FoldersCommitPush),
+        ] {
+            let selected = chosen.is_some_and(|c| c.mode == m);
+            segments = segments.child(
+                ui::segment(
+                    SharedString::from(format!("fp-{key:?}-{}", id.0)),
+                    text(locale, key),
+                    selected,
+                    t,
+                )
+                .on_click(cx.listener(move |page, _, _, cx| {
+                    if !selected {
+                        let value = PageCommit {
+                            mode: m,
+                            ..chosen.unwrap_or_default()
+                        };
+                        page.set_page_commit(id, Some(value), cx)
+                    }
+                })),
+            );
+        }
+        let line = match (chosen, f.inherited) {
+            (Some(c), _) => text(locale, fm::mode_hint(c.mode)),
+            (None, (mode, None)) => tr(
+                locale,
+                Key::FoldersForPageFolder,
+                &[("mode", Arg::Text(&mode_name(mode)))],
+            ),
+            (None, (mode, Some(from))) => tr(
+                locale,
+                Key::FoldersForPageFrom,
+                &[
+                    (
+                        "from",
+                        Arg::Text(&fm::group_label(
+                            locale,
+                            self.owner,
+                            from,
+                            folders.level_name(from),
+                        )),
+                    ),
+                    ("mode", Arg::Text(&mode_name(mode))),
+                ],
+            ),
+        };
+        let mut form = div()
+            .flex()
+            .flex_col()
+            .gap(px(4.))
+            .pl(px(48.))
+            .pt(px(12.))
+            .pb(px(8.))
+            .on_mouse_down_out(cx.listener(move |page, _, _, cx| {
+                if page.folder_ui.settings == Some(id) && page.folder_ui.branch_menu.is_none() {
+                    page.folder_ui.settings = None;
+                    cx.notify();
+                }
+            }))
+            .child(
+                type_scale::LABEL
+                    .el()
+                    .text_color(t.text_secondary)
+                    .child(text(locale, Key::FoldersForPage)),
+            )
+            .child(segments)
+            .child(
+                type_scale::SMALL
+                    .el()
+                    .max_w(px(480.))
+                    .text_color(t.text_tertiary)
+                    .child(line),
+            );
+        if let Some(c) = chosen.filter(|c| c.mode.automatic()) {
+            let as_user = c.as_user.unwrap_or(folders.as_user_default);
+            let check_row = |n: String, checked: bool, label: String| {
+                let hover = t.fill_hover;
+                ui::focusable(div().id(SharedString::from(n)), t, false)
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(8.))
+                    .min_h(px(24.))
+                    .px(px(4.))
+                    .ml(px(-4.))
+                    .rounded(px(RADIUS_SM))
+                    .hover(move |s| s.bg(hover))
+                    .child(ui::checkbox(checked, t))
+                    .child(
+                        type_scale::UI
+                            .el()
+                            .flex_1()
+                            .min_w_0()
+                            .text_color(t.text_primary)
+                            .child(label),
+                    )
+            };
+            form = form.child(
+                check_row(
+                    format!("fp-as-user-{}", id.0),
+                    as_user,
+                    text(locale, Key::FoldersCommitAsUser),
+                )
+                .on_click(cx.listener(move |page, _, _, cx| {
+                    let value = PageCommit {
+                        as_user: Some(!as_user),
+                        ..c
+                    };
+                    page.set_page_commit(id, Some(value), cx)
+                })),
+            );
+            if let Some(default) = checkout.and_then(|g| g.default_branch.as_ref()) {
+                form = form.child(
+                    check_row(
+                        format!("fp-on-default-{}", id.0),
+                        c.on_default,
+                        tr(
+                            locale,
+                            Key::FoldersCommitOnDefault,
+                            &[("branch", Arg::Text(default))],
+                        ),
+                    )
+                    .on_click(cx.listener(move |page, _, _, cx| {
+                        let value = PageCommit {
+                            on_default: !c.on_default,
+                            ..c
+                        };
+                        page.set_page_commit(id, Some(value), cx)
+                    })),
                 );
             }
         }

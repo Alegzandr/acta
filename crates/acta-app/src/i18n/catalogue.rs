@@ -2497,6 +2497,26 @@ catalogue! {
         en: t("Also on {branch}"),
         fr: t("Aussi sur {branch}"),
     }
+    FoldersForPage "folders.for_page" {
+        en: t("For this page"),
+        fr: t("Pour cette page"),
+    }
+    FoldersForPageInherit "folders.for_page.inherit" {
+        en: t("Use folder setting"),
+        fr: t("Réglage du dossier"),
+    }
+    FoldersForPageFolder "folders.for_page.folder" {
+        en: t("Folder setting: {mode}."),
+        fr: t("Réglage du dossier\u{a0}: {mode}."),
+    }
+    FoldersForPageFrom "folders.for_page.from" {
+        en: t("{from}: {mode}."),
+        fr: t("{from}\u{a0}: {mode}."),
+    }
+    FoldersForPageMenu "folders.for_page.menu" {
+        en: t("Commits for this page\u{2026}"),
+        fr: t("Commits pour cette page\u{2026}"),
+    }
     FoldersCommitIdentity "folders.commit.identity" {
         en: t("Commits as {name}."),
         fr: t("Commits au nom de\u{a0}: {name}."),
