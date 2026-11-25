@@ -787,7 +787,7 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `cmd.save_file` | Save as file... | Enregistrer comme fichier... |
 | `cmd.attach` | Attach files... | Joindre des fichiers... |
 | `cmd.attachment_save` | Save file as... | Enregistrer le fichier sous... |
-| `cmd.export` | Export... | Exporter... |
+| `cmd.export` | Back up... | Sauvegarder... |
 | `cmd.import` | Import... | Importer... |
 | `cmd.trash` | Open trash | Ouvrir la corbeille |
 | `cmd.snapshot` | Restore from snapshot... | Restaurer depuis un instantané... |
@@ -944,8 +944,10 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `settings.remove.body` | Removes Acta's plugin, permissions and status line from Claude Code, and turns its own memory back on. Your projects stay in Acta. | Retire de Claude Code le plugin, les autorisations et la ligne d'état d'Acta, et réactive sa propre mémoire. Vos projets restent dans Acta. |
 | `settings.remove.confirm` | Remove | Retirer |
 | `settings.data` | Data | Données |
-| `settings.export.last` | Last export: {days} (`time.days` or `time.today_word`) | Dernier export : {days} |
-| `settings.export.never` | Never exported | Jamais exporté |
+| `settings.export.last` | Last backup: {days} (`time.days` or `time.today_word`) | Dernière sauvegarde : {days} |
+| `settings.export.never` | Never backed up | Jamais sauvegardé |
+| `settings.reset.label` | All data | Toutes les données |
+| `settings.reset` | Reset Acta... | Réinitialiser Acta... |
 | `settings.snapshots.today` | {n} snapshot, from today, {time} · {n} snapshots, newest today, {time} | {n} instantané, d'aujourd'hui à {time} · {n} instantanés, le plus récent d'aujourd'hui à {time} |
 | `settings.snapshots.older` | {n} snapshot, from {datetime} · {n} snapshots, newest {datetime} | {n} instantané, du {datetime} · {n} instantanés, le plus récent du {datetime} |
 | `settings.snapshots` | Snapshots | Instantanés |
@@ -975,20 +977,25 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `updater.checking` | Checking for updates... | Recherche de mises à jour... |
 | `updater.downloading` | Downloading update... | Téléchargement de la mise à jour... |
 | `updater.restarting` | Restarting... | Redémarrage... |
-| `export.title` | Export | Exporter |
+| `export.title` | Back up | Sauvegarder |
 | `export.scope.all` | Everything | Tout |
 | `export.scope.project` | This project | Ce projet |
-| `export.warning` | The file is not encrypted: anyone who opens it can read these projects. | Le fichier n'est pas chiffré : quiconque l'ouvre peut lire ces projets. |
 | `export.include_files` | Include attached files ({size}) | Inclure les fichiers joints ({size}) |
-| `export.too_large` | With its files this export would be about {size}, more than an import can read ({limit}). Export without files: their names and sizes stay. | Avec ses fichiers, cet export ferait environ {size}, plus qu'un import ne peut en lire ({limit}). Exportez sans les fichiers : leurs noms et tailles sont conservés. |
-| `export.passphrase` | Protect with a passphrase | Protéger par une phrase secrète |
+| `export.too_large` | With its files this backup would be about {size}, more than an import can read ({limit}). Back up without files: their names and sizes stay. | Avec ses fichiers, cette sauvegarde ferait environ {size}, plus qu'un import ne peut en lire ({limit}). Sauvegardez sans les fichiers : leurs noms et tailles sont conservés. |
+| `export.passphrase` | Passphrase | Phrase secrète |
+| `export.passphrase.repeat` | Repeat the passphrase | Répétez la phrase secrète |
+| `export.passphrase.short` | At least {n} characters | Au moins {n} caractères |
+| `export.passphrase.weak` | Weak: a longer passphrase is safer | Faible : une phrase plus longue est plus sûre |
+| `export.passphrase.fair` | Fair: a few more words make it strong | Moyenne : quelques mots de plus la rendent solide |
+| `export.passphrase.strong` | Strong | Solide |
+| `export.passphrase.mismatch` | The two passphrases differ. | Les deux phrases secrètes diffèrent. |
 | `export.passphrase.lost` | Acta cannot recover a lost passphrase. | Acta ne peut pas retrouver une phrase secrète perdue. |
-| `export.choose` | Choose location... | Choisir l'emplacement... |
-| `export.done` | Exported {n} project to {file}. · Exported {n} projects to {file}. | {n} projet exporté vers {file}. · {n} projets exportés vers {file}. |
+| `export.choose` | Save backup... | Enregistrer la sauvegarde... |
+| `export.done` | Backed up {n} project to {file}. · Backed up {n} projects to {file}. | {n} projet sauvegardé dans {file}. · {n} projets sauvegardés dans {file}. |
 | `export.show` | Show in folder | Afficher dans le dossier |
-| `export.suggest` | Everything is on this computer only. An export is your copy if the keychain is lost. | Tout est sur cet ordinateur uniquement. Un export est votre copie si le trousseau est perdu. |
+| `export.suggest` | Everything is on this computer only. A backup is your copy if the keychain is lost. | Tout est sur cet ordinateur uniquement. Une sauvegarde est votre copie si le trousseau est perdu. |
 | `import.title` | Import "{file}" | Importer « {file} » |
-| `import.meta` | Exported {date} · format {n} · {projects} (`count.projects`) | Exporté le {date} · format {n} · {projects} |
+| `import.meta` | Backed up {date} · format {n} · {projects} (`count.projects`) | Sauvegardé le {date} · format {n} · {projects} |
 | `import.created` | Created | Créés |
 | `import.updated` | Updated | Mis à jour |
 | `import.skipped` | Skipped | Ignorés |
@@ -1007,12 +1014,23 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `import.count.updated` | {n} updated | {n} mis à jour |
 | `import.folders` | {n} working folder was not found on this computer. Locate it from its project, epic or topic. · {n} working folders were not found on this computer. Locate each one from its project, epic or topic. | {n} dossier de travail est introuvable sur cet ordinateur. Localisez-le depuis son projet, son epic ou son sujet. · {n} dossiers de travail sont introuvables sur cet ordinateur. Localisez chacun depuis son projet, son epic ou son sujet. |
 | `import.network_folders` | {n} working folder on a network path was left out. Add it again from its project, epic or topic. · {n} working folders on a network path were left out. Add each one again from its project, epic or topic. | {n} dossier de travail sur un chemin réseau a été écarté. Ajoutez-le de nouveau depuis son projet, son epic ou son sujet. · {n} dossiers de travail sur un chemin réseau ont été écartés. Ajoutez chacun de nouveau depuis son projet, son epic ou son sujet. |
-| `import.files_missing` | {n} file was not in the export. · {n} files were not in the export. | {n} fichier n'était pas dans l'export. · {n} fichiers n'étaient pas dans l'export. |
+| `import.files_missing` | {n} file was not in the backup. · {n} files were not in the backup. | {n} fichier n'était pas dans la sauvegarde. · {n} fichiers n'étaient pas dans la sauvegarde. |
 | `import.recovered_manual` | Commit modes come back as Manual: set them again in each folder's settings. | Les modes de commit reviennent en Manuel : redéfinissez-les dans les réglages de chaque dossier. |
 | `import.newer` | This file was made by a newer Acta (format {n}). Update Acta, then import it. | Ce fichier a été créé par une version plus récente d'Acta (format {n}). Mettez Acta à jour, puis importez-le. |
-| `import.not_acta` | This is not an Acta export. | Ce n'est pas un export Acta. |
-| `import.too_large` | This file is too large to import ({size}). The limit is {limit}. Export one project at a time, then import each file. | Ce fichier est trop volumineux pour être importé ({size}). La limite est de {limit}. Exportez un projet à la fois, puis importez chaque fichier. |
+| `import.not_acta` | This is not an Acta backup. | Ce n'est pas une sauvegarde Acta. |
+| `import.too_large` | This file is too large to import ({size}). The limit is {limit}. Back up one project at a time, then import each backup. | Ce fichier est trop volumineux pour être importé ({size}). La limite est de {limit}. Sauvegardez un projet à la fois, puis importez chaque sauvegarde. |
 | `import.wrong_passphrase` | Wrong passphrase. | Phrase secrète incorrecte. |
+| `import.damaged` | This backup is damaged or incomplete. Nothing was imported. | Cette sauvegarde est endommagée ou incomplète. Rien n'a été importé. |
+| `import.open` | Open | Ouvrir |
+| `reset.title` | Reset Acta? | Réinitialiser Acta ? |
+| `reset.body` | Erases every project, note, memory, file and contact, and the snapshots. Your settings, layout and voice models stay. | Efface tous les projets, notes, mémoires, fichiers et contacts, ainsi que les instantanés. Vos réglages, votre disposition et les modèles vocaux sont conservés. |
+| `reset.backup` | Back up first... | Sauvegarder d'abord... |
+| `reset.sign_out` | Also sign out of the chat and browser | Me déconnecter aussi du chat et du navigateur |
+| `reset.voice_models` | Also delete the voice models | Supprimer aussi les modèles vocaux |
+| `reset.type` | Type {word} to confirm | Tapez {word} pour confirmer |
+| `reset.word` | reset | réinitialiser |
+| `reset.confirm` | Reset Acta | Réinitialiser Acta |
+| `reset.failed` | Acta could not reset: a Claude Code session still uses its data. Close Claude Code, then reset again. | Acta n'a pas pu se réinitialiser : une session Claude Code utilise encore ses données. Fermez Claude Code, puis recommencez. |
 | `trash.hint` | Deleted things stay here for 30 days. | Les éléments supprimés restent ici 30 jours. |
 | `trash.by` | by {author} | par {author} |
 | `trash.project_content` | {topics}, {notes} (`count.topics`, `count.notes`) | {topics}, {notes} |
@@ -1041,8 +1059,8 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `keychain.m` | the macOS Keychain | du trousseau macOS |
 | `keychain.l` | the Secret Service keyring | du service Secret Service |
 | `keyloss.untouched` | Acta has not changed the file: | Acta n'a pas modifié le fichier : |
-| `keyloss.import` | Import an export... | Importer un export... |
-| `keyloss.limit` | Without the key or an export, the content cannot be read. You can start empty; the file is kept as {file}. | Sans la clé ni export, le contenu ne peut pas être lu. Vous pouvez repartir de zéro ; le fichier est conservé sous le nom {file}. |
+| `keyloss.import` | Import a backup... | Importer une sauvegarde... |
+| `keyloss.limit` | Without the key or a backup, the content cannot be read. You can start empty; the file is kept as {file}. | Sans la clé ni sauvegarde, le contenu ne peut pas être lu. Vous pouvez repartir de zéro ; le fichier est conservé sous le nom {file}. |
 | `keyloss.start_empty` | Start empty | Repartir de zéro |
 | `openfail.title` | Acta could not open its database | Acta n'a pas pu ouvrir sa base de données |
 | `openfail.body` | Something on this computer kept Acta from reading its data. Nothing was changed. Try again; if it keeps failing, the log in the data folder says what failed. | Quelque chose sur cet ordinateur empêche Acta de lire ses données. Rien n'a été modifié. Réessayez ; si l'échec se répète, le journal du dossier de données indique la cause. |
@@ -1486,3 +1504,7 @@ From the user's decisions of 2026-11-22 (layout.md 4.5.1, data.md 11 request 27)
 | `chat.clear_all_body` | This deletes the cookies and site data of every chat from this computer. Your conversations stay in your Claude account. | Cela supprime de cet ordinateur les cookies et données de site de tous les chats. Vos conversations restent dans votre compte Claude. |
 
 `{level_lower}` is the level word in lower case ("topic", « sujet »); the French form picks "cet" before "epic" (« cet epic »). The commands "Start Claude Code here", "New chat here" and "New browser here" use the `tool.*` labels above as their palette text.
+
+### 10.4.18 Keys of backups and reset
+
+From the user's decisions of 2026-11-22 (ADR 0006 amendment; components-app.md 5, Back up dialog, Import and Reset). Moved into 10.4 and `catalogue.rs` with the implementation (branch `integration-engineer/passphrase-backup`). A backup is the only export and is always encrypted, so "export" becomes "back up" / *sauvegarder* in what the human reads: `cmd.export`, `settings.export.last`, `settings.export.never`, `export.title`, `export.too_large`, `export.choose`, `export.done`, `export.suggest`, `import.meta`, `import.files_missing`, `import.not_acta`, `import.too_large`, `keyloss.import` and `keyloss.limit` changed; `export.passphrase` is now the field's placeholder. Retired: `export.warning` (no plaintext file is written any more; the row in 10.4.10 above is history). New after `export.passphrase`: `export.passphrase.repeat`, `.short`, `.weak`, `.fair`, `.strong`, `.mismatch`; after `import.wrong_passphrase`: `import.damaged`, `import.open`, then the `reset.*` keys; after `settings.export.never`: `settings.reset.label` and `settings.reset`. In French *sauvegarde* is feminine ("Une sauvegarde est votre copie"); the strength words agree with *phrase* (« Moyenne », « Solide »). `{n}` in `export.passphrase.short` is always 8. `{word}` in `reset.type` is `reset.word`, the word the human types, which is the language's own (« réinitialiser »), matched in either case.

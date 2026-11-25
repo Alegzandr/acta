@@ -3118,8 +3118,8 @@ catalogue! {
         fr: t("Enregistrer le fichier sous\u{2026}"),
     }
     CmdExport "cmd.export" {
-        en: t("Export\u{2026}"),
-        fr: t("Exporter\u{2026}"),
+        en: t("Back up\u{2026}"),
+        fr: t("Sauvegarder\u{2026}"),
     }
     CmdImport "cmd.import" {
         en: t("Import\u{2026}"),
@@ -3746,12 +3746,20 @@ catalogue! {
         fr: t("Données"),
     }
     SettingsExportLast "settings.export.last" {
-        en: t("Last export: {days}"),
-        fr: t("Dernier export\u{a0}: {days}"),
+        en: t("Last backup: {days}"),
+        fr: t("Dernière sauvegarde\u{a0}: {days}"),
     }
     SettingsExportNever "settings.export.never" {
-        en: t("Never exported"),
-        fr: t("Jamais exporté"),
+        en: t("Never backed up"),
+        fr: t("Jamais sauvegardé"),
+    }
+    SettingsResetLabel "settings.reset.label" {
+        en: t("All data"),
+        fr: t("Toutes les données"),
+    }
+    SettingsReset "settings.reset" {
+        en: t("Reset Acta\u{2026}"),
+        fr: t("Réinitialiser Acta\u{2026}"),
     }
     SettingsSnapshotsToday "settings.snapshots.today" {
         en: p("{n} snapshot, from today, {time}", "{n} snapshots, newest today, {time}"),
@@ -3870,8 +3878,8 @@ catalogue! {
         fr: t("Redémarrage\u{2026}"),
     }
     ExportTitle "export.title" {
-        en: t("Export"),
-        fr: t("Exporter"),
+        en: t("Back up"),
+        fr: t("Sauvegarder"),
     }
     ExportScopeAll "export.scope.all" {
         en: t("Everything"),
@@ -3881,49 +3889,69 @@ catalogue! {
         en: t("This project"),
         fr: t("Ce projet"),
     }
-    ExportWarning "export.warning" {
-        en: t("The file is not encrypted: anyone who opens it can read these projects."),
-        fr: t("Le fichier n\u{2019}est pas chiffré\u{a0}: quiconque l\u{2019}ouvre peut lire ces projets."),
-    }
     ExportIncludeFiles "export.include_files" {
         en: t("Include attached files ({size})"),
         fr: t("Inclure les fichiers joints ({size})"),
     }
     ExportTooLarge "export.too_large" {
-        en: t("With its files this export would be about {size}, more than an import can read ({limit}). Export without files: their names and sizes stay."),
-        fr: t("Avec ses fichiers, cet export ferait environ {size}, plus qu\u{2019}un import ne peut en lire ({limit}). Exportez sans les fichiers\u{a0}: leurs noms et tailles sont conservés."),
+        en: t("With its files this backup would be about {size}, more than an import can read ({limit}). Back up without files: their names and sizes stay."),
+        fr: t("Avec ses fichiers, cette sauvegarde ferait environ {size}, plus qu\u{2019}un import ne peut en lire ({limit}). Sauvegardez sans les fichiers\u{a0}: leurs noms et tailles sont conservés."),
     }
     ExportPassphrase "export.passphrase" {
-        en: t("Protect with a passphrase"),
-        fr: t("Protéger par une phrase secrète"),
+        en: t("Passphrase"),
+        fr: t("Phrase secrète"),
+    }
+    ExportPassphraseRepeat "export.passphrase.repeat" {
+        en: t("Repeat the passphrase"),
+        fr: t("Répétez la phrase secrète"),
+    }
+    ExportPassphraseShort "export.passphrase.short" {
+        en: t("At least {n} characters"),
+        fr: t("Au moins {n} caractères"),
+    }
+    ExportPassphraseWeak "export.passphrase.weak" {
+        en: t("Weak: a longer passphrase is safer"),
+        fr: t("Faible\u{a0}: une phrase plus longue est plus sûre"),
+    }
+    ExportPassphraseFair "export.passphrase.fair" {
+        en: t("Fair: a few more words make it strong"),
+        fr: t("Moyenne\u{a0}: quelques mots de plus la rendent solide"),
+    }
+    ExportPassphraseStrong "export.passphrase.strong" {
+        en: t("Strong"),
+        fr: t("Solide"),
+    }
+    ExportPassphraseMismatch "export.passphrase.mismatch" {
+        en: t("The two passphrases differ."),
+        fr: t("Les deux phrases secrètes diffèrent."),
     }
     ExportPassphraseLost "export.passphrase.lost" {
         en: t("Acta cannot recover a lost passphrase."),
         fr: t("Acta ne peut pas retrouver une phrase secrète perdue."),
     }
     ExportChoose "export.choose" {
-        en: t("Choose location\u{2026}"),
-        fr: t("Choisir l\u{2019}emplacement\u{2026}"),
+        en: t("Save backup\u{2026}"),
+        fr: t("Enregistrer la sauvegarde\u{2026}"),
     }
     ExportDone "export.done" {
-        en: p("Exported {n} project to {file}.", "Exported {n} projects to {file}."),
-        fr: p("{n} projet exporté vers {file}.", "{n} projets exportés vers {file}."),
+        en: p("Backed up {n} project to {file}.", "Backed up {n} projects to {file}."),
+        fr: p("{n} projet sauvegardé dans {file}.", "{n} projets sauvegardés dans {file}."),
     }
     ExportShow "export.show" {
         en: t("Show in folder"),
         fr: t("Afficher dans le dossier"),
     }
     ExportSuggest "export.suggest" {
-        en: t("Everything is on this computer only. An export is your copy if the keychain is lost."),
-        fr: t("Tout est sur cet ordinateur uniquement. Un export est votre copie si le trousseau est perdu."),
+        en: t("Everything is on this computer only. A backup is your copy if the keychain is lost."),
+        fr: t("Tout est sur cet ordinateur uniquement. Une sauvegarde est votre copie si le trousseau est perdu."),
     }
     ImportTitle "import.title" {
         en: t("Import \"{file}\""),
         fr: t("Importer «\u{202f}{file}\u{202f}»"),
     }
     ImportMeta "import.meta" {
-        en: t("Exported {date} · format {n} · {projects}"),
-        fr: t("Exporté le {date} · format {n} · {projects}"),
+        en: t("Backed up {date} · format {n} · {projects}"),
+        fr: t("Sauvegardé le {date} · format {n} · {projects}"),
     }
     ImportCreated "import.created" {
         en: t("Created"),
@@ -3998,8 +4026,8 @@ catalogue! {
         fr: p("{n} dossier de travail sur un chemin réseau a été écarté. Ajoutez-le de nouveau depuis son projet, son epic ou son sujet.", "{n} dossiers de travail sur un chemin réseau ont été écartés. Ajoutez chacun de nouveau depuis son projet, son epic ou son sujet."),
     }
     ImportFilesMissing "import.files_missing" {
-        en: p("{n} file was not in the export.", "{n} files were not in the export."),
-        fr: p("{n} fichier n\u{2019}était pas dans l\u{2019}export.", "{n} fichiers n\u{2019}étaient pas dans l\u{2019}export."),
+        en: p("{n} file was not in the backup.", "{n} files were not in the backup."),
+        fr: p("{n} fichier n\u{2019}était pas dans la sauvegarde.", "{n} fichiers n\u{2019}étaient pas dans la sauvegarde."),
     }
     ImportRecoveredManual "import.recovered_manual" {
         en: t("Commit modes come back as Manual: set them again in each folder\u{2019}s settings."),
@@ -4010,16 +4038,60 @@ catalogue! {
         fr: t("Ce fichier a été créé par une version plus récente d\u{2019}Acta (format {n}). Mettez Acta à jour, puis importez-le."),
     }
     ImportNotActa "import.not_acta" {
-        en: t("This is not an Acta export."),
-        fr: t("Ce n\u{2019}est pas un export Acta."),
+        en: t("This is not an Acta backup."),
+        fr: t("Ce n\u{2019}est pas une sauvegarde Acta."),
     }
     ImportTooLarge "import.too_large" {
-        en: t("This file is too large to import ({size}). The limit is {limit}. Export one project at a time, then import each file."),
-        fr: t("Ce fichier est trop volumineux pour être importé ({size}). La limite est de {limit}. Exportez un projet à la fois, puis importez chaque fichier."),
+        en: t("This file is too large to import ({size}). The limit is {limit}. Back up one project at a time, then import each backup."),
+        fr: t("Ce fichier est trop volumineux pour être importé ({size}). La limite est de {limit}. Sauvegardez un projet à la fois, puis importez chaque sauvegarde."),
     }
     ImportWrongPassphrase "import.wrong_passphrase" {
         en: t("Wrong passphrase."),
         fr: t("Phrase secrète incorrecte."),
+    }
+    ImportDamaged "import.damaged" {
+        en: t("This backup is damaged or incomplete. Nothing was imported."),
+        fr: t("Cette sauvegarde est endommagée ou incomplète. Rien n\u{2019}a été importé."),
+    }
+    ImportOpen "import.open" {
+        en: t("Open"),
+        fr: t("Ouvrir"),
+    }
+    ResetTitle "reset.title" {
+        en: t("Reset Acta?"),
+        fr: t("Réinitialiser Acta\u{202f}?"),
+    }
+    ResetBody "reset.body" {
+        en: t("Erases every project, note, memory, file and contact, and the snapshots. Your settings, layout and voice models stay."),
+        fr: t("Efface tous les projets, notes, mémoires, fichiers et contacts, ainsi que les instantanés. Vos réglages, votre disposition et les modèles vocaux sont conservés."),
+    }
+    ResetBackup "reset.backup" {
+        en: t("Back up first\u{2026}"),
+        fr: t("Sauvegarder d\u{2019}abord\u{2026}"),
+    }
+    ResetSignOut "reset.sign_out" {
+        en: t("Also sign out of the chat and browser"),
+        fr: t("Me déconnecter aussi du chat et du navigateur"),
+    }
+    ResetVoiceModels "reset.voice_models" {
+        en: t("Also delete the voice models"),
+        fr: t("Supprimer aussi les modèles vocaux"),
+    }
+    ResetType "reset.type" {
+        en: t("Type {word} to confirm"),
+        fr: t("Tapez {word} pour confirmer"),
+    }
+    ResetWord "reset.word" {
+        en: t("reset"),
+        fr: t("réinitialiser"),
+    }
+    ResetConfirm "reset.confirm" {
+        en: t("Reset Acta"),
+        fr: t("Réinitialiser Acta"),
+    }
+    ResetFailed "reset.failed" {
+        en: t("Acta could not reset: a Claude Code session still uses its data. Close Claude Code, then reset again."),
+        fr: t("Acta n\u{2019}a pas pu se réinitialiser\u{a0}: une session Claude Code utilise encore ses données. Fermez Claude Code, puis recommencez."),
     }
     TrashHint "trash.hint" {
         en: t("Deleted things stay here for 30 days."),
@@ -4134,12 +4206,12 @@ catalogue! {
         fr: t("Acta n\u{2019}a pas modifié le fichier\u{a0}:"),
     }
     KeylossImport "keyloss.import" {
-        en: t("Import an export\u{2026}"),
-        fr: t("Importer un export\u{2026}"),
+        en: t("Import a backup\u{2026}"),
+        fr: t("Importer une sauvegarde\u{2026}"),
     }
     KeylossLimit "keyloss.limit" {
-        en: t("Without the key or an export, the content cannot be read. You can start empty; the file is kept as {file}."),
-        fr: t("Sans la clé ni export, le contenu ne peut pas être lu. Vous pouvez repartir de zéro\u{202f}; le fichier est conservé sous le nom {file}."),
+        en: t("Without the key or a backup, the content cannot be read. You can start empty; the file is kept as {file}."),
+        fr: t("Sans la clé ni sauvegarde, le contenu ne peut pas être lu. Vous pouvez repartir de zéro\u{202f}; le fichier est conservé sous le nom {file}."),
     }
     KeylossStartEmpty "keyloss.start_empty" {
         en: t("Start empty"),

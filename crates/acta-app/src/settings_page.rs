@@ -1119,6 +1119,19 @@ impl SettingsPage {
             )
             .into_any_element(),
         );
+        out.push(
+            setting_row(
+                text(locale, Key::SettingsResetLabel),
+                String::new(),
+                action(
+                    "settings-reset",
+                    text(locale, Key::SettingsReset),
+                    Box::new(crate::shell::ResetData),
+                ),
+                t,
+            )
+            .into_any_element(),
+        );
         // The path, middle-truncated by folder, in full in the tooltip;
         // "Show in Explorer" (Finder, file manager) reveals the file.
         let database = facts.database.clone();
