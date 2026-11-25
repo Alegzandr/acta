@@ -89,6 +89,25 @@ pub struct Preferences {
     pub voice: crate::voice::VoicePrefs,
 }
 
+/// Reset Acta: the record ids go with the records (the tree's folds and
+/// closed groups, the Overview's open sections, the page tabs that name a
+/// record), and the chat's state when signing out. Theme, language,
+/// sizes, zoom and the fixed pages stay.
+pub fn forget_records(prefs: &mut Preferences, sign_out: bool) {
+    prefs.collapsed.clear();
+    prefs.closed_shown.clear();
+    prefs.overview_open.clear();
+    if let Some(saved) = &prefs.layout {
+        prefs.layout = Saved::from_value(&saved.to_value(), |key| {
+            matches!(key, "trash" | "settings" | "shortcuts" | "contacts")
+        });
+    }
+    if sign_out {
+        prefs.chat_started = false;
+        prefs.chat_help_dismissed = false;
+    }
+}
+
 /// The file as stored. Every field but the version may be missing (it then
 /// takes its default); fields this build does not know are ignored.
 #[derive(Serialize, Deserialize)]
@@ -579,6 +598,45 @@ impl Writer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_reset_forgets_the_record_ids_and_keeps_the_settings() {
+        let layout = serde_json::json!({
+            "v": 1,
+            "page": { "groups": [{ "tabs": ["T-1", "trash", "K-4"], "active": 0 }] },
+        });
+        let mut prefs = Preferences {
+            theme: ThemeSetting::Dark,
+            language: Locale::Fr,
+            collapsed: vec!["P-1".into()],
+            closed_shown: vec!["closed:E-3".into()],
+            overview_open: vec!["P-1".into()],
+            zoom: Some(125),
+            chat_started: true,
+            chat_help_dismissed: true,
+            layout: Saved::from_value(&layout, |_| true),
+            ..Preferences::default()
+        };
+        forget_records(&mut prefs, false);
+        assert!(prefs.collapsed.is_empty() && prefs.closed_shown.is_empty());
+        assert!(prefs.overview_open.is_empty());
+        let pages: Vec<&str> = prefs
+            .layout
+            .as_ref()
+            .unwrap()
+            .pages
+            .iter()
+            .map(|(_, k)| k.as_str())
+            .collect();
+        assert_eq!(pages, ["trash"]);
+        assert_eq!(
+            (prefs.theme, prefs.language, prefs.zoom),
+            (ThemeSetting::Dark, Locale::Fr, Some(125))
+        );
+        assert!(prefs.chat_started && prefs.chat_help_dismissed);
+        forget_records(&mut prefs, true);
+        assert!(!prefs.chat_started && !prefs.chat_help_dismissed);
+    }
 
     #[test]
     fn a_missing_file_gives_the_defaults() {

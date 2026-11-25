@@ -29,7 +29,7 @@ Plain, specific, short. Acta talks like a careful colleague's notes: it names th
 | Conflict | Conflict detected! | Claude Code changed this while you were editing. |
 | Dialog title | Are you sure? | Restore the snapshot from 18 Nov 2026? |
 | Dialog body | This action cannot be undone. | Acta will restart with its data as of 18 Nov 2026, 09:12. Everything as it is now is saved as a snapshot first. |
-| Export warning | WARNING: unencrypted export! | The file is not encrypted. Anyone who can open it can read these projects. |
+| Passphrase | Password must contain 1 uppercase letter, 1 digit and 1 symbol! | At least 8 characters |
 | Key loss | Fatal error: decryption failed | Acta cannot open its database. The file is intact, but its key is missing from the system keychain. |
 | Import result | Import completed with 9 conflicts | Imported: 12 created, 3 updated. 9 skipped because Acta already has the same or a newer version. |
 | Missing folder | Error: invalid path | Not found on this computer. Locate... |
@@ -84,7 +84,7 @@ Both languages use the 24-hour clock and day-month-year order; neither follows t
 | Percent, sizes | 68%, 400 MB | 68 %, 400 Mo |
 | Counts over 99 | 99+ | 99+ |
 
-The first of the month is "1er" in French, in the long and the compact forms ("le 1er nov. 2026", "1er nov."); English has no such form. File names Acta proposes (`acta-2026-11-20.acta.json`) are not localised.
+The first of the month is "1er" in French, in the long and the compact forms ("le 1er nov. 2026", "1er nov."); English has no such form. File names Acta proposes (`acta-2026-11-20.acta-backup`) are not localised.
 
 ### 10.2.1 Due dates
 

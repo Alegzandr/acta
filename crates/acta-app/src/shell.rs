@@ -199,6 +199,8 @@ actions!(
         ImportData,
         /// Settings: "Restore from snapshot...".
         RestoreSnapshot,
+        /// Settings: "Reset Acta..." (confirmed by typing a word).
+        ResetData,
         /// "Open trash".
         OpenTrash,
         /// `Esc` in the sidebar shown over the page: dismiss it.
@@ -753,6 +755,12 @@ impl Shell {
         #[cfg(windows)]
         let chat_db = db.clone();
         let ws = cx.new(|cx| Workspace::new(db, cx));
+        if db::RESET_FAILED.swap(false, std::sync::atomic::Ordering::Relaxed) {
+            ws.update(cx, |ws, cx| {
+                let message = text(settings::locale(cx), Key::ResetFailed);
+                ws.toast(message, ToastKind::Error, cx);
+            });
+        }
         let files = cx.new(|_| crate::attach_ui::Files::new(ws.clone()));
         cx.set_global(crate::attach_ui::FilesHub(files.clone()));
         let dock = cx.new(|cx| TerminalDock::new(ws.clone(), false, cx));
@@ -3570,6 +3578,15 @@ impl Shell {
                     }
                     shell.close_overlay(window, cx)
                 }
+                DialogEvent::ResetHere(options) => {
+                    let options = *options;
+                    shell.close_overlay(window, cx);
+                    shell.reset_here(options, window, cx);
+                }
+                DialogEvent::BackUpFirst => {
+                    shell.close_overlay(window, cx);
+                    shell.open_export(window, cx);
+                }
                 DialogEvent::RestartTerminal => {
                     shell.close_overlay(window, cx);
                     let restart = shell.bench().and_then(|b| b.pending_restart.take());
@@ -3666,12 +3683,12 @@ impl Shell {
         );
     }
 
-    /// "Import...": the system open dialog, then the preview.
-    /// "Import...": the system open dialog, then the preview. On the
-    /// key-loss screen (no database open) the preview shows what an empty
-    /// database would get, and nothing is set aside before Import.
+    /// "Import...": the system open dialog, then the backup's passphrase
+    /// (dialogs.rs), then the preview. On the key-loss screen (no database
+    /// open) the preview shows what an empty database would get, and
+    /// nothing is set aside before Import. A file that is not a backup, or
+    /// is too large, is refused before the passphrase is asked.
     pub fn import(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let db = self.bench().map(|bench| bench.ws.read(cx).db.clone());
         let chosen = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: false,
@@ -3687,60 +3704,103 @@ impl Shell {
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            let recovery = db.is_none();
-            let parsed = cx
-                .background_spawn(async move {
-                    // The file is read before the store is taken.
-                    let file = ExportFile::read(&path)?;
-                    let report = match db {
-                        Some(db) => db.lock().import(&file, true)?,
-                        None => {
-                            if file.version > acta_core::store::FORMAT_VERSION {
-                                return Err(acta_core::Error::FormatTooNew {
-                                    found: file.version,
-                                    supported: acta_core::store::FORMAT_VERSION,
-                                });
-                            }
-                            crate::dialogs::report_into_empty(&file)
-                        }
-                    };
-                    Ok::<_, acta_core::Error>((file, report))
+            let checked = cx
+                .background_spawn({
+                    let path = path.clone();
+                    async move { acta_core::store::check_backup_file(&path) }
                 })
                 .await;
             let _ = shell.update_in(cx, |shell, window, cx| {
                 let locale = settings::locale(cx);
-                let kind = match parsed {
-                    Ok((file, report)) => DialogKind::Import {
+                let kind = match checked {
+                    Ok(()) => DialogKind::ImportPassphrase {
+                        path,
                         file_name,
-                        file: std::sync::Arc::new(file),
-                        report,
-                        recovery,
+                        error: None,
+                        opening: false,
                     },
-                    Err(acta_core::Error::FormatTooNew { found, .. }) => {
-                        DialogKind::ImportRefused {
-                            file_name,
-                            message: tr(
-                                locale,
-                                Key::ImportNewer,
-                                &[("n", Arg::Text(&found.to_string()))],
-                            ),
-                        }
-                    }
-                    Err(acta_core::Error::FileTooLarge { size, limit }) => {
-                        DialogKind::ImportRefused {
-                            file_name,
-                            message: crate::dialogs::import_too_large(locale, size, limit),
-                        }
-                    }
-                    Err(_) => DialogKind::ImportRefused {
+                    Err(err) => DialogKind::ImportRefused {
                         file_name,
-                        message: text(locale, Key::ImportNotActa),
+                        message: crate::dialogs::import_refusal(locale, err),
                     },
                 };
                 shell.open_dialog(kind, window, cx);
             });
         })
         .detach();
+    }
+
+    /// "Reset Acta...": the confirmation, with whether voice models are
+    /// on this computer (only then is deleting them offered).
+    pub fn open_reset(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let has_models = db::config().is_some_and(|c| {
+            acta_core::voice::models::models_dir(&c.data_dir)
+                .read_dir()
+                .is_ok_and(|mut d| d.next().is_some())
+        });
+        self.open_dialog(
+            DialogKind::Reset {
+                sign_out: false,
+                voice_models: false,
+                has_models,
+                counts: None,
+                unreachable: None,
+            },
+            window,
+            cx,
+        );
+    }
+
+    /// The key-loss screen's reset: erased now, before anything opens the
+    /// database, then a new one opens on first run.
+    fn reset_here(
+        &mut self,
+        options: acta_core::reset::ResetOptions,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(config) = db::config() else { return };
+        let erasing = cx.background_spawn(async move {
+            acta_core::reset::wipe_here(&config.data_dir, &config.keys, options)
+        });
+        self._open = cx.spawn_in(window, async move |shell, cx| {
+            let wiped = erasing.await;
+            let _ = shell.update_in(cx, |shell, window, cx| {
+                match wiped {
+                    Ok(_) => {
+                        crate::log::line("reset: data erased from the key-loss screen");
+                        settings::change(cx, |prefs| {
+                            crate::preferences::forget_records(prefs, options.sign_out)
+                        });
+                        shell.content = Content::Opening;
+                        shell.open_store(window, cx);
+                    }
+                    Err(err) => crate::log::line(&format!("reset: not done: {err}")),
+                }
+                cx.notify();
+            });
+        });
+    }
+
+    /// "Reset Acta..." on the key-loss screen: the same confirmation,
+    /// without counts (nothing can be read).
+    fn open_reset_here(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let has_models = db::config().is_some_and(|c| {
+            acta_core::voice::models::models_dir(&c.data_dir)
+                .read_dir()
+                .is_ok_and(|mut d| d.next().is_some())
+        });
+        self.open_dialog(
+            DialogKind::Reset {
+                sign_out: false,
+                voice_models: false,
+                has_models,
+                counts: None,
+                unreachable: None,
+            },
+            window,
+            cx,
+        );
     }
 
     pub fn open_snapshots(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -5719,18 +5779,33 @@ impl Shell {
                             .child(tr(locale, Key::KeylossLimit, &[("file", Arg::Text(&kept))])),
                     )
                     .child(
-                        div().mt(px(8.)).ml(px(-12.)).child(
-                            ui::button(
-                                "keyloss-empty",
-                                text(locale, Key::KeylossStartEmpty),
-                                Variant::Ghost,
-                                false,
-                                &t,
+                        div()
+                            .mt(px(8.))
+                            .ml(px(-12.))
+                            .child(
+                                ui::button(
+                                    "keyloss-empty",
+                                    text(locale, Key::KeylossStartEmpty),
+                                    Variant::Ghost,
+                                    false,
+                                    &t,
+                                )
+                                .on_click(cx.listener(
+                                    |shell, _, window, cx| shell.start_empty(None, window, cx),
+                                )),
                             )
-                            .on_click(cx.listener(
-                                |shell, _, window, cx| shell.start_empty(None, window, cx),
-                            )),
-                        ),
+                            .child(
+                                ui::button(
+                                    "keyloss-reset",
+                                    text(locale, Key::SettingsReset),
+                                    Variant::Ghost,
+                                    false,
+                                    &t,
+                                )
+                                .on_click(cx.listener(
+                                    |shell, _, window, cx| shell.open_reset_here(window, cx),
+                                )),
+                            ),
                     ),
             )
             .into_any_element()
@@ -6730,6 +6805,7 @@ impl Render for Shell {
             .on_action(cx.listener(|s, _: &ExportData, w, cx| s.open_export(w, cx)))
             .on_action(cx.listener(|s, _: &ImportData, w, cx| s.import(w, cx)))
             .on_action(cx.listener(|s, _: &RestoreSnapshot, w, cx| s.open_snapshots(w, cx)))
+            .on_action(cx.listener(|s, _: &ResetData, w, cx| s.open_reset(w, cx)))
             .on_action(cx.listener(|s, _: &OpenTrash, w, cx| s.navigate(Route::Trash, true, w, cx)))
             .on_action(cx.listener(|s, _: &ToggleTerminal, w, cx| s.toggle_terminal(w, cx)))
             .on_action(cx.listener(|s, _: &StartClaudeHere, w, cx| {

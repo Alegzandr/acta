@@ -111,10 +111,27 @@ pub enum Error {
         record: String,
         level: String,
     },
-    /// An export file of a newer format than this build reads.
+    /// A backup of a newer format than this build reads.
     FormatTooNew {
         found: i64,
         supported: i64,
+    },
+    /// A payload older than the first one a backup held: a plaintext
+    /// export of Acta 0.3 to 0.6, which no Acta imports any more.
+    FormatTooOld {
+        found: i64,
+        oldest: i64,
+    },
+    /// The passphrase does not open the backup (or the part of the file
+    /// that checks it is damaged: the two cannot be told apart).
+    WrongPassphrase,
+    /// The backup opened with its passphrase but is cut short or altered
+    /// further on. Nothing was imported.
+    BackupDamaged,
+    /// A new backup's passphrase is shorter than the minimum, in
+    /// characters.
+    PassphraseTooShort {
+        min: usize,
     },
     /// A file larger than an import reads; sizes in bytes.
     FileTooLarge {
@@ -189,6 +206,17 @@ impl fmt::Display for Error {
                 f,
                 "this file is format {found}; this Acta reads up to format {supported}. Update Acta."
             ),
+            Error::FormatTooOld { found, oldest } => write!(
+                f,
+                "this file is format {found}, a plaintext export from before backups; Acta imports backups (format {oldest} and later) only"
+            ),
+            Error::WrongPassphrase => f.write_str("wrong passphrase"),
+            Error::BackupDamaged => {
+                f.write_str("the backup is damaged or incomplete; nothing was imported")
+            }
+            Error::PassphraseTooShort { min } => {
+                write!(f, "a passphrase needs at least {min} characters")
+            }
             Error::FileTooLarge { size, limit } => {
                 let mib = |b: &u64| b.div_ceil(1024 * 1024);
                 write!(
@@ -208,7 +236,7 @@ impl fmt::Display for Error {
             }
             Error::ExportTooLarge { size, limit } => write!(
                 f,
-                "with its files this export would be about {}, over the {} an import reads; export without files (acta export --no-files): names and sizes stay",
+                "with its files this backup would be about {}, over the {} an import reads; back up without files (acta export --no-files): names and sizes stay",
                 crate::files::size_label(*size as i64),
                 crate::files::size_label(*limit as i64)
             ),

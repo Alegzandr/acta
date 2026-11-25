@@ -223,7 +223,7 @@ Annotations: the tree keeps the owning topic selected. Edit turns this same page
 
 ```
             +------------------------------------------------------------+
-            | Import "acta-2026-11-20.acta.json"                          |  type.heading
+            | Import "acta-2026-11-20.acta-backup"                        |  type.heading
             | Exported 20 Nov 2026 · format 1 · 4 projects                |  type.small
          16 |                                                            |
             |                    Created     Updated     Skipped         |  type.small, tertiary
@@ -255,7 +255,7 @@ Annotations: the tree keeps the owning topic selected. Edit turns this same page
 |                    reinstall, a new user profile or a move to another machine.                 |
 |                12  Acta has not changed the file:                    <- type.reading           |
 |                 4  C:\Users\Alexandre\AppData\Roaming\Acta\acta.db   <- type.code, selectable  |
-|                24  [Import an export...]  [Try again]                <- primary, secondary     |
+|                24  [Import a backup...]  [Try again]                <- primary, secondary     |
 |                24  Without the key or an export, the content cannot be read. You can           |
 |                    start empty; the file is kept as acta.unreadable-2026-11-20-091200.db       |
 |                 8  Start empty                                       <- ghost                  |

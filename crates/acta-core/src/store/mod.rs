@@ -8,6 +8,7 @@
 //! (ADR 0005); bodies are read one record at a time.
 
 mod attachments;
+mod backup;
 mod exchange;
 mod folders;
 mod kb;
@@ -26,10 +27,14 @@ pub use attachments::{
     AttachSource, AttachmentReader, CHUNK_BYTES, FileTotals, LARGE_FILE_BYTES, MAX_FILE_BYTES,
     MAX_FILES_PER_OWNER, NAME_MAX, Purged, Staged, clean_name, stage_with,
 };
+pub use backup::{
+    BACKUP_EXTENSION, MIN_PASSPHRASE_CHARS, Passphrase, Strength, check_backup_file, is_backup,
+    strength,
+};
 pub use exchange::{
-    ExportFile, FILE_EXTENSION, FORMAT_NAME, FORMAT_VERSION, ImportCounts, ImportReport,
-    MAX_IMPORT_BYTES, XAttachment, XBlob, XContact, XEntry, XEpic, XFolder, XKb, XKbLink, XKbPair,
-    XNote, XProfile, XProject, XQuestion, XReport, XRevision, XStamp, XTopic,
+    ExportFile, FORMAT_NAME, FORMAT_VERSION, ImportCounts, ImportReport, MAX_IMPORT_BYTES,
+    OLDEST_FORMAT_VERSION, XAttachment, XBlob, XContact, XEntry, XEpic, XFolder, XKb, XKbLink,
+    XKbPair, XNote, XProfile, XProject, XQuestion, XReport, XRevision, XStamp, XTopic,
 };
 pub use folders::{AUTO_MEMORY_PREFIX, FolderResolution, VisibleFolder, VisibleFolders};
 pub use kb::{

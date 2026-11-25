@@ -25,7 +25,9 @@ use acta_core::agent::args::*;
 use acta_core::agent::{Agent, Launch, Session};
 use acta_core::model::{Author, KbKind, Level, Owner, ProjectId};
 use acta_core::paths::{self, BaseDirs, Os};
-use acta_core::store::{ExportFile, NewKb};
+use acta_core::store::{
+    BACKUP_EXTENSION, ExportFile, MIN_PASSPHRASE_CHARS, NewKb, Passphrase, Strength,
+};
 use clap::error::ErrorKind;
 use clap::{Args, CommandFactory, Parser, Subcommand};
 use open::Opener;
@@ -264,7 +266,8 @@ enum Command {
         #[arg(long)]
         cursor: Option<i64>,
     },
-    /// Export everything, or one project, to an .acta.json file (plaintext)
+    /// Back up everything, or one project, to a passphrase-encrypted
+    /// .acta-backup file (the passphrase is asked twice, never echoed)
     Export {
         path: PathBuf,
         #[arg(long, value_name = "P-n")]
@@ -272,6 +275,10 @@ enum Command {
         /// Leave attached files' content out (names and sizes stay)
         #[arg(long)]
         no_files: bool,
+        /// Read the passphrase from the first line of stdin instead of
+        /// asking on the terminal
+        #[arg(long)]
+        passphrase_stdin: bool,
     },
     /// Internal: the text of some pages of an attached PDF, as JSON. Run
     /// by `acta mcp` and `acta attachment` as a child with a time, memory
@@ -303,12 +310,17 @@ enum Command {
         #[arg(long)]
         size: Option<String>,
     },
-    /// Merge an .acta.json export into the database
+    /// Merge an .acta-backup into the database (the passphrase is asked,
+    /// never echoed)
     Import {
         path: PathBuf,
         /// Report what would change without writing
         #[arg(long)]
         dry_run: bool,
+        /// Read the passphrase from the first line of stdin instead of
+        /// asking on the terminal
+        #[arg(long)]
+        passphrase_stdin: bool,
     },
     /// The Claude Code sessions running now in linked folders, and what they do
     Sessions,
@@ -882,8 +894,13 @@ fn run_on(store: &mut acta_core::Store, command: Command) -> Result<String, Stri
             path,
             project,
             no_files,
-        } => return export(store, &path, project, !no_files),
-        Command::Import { path, dry_run } => return import(store, &path, dry_run),
+            passphrase_stdin,
+        } => return export(store, &path, project, !no_files, passphrase_stdin),
+        Command::Import {
+            path,
+            dry_run,
+            passphrase_stdin,
+        } => return import(store, &path, dry_run, passphrase_stdin),
         Command::Snapshot { action } => return snapshot(store, action),
         Command::Sessions => {
             return acta_core::agent::presence::render_sessions(store, acta_core::time::now_ms())
@@ -1277,7 +1294,7 @@ fn kb_export(ag: &mut Agent<'_>, id: &str, path: &Path) -> Result<String, String
 
 /// Writes a file that must not exist yet: the check and the creation are
 /// one operation (`create_new`), so nothing already there is overwritten.
-/// The file is readable by the user only: an export is plaintext.
+/// The file is readable by the user only.
 fn write_new(path: &Path, text: &str) -> Result<(), String> {
     use std::io::Write;
     let mut f = acta_core::fsutil::create_new_private_file(path).map_err(|e| match e.kind() {
@@ -1289,49 +1306,134 @@ fn write_new(path: &Path, text: &str) -> Result<(), String> {
         .map_err(|e| format!("cannot write: {}", e.kind()))
 }
 
+/// Where the passphrase comes from: the terminal, without echo, or the
+/// first line of stdin when asked for. Never an argument or a variable.
+fn passphrase(from_stdin: bool, confirm: bool) -> Result<Passphrase, String> {
+    use std::io::IsTerminal as _;
+    if from_stdin {
+        let mut line = String::new();
+        std::io::stdin()
+            .read_line(&mut line)
+            .map_err(|e| format!("cannot read the passphrase: {}", e.kind()))?;
+        while line.ends_with(['\n', '\r']) {
+            line.pop();
+        }
+        let pass = Passphrase::new(line);
+        if confirm && pass.chars() < MIN_PASSPHRASE_CHARS {
+            return Err(format!(
+                "a passphrase needs at least {MIN_PASSPHRASE_CHARS} characters"
+            ));
+        }
+        return Ok(pass);
+    }
+    if !std::io::stdin().is_terminal() {
+        return Err(
+            "no terminal to ask the passphrase on; pass it on stdin with --passphrase-stdin".into(),
+        );
+    }
+    let ask = |prompt: &str| {
+        rpassword::prompt_password(prompt)
+            .map(Passphrase::new)
+            .map_err(|e| format!("cannot read the passphrase: {}", e.kind()))
+    };
+    let first = ask("Passphrase: ")?;
+    if confirm {
+        if first.chars() < MIN_PASSPHRASE_CHARS {
+            return Err(format!(
+                "a passphrase needs at least {MIN_PASSPHRASE_CHARS} characters"
+            ));
+        }
+        let again = ask("Repeat the passphrase: ")?;
+        if !first.same_as(&again) {
+            return Err("the two passphrases differ; nothing was written".into());
+        }
+    }
+    Ok(first)
+}
+
+/// `path`, ending in `.acta-backup`.
+fn backup_path(path: &Path) -> PathBuf {
+    let suffix = format!(".{BACKUP_EXTENSION}");
+    if path.to_string_lossy().ends_with(&suffix) {
+        path.to_path_buf()
+    } else {
+        let mut name = path.as_os_str().to_owned();
+        name.push(&suffix);
+        PathBuf::from(name)
+    }
+}
+
 fn export(
     store: &mut acta_core::Store,
     path: &Path,
     project: Option<String>,
     include_files: bool,
+    passphrase_stdin: bool,
 ) -> Result<String, String> {
-    // An export writes every stored text to a plaintext file.
+    // A backup holds every stored text.
     if author() == Author::Claude {
         return Err("Export is for you to run, not Claude Code.".into());
     }
     let project = project
         .map(|p| ProjectId::parse(&p).ok_or("--project takes P-n"))
         .transpose()?;
+    let path = backup_path(path);
+    // Refused before the passphrase is asked.
+    if path.exists() {
+        return Err("the file exists; choose a new path".into());
+    }
+    let pass = passphrase(passphrase_stdin, true)?;
     let file = store
         .export_with(project, include_files)
         .map_err(|e| e.to_string())?;
-    let text = file.to_json().map_err(|e| e.to_string())?;
-    write_new(path, &text)?;
+    file.save_backup_new(&path, &pass).map_err(|e| match e {
+        acta_core::Error::Io(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            "the file exists; choose a new path".to_owned()
+        }
+        acta_core::Error::Io(e) => format!("cannot write: {}", e.kind()),
+        e => e.to_string(),
+    })?;
     store.record_export().map_err(|e| e.to_string())?;
     let files = match (file.attachments.len(), include_files) {
         (0, _) => String::new(),
         (n, true) => format!(", {n} files"),
         (n, false) => format!(", {n} files (names only)"),
     };
+    let weak = match pass.strength() {
+        Strength::Weak => " The passphrase is weak: a longer one is safer.",
+        _ => "",
+    };
     Ok(format!(
-        "ok exported {} projects, {} topics, {} entries, {} knowledge entries{files}. The file is plaintext: keep it somewhere private.",
+        "ok backed up {} projects, {} topics, {} entries, {} knowledge entries{files} to {}. Keep the passphrase: Acta cannot recover it.{weak}",
         file.projects.len(),
         file.topics.len(),
         file.entries.len(),
-        file.knowledge.len()
+        file.knowledge.len(),
+        path.file_name().unwrap_or_default().to_string_lossy()
     ))
 }
 
-fn import(store: &mut acta_core::Store, path: &Path, dry_run: bool) -> Result<String, String> {
+fn import(
+    store: &mut acta_core::Store,
+    path: &Path,
+    dry_run: bool,
+    passphrase_stdin: bool,
+) -> Result<String, String> {
     // An import can set what only the user sets (commit modes, active
     // folders: ADR 0011); the store also guards it.
     if author() == Author::Claude {
         return Err("Import is for you to run, not Claude Code.".into());
     }
-    let file = ExportFile::read(path).map_err(|e| match e {
+    let read_error = |e: acta_core::Error| match e {
         acta_core::Error::Io(e) => format!("cannot read the file: {}", e.kind()),
         e => e.to_string(),
-    })?;
+    };
+    // A file that is not a backup, or too large, is refused before the
+    // passphrase is asked.
+    acta_core::store::check_backup_file(path).map_err(read_error)?;
+    let pass = passphrase(passphrase_stdin, false)?;
+    let file = ExportFile::read_backup(path, &pass).map_err(read_error)?;
+    drop(pass);
     let report = store.import(&file, dry_run).map_err(|e| e.to_string())?;
     let t = report.total();
     Ok(format!(
@@ -1356,8 +1458,8 @@ fn import(store: &mut acta_core::Store, path: &Path, dry_run: bool) -> Result<St
         }
     ) + &match report.files_not_in_export.len() {
         0 => String::new(),
-        1 => "; 1 file not in the export".to_owned(),
-        n => format!("; {n} files not in the export"),
+        1 => "; 1 file not in the backup".to_owned(),
+        n => format!("; {n} files not in the backup"),
     })
 }
 
@@ -1481,7 +1583,8 @@ mod tests {
             vec!["acta", "kb", "read", "K-2", "--section", "3.1"],
             vec!["acta", "kb", "--query", "--kind", "memory"],
             vec!["acta", "snapshot", "restore", "latest"],
-            vec!["acta", "export", "out.acta.json", "--project", "P-1"],
+            vec!["acta", "export", "out.acta-backup", "--project", "P-1"],
+            vec!["acta", "import", "in.acta-backup", "--passphrase-stdin"],
         ] {
             assert!(Cli::try_parse_from(&args).is_ok(), "{args:?}");
         }

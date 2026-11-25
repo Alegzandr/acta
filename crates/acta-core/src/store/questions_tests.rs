@@ -790,141 +790,23 @@ fn questions_contacts_and_the_profile_survive_an_export_and_an_import() {
 }
 
 #[test]
-fn a_pre_contacts_export_imports_with_one_contact_per_key_per_project() {
+fn a_contact_named_by_text_rather_than_uuid_is_refused() {
     let mut f = fixture();
     let s = &mut f.t.store;
-    let other = s.create_project("Other", "", H).unwrap();
-    let t2 = s
-        .create_topic(
-            NewTopic {
-                project: other,
-                epic: None,
-                title: "Elsewhere".into(),
-                description: String::new(),
-                status: Status::Draft,
-            },
-            H,
-        )
-        .unwrap();
-    let n = s.add_note(f.project, "Tell Marie", H).unwrap();
     ask(s, Owner::Topic(f.topic), "Can we keep v1?", None, None);
     let file = s.export(None).unwrap();
-    // As the free-text build wrote it: names where the UUIDs now are.
+    // Names where UUIDs belong (the free-text build of 0.4) were only ever
+    // in plaintext exports: a backup never holds them.
     let mut v: serde_json::Value = serde_json::from_str(&file.to_json().unwrap()).unwrap();
-    v.as_object_mut().unwrap().remove("contacts");
-    let uuid_of = |s: &Store, r: Record| -> String {
-        match r {
-            Record::Topic(t) => s.topic(t).unwrap().stamp.uuid,
-            Record::Note(n) => s.note(n).unwrap().stamp.uuid,
-            _ => unreachable!(),
-        }
-    };
-    let (u1, u2, u3) = (
-        uuid_of(s, Record::Topic(f.topic)),
-        uuid_of(s, Record::Topic(t2)),
-        uuid_of(s, Record::Note(n)),
-    );
-    for t in v["topics"].as_array_mut().unwrap() {
-        if t["uuid"] == u1.as_str() {
-            t["report_to"] = "Marie  Dubois".into();
-        }
-        if t["uuid"] == u2.as_str() {
-            t["report_to"] = "marie dubois".into();
-        }
-    }
-    for x in v["notes"].as_array_mut().unwrap() {
-        if x["uuid"] == u3.as_str() {
-            x["report_to"] = "MARIE DUBOIS".into();
-        }
-    }
-    v["questions"][0]["asked_to"] = "Marie Dubois".into();
-    let old = ExportFile::from_json(&v.to_string()).unwrap();
+    v["topics"][0]["report_to"] = "Marie Dubois".into();
+    let named = ExportFile::from_json(&v.to_string()).unwrap();
     let mut b = open();
-    let report = b.store.import(&old, false).unwrap();
-    // One per key per project: Acta's three uses share one, Other has its
-    // own.
-    assert_eq!(report.contacts.created, 2);
-    let again = b.store.export(None).unwrap();
-    assert_eq!(again.contacts.len(), 2);
-    assert!(
-        again
-            .contacts
-            .iter()
-            .all(|c| c.epic.is_none() && c.project.is_some())
-    );
-    let acta = again
-        .topics
-        .iter()
-        .find(|t| t.stamp.uuid == u1)
-        .unwrap()
-        .report
-        .report_to
-        .clone();
-    let note = again
-        .notes
-        .iter()
-        .find(|x| x.stamp.uuid == u3)
-        .unwrap()
-        .report_to
-        .clone();
-    let elsewhere = again
-        .topics
-        .iter()
-        .find(|t| t.stamp.uuid == u2)
-        .unwrap()
-        .report
-        .report_to
-        .clone();
-    assert_eq!(acta, note);
-    assert_eq!(acta, again.questions[0].asked_to);
-    assert_ne!(acta, elsewhere);
-}
-
-#[test]
-fn a_version_2_export_imports_and_its_updates_keep_the_contacts() {
-    let mut f = fixture();
-    let s = &mut f.t.store;
-    let marie = contact(s, "Marie", ContactLevel::Project(f.project));
-    s.set_report_to(Record::Topic(f.topic), Some(marie), H)
-        .unwrap();
-    s.set_reported(Record::Topic(f.topic), true, H).unwrap();
-    s.set_report_to(Record::Epic(f.epic), Some(marie), H)
-        .unwrap();
-    let n = s.add_note(f.project, "Tell Marie", H).unwrap();
-    s.set_report_to(Record::Note(n), Some(marie), H).unwrap();
-    ask(s, Owner::Topic(f.topic), "Can we keep v1?", None, None);
-    let file = s.export(None).unwrap();
-
-    let mut v2: serde_json::Value = serde_json::from_str(&file.to_json().unwrap()).unwrap();
-    v2["version"] = 2.into();
-    for k in ["questions", "contacts", "profile"] {
-        v2.as_object_mut().unwrap().remove(k);
+    match b.store.import(&named, false) {
+        Err(Error::Invalid(m)) => assert!(m.contains("missing record"), "{m}"),
+        other => panic!("{other:?}"),
     }
-    for kind in ["epics", "topics", "notes"] {
-        for x in v2[kind].as_array_mut().unwrap() {
-            let o = x.as_object_mut().unwrap();
-            for k in ["report_to", "reported_at", "reported_by"] {
-                o.remove(k);
-            }
-            let at = o["updated_at"].as_i64().unwrap();
-            o.insert("updated_at".into(), (at + 1_000).into());
-        }
-    }
-    let old = ExportFile::from_json(&v2.to_string()).unwrap();
-    assert!(old.questions.is_empty() && old.contacts.is_empty());
-    let report = s.import(&old, false).unwrap();
-    assert!(report.topics.updated > 0 && report.notes.updated > 0);
-    let r = s.topic(f.topic).unwrap().report;
-    assert_eq!(r.to.map(|c| c.id), Some(marie));
-    assert!(r.at.is_some());
-    assert_eq!(s.epic(f.epic).unwrap().report.to.map(|c| c.id), Some(marie));
-    assert_eq!(s.note(n).unwrap().report_to.map(|c| c.id), Some(marie));
-    let mut b = open();
-    let report = b.store.import(&old, false).unwrap();
-    assert!(report.topics.created > 0);
-    let again = b.store.export(None).unwrap();
-    assert!(again.questions.is_empty() && again.contacts.is_empty());
-    assert!(again.topics.iter().all(|t| t.report.report_to.is_none()));
+    // Nothing was written.
+    assert_eq!(b.store.export(None).unwrap().topics.len(), 0);
 }
 
 #[test]
