@@ -21,6 +21,10 @@ fn main() {
     if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
         println!("cargo:rustc-link-arg-bins=/ignore:4099");
         println!("cargo:rustc-link-arg-tests=/ignore:4099");
+        // The UI thread is the main thread: 8 MB of stack, as macOS and
+        // Linux give it, instead of Windows' 1 MB. gpui-base parses short
+        // Markdown on it recursively (markdown_view/policy.rs, MAX_DEPTH).
+        println!("cargo:rustc-link-arg-bin=Acta=/STACK:8388608");
     }
 }
 

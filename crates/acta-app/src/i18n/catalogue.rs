@@ -5261,4 +5261,48 @@ catalogue! {
         en: t("Sessions started in Acta\u{2019}s terminal always load Acta\u{2019}s plugin. To stop that, set \"acta@inline\": false under enabledPlugins."),
         fr: t("Les sessions lancées dans le terminal d\u{2019}Acta chargent toujours le plugin d\u{2019}Acta. Pour l\u{2019}éviter, mettez \"acta@inline\": false sous enabledPlugins."),
     }
+    MdAlertNote "md.alert.note" {
+        en: t("Note"),
+        fr: t("Remarque"),
+    }
+    MdAlertTip "md.alert.tip" {
+        en: t("Tip"),
+        fr: t("Conseil"),
+    }
+    MdAlertImportant "md.alert.important" {
+        en: t("Important"),
+        fr: t("Important"),
+    }
+    MdAlertWarning "md.alert.warning" {
+        en: t("Warning"),
+        fr: t("Attention"),
+    }
+    MdAlertCaution "md.alert.caution" {
+        en: t("Caution"),
+        fr: t("Prudence"),
+    }
+    MdCopyCode "md.copy_code" {
+        en: t("Copy code"),
+        fr: t("Copier le code"),
+    }
+    MdLinkMismatch "md.link_mismatch" {
+        en: t("This link goes to {host}, not to the address it shows."),
+        fr: t("Ce lien mène à {host}, pas à l\u{2019}adresse qu\u{2019}il affiche."),
+    }
+    MdLinkOpenHost "md.link_open_host" {
+        en: t("Open {host}"),
+        fr: t("Ouvrir {host}"),
+    }
+    MdImage "md.image" {
+        en: t("Image"),
+        fr: t("Image"),
+    }
+    MdImageBlocked "md.image_blocked" {
+        en: t("Not shown: only files attached in Acta are displayed."),
+        fr: t("Non affichée\u{a0}: seuls les fichiers joints dans Acta sont affichés."),
+    }
+    MdLinkBlocked "md.link_blocked" {
+        en: t("Not opened: Acta opens only web and e-mail links."),
+        fr: t("Non ouvert\u{a0}: Acta n\u{2019}ouvre que les liens web et e-mail."),
+    }
 }

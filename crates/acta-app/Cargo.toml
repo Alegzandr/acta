@@ -22,7 +22,24 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 image = { version = "0.25", default-features = false, features = ["png"] }
 # Exact pins: ADR 0001 (UI stack) and ADR 0004 (must match the vpk tool version).
 gpui-kit = "=0.10.0"
+# Markdown at rest (components-editor.md 5): the parser gpui-base 0.10 uses, read
+# once per text for footnote numbers and link definitions (markdown_view.rs).
+markdown = "=1.0.0"
 serde = { version = "1", features = ["derive"] }
+# Messages from threads outside GPUI to the UI: the chat panel's web view handlers,
+# the browser panel, and the code highlighter's worker (markdown_view).
+async-channel = "2"
+# Web addresses: the chat panel's navigation allow-list (chat.rs) and the
+# destinations of links in Markdown, with internationalised hosts in ASCII
+# (markdown_view/policy.rs).
+url = "2"
+# Code block highlighting in the Monokai roles (components-editor.md 5, Code):
+# syntect's parser with two-face's syntax set, the pair gpui-component's `syntect`
+# feature uses, without its theme layer. PowerShell, which two-face lacks, is
+# embedded as a syntect dump (assets/syntaxes/powershell, made by
+# scripts/syntax-dump), so no YAML loader ships. two-face's dumps bring bincode 1.
+syntect = { version = "=5.3.0", default-features = false, features = ["parsing", "regex-fancy"] }
+two-face = { version = "0.4.5", default-features = false, features = ["syntect-fancy"] }
 serde_json = "1"
 # public-utils only makes modules public: `bundle::Manifest` is in the signature of
 # `UpdateSource`, and `download` fetches the feed (update_source.rs).
@@ -72,10 +89,6 @@ winreg = "0.56"
 # on Longbridge's wry fork.
 gpui-webview = "=0.10.0"
 wry = { version = "=0.53.3", package = "lb-wry" }
-# The chat panel's navigation allow-list (chat.rs).
-url = "2"
-# Messages from the web view's handlers (which run outside GPUI) to the chat panel.
-async-channel = "2"
 # The WebView2 controller events wry does not expose: accelerator keys routed to
 # Acta, focus, and failed navigations (chat_windows.rs). Same versions as lb-wry's.
 webview2-com = "=0.38.2"
