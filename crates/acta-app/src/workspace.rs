@@ -399,7 +399,11 @@ impl Undo {
                 folder,
                 expect,
                 ..
-            } => page::page_commit(store, *owner, *folder)? == *expect,
+            } => {
+                // A folder gone since: nothing to put back.
+                is_live(store, Record::Folder(*folder))?
+                    && page::page_commit(store, *owner, *folder)? == *expect
+            }
             Undo::FolderPath { id, expect, .. } => store.folder(*id)?.path == *expect,
             Undo::KbRevision { id, expect, .. } => store.kb_entry(*id)?.rev == *expect,
             Undo::KbOwner { id, expect, .. } => store.kb_entry(*id)?.owner == *expect,
@@ -2571,6 +2575,10 @@ mod tests {
         assert!(redo.apply(store).unwrap().is_some());
         assert_eq!(page::page_commit(store, owner, folder).unwrap(), push);
         page::set_page_commit(store, owner, folder, None, Author::Human).unwrap();
+        assert!(step.apply(store).unwrap().is_none());
+        // The folder gone since: skipped too.
+        page::set_page_commit(store, owner, folder, push, Author::Human).unwrap();
+        store.delete(Record::Folder(folder), Author::Human).unwrap();
         assert!(step.apply(store).unwrap().is_none());
     }
 

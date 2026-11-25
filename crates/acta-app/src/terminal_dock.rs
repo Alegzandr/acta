@@ -41,7 +41,7 @@ use crate::theme::{Appearance, Mode, RADIUS_XS, Tokens};
 use crate::tools_model::{self as tm, Holder, InstanceKey, Instances};
 use crate::type_scale;
 use crate::ui::{self, Variant};
-use crate::workspace::{CommitColumns, FolderRef, Undo, Workspace};
+use crate::workspace::{CommitColumns, FolderRef, ToastKind, Undo, Workspace};
 
 /// Where a launch comes from: the page's record and its name.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -165,6 +165,9 @@ pub struct Start {
     pub left_out: Vec<PathBuf>,
     pub folder: Option<FolderId>,
     pub commit: Option<CommitColumns>,
+    /// The page's commit rules were not passed to the session (ADR 0011
+    /// addendum 2026-11-23): the header's mark says so.
+    pub rules_off: bool,
 }
 
 /// The folders of a session's page, as the header shows them: refreshed
@@ -176,6 +179,8 @@ struct SessionPage {
     disk: HashMap<String, fm::Disk>,
     /// The commit columns of the folder the session started in, now.
     commit: Option<CommitColumns>,
+    /// The session's folder still belongs to its page, so its rules hold.
+    rules_held: bool,
 }
 
 /// The folders Acta's terminal sessions were launched with (working
@@ -547,17 +552,18 @@ impl TerminalDock {
     /// folder was not found) read again off the UI thread, with the
     /// existence of each.
     fn refresh_pages(&mut self, cx: &mut Context<Self>) {
-        let wanted: Vec<(InstanceKey, Owner, Option<FolderId>)> = self
+        let wanted: Vec<(InstanceKey, Owner, Option<FolderId>, String)> = self
             .panes
             .iter()
             .filter_map(|(key, pane)| match pane {
                 Pane::Running {
                     origin: Some(origin),
                     start,
+                    token,
                     ..
-                } => Some((key, origin.owner, start.folder)),
+                } => Some((key, origin.owner, start.folder, token.clone())),
                 // The not-found message offers the page's other folders.
-                Pane::Missing { origin, .. } => Some((key, origin.owner, None)),
+                Pane::Missing { origin, .. } => Some((key, origin.owner, None, String::new())),
                 _ => None,
             })
             .collect();
@@ -566,20 +572,28 @@ impl TerminalDock {
             return;
         }
         let task = self.ws.read(cx).db.run(cx, move |store| {
+            // A session whose folder left its page (detached, removed,
+            // moved): its settings file is made strict now.
+            if page::restrict_detached_sessions(store).is_err() {
+                crate::log::line("sessions: detached sessions could not be checked");
+            }
             let mut out = Vec::new();
-            for (key, owner, folder) in wanted {
+            for (key, owner, folder, token) in wanted {
                 let Ok(folders) = crate::record::load_folders(store, owner) else {
                     continue;
                 };
                 let commit = folder
                     .and_then(|id| store.folder(id).ok())
                     .and_then(|f| effective_columns(store, owner, &f.path).ok());
+                let rules_held =
+                    token.is_empty() || page::session_rules_applied(store, &token).unwrap_or(false);
                 out.push((
                     key,
                     SessionPage {
                         folders,
                         disk: HashMap::new(),
                         commit,
+                        rules_held,
                     },
                 ));
             }
@@ -842,6 +856,7 @@ impl TerminalDock {
                             left_out: Vec::new(),
                             folder: None,
                             commit: None,
+                            rules_off: false,
                         };
                         dock.running(
                             key,
@@ -891,8 +906,21 @@ impl TerminalDock {
                 )
         });
         let new_conversations = settings::current(cx).new_conversations;
-        let token = acta_core::random_uuid().unwrap_or_default();
+        // Without a token the session could not carry its page: refused,
+        // never started as if outside Acta.
+        let Some(token) = acta_core::random_uuid() else {
+            crate::log::line("sessions: no random source for a launch token");
+            self.generations.remove(&key);
+            drop(self.panes.close(key));
+            self.publish_tokens(cx);
+            let message = text(settings::locale(cx), Key::TerminalNoRandom);
+            self.ws
+                .update(cx, |ws, cx| ws.toast(message, ToastKind::Error, cx));
+            cx.notify();
+            return;
+        };
         let launch_token = token.clone();
+        let app = crate::db::app_instance();
         let ws = self.ws.read(cx);
         let db = ws.db.clone();
         let folders = ws.db.run(cx, move |store| {
@@ -943,15 +971,13 @@ impl TerminalDock {
             // session's own settings file. Without it the session still
             // starts; the guard then treats its token as unknown.
             let session_settings = match folders.iter().find(|f| f.active) {
-                Some(f) if !launch_token.is_empty() => {
-                    match page::begin_session(store, &launch_token, owner, &f.path) {
-                        Ok(file) => Some(file),
-                        Err(_) => {
-                            crate::log::line("sessions: the page's commit rules were not written");
-                            None
-                        }
+                Some(f) => match page::begin_session(store, &launch_token, owner, &f.path, app) {
+                    Ok(file) => Some(file),
+                    Err(_) => {
+                        crate::log::line("sessions: the page's commit rules were not written");
+                        None
                     }
-                }
+                },
                 _ => None,
             };
             Ok((folders, active, epic, conversation, session_settings))
@@ -966,6 +992,8 @@ impl TerminalDock {
                 db: db.clone(),
                 token: ended,
             });
+            // The page's rules do not hold when they could not be written.
+            let rules_off = active.is_some() && session_settings.is_none();
             let settings_file = session_settings.flatten();
             let conversation_id = match &conversation {
                 Some(Conversation::New(id)) | Some(Conversation::Resume(id)) => Some(id.clone()),
@@ -986,7 +1014,7 @@ impl TerminalDock {
                     let options = ClaudeOptions {
                         plugin_dir: plugin_dir(),
                         conversation,
-                        token: (!token_for_env.is_empty()).then_some(token_for_env),
+                        token: Some(token_for_env),
                         settings: settings_file,
                         prompt,
                     };
@@ -1031,7 +1059,11 @@ impl TerminalDock {
                             left_out: launch.left_out.clone(),
                             folder: start_folder,
                             commit: start_commit,
+                            rules_off: rules_off || launch.settings_left_out,
                         };
+                        if start.rules_off {
+                            crate::log::line("sessions: the page's commit rules were not passed");
+                        }
                         let mut pane = dock.running(
                             key,
                             Some(origin),
@@ -2199,6 +2231,20 @@ impl TerminalDock {
                 .collect(),
             _ => Vec::new(),
         };
+        // The page's commit rules not passed, or no longer the page's: the
+        // same mark, one more line.
+        let mut left_out = left_out;
+        let rules_off = match self.panes.get(key) {
+            Some(Pane::Running {
+                start,
+                origin: Some(_),
+                ..
+            }) => start.rules_off || page.is_some_and(|p| !p.rules_held),
+            _ => false,
+        };
+        if rules_off {
+            left_out.push(text(locale, Key::TerminalRulesOff));
+        }
         let mark = if left_out.is_empty() { 0. } else { 14. + 6. };
         let context = Self::context(&origin, locale);
         let waiting_text = format!("\u{b7} {}", text(locale, Key::TerminalWaiting));

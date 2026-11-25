@@ -1425,8 +1425,8 @@ fn commit_mode_per_page_through_the_hook_and_mcp() {
         let s = &mut store;
         page::set_page_commit(s, Owner::Topic(a), folder, mode(CommitMode::Manual), h).unwrap();
         page::set_page_commit(s, Owner::Topic(b), folder, mode(CommitMode::Push), h).unwrap();
-        let fa = page::begin_session(s, T_A, Owner::Topic(a), &repo).unwrap();
-        let fb = page::begin_session(s, T_B, Owner::Topic(b), &repo).unwrap();
+        let fa = page::begin_session(s, T_A, Owner::Topic(a), &repo, None).unwrap();
+        let fb = page::begin_session(s, T_B, Owner::Topic(b), &repo, None).unwrap();
         (a, b, fa.unwrap(), fb.unwrap())
     };
     let doc =

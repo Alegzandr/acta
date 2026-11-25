@@ -73,6 +73,9 @@ pub struct ClaudeOptions {
 pub struct ClaudeLaunch {
     pub spec: LaunchSpec,
     pub left_out: Vec<PathBuf>,
+    /// The per-session settings file could not be passed: the page's
+    /// commit rules do not hold for this session.
+    pub settings_left_out: bool,
 }
 
 /// Why Claude Code cannot be started. Each maps to a state of the terminal
@@ -151,11 +154,24 @@ pub fn build_claude_launch(
         claude_args.push("--plugin-dir".to_owned());
         claude_args.push(dir.to_string_lossy().into_owned());
     }
-    if let Some(file) = &options.settings
-        && !(shim && has_cmd_metachar(&file.to_string_lossy()))
-    {
-        claude_args.push("--settings".to_owned());
-        claude_args.push(file.to_string_lossy().into_owned());
+    // The page's commit rules. Through the `cmd` shim a path `cmd.exe`
+    // would interpret goes in its 8.3 form; without one it is left out and
+    // the launch says so.
+    let mut settings_left_out = false;
+    if let Some(file) = &options.settings {
+        let usable = |p: &Path| !(shim && has_cmd_metachar(&p.to_string_lossy()));
+        let file = if usable(file) {
+            Some(file.clone())
+        } else {
+            acta_core::fsutil::short_path(file).filter(|s| usable(s))
+        };
+        match file {
+            Some(f) => {
+                claude_args.push("--settings".to_owned());
+                claude_args.push(f.to_string_lossy().into_owned());
+            }
+            None => settings_left_out = true,
+        }
     }
     match &options.conversation {
         Some(Conversation::New(id)) if is_uuid(id) => {
@@ -226,6 +242,7 @@ pub fn build_claude_launch(
     };
 
     Ok(ClaudeLaunch {
+        settings_left_out,
         spec: LaunchSpec {
             program,
             args,
@@ -637,8 +654,10 @@ mod tests {
             settings: Some(PathBuf::from("C:\\100%\\s.json")),
             ..ClaudeOptions::default()
         };
+        // A file that does not exist has no 8.3 form: left out, and said.
         let launch = build_claude_launch(&shim, &folders, &focus(), &odd, |_| true).unwrap();
         assert!(!launch.spec.args.join(" ").contains("--settings"));
+        assert!(launch.settings_left_out);
     }
 
     #[test]

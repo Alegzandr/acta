@@ -261,8 +261,9 @@ impl RecordPage {
     /// Keys on a folder of the list (interaction.md 6.1): on any folder,
     /// `Space` makes it active, `Enter` reveals it (Locate when not found),
     /// `Mod+C` copies its path, `Shift+F10` or the menu key opens its menu;
-    /// on an own folder, `Alt+Up` / `Alt+Down` reorder, `F2` opens its
-    /// settings, `E` chooses another folder, `Delete` removes it. `Up` /
+    /// `F2` opens its settings ("For this page" on an inherited git folder);
+    /// on an own folder, `Alt+Up` / `Alt+Down` reorder,
+    /// `E` chooses another folder, `Delete` removes it. `Up` /
     /// `Down` move between folders, `Left` / `Esc` fold the list.
     fn on_folder_key(
         &mut self,
@@ -3002,7 +3003,8 @@ enum FolderKey {
     Menu,
     /// `Alt+Up` (-1) / `Alt+Down` (+1), own folders only.
     Move(i64),
-    /// `F2`: its settings, own folders only.
+    /// `F2`: its settings on an own folder; "For this page" on an
+    /// inherited git folder.
     Settings,
     /// `E`: "Choose another folder...", own folders only.
     Other,

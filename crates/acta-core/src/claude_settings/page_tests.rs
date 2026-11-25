@@ -164,7 +164,7 @@ fn two_pages_on_one_folder_with_different_modes() {
     assert!(allow.contains("git commit") && !allow.contains("git push"));
 
     // A session for B is allowed to push; for A, every commit is asked.
-    let fb = begin_session(&mut w.t.store, T2, b, &w.repo).unwrap();
+    let fb = begin_session(&mut w.t.store, T2, b, &w.repo, None).unwrap();
     let doc = settings_file(&fb);
     assert!(
         doc["permissions"]["allow"]
@@ -174,7 +174,7 @@ fn two_pages_on_one_folder_with_different_modes() {
     );
     assert_eq!(doc["env"]["GIT_TERMINAL_PROMPT"], "0");
     assert!(doc["permissions"].get("ask").is_none());
-    let fa = begin_session(&mut w.t.store, T1, a, &w.repo).unwrap();
+    let fa = begin_session(&mut w.t.store, T1, a, &w.repo, None).unwrap();
     let doc = settings_file(&fa);
     assert!(doc["permissions"].get("allow").is_none());
     let ask = doc["permissions"]["ask"].as_array().unwrap();
@@ -216,7 +216,10 @@ fn two_pages_on_one_folder_with_different_modes() {
         session_page(&w.t.store, Some(T2)).unwrap(),
         SessionPage::Unknown
     );
-    assert_eq!(end_all_sessions(&mut w.t.store).unwrap(), 1);
+    assert_eq!(
+        end_sessions_of_gone_apps(&mut w.t.store, &|_| false).unwrap(),
+        1
+    );
     assert!(!fa.unwrap().exists());
 }
 
@@ -268,8 +271,10 @@ fn page_choices_are_inherited_downward() {
     assert_eq!(mode_of(&w, b), (CommitMode::Push, Source::Page(e)));
     assert_eq!(mode_of(&w, c), (CommitMode::Manual, Source::Folder));
     assert_eq!(mode_of(&w, p), (CommitMode::Manual, Source::Folder));
-    set_page_commit(&mut w.t.store, p, w.folder, pc(CommitMode::Commit), H).unwrap();
-    assert_eq!(mode_of(&w, c), (CommitMode::Commit, Source::Page(p)));
+    // The project owns the folder record: its setting is the folder's,
+    // so it makes no page choice there.
+    assert!(set_page_commit(&mut w.t.store, p, w.folder, pc(CommitMode::Commit), H).is_err());
+    assert_eq!(mode_of(&w, c), (CommitMode::Manual, Source::Folder));
     assert_eq!(
         mode_of(&w, a),
         (CommitMode::Push, Source::Page(e)),
@@ -341,8 +346,8 @@ fn a_session_cannot_claim_another_pages_mode() {
     let mut w = world();
     let (a, b) = (Owner::Topic(w.a), Owner::Topic(w.b));
     set_page_commit(&mut w.t.store, b, w.folder, pc(CommitMode::Push), H).unwrap();
-    begin_session(&mut w.t.store, T1, a, &w.repo).unwrap();
-    begin_session(&mut w.t.store, T2, b, &w.repo).unwrap();
+    begin_session(&mut w.t.store, T1, a, &w.repo, None).unwrap();
+    begin_session(&mut w.t.store, T2, b, &w.repo, None).unwrap();
 
     // A's token is A's page, whatever else the session says (ACTA_TOPIC
     // and presence are not read): Manual, nothing granted.
@@ -380,7 +385,7 @@ fn a_session_cannot_claim_another_pages_mode() {
         assert_eq!(told.settings.mode, CommitMode::Manual);
     }
     // A bad token is never recorded.
-    assert!(begin_session(&mut w.t.store, "x; rm", b, &w.repo).is_err());
+    assert!(begin_session(&mut w.t.store, "x; rm", b, &w.repo, None).is_err());
     // A page in the trash gives no mode either.
     w.t.store
         .delete(crate::model::Record::Topic(w.b), H)
@@ -418,4 +423,132 @@ fn session_settings_ask_only_beyond_the_folder_file() {
     );
     assert!(doc["permissions"].get("ask").is_none());
     assert_eq!(doc["attribution"]["commit"], "");
+}
+
+/// A Push session whose folder is removed from its page keeps no right of
+/// its own: each push is put to the user, the default branch is refused,
+/// and its settings file is made strict.
+#[test]
+fn a_detached_folder_keeps_no_rights() {
+    let mut w = world();
+    let b = Owner::Topic(w.b);
+    set_page_commit(&mut w.t.store, b, w.folder, pc(CommitMode::Push), H).unwrap();
+    let file = begin_session(&mut w.t.store, T2, b, &w.repo, None)
+        .unwrap()
+        .unwrap();
+    let sb = session_page(&w.t.store, Some(T2)).unwrap();
+    assert_eq!(judge(&w, &sb, "git push"), None);
+    w.t.store
+        .delete(crate::model::Record::Folder(w.folder), H)
+        .unwrap();
+    let v = view(&w, &sb);
+    assert_eq!(
+        (v.permitted, v.granted),
+        (CommitMode::Manual, CommitMode::Push)
+    );
+    assert!(matches!(judge(&w, &sb, "git push"), Some(Verdict::Ask(_))));
+    assert!(matches!(
+        judge(&w, &sb, "git push --force"),
+        Some(Verdict::Deny(_))
+    ));
+    git(&w.repo, &["switch", "-q", "main"]);
+    assert!(matches!(
+        judge(&w, &sb, "git commit -m x"),
+        Some(Verdict::Deny(_))
+    ));
+    // The file follows.
+    assert!(session_rules_applied(&w.t.store, T2).unwrap());
+    assert_eq!(restrict_detached_sessions(&mut w.t.store).unwrap(), 1);
+    assert_eq!(restrict_detached_sessions(&mut w.t.store).unwrap(), 0);
+    assert!(!session_rules_applied(&w.t.store, T2).unwrap());
+    let doc: Value = serde_json::from_str(&fs::read_to_string(&file).unwrap()).unwrap();
+    assert!(doc["permissions"].get("allow").is_none());
+    assert!(
+        doc["permissions"]["ask"]
+            .to_string()
+            .contains("Bash(git push)")
+    );
+    // A session that kept its folder is left alone.
+    begin_session(&mut w.t.store, T1, Owner::Topic(w.c), &w.repo, None).unwrap();
+    assert_eq!(
+        restrict_detached_sessions(&mut w.t.store).unwrap(),
+        1,
+        "c no longer sees it either"
+    );
+}
+
+/// The path attached at the epic (through the project) and at the topic:
+/// a choice above never overrides the topic's own record.
+#[test]
+fn a_pages_own_record_ends_the_walk() {
+    let mut w = world();
+    let (e, a, b) = (Owner::Epic(w.epic), Owner::Topic(w.a), Owner::Topic(w.b));
+    let own = w.t.store.add_folder(a, &w.repo, H).unwrap();
+    set_commit(&mut w.t.store, own, CommitMode::Manual, None, false, H).unwrap();
+    set_page_commit(&mut w.t.store, e, w.folder, pc(CommitMode::Push), H).unwrap();
+    assert_eq!(mode_of(&w, a), (CommitMode::Manual, Source::Folder));
+    assert_eq!(mode_of(&w, b), (CommitMode::Push, Source::Page(e)));
+    // The topic's own record set to commit: that is what applies.
+    set_commit(&mut w.t.store, own, CommitMode::Commit, None, false, H).unwrap();
+    assert_eq!(mode_of(&w, a), (CommitMode::Commit, Source::Folder));
+    let i = inherited(&w.t.store, a, &stored_form(&w.repo)).unwrap();
+    assert_eq!(i.source, Source::Folder);
+}
+
+/// Only the sessions of an app that is gone are forgotten: another running
+/// Acta keeps its own.
+#[test]
+fn sessions_of_a_running_app_are_kept() {
+    let mut w = world();
+    let a = Owner::Topic(w.a);
+    let me = AppInstance {
+        pid: 7,
+        started: 1_700_000_000,
+    };
+    let gone = AppInstance {
+        pid: 7,
+        started: 1_600_000_000,
+    };
+    let mine = begin_session(&mut w.t.store, T1, a, &w.repo, Some(me)).unwrap();
+    set_page_commit(&mut w.t.store, a, w.folder, pc(CommitMode::Push), H).unwrap();
+    let theirs = begin_session(&mut w.t.store, T2, a, &w.repo, Some(gone))
+        .unwrap()
+        .unwrap();
+    let alive = |x: AppInstance| x == me;
+    assert_eq!(
+        end_sessions_of_gone_apps(&mut w.t.store, &alive).unwrap(),
+        1
+    );
+    assert!(matches!(
+        session_page(&w.t.store, Some(T1)).unwrap(),
+        SessionPage::Launched(_)
+    ));
+    assert_eq!(
+        session_page(&w.t.store, Some(T2)).unwrap(),
+        SessionPage::Unknown
+    );
+    assert!(!theirs.exists());
+    assert!(
+        mine.is_none(),
+        "a Manual page on a Manual folder needs no file"
+    );
+}
+
+/// Choices go with a folder or page purged for good, not with the trash.
+#[test]
+fn choices_go_with_a_purge_not_the_trash() {
+    use crate::model::Record;
+    let mut w = world();
+    let (a, c) = (Owner::Topic(w.a), Owner::Topic(w.c));
+    set_page_commit(&mut w.t.store, a, w.folder, pc(CommitMode::Push), H).unwrap();
+    set_page_commit(&mut w.t.store, c, w.folder, pc(CommitMode::Commit), H).unwrap();
+    let count = |s: &crate::Store| s.local_values(PAGE_PREFIX).unwrap().len();
+    w.t.store.delete(Record::Topic(w.a), H).unwrap();
+    assert_eq!(count(&w.t.store), 2, "trashed: kept for a restore");
+    w.t.store.trash_purge(&[Record::Topic(w.a)]).unwrap();
+    assert_eq!(count(&w.t.store), 1);
+    w.t.store.delete(Record::Folder(w.folder), H).unwrap();
+    assert_eq!(count(&w.t.store), 1);
+    w.t.store.trash_purge(&[Record::Folder(w.folder)]).unwrap();
+    assert_eq!(count(&w.t.store), 0);
 }
