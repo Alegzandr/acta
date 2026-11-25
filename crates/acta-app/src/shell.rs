@@ -6607,6 +6607,7 @@ impl Render for Shell {
         self.zoom_applied = zoom::applied(settings::zoom(cx), w, h);
         zoom::set_factor(zoom::as_factor(self.zoom_applied));
         window.set_rem_size(zoom::rem_size());
+        #[cfg(windows)]
         crate::webview_build::set_zoom(zoom::factor());
         self.effective_width = zoom::eff(viewport.width);
         let tokens = cx.global::<Tokens>().clone();
