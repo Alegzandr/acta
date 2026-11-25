@@ -63,6 +63,7 @@ pub fn init(cx: &mut App) {
     // without dropping globals), so the last change is written here, on
     // this thread; it is a few bytes.
     cx.on_app_quit(|cx| {
+        crate::resume::set_quitting();
         flush(cx);
         async {}
     })

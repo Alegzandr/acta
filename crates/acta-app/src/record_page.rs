@@ -209,7 +209,12 @@ pub struct RecordPage {
     /// read back, opened at the next frame (an editor needs the window).
     draft_writes: [Task<()>; 2],
     drafts_read: bool,
+    drafts_asked: bool,
     pending_drafts: Vec<(bool, String)>,
+    /// The kept scroll and focus to restore once the page is first drawn,
+    /// and the pending write of the scroll (interaction.md 6.6).
+    restore: Option<resume::PageState>,
+    scroll_write: Task<()>,
     _load: Task<()>,
     _subs: Vec<Subscription>,
 }
@@ -341,7 +346,10 @@ impl RecordPage {
             fold_focused: None,
             draft_writes: [Task::ready(()), Task::ready(())],
             drafts_read: false,
+            drafts_asked: false,
             pending_drafts: Vec::new(),
+            restore: settings::current(cx).pages.get(&owner.to_string()).cloned(),
+            scroll_write: Task::ready(()),
             _load: Task::ready(()),
             _subs: subs,
         };
@@ -1028,6 +1036,79 @@ impl RecordPage {
         cx.notify();
     }
 
+    // ---- resume (interaction.md 6.6) ----
+
+    /// The page scrolled: its position is kept 500 ms after it stops.
+    fn keep_scroll(&mut self, cx: &mut Context<Self>) {
+        let timer = cx
+            .background_executor()
+            .timer(std::time::Duration::from_millis(500));
+        self.scroll_write = cx.spawn(async move |page, cx| {
+            timer.await;
+            let _ = page.update(cx, |page, cx| {
+                let top = zoom::eff(-page.scroll.offset().y);
+                let key = page.owner.to_string();
+                if settings::current(cx).pages.get(&key).map(|s| s.scroll)
+                    != Some(top.max(0.).round() as u32)
+                {
+                    settings::change(cx, |p| {
+                        resume::set_scroll(&mut p.pages, &key, top);
+                    });
+                }
+            });
+        });
+    }
+
+    /// The element to give the keyboard back to on the next launch: an
+    /// open editor, else the focused block.
+    pub fn kept_focus(&self, window: &Window, cx: &App) -> Option<record::Block> {
+        let has = |editor: &Option<Entity<TextareaState>>| {
+            editor
+                .as_ref()
+                .is_some_and(|e| e.read(cx).focus_handle(cx).contains_focused(window, cx))
+        };
+        if has(&self.state_edit) {
+            return Some(record::Block::State);
+        }
+        if has(&self.description_edit) {
+            return Some(record::Block::Description);
+        }
+        self.focused_block(window)
+    }
+
+    /// Scroll to the kept position (GPUI clamps it to the page) and, when
+    /// the page has the keyboard, give it to the kept element if it still
+    /// exists.
+    fn apply_restore(
+        &mut self,
+        kept: resume::PageState,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if kept.scroll > 0 {
+            let x = self.scroll.offset().x;
+            self.scroll
+                .set_offset(gpui_kit::point(x, -px(kept.scroll as f32)));
+        }
+        let block = kept.focus.as_deref().and_then(resume::focus_block);
+        if let Some(block) = block
+            && self.focus.contains_focused(window, cx)
+        {
+            let editor = match block {
+                record::Block::State => self.state_edit.clone(),
+                record::Block::Description => self.description_edit.clone(),
+                _ => None,
+            };
+            if let Some(editor) = editor {
+                editor.update(cx, |e, cx| e.focus(window, cx));
+            } else if self.block_order.contains(&block) {
+                let handle = self.block_handle(block, cx);
+                window.focus(&handle, cx);
+            }
+        }
+        cx.notify();
+    }
+
     // ---- drafts (data.md request 15, interaction.md 6.6) ----
 
     fn draft_field(description: bool) -> resume::DraftField {
@@ -1094,10 +1175,9 @@ impl RecordPage {
     /// Once the page first loaded: the editors that had a draft reopen
     /// with it, unfocused (the kept focus says where the keyboard goes).
     fn read_drafts(&mut self, cx: &mut Context<Self>) {
-        if self.drafts_read {
+        if std::mem::replace(&mut self.drafts_asked, true) {
             return;
         }
-        self.drafts_read = true;
         let owner = self.owner;
         let prefix = resume::draft_prefix(owner);
         let task = self
@@ -1106,8 +1186,9 @@ impl RecordPage {
             .db
             .run(cx, move |store| store.local_values(&prefix));
         cx.spawn(async move |page, cx| {
-            let Ok(kept) = task.await else { return };
+            let kept = task.await.unwrap_or_default();
             let _ = page.update(cx, |page, cx| {
+                page.drafts_read = true;
                 for (key, value) in kept {
                     let description = match resume::draft_field(owner, &key) {
                         Some(resume::DraftField::Description) => true,
@@ -4391,6 +4472,17 @@ impl Render for RecordPage {
         for (description, draft) in std::mem::take(&mut self.pending_drafts) {
             self.open_editor_with(description, Some(draft), false, window, cx);
         }
+        // The kept scroll and focus, once the loaded page has been laid
+        // out (the drafts' reads come first: an editor may be the focus).
+        if self.data.is_some()
+            && self.drafts_read
+            && self.pending_drafts.is_empty()
+            && let Some(kept) = self.restore.take()
+        {
+            cx.on_next_frame(window, move |page, window, cx| {
+                page.apply_restore(kept, window, cx)
+            });
+        }
         // A focus handle for each table row (`D` on a row, focus after a
         // click-through).
         let rows = self.data.as_ref().map_or(0, |d| d.all_topics().len());
@@ -4472,6 +4564,7 @@ impl Render for RecordPage {
                 if page.title_edit.is_some() {
                     page.commit_title(window, cx);
                 }
+                page.keep_scroll(cx);
             }))
             .track_focus(&self.focus)
             .key_context("RecordPage")

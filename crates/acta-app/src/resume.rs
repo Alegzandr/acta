@@ -9,6 +9,7 @@
 //! [`draft_key`], never to the file.
 
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use acta_core::model::{EntryId, Owner};
 
@@ -18,6 +19,17 @@ use crate::record::Block;
 /// At most this many pages keep a state, and this many sessions restart.
 pub const PAGES_MAX: usize = 64;
 pub const SESSIONS_MAX: usize = 16;
+
+static QUITTING: AtomicBool = AtomicBool::new(false);
+
+/// Acta is quitting: the sessions that end now still restart next time.
+pub fn set_quitting() {
+    QUITTING.store(true, Ordering::Relaxed);
+}
+
+pub fn quitting() -> bool {
+    QUITTING.load(Ordering::Relaxed)
+}
 
 /// The kept state of one page.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -158,6 +170,9 @@ pub fn read_sessions(stored: Vec<String>) -> Vec<String> {
     out
 }
 
+/// Where quick capture's draft is kept (one, like the overlay).
+pub const CAPTURE_DRAFT_KEY: &str = "draft.capture";
+
 /// The record a kept id names (`T-42`, `E-3`, `P-1`).
 pub fn parse_owner(id: &str) -> Option<Owner> {
     use acta_core::model::{EpicId, ProjectId, TopicId};
@@ -210,6 +225,31 @@ pub fn draft_field(owner: Owner, key: &str) -> Option<DraftField> {
 /// `None` when it says the same (no draft, the key is removed).
 pub fn draft_value(typed: &str, stored: &str) -> Option<String> {
     (typed.trim_end() != stored.trim_end()).then(|| typed.to_owned())
+}
+
+/// Where a page's agent browsers keep their last addresses (encrypted
+/// database, local): one per browser, in order.
+#[cfg(any(windows, test))]
+pub fn browser_key(owner: Owner) -> String {
+    format!("browser.addresses.{owner}")
+}
+
+/// The addresses as stored.
+#[cfg(any(windows, test))]
+pub fn encode_addresses(addresses: &[String]) -> String {
+    serde_json::to_string(addresses).unwrap_or_else(|_| "[]".into())
+}
+
+/// The addresses a page's browsers reopen on: web addresses only (the
+/// agent browser's policy checks them again when they load), at most
+/// `max`. A damaged value reads as none.
+#[cfg(any(windows, test))]
+pub fn decode_addresses(raw: &str, max: usize) -> Vec<String> {
+    let list: Vec<String> = serde_json::from_str(raw).unwrap_or_default();
+    list.into_iter()
+        .filter(|a| a.starts_with("https://") || a.starts_with("http://"))
+        .take(max)
+        .collect()
 }
 
 #[cfg(test)]
@@ -286,7 +326,8 @@ mod tests {
         assert!(!set_scroll(&mut pages, "T-4", 320.2));
         assert!(set_focus(&mut pages, "T-4", Some(Block::State)));
         assert!(!set_focus(&mut pages, "T-4", Some(Block::State)));
-        assert!(set_scroll(&mut pages, "P-1", -5.));
+        // A new page at the top: nothing to change, kept at 0.
+        assert!(!set_scroll(&mut pages, "P-1", -5.));
         assert_eq!(pages["P-1"].scroll, 0);
         assert!(!set_scroll(&mut pages, "not a key!", 3.));
         assert_eq!(
@@ -318,6 +359,30 @@ mod tests {
         assert_eq!(parse_owner("3"), None);
         let many: Vec<String> = (1..40).map(|i| format!("T-{i}")).collect();
         assert_eq!(read_sessions(many).len(), SESSIONS_MAX);
+    }
+
+    #[test]
+    fn browsers_keep_web_addresses_only() {
+        let kept = vec![
+            "https://example.com/a".to_owned(),
+            "about:blank".to_owned(),
+            "file:///C:/Users/Alexandre/secret.txt".to_owned(),
+            "http://localhost:3000".to_owned(),
+        ];
+        let raw = encode_addresses(&kept);
+        assert_eq!(
+            decode_addresses(&raw, 4),
+            vec![
+                "https://example.com/a".to_owned(),
+                "http://localhost:3000".to_owned()
+            ]
+        );
+        assert_eq!(decode_addresses(&raw, 1).len(), 1);
+        assert!(decode_addresses("not json", 4).is_empty());
+        assert_eq!(
+            browser_key(Owner::Topic(TopicId(4))),
+            "browser.addresses.T-4"
+        );
     }
 
     #[test]

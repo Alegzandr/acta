@@ -63,6 +63,9 @@ pub enum BrowserEvent {
     ClearFailed,
     /// A key Acta keeps, pressed while the page had the keyboard.
     Kept(Kept),
+    /// The page is on a new address (kept for the next launch,
+    /// interaction.md 6.6).
+    Address,
 }
 
 /// Why the pipe is not served.
@@ -383,6 +386,19 @@ impl BrowserPanel {
         cx.notify();
     }
 
+    /// The address the page is on (empty before any).
+    pub fn address(&self) -> &str {
+        &self.url
+    }
+
+    /// Opened again on its address of the last launch: it loads there when
+    /// shown (as after an idle close).
+    pub fn set_address(&mut self, url: String) {
+        if self.web.is_none() {
+            self.url = url;
+        }
+    }
+
     /// Shown again after an idle close: the web view comes back at its
     /// address.
     pub fn reopen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -495,6 +511,9 @@ impl BrowserPanel {
                 }
             }
             Job::Loaded(url) => {
+                if url != self.url {
+                    cx.emit(BrowserEvent::Address);
+                }
                 self.url = url.clone();
                 if !self.address.read(cx).focus_handle(cx).is_focused(window) {
                     let shown = if url == "about:blank" {

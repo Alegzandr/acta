@@ -680,6 +680,10 @@ impl Shell {
         let me = cx.entity().downgrade();
         window.on_window_should_close(cx, move |window, cx| {
             let Some(tool) = crate::ready::must_ask_quit(cx) else {
+                // The window goes: what runs in it ends, and the
+                // Resume state must not follow that (interaction.md 6.6).
+                let _ = me.update(cx, |shell, cx| shell.keep_resume_state(window, cx));
+                crate::resume::set_quitting();
                 return true;
             };
             let _ = me.update(cx, |shell, cx| {
@@ -992,6 +996,7 @@ impl Shell {
                 None => self.show_first_run(window, cx),
             }
             self.after_layout(window, cx);
+            self.resume_sessions(window, cx);
             self.dev_overlay(window, cx);
             return;
         }
@@ -1990,6 +1995,7 @@ impl Shell {
         if route == Route::Settings {
             crate::ready::check_if_stale(cx);
         }
+        self.keep_resume_state(window, cx);
         let (page, sub) = self.make_view(route, tab, window, cx);
         let Some(bench) = self.bench() else { return };
         bench.page = page;
@@ -2643,24 +2649,75 @@ impl Shell {
             _ => None,
         };
         let owner = crate::tools_model::owner_of(route, kb_owner)?;
-        let ws = bench.ws.read(cx);
-        let projects = &ws.projects;
-        let (project, name) = match owner {
-            Owner::Project(id) => (id, tree::locate_project(projects, id)?.project?.1),
-            Owner::Epic(id) => {
-                let l = tree::locate_epic(projects, id)?;
-                (l.project?.0, l.epic?.1)
+        origin_of(&bench.ws.read(cx).projects, owner)
+    }
+
+    /// What Resume keeps of the pages (interaction.md 6.6): the leaving
+    /// page's focused element, and only the open tabs' states.
+    pub(crate) fn keep_resume_state(&mut self, window: &Window, cx: &mut Context<Self>) {
+        let Some(bench) = self.bench() else { return };
+        let open: Vec<String> = bench
+            .layout
+            .page_tabs()
+            .into_iter()
+            .filter_map(|id| {
+                if id == bench.current {
+                    bench.history.current()
+                } else {
+                    bench.slots.get(&id).and_then(|s| s.history.current())
+                }
+            })
+            .map(|r| r.key())
+            .collect();
+        let focus = match (&bench.page, bench.history.current()) {
+            (PageView::Record(page), Some(route)) => {
+                Some((route.key(), page.read(cx).kept_focus(window, cx)))
             }
-            Owner::Topic(id) => {
-                let l = tree::locate_topic(projects, id)?;
-                (l.project?.0, l.topic?.1)
-            }
+            _ => None,
         };
-        Some(Origin {
-            owner,
-            project,
-            name,
+        let mut pages = settings::current(cx).pages.clone();
+        if let Some((key, focus)) = focus {
+            crate::resume::set_focus(&mut pages, &key, focus);
+        }
+        crate::resume::prune(&mut pages, &open);
+        if pages != settings::current(cx).pages {
+            settings::change(cx, |p| p.pages = pages);
+        }
+    }
+
+    /// The sessions that ran when Acta last quit start again, each on its
+    /// page's conversation (interaction.md 6.6). A page gone meanwhile is
+    /// skipped.
+    fn resume_sessions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let owners: Vec<Owner> = settings::current(cx)
+            .sessions
+            .iter()
+            .filter_map(|id| crate::resume::parse_owner(id))
+            .collect();
+        let Some(bench) = self.bench() else { return };
+        // Quick capture's draft of the last launch.
+        let task = bench.ws.read(cx).db.run(cx, |store| {
+            store.local_value(crate::resume::CAPTURE_DRAFT_KEY)
+        });
+        cx.spawn(async move |shell, cx| {
+            let Ok(Some(draft)) = task.await else { return };
+            let _ = shell.update(cx, |shell, _| {
+                if let Some(bench) = shell.bench()
+                    && bench.capture_draft.is_empty()
+                {
+                    bench.capture_draft = draft;
+                }
+            });
         })
+        .detach();
+        let Some(bench) = self.bench() else { return };
+        let projects = bench.ws.read(cx).projects.clone();
+        let dock = bench.dock.clone();
+        for owner in owners {
+            if let Some(origin) = origin_of(&projects, owner) {
+                dock.update(cx, |dock, cx| dock.resume(origin, window, cx));
+            }
+        }
     }
 
     /// The Terminal view follows the current page (layout.md 4.5.1): set
@@ -3566,6 +3623,10 @@ impl Shell {
                     if let Some(bench) = shell.bench() {
                         bench.capture_draft = draft.clone();
                         bench.capture_tray = tray.clone();
+                        let (db, text) = (bench.ws.read(cx).db.clone(), draft.clone());
+                        cx.background_executor()
+                            .spawn(async move { crate::capture::keep_draft(&db, &text) })
+                            .detach();
                     }
                     shell.close_overlay(window, cx);
                 }
@@ -4478,6 +4539,8 @@ impl Shell {
                         .update(cx, |ws, cx| ws.toast(message, ToastKind::Error, cx));
                 }
             }
+            // Handled by the dock (kept for the next launch).
+            BrowserEvent::Address => {}
         }
     }
 
@@ -6443,6 +6506,26 @@ fn row_project(projects: &[acta_core::model::ProjectTree], row: &Row) -> Option<
         }
         Row::Closed { .. } => None,
     }
+}
+
+/// The record that owns tools, with its project and title, from the tree.
+fn origin_of(projects: &[acta_core::model::ProjectTree], owner: Owner) -> Option<Origin> {
+    let (project, name) = match owner {
+        Owner::Project(id) => (id, tree::locate_project(projects, id)?.project?.1),
+        Owner::Epic(id) => {
+            let l = tree::locate_epic(projects, id)?;
+            (l.project?.0, l.epic?.1)
+        }
+        Owner::Topic(id) => {
+            let l = tree::locate_topic(projects, id)?;
+            (l.project?.0, l.topic?.1)
+        }
+    };
+    Some(Origin {
+        owner,
+        project,
+        name,
+    })
 }
 
 /// "New document" / "New memory": a draft's place in the tab and the
