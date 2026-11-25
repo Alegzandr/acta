@@ -17,7 +17,7 @@ Local-first desktop app that complements Claude Code: a project tracker for the 
 - Sample and test data uses the name "Alexandre".
 - Before any commit: `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`.
 - Branch workflow: each agent works on its own branch (`<role>/<slug>`) in its own git worktree under `../acta-wt/` and commits there. Agents never push, merge or touch `main`.
-- At most two sub-agents at once: the lead runs up to two agents (engineer, designer or reviewer) in parallel, each building at below-normal priority with `CARGO_BUILD_JOBS=4`, so builds never overload the lead's machine. CI on GitHub may run in parallel.
+- One sub-agent at a time: the lead runs a single agent (engineer, designer or reviewer) at once, building at below-normal priority with `CARGO_BUILD_JOBS=4`, so builds never overload the lead's machine. CI on GitHub may run in parallel.
 - The lead orchestrates: assigns work, has every branch reviewed by the `reviewer` agent (who did not write it), merges into `main`, pushes, and verifies the result (local checks, then CI).
 - Agent-facing output (MCP, CLI, hooks) is compact by design: summaries first, pagination, no dumps.
 - No plaintext user data or key material on disk, in logs or in process arguments.
