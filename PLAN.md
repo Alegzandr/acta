@@ -116,7 +116,13 @@ Requested by the user on 2026-11-23 ("like Notepad on Windows 11: reopening Acta
 ## Small fixes
 - [ ] Sidebar: unread dots are not vertically aligned with the counters (user, 2026-11-23); align the trailing slot's dot, glyphs and counts on one baseline/centre line.
 
-## Open a folder in VS Code
+## Attachments: Open with (ADR 0012, amendment 2026-11-25)
+- [ ] Working copy in `<data dir>/open/<random>/`, opened with the default app, watched; each save re-encrypted as a new version; silent sync on save; on return to Acta after a save a non-blocking "Done?" bar (Done / Keep editing), else "{n} file(s) being edited" in the status bar; Windows also deletes once the app lets go (exclusive open), at quit and at next start with a last sync-back. First-use sentence, catalogue rows, tests (sync on change, no sync for read-only copies, cleanup after a simulated crash, never reachable by MCP/CLI).
+
+## Deliverables in the folder (ADR 0007 addendum 2026-11-25)
+- [x] using-acta skill: documents produced for people are files in the working folder, never `kb_write`; an entry names the path.
+- [ ] Files view: a file named in an entry opens from the entry (link to the Files view and Markdown rendering).
+
 - A folder's menu (and the folder row's actions) gains "Open in VS Code" when VS Code is installed: `code` on PATH, or the usual install places (Windows `%LOCALAPPDATA%\Programs\Microsoft VS Code`, Program Files; macOS `/Applications/Visual Studio Code.app`; Linux `code`/`code-insiders` on PATH, Flatpak/Snap). Hidden otherwise, never an install offer.
 - Launched detached like "Show in folder": the folder path is the one process argument (same accepted case as the system file manager), no shell, no console window. Failure shows a toast.
 - One sentence in copy.md / catalogue; works in the folder list, the Files view and the palette ("Open in VS Code").

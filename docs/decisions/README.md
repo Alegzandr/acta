@@ -21,6 +21,7 @@ can change it. The full status is the `Status:` line of each file; this index sh
 | [0013](0013-claude-code-prerequisites.md) | Ready for Claude Code: detecting and installing what it needs | proposed |
 | [0014](0014-voice-dictation.md) | Dictation: local Whisper, on-device only | proposed |
 | [0015](0015-memory-quality.md) | Memory quality | accepted |
+| [0016](0016-meeting-transcripts.md) | Meeting transcripts | accepted |
 
 
 Template:

@@ -17,7 +17,7 @@ Local-first desktop app that complements Claude Code: a project tracker for the 
 - Sample and test data uses the name "Alexandre".
 - Before any commit: `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`.
 - Branch workflow: each agent works on its own branch (`<role>/<slug>`) in its own git worktree under `../acta-wt/` and commits there. Agents never push, merge or touch `main`.
-- One sub-agent at a time: the lead runs a single agent (engineer, designer or reviewer) at once, so builds never overload the lead's machine. CI on GitHub may run in parallel.
+- At most two sub-agents at once: the lead runs up to two agents (engineer, designer or reviewer) in parallel, each building at below-normal priority with `CARGO_BUILD_JOBS=4`, so builds never overload the lead's machine. CI on GitHub may run in parallel.
 - The lead orchestrates: assigns work, has every branch reviewed by the `reviewer` agent (who did not write it), merges into `main`, pushes, and verifies the result (local checks, then CI).
 - Agent-facing output (MCP, CLI, hooks) is compact by design: summaries first, pagination, no dumps.
 - No plaintext user data or key material on disk, in logs or in process arguments.
@@ -27,4 +27,5 @@ Local-first desktop app that complements Claude Code: a project tracker for the 
 - The lead's machine is in use while agents work. Never send synthetic keyboard or mouse input, never bring a test window to the foreground or take focus. Test windows are driven by window messages or the app's own test hooks, and captured with PrintWindow. What needs real input is left unverified and reported.
 - Housekeeping: close every Acta (or other) window you start as soon as you are done (WM_CLOSE, verify the process exited). One Rust target dir per agent, on C: under the session scratchpad (short 8.3 path), never inside a worktree on F:; delete it and your worktree when your branch is merged.
 - `preferences.json` (theme, language, pane sizes, open tabs and tree expansion) may live outside the encrypted database: it holds settings and opaque record ids or fixed page keys only, never titles, paths, drafts or any content.
+- `<data dir>/open` holds decrypted working copies of attachments opened in another app (ADR 0012, amendment 2026-11-25): synced back encrypted and deleted when the app lets go, when Acta quits and at the next start. It is the third accepted exception to the plaintext rule.
 - The web view profiles of the chat panel (ADR 0009, `<data dir>/webview`) and of the agent browser (ADR 0010, `<data dir>/agent-browser`) are the accepted exceptions to the plaintext rule: their cookies are managed by the system web view, in Acta's data directory.
