@@ -1,0 +1,5 @@
+Code(Some("yaml"), "title: Encrypted storage\nstatus: accepted\nowner: Alexandre")
+Heading(1, [Text("Encrypted storage", Marks { em: false, strong: false, del: false, code: false, link: None })])
+Para([Text("SQLCipher encrypts every page[1], and the key never touches the disk[2]. A second mention of pages[1] keeps its number.", Marks { em: false, strong: false, del: false, code: false, link: None })])
+Heading(2, [Text("Setext heading", Marks { em: false, strong: false, del: false, code: false, link: None })])
+Para([Text("Entities: © — & and an escape *not emphasis*.", Marks { em: false, strong: false, del: false, code: false, link: None })])

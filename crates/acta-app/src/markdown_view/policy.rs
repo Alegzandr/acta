@@ -78,11 +78,13 @@ fn host_in_text(text: &str) -> Option<String> {
         return None;
     }
     let lower = text.to_ascii_lowercase();
+    let schemed = lower.starts_with("https://") || lower.starts_with("http://");
     let rest = lower
         .strip_prefix("https://")
         .or_else(|| lower.strip_prefix("http://"))
         .unwrap_or(&lower);
     let host_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let has_path = host_end < rest.len();
     let authority = &rest[..host_end];
     let host = authority.rsplit('@').next().unwrap_or(authority);
     let host = host.split(':').next().unwrap_or(host);
@@ -97,7 +99,14 @@ fn host_in_text(text: &str) -> Option<String> {
         })
         && tld.chars().count() >= 2
         && tld.chars().all(|c| c.is_alphabetic() || !c.is_ascii());
-    if !looks_like_host {
+    // A bare name with a dot is often a file (`README.md`, `main.rs`):
+    // without a scheme, `www.` or a path, only the common web endings
+    // count as an address.
+    const WEB: [&str; 14] = [
+        "com", "org", "net", "io", "dev", "app", "ai", "co", "edu", "gov", "fr", "de", "uk", "eu",
+    ];
+    let plainly_web = schemed || host.starts_with("www.") || has_path || WEB.contains(tld);
+    if !looks_like_host || !plainly_web {
         return None;
     }
     // The ASCII form, so "gіthub.com" with a Cyrillic i does not match.
@@ -167,49 +176,16 @@ pub fn classify_image(dest: &str) -> ImageSource {
 /// Whether raw inline HTML is the one tag drawn as what it means: `<br>`,
 /// `<br/>`, `<br />`, any case (components-editor.md 5, HTML).
 pub fn is_br(tag: &str) -> bool {
-    let Some(inner) = tag.trim().strip_prefix('<').and_then(|t| t.strip_suffix('>')) else {
+    let Some(inner) = tag
+        .trim()
+        .strip_prefix('<')
+        .and_then(|t| t.strip_suffix('>'))
+    else {
         return false;
     };
     let inner = inner.trim_end();
     let inner = inner.strip_suffix('/').unwrap_or(inner).trim_end();
     inner.eq_ignore_ascii_case("br")
-}
-
-/// The GitHub slug of a heading's text: lower case, punctuation other than
-/// `-` and `_` removed, spaces to `-`.
-pub fn slug(text: &str) -> String {
-    text.trim()
-        .chars()
-        .filter_map(|c| {
-            if c == ' ' {
-                Some('-')
-            } else if c.is_alphanumeric() || c == '-' || c == '_' {
-                Some(c)
-            } else {
-                None
-            }
-        })
-        .flat_map(char::to_lowercase)
-        .collect()
-}
-
-/// The slugs of a text's headings in order, a repeat getting `-1`, `-2`.
-pub fn slugs<'a>(headings: impl IntoIterator<Item = &'a str>) -> Vec<String> {
-    let mut seen: HashMap<String, usize> = HashMap::new();
-    headings
-        .into_iter()
-        .map(|heading| {
-            let base = slug(heading);
-            let n = seen.entry(base.clone()).or_insert(0);
-            let out = if *n == 0 {
-                base.clone()
-            } else {
-                format!("{base}-{n}")
-            };
-            *n += 1;
-            out
-        })
-        .collect()
 }
 
 /// The parse options of the rendering contract: GFM, front matter, math
@@ -242,6 +218,12 @@ pub struct Prepared {
     pub notes: Vec<Note>,
     /// The source of every link reference definition, one per line.
     pub definitions: String,
+    /// Link reference identifier (normalised) to its destination, for
+    /// image references.
+    pub links: HashMap<String, String>,
+    /// Destinations some link of the text disguises (its visible text is an
+    /// address on another host), to the host they really go to.
+    pub deceptive: HashMap<String, String>,
 }
 
 /// Reads the facts of [`Prepared`] from `text`. Cheap when the text has no
@@ -256,12 +238,20 @@ pub fn prepare(text: &str) -> Prepared {
     };
     let mut references = Vec::new();
     let mut definitions = Vec::new();
+    let mut shown: Vec<(String, String)> = Vec::new();
+    let mut shown_refs: Vec<(String, String)> = Vec::new();
     walk(&root, &mut |node| match node {
         Node::FootnoteReference(r) => references.push(r.identifier.clone()),
         Node::FootnoteDefinition(d) => {
             definitions.push((d.identifier.clone(), footnote_markdown(text, d)))
         }
+        Node::Link(l) => shown.push((plain_text(node), l.url.clone())),
+        Node::LinkReference(l) => shown_refs.push((plain_text(node), l.identifier.clone())),
         Node::Definition(d) => {
+            prepared
+                .links
+                .entry(d.identifier.clone())
+                .or_insert_with(|| d.url.clone());
             if let Some(source) = d
                 .position
                 .as_ref()
@@ -273,6 +263,16 @@ pub fn prepare(text: &str) -> Prepared {
         }
         _ => {}
     });
+    for (text, id) in shown_refs {
+        if let Some(url) = prepared.links.get(&id) {
+            shown.push((text, url.clone()));
+        }
+    }
+    for (text, url) in shown {
+        if let Some(host) = deceptive_host(&text, &url) {
+            prepared.deceptive.insert(url, host);
+        }
+    }
     let mut next = 1;
     for id in references {
         if definitions.iter().any(|(d, _)| *d == id) && !prepared.footnotes.contains_key(&id) {
@@ -293,6 +293,17 @@ pub fn prepare(text: &str) -> Prepared {
     }
     prepared.notes.sort_by_key(|n| n.number);
     prepared
+}
+
+/// The text a node shows, without its markup.
+fn plain_text(node: &Node) -> String {
+    let mut out = String::new();
+    walk(node, &mut |n| match n {
+        Node::Text(t) => out.push_str(&t.value),
+        Node::InlineCode(c) => out.push_str(&c.value),
+        _ => {}
+    });
+    out
 }
 
 fn walk(node: &Node, f: &mut impl FnMut(&Node)) {
@@ -329,7 +340,11 @@ pub fn dedent(source: &str, columns: usize) -> Option<String> {
             out.push_str(line);
             continue;
         }
-        let spaces = line.bytes().take(columns).take_while(|b| *b == b' ').count();
+        let spaces = line
+            .bytes()
+            .take(columns)
+            .take_while(|b| *b == b' ')
+            .count();
         let rest = &line[spaces..];
         if spaces < columns && (rest.starts_with('\t') || rest.starts_with('>')) {
             return None;
@@ -376,13 +391,25 @@ mod tests {
                 host: "example.com".into()
             }
         );
-        assert!(matches!(classify_link("HTTP://Example.com"), LinkTarget::Web { .. }));
+        assert!(matches!(
+            classify_link("HTTP://Example.com"),
+            LinkTarget::Web { .. }
+        ));
         assert_eq!(
             classify_link("mailto:alexandre@example.com"),
             LinkTarget::Mail("mailto:alexandre@example.com".into())
         );
-        assert_eq!(classify_link("#storage-layer"), LinkTarget::Anchor("storage-layer".into()));
-        for inert in ["src/main.rs", "../docs/a.md", "main.rs#L10", "C:\\Users\\a.txt", "//host/x"] {
+        assert_eq!(
+            classify_link("#storage-layer"),
+            LinkTarget::Anchor("storage-layer".into())
+        );
+        for inert in [
+            "src/main.rs",
+            "../docs/a.md",
+            "main.rs#L10",
+            "C:\\Users\\a.txt",
+            "//host/x",
+        ] {
             assert_eq!(classify_link(inert), LinkTarget::Inert, "{inert}");
         }
         for blocked in [
@@ -419,8 +446,14 @@ mod tests {
             Some("evil.example".into())
         );
         // The same host, with or without www, or text that is no address.
-        assert_eq!(deceptive_host("github.com/acta", "https://github.com/acta"), None);
-        assert_eq!(deceptive_host("www.github.com", "https://github.com/"), None);
+        assert_eq!(
+            deceptive_host("github.com/acta", "https://github.com/acta"),
+            None
+        );
+        assert_eq!(
+            deceptive_host("www.github.com", "https://github.com/"),
+            None
+        );
         assert_eq!(deceptive_host("the docs", "https://evil.example/"), None);
         assert_eq!(deceptive_host("README.md", "https://evil.example/"), None);
         assert_eq!(deceptive_host("v1.2", "https://evil.example/"), None);
@@ -444,7 +477,15 @@ mod tests {
             classify_image("https://example.com/p.png"),
             ImageSource::Web("https://example.com/p.png".into())
         );
-        for other in ["A-0", "A-", "a-5", "A-5x", "data:image/png;base64,AA==", "file:///p.png", "p.png"] {
+        for other in [
+            "A-0",
+            "A-",
+            "a-5",
+            "A-5x",
+            "data:image/png;base64,AA==",
+            "file:///p.png",
+            "p.png",
+        ] {
             assert_eq!(classify_image(other), ImageSource::Other, "{other}");
         }
     }
@@ -460,25 +501,24 @@ mod tests {
     }
 
     #[test]
-    fn github_slugs() {
-        assert_eq!(slug("Storage layer"), "storage-layer");
-        assert_eq!(slug("ADR 0003: Encrypted storage!"), "adr-0003-encrypted-storage");
-        assert_eq!(slug("snake_case and-dash"), "snake_case-and-dash");
-        assert_eq!(slug("Été à Paris"), "été-à-paris");
-        assert_eq!(slugs(["Notes", "Notes", "Notes"]), ["notes", "notes-1", "notes-2"]);
-    }
-
-    #[test]
     fn footnotes_number_by_first_reference() {
         let text = "B[^b] then A[^a] and B again[^b].\n\n[^a]: Note A.\n[^b]: Note B\n    continued.\n[^c]: Never cited.\n";
         let p = prepare(text);
         assert_eq!(p.footnotes["b"], 1);
         assert_eq!(p.footnotes["a"], 2);
         assert_eq!(p.footnotes["c"], 3);
-        let notes: Vec<_> = p.notes.iter().map(|n| (n.number, n.markdown.as_str())).collect();
+        let notes: Vec<_> = p
+            .notes
+            .iter()
+            .map(|n| (n.number, n.markdown.as_str()))
+            .collect();
         assert_eq!(
             notes,
-            [(1, "Note B\ncontinued."), (2, "Note A."), (3, "Never cited.")]
+            [
+                (1, "Note B\ncontinued."),
+                (2, "Note A."),
+                (3, "Never cited.")
+            ]
         );
     }
 
@@ -487,6 +527,31 @@ mod tests {
         let p = prepare("See [the plan][plan].\n\n[plan]: https://example.com/plan \"Plan\"\n");
         assert_eq!(p.definitions, "[plan]: https://example.com/plan \"Plan\"\n");
         assert_eq!(prepare("no brackets").definitions, "");
+    }
+
+    #[test]
+    fn disguised_links_are_found_before_drawing() {
+        let p = prepare(
+            "[github.com/acta](https://github.example.net/acta) and [docs](https://docs.example.com) and [ref][r]
+
+[r]: https://evil.example/
+",
+        );
+        assert_eq!(
+            p.deceptive
+                .get("https://github.example.net/acta")
+                .map(String::as_str),
+            Some("github.example.net")
+        );
+        assert!(!p.deceptive.contains_key("https://docs.example.com"));
+        assert_eq!(p.links["r"], "https://evil.example/");
+        let p = prepare(
+            "[www.example.com][r]
+
+[r]: https://evil.example/
+",
+        );
+        assert!(p.deceptive.contains_key("https://evil.example/"));
     }
 
     #[test]

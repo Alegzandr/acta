@@ -70,6 +70,11 @@ pub struct Tokens {
     pub caption_close_hover: Hsla,
     /// Glyph on `caption.close.hover` (the platform's white, per 2.1).
     pub caption_close_glyph: Hsla,
+    /// Keywords, strings and constants in highlighted code blocks
+    /// (components-editor.md 5, Code).
+    pub syntax_keyword: Hsla,
+    pub syntax_string: Hsla,
+    pub syntax_constant: Hsla,
 }
 
 impl Global for Tokens {}
@@ -90,6 +95,8 @@ struct Palette {
     success: u32,
     scrim: (u32, f32),
     shadow: (u32, f32),
+    /// `syntax.keyword`, `syntax.string`, `syntax.constant`.
+    syntax: [u32; 3],
 }
 
 impl Tokens {
@@ -105,6 +112,7 @@ impl Tokens {
             success: 0x9BB26B,
             scrim: (0x000000, 0.45),
             shadow: (0x000000, 0.40),
+            syntax: [0xBC96BC, 0x9BB26B, 0x7FA6CC],
         })
     }
 
@@ -120,6 +128,7 @@ impl Tokens {
             success: 0x4C6A24,
             scrim: (0x24231F, 0.25),
             shadow: (0x24231F, 0.14),
+            syntax: [0x844C86, 0x4C6A24, 0x2F5F8F],
         })
     }
 
@@ -155,6 +164,9 @@ impl Tokens {
             shadow_overlay_color: hex(p.shadow.0).opacity(p.shadow.1),
             caption_close_hover: hex(0xC42B1C),
             caption_close_glyph: hex(0xFFFFFF),
+            syntax_keyword: hex(p.syntax[0]),
+            syntax_string: hex(p.syntax[1]),
+            syntax_constant: hex(p.syntax[2]),
         }
     }
 
@@ -170,7 +182,7 @@ impl Tokens {
     }
 
     /// Every token with its docs/design/color.md name, in table order (type specimen).
-    pub fn named(&self) -> [(&'static str, Hsla); 28] {
+    pub fn named(&self) -> [(&'static str, Hsla); 31] {
         [
             ("bg.sunken", self.bg_sunken),
             ("bg.base", self.bg_base),
@@ -200,6 +212,9 @@ impl Tokens {
             ("shadow.overlay", self.shadow_overlay_color),
             ("caption.close.hover", self.caption_close_hover),
             ("caption.close glyph", self.caption_close_glyph),
+            ("syntax.keyword", self.syntax_keyword),
+            ("syntax.string", self.syntax_string),
+            ("syntax.constant", self.syntax_constant),
         ]
     }
 }
@@ -654,6 +669,32 @@ mod tests {
             for (i, surface) in three.iter().enumerate() {
                 let measured = ratio(rgb8(t.focus_ring), opaque(rgb8(*surface)));
                 check("focus.ring", measured, pick(&d, &l, i));
+            }
+            // The syntax colours on bg.sunken / base / raised (2.2).
+            let syntax: [(&str, Hsla, Three, Three); 3] = [
+                (
+                    "syntax.keyword",
+                    t.syntax_keyword,
+                    [6.75, 6.31, 5.70],
+                    [5.63, 5.99, 6.25],
+                ),
+                (
+                    "syntax.string",
+                    t.syntax_string,
+                    [7.37, 6.89, 6.22],
+                    [5.58, 5.93, 6.19],
+                ),
+                (
+                    "syntax.constant",
+                    t.syntax_constant,
+                    [6.75, 6.31, 5.71],
+                    [6.00, 6.38, 6.66],
+                ),
+            ];
+            for (name, fg, d, l) in syntax {
+                for (i, surface) in four[..3].iter().enumerate() {
+                    check(name, ratio(rgb8(fg), opaque(*surface)), pick(&d, &l, i));
+                }
             }
             let measured = ratio(
                 rgb8(t.caption_close_glyph),

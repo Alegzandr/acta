@@ -39,6 +39,9 @@ All values are sRGB hex. Alpha tokens are composited by the renderer (GPUI `hsla
 | `scrim` | `#000000` @ 45% | `#24231F` @ 25% | Behind dialogs only |
 | `shadow.overlay` | `0 8px 24px #000000` @ 40% | `0 8px 24px #24231F` @ 14% | Palette, menus, dialogs, tooltips, toasts |
 | `caption.close.hover` | `#C42B1C` | `#C42B1C` | Windows/Linux close button hover (platform convention), glyph `#FFFFFF` |
+| `syntax.keyword` | `#BC96BC` | `#844C86` | Keywords in highlighted code blocks (terminal slot 5) |
+| `syntax.string` | `#9BB26B` | `#4C6A24` | Strings in highlighted code blocks (terminal slot 2, = `success`) |
+| `syntax.constant` | `#7FA6CC` | `#2F5F8F` | Numbers and language constants in highlighted code blocks (terminal slot 4) |
 
 Elevation is tone, lightest on top in dark and in light: `sunken < base < raised <= overlay`. In light, `raised` and `overlay` are both white; an overlay is told apart by its outline and shadow, which it always has. A surface never sits on a surface more than one step lighter than itself except overlays.
 
@@ -46,7 +49,7 @@ Why neutral greys: the surfaces are greys with a trace of warmth (blue one to th
 
 Why verdigris: the semantic colours (red, amber, green) are all warm, so a warm accent would collide with danger or warning on a focus ring next to an error. A grey-green copper patina stays calm on neutral greys, separates from all three semantics, and is neither the blue nor the purple of the three references, so nothing in Acta reads as borrowed.
 
-Three syntax colours for code blocks (`syntax.keyword`, `syntax.string`, `syntax.constant`, aliases of terminal slots 5, 2 and 4) are specified, with their measured ratios, in components-editor.md 5 and move into the two tables here when they are added to `Tokens`.
+The three syntax colours of code blocks (`syntax.keyword`, `syntax.string`, `syntax.constant`) take the terminal's slots 5, 2 and 4, so code in a page and code in the terminal read alike; their use is in components-editor.md 5 (Code).
 
 ### 2.2 Measured contrast (WCAG 2.x, computed from the hex values)
 
@@ -59,6 +62,9 @@ Three syntax colours for code blocks (`syntax.keyword`, `syntax.string`, `syntax
 | `danger` on same four | 5.89 / 5.50 / 4.97 / 4.52 | 5.21 / 5.54 / 5.78 / 5.78 | 4.5 |
 | `warning` on same four | 7.45 / 6.96 / 6.29 / 5.71 | 5.52 / 5.87 / 6.12 / 6.12 | 3.0 (glyph) |
 | `success` on same four | 7.37 / 6.89 / 6.22 / 5.65 | 5.58 / 5.93 / 6.19 / 6.19 | 3.0 (glyph) |
+| `syntax.keyword` on `bg.sunken` / `base` / `raised` | 6.75 / 6.31 / 5.70 | 5.63 / 5.99 / 6.25 | 4.5 |
+| `syntax.string` on same three | 7.37 / 6.89 / 6.22 | 5.58 / 5.93 / 6.19 | 4.5 |
+| `syntax.constant` on same three | 6.75 / 6.31 / 5.71 | 6.00 / 6.38 / 6.66 | 4.5 |
 | `text.on-accent` on `accent` / `.hover` / `.pressed` | 7.10 / 8.47 / 5.48 | 5.67 / 7.20 / 9.06 | 4.5 |
 | `text.on-accent` on `danger` | 5.76 | 5.54 | 4.5 |
 | `text.primary` on `fill.selected` over `sunken` / `base` / `overlay` | 10.73 / 9.93 / 8.08 | 10.28 / 10.91 / 11.37 | 4.5 |

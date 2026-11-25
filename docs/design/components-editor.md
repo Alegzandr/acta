@@ -74,7 +74,7 @@ Not yet verified (the conformance suite, Build steps, settles each): table colum
 
 A `diff` block (and a fence labelled `patch`) colours whole lines instead: lines starting `+` in `success`, `-` in `danger`, `@@` hunk headers in `text.tertiary`, others `text.primary`, no background tints (the History "Changes" view's rule). No language, an unknown language, `mermaid`, `math`, `text`, `plaintext`: plain `text.primary`, no guessing from content. A block over 2,000 lines or 200 KB draws unhighlighted. Bold of the mono is never used. Why five roles and three hues: highlighting earns its colour by separating code from prose inside the block; more roles turn a calm page into a theme showcase. The three hues are the terminal's blue, magenta and green slots (2.4), so code in a page and code in the terminal read alike, and none is the accent.
 
-New colour tokens, **pending**: they move into the 2.1 table (and their ratios into 2.2) in the change that adds them to `Tokens`, because `theme.rs` tests parse those tables.
+New colour tokens, now in color.md 2.1 and 2.2 and in `Tokens` (branch `gpui-engineer/markdown-render`):
 
 | Token | Dark | Light | Used for |
 |---|---|---|---|

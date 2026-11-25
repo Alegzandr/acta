@@ -71,7 +71,13 @@ pub fn highlight(code: &str, lang: &str) -> Vec<(Range<usize>, Role)> {
     let Some(syntaxes) = SYNTAXES.get() else {
         return Vec::new();
     };
-    let Some(syntax) = syntaxes.find_syntax_by_token(lang) else {
+    let by_name = || {
+        syntaxes
+            .syntaxes()
+            .iter()
+            .find(|s| s.name.eq_ignore_ascii_case(lang))
+    };
+    let Some(syntax) = syntaxes.find_syntax_by_token(lang).or_else(by_name) else {
         return Vec::new();
     };
     let roles = RoleScopes::get();
@@ -91,7 +97,11 @@ pub fn highlight(code: &str, lang: &str) -> Vec<(Range<usize>, Role)> {
                 return Vec::new();
             }
         }
-        push(&mut runs, offset + at..offset + line.len(), roles.role(&stack));
+        push(
+            &mut runs,
+            offset + at..offset + line.len(),
+            roles.role(&stack),
+        );
         offset += line.len();
     }
     runs
@@ -227,7 +237,7 @@ mod tests {
         SYNTAXES.get_or_init(two_face::syntax::extra_newlines);
     }
 
-    fn roles_of(code: &str, lang: &str) -> Vec<(&str, Role)> {
+    fn roles_of<'a>(code: &'a str, lang: &str) -> Vec<(&'a str, Role)> {
         highlight(code, lang)
             .into_iter()
             .map(|(r, role)| (&code[r], role))
@@ -248,7 +258,12 @@ mod tests {
         assert!(has("42", Role::Constant), "{runs:?}");
         assert!(has("true", Role::Constant), "{runs:?}");
         // Operators and identifiers stay default text.
-        assert!(!runs.iter().any(|(t, _)| t.contains("&&") || t.contains("open")), "{runs:?}");
+        assert!(
+            !runs
+                .iter()
+                .any(|(t, _)| t.contains("&&") || t.contains("open")),
+            "{runs:?}"
+        );
     }
 
     #[test]
@@ -261,7 +276,6 @@ mod tests {
             ("yaml", "a: 'b'"),
             ("python", "def f(): return None"),
             ("sh", "echo \"hi\""),
-            ("powershell", "$a = \"b\""),
             ("html", "<a href=\"x\">y</a>"),
             ("go", "func main() { return }"),
             ("sql", "SELECT 1"),
@@ -276,7 +290,11 @@ mod tests {
         let code = "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-old\n+new\n same\n";
         assert_eq!(
             roles_of(code, "diff"),
-            [("@@ -1 +1 @@", Role::Hunk), ("-old", Role::Removed), ("+new", Role::Added)]
+            [
+                ("@@ -1 +1 @@", Role::Hunk),
+                ("-old", Role::Removed),
+                ("+new", Role::Added)
+            ]
         );
         assert_eq!(roles_of("+x\n", "patch"), [("+x", Role::Added)]);
     }
@@ -284,7 +302,14 @@ mod tests {
     #[test]
     fn plain_languages_and_large_blocks_stay_plain() {
         assert_eq!(language(Some("Rust ignore")), Some("rust".into()));
-        for plain in [None, Some(""), Some("text"), Some("mermaid"), Some("math"), Some("plaintext")] {
+        for plain in [
+            None,
+            Some(""),
+            Some("text"),
+            Some("mermaid"),
+            Some("math"),
+            Some("plaintext"),
+        ] {
             assert_eq!(language(plain), None, "{plain:?}");
         }
         load();

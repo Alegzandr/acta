@@ -110,6 +110,8 @@ icons! {
     User => "user",
     Paperclip => "paperclip",
     File => "file",
+    ImageOff => "image-off",
+    Copy => "copy",
 }
 
 /// The app mark, shown in the updater window only (docs/design/components-app.md 5).

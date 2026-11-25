@@ -1317,6 +1317,16 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `settings.setup.confirm` | Set up | Configurer |
 | `settings.plugin.hint` | Sessions started in Acta's terminal always load Acta's plugin. To stop that, set "acta@inline": false under enabledPlugins. | Les sessions lancées dans le terminal d'Acta chargent toujours le plugin d'Acta. Pour l'éviter, mettez "acta@inline": false sous enabledPlugins. |
 
+| `md.alert.note` | Note | Remarque |
+| `md.alert.tip` | Tip | Conseil |
+| `md.alert.important` | Important | Important |
+| `md.alert.warning` | Warning | Attention |
+| `md.alert.caution` | Caution | Prudence |
+| `md.copy_code` | Copy code | Copier le code |
+| `md.link_mismatch` | This link goes to {host}, not to the address it shows. | Ce lien mène à {host}, pas à l'adresse qu'il affiche. |
+| `md.link_open_host` | Open {host} | Ouvrir {host} |
+| `md.image` | Image | Image |
+| `md.image_blocked` | Not shown: only files attached in Acta are displayed. | Non affichée : seuls les fichiers joints dans Acta sont affichés. |
 Strings that exist in the behaviour sections but are not in this table are a defect of the table: add the row in the same change that adds the string.
 
 ### 10.4.1 Keys of the workbench layout (4.8)
@@ -1649,26 +1659,16 @@ The git letters M, A, U, D, R, C, ref names, hashes, paths, file names and git's
 
 ### 10.4.21 Keys of Markdown rendering and the editor
 
-From the user's request of 2026-11-22 (components-editor.md 5). Pending until implemented; numbered high so that sections added meanwhile by other work keep their numbers. The heading and list commands reuse `slash.h1` to `slash.h3`, `slash.bullets`, `slash.numbers`, `slash.tasks` and `slash.quote` as their palette, bubble and context-menu labels; "Copied" is `common.copied`. `{mod}` is the `Ctrl` / `Cmd` key name of 6.1 (`KeyName::Mod`), `{host}` a host name, `{slug}` a heading anchor and `{item}` a task's text as written (at most 60 characters, then "…"), none of them translated. The alert words name GitHub's alert kinds and are translated like any label; what follows them is content and is not.
+From the user's request of 2026-11-22 (components-editor.md 5). The keys the renderer uses (`md.alert.*`, `md.copy_code`, `md.link_mismatch`, `md.link_open_host`, `md.image`, `md.image_blocked`) moved into 10.4 with the renderer (branch `gpui-engineer/markdown-render`); the rest is pending until implemented; numbered high so that sections added meanwhile by other work keep their numbers. The heading and list commands reuse `slash.h1` to `slash.h3`, `slash.bullets`, `slash.numbers`, `slash.tasks` and `slash.quote` as their palette, bubble and context-menu labels; "Copied" is `common.copied`. `{mod}` is the `Ctrl` / `Cmd` key name of 6.1 (`KeyName::Mod`), `{host}` a host name, `{slug}` a heading anchor and `{item}` a task's text as written (at most 60 characters, then "…"), none of them translated. The alert words name GitHub's alert kinds and are translated like any label; what follows them is content and is not.
 
 | Key | English | French |
 |---|---|---|
-| `md.alert.note` | Note | Remarque |
-| `md.alert.tip` | Tip | Conseil |
-| `md.alert.important` | Important | Important |
-| `md.alert.warning` | Warning | Attention |
-| `md.alert.caution` | Caution | Prudence |
-| `md.copy_code` | Copy code | Copier le code |
 | `md.copy_plain` | Copy as plain text | Copier en texte brut |
 | `md.anchor_missing` | No heading “{slug}” on this page | Aucun titre « {slug} » sur cette page |
 | `md.open_link` | Open link | Ouvrir le lien |
 | `md.copy_link` | Copy link address | Copier l'adresse du lien |
 | `md.mod_click` | {mod}+click to open | {mod}+clic pour ouvrir |
 | `md.link_blocked` | Not opened: Acta opens only web and e-mail links. | Non ouvert : Acta n'ouvre que les liens web et e-mail. |
-| `md.link_mismatch` | This link goes to {host}, not to the address it shows. | Ce lien mène à {host}, pas à l'adresse qu'il affiche. |
-| `md.link_open_host` | Open {host} | Ouvrir {host} |
-| `md.image` | Image | Image |
-| `md.image_blocked` | Not shown: only files attached in Acta are displayed. | Non affichée : seuls les fichiers joints dans Acta sont affichés. |
 | `md.image_missing` | File {id} is not in this project. | Le fichier {id} n'est pas dans ce projet. |
 | `md.image_undecodable` | This file cannot be shown as an image. | Ce fichier ne peut pas être affiché comme image. |
 | `md.footnote_back` | Back to the text | Retour au texte |
