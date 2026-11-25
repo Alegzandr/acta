@@ -112,7 +112,9 @@ Requested by the user on 2026-11-23 ("like Notepad on Windows 11: reopening Acta
 - [ ] Spec (product-designer) and build (gpui-engineer), with tests of the restore model.
 
 ## Per-page commit mode (ADR 0011 addendum 2026-11-23)
-- [ ] Store override per (page, folder), `--settings` per session for Acta-launched sessions, guard resolves the session's page, folder form "For this page", tests (two pages, one folder, different modes; outside session uses the folder setting).
+- [x] Store override per (page, folder), `--settings` per session for Acta-launched sessions, guard resolves the session's page, folder form "For this page", tests (two pages, one folder, different modes; outside session uses the folder setting).
+  - Built on `integration-engineer/page-commit-mode` (ADR 0011 addendum, "Built ... with these precisions"): overrides as local values, inherited downward; the page comes from the session's launch record (`ACTA_LAUNCH`), never from presence or `ACTA_TOPIC`; per-session `--settings` file with `ask` rules where the folder file allows more than the page; the guard can answer "ask"; "Commits for this page..." on inherited git folders; row mark, header mismatch, briefing and `acta folders list` follow the page. Tests: core (two pages, outside session, inheritance, spoofing, ask rules) and the stdio end-to-end through `acta hook pre-git` and the MCP briefing.
+  - Not verified by running: the form in the app (no GUI run), and Claude Code honouring the per-session `ask` rules and a hook "ask" over a folder file's allow rule (documented behaviour; see the report for the headless runs).
 
 ## Small fixes
 - [ ] Sidebar: unread dots are not vertically aligned with the counters (user, 2026-11-23); align the trailing slot's dot, glyphs and counts on one baseline/centre line.
