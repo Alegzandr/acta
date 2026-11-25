@@ -46,6 +46,8 @@ pub struct Capture {
     report: Entity<ContactPicker>,
     /// The files pasted, dropped or chosen (components-attachments.md 5).
     pub tray: Entity<Tray>,
+    /// The pending write of the draft (interaction.md 6.6).
+    draft_write: gpui_kit::Task<()>,
     _subs: Vec<Subscription>,
 }
 
@@ -98,13 +100,12 @@ impl Capture {
             cx.subscribe_in(
                 &editor,
                 window,
-                |capture, _, event: &InputEvent, window, cx| {
-                    if let InputEvent::PressEnter {
+                |capture, _, event: &InputEvent, window, cx| match event {
+                    InputEvent::PressEnter {
                         secondary: true, ..
-                    } = event
-                    {
-                        capture.save(window, cx);
-                    }
+                    } => capture.save(window, cx),
+                    InputEvent::Change => capture.write_draft(cx),
+                    _ => {}
                 },
             ),
             cx.subscribe_in(
@@ -127,8 +128,22 @@ impl Capture {
             editor,
             report,
             tray,
+            draft_write: gpui_kit::Task::ready(()),
             _subs: subs,
         }
+    }
+
+    /// The text goes to the encrypted database 400 ms after the last
+    /// change, so a crash keeps it (interaction.md 6.6).
+    fn write_draft(&mut self, cx: &mut Context<Self>) {
+        let text = self.editor.read(cx).value().to_string();
+        let db = self.ws.read(cx).db.clone();
+        self.draft_write = crate::drafts::write_later(
+            &db,
+            crate::resume::CAPTURE_DRAFT_KEY.into(),
+            draft_of(&text),
+            cx,
+        );
     }
 
     fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -325,4 +340,9 @@ impl Render for Capture {
             .children(crate::voice::ui::line_for(&self.editor, cx));
         attach_ui::drop_zone("capture", &self.tray, RADIUS_XL, body, cx)
     }
+}
+
+/// Quick capture's draft as kept: none for an empty text.
+pub fn draft_of(text: &str) -> Option<String> {
+    (!text.trim().is_empty()).then(|| text.to_owned())
 }

@@ -1141,8 +1141,12 @@ fn tree_row(
             .child(parent_trailing(*project, Some(*eid), signal_el, cx)),
         Row::Inbox { count: n, .. } => {
             let count = short_count((*n).max(0) as u64);
+            // The count is centred in the trailing slot's 16, on the
+            // same vertical centre line as the dots and glyphs of the rows
+            // around it (Small fixes, 2026-11-23); a wider count grows
+            // to the left.
             let reserve = if *n > 0 {
-                text_width(type_scale::SMALL, &count, cx)
+                text_width(type_scale::SMALL, &count, cx).max(16.)
             } else {
                 0.
             };
@@ -1159,6 +1163,9 @@ fn tree_row(
                         type_scale::SMALL
                             .el()
                             .flex_shrink_0()
+                            .min_w(px(16.))
+                            .flex()
+                            .justify_center()
                             .font_features(type_scale::tabular())
                             .text_color(lift(t.text_tertiary))
                             .child(count),

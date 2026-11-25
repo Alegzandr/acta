@@ -16,6 +16,7 @@ use super::*;
 use crate::contact_picker::{ContactPicker, Mode, PickerEvent, Value};
 use crate::question_view::{self, RowLook};
 use crate::questions_model::{self as qm, Section};
+use crate::resume::{self, DraftField};
 use crate::workspace::{ReportState, WriteError, put_report, report_state, with_lifts};
 
 gpui_kit::actions!(
@@ -108,12 +109,12 @@ enum RItem {
 
 #[derive(Default)]
 pub(super) struct QuestionUi {
-    composer: Option<Composer>,
+    pub(super) composer: Option<Composer>,
     answer: Option<AnswerEdit>,
     /// A row's menu: the question and the highlighted item.
     menu: Option<(QuestionId, usize, usize)>,
     menu_anchor: AnchorBounds,
-    row_focus: Vec<FocusHandle>,
+    pub(super) row_focus: Vec<FocusHandle>,
     row_ids: std::cell::RefCell<Vec<QuestionId>>,
     date: Option<RowDate>,
     /// Unread dots stay for as long as the page is open.
@@ -236,6 +237,8 @@ impl RecordPage {
         cx: &mut Context<Self>,
     ) {
         let Some(place) = self.q_place() else { return };
+        // Reveal: a folded Questions section unfolds for its composer.
+        self.reveal_section(crate::fold::Section::Questions, cx);
         let locale = settings::locale(cx);
         let text = cx.new(|cx| {
             TextareaState::new(window, cx)
@@ -265,8 +268,10 @@ impl RecordPage {
                             let clean = qm::clean_text(&value);
                             editor.update(cx, |s, cx| s.set_value(clean, window, cx));
                         }
+                        page.write_composer_draft(cx);
                         cx.notify();
                     }
+                    InputEvent::Focus => page.claim_field(DraftField::Question, cx),
                     _ => {}
                 },
             ),
@@ -305,8 +310,47 @@ impl RecordPage {
         cx.notify();
     }
 
+    /// The composer's text is kept as the page's draft (interaction.md
+    /// 6.6): a new question's text, or an edit that differs.
+    fn write_composer_draft(&mut self, cx: &mut Context<Self>) {
+        let Some(c) = &self.q.composer else { return };
+        let typed = c.text.read(cx).value().to_string();
+        let stored = c
+            .editing
+            .and_then(|id| self.question_by_id(id))
+            .map(|q| q.text)
+            .unwrap_or_default();
+        let id = c.editing.map_or(0, |id| id.0);
+        let value = resume::draft_value(&typed, &stored).map(|t| resume::encode_item(id, &t));
+        self.write_field(DraftField::Question, value, cx);
+    }
+
+    fn question_by_id(&self, id: QuestionId) -> Option<Question> {
+        let s = &self.data.as_ref()?.questions.section;
+        s.open.iter().chain(&s.closed).find(|q| q.id == id).cloned()
+    }
+
+    /// A kept composer draft: the composer opens again on it, for the
+    /// question it edited if that still exists, else as a new one.
+    pub(super) fn reopen_composer(
+        &mut self,
+        id: i64,
+        text: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let editing = (id > 0)
+            .then(|| self.question_by_id(QuestionId(id)))
+            .flatten();
+        self.open_composer(editing.as_ref(), None, window, cx);
+        if let Some(c) = &self.q.composer {
+            c.text.update(cx, |s, cx| s.set_value(text, window, cx));
+        }
+    }
+
     fn close_composer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.q.composer = None;
+        self.discard_field(DraftField::Question, cx);
         window.focus(&self.focus, cx);
         cx.notify();
     }
@@ -1697,6 +1741,24 @@ impl RecordPage {
         self.q
             .seen_unread
             .extend(data.questions.unread.iter().copied());
+        let toggle = self.fold_toggle(
+            crate::fold::Section::Questions,
+            Key::SectionQuestions,
+            (s.open_total > 0).then(|| number(locale, s.open_total as u64)),
+            locale,
+            t,
+            cx,
+        );
+        // Folded: the header alone, its `plus` hidden (components-records.md
+        // 5, Section fold).
+        if self.folded(crate::fold::Section::Questions, cx) {
+            return div()
+                .flex()
+                .flex_col()
+                .mt(px(32.))
+                .child(toggle)
+                .into_any_element();
+        }
         // The header is the section's stop among the page's blocks: `Enter`
         // goes inside, to the first row (interaction.md 6.1).
         let header = div()
@@ -1709,16 +1771,7 @@ impl RecordPage {
             .px(px(8.))
             .mx(px(-8.))
             .rounded(px(RADIUS_SM))
-            .child(ui::section_header(text(locale, Key::SectionQuestions), t))
-            .when(s.open_total > 0, |this| {
-                this.child(
-                    type_scale::SMALL
-                        .el()
-                        .text_color(t.text_tertiary)
-                        .font_features(type_scale::tabular())
-                        .child(number(locale, s.open_total as u64)),
-                )
-            })
+            .child(toggle)
             .child(div().flex_1())
             .child(
                 ui::ghost_icon_button("q-new", Icon::Plus, 24., false, false, true, t)

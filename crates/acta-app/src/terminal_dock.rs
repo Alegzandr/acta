@@ -403,6 +403,14 @@ pub struct TerminalDock {
     one_off: Option<OneOff>,
     show_one_off: bool,
     seen_revision: u64,
+    /// Pages whose next start resumes their conversation whatever the
+    /// setting says: their session ran when Acta last quit
+    /// (interaction.md 6.6).
+    force_resume: std::collections::HashSet<Owner>,
+    /// The sessions a launch is restarting, kept as the list until they
+    /// settled (interaction.md 6.6), and the wait for that.
+    resuming: Option<Vec<String>>,
+    _settle: Option<gpui_kit::Task<()>>,
     _refresh: Option<gpui_kit::Task<()>>,
     _folder: Option<gpui_kit::Task<()>>,
     _ws_sub: Option<Subscription>,
@@ -478,6 +486,9 @@ impl TerminalDock {
             one_off: None,
             show_one_off: false,
             seen_revision: 0,
+            force_resume: Default::default(),
+            resuming: None,
+            _settle: None,
             _refresh: None,
             _folder: None,
             _ws_sub: Some(sub),
@@ -674,6 +685,68 @@ impl TerminalDock {
         self.show_one_off = false;
         self.launch(key, origin, prompt, window, cx);
         Some(key)
+    }
+
+    /// The launch restarts `origins`' sessions: the kept list stays as it is
+    /// until they settled (15 s), then the launch marker goes and the list
+    /// follows the sessions again.
+    pub fn resume_all(
+        &mut self,
+        origins: Vec<Origin>,
+        kept: Vec<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.resuming = Some(kept);
+        for origin in origins {
+            self.resume(origin, window, cx);
+        }
+        let timer = cx
+            .background_executor()
+            .timer(std::time::Duration::from_secs(15));
+        self._settle = Some(cx.spawn(async move |dock, cx| {
+            timer.await;
+            let _ = dock.update(cx, |dock, cx| {
+                dock.resuming = None;
+                settings::change(cx, |p| p.resuming = false);
+                dock.save_sessions(cx);
+            });
+        }));
+    }
+
+    /// Restart the session `origin`'s page had running when Acta last quit
+    /// (interaction.md 6.6): a launch like any other (a new launch token,
+    /// the page's commit settings), on the page's last conversation.
+    pub fn resume(&mut self, origin: Origin, window: &mut Window, cx: &mut Context<Self>) {
+        if self.panes.at_limit(Holder::Page(origin.owner)) {
+            return;
+        }
+        self.force_resume.insert(origin.owner);
+        self.start(Some(origin), None, window, cx);
+    }
+
+    /// The pages with a session Acta started that is still running, kept
+    /// in `preferences.json` so the next launch restarts them. Not while
+    /// quitting: the sessions end then, and the list must survive that.
+    fn save_sessions(&self, cx: &mut App) {
+        // While restarted sessions settle, the list stays the one intended.
+        if self.free || crate::resume::quitting() || self.resuming.is_some() {
+            return;
+        }
+        let mut owners: Vec<String> = Vec::new();
+        for (key, pane) in self.panes.iter() {
+            if let (Holder::Page(owner), Pane::Running { view, .. }) = (key.holder, pane)
+                && view.read(cx).is_running()
+            {
+                let id = owner.to_string();
+                if !owners.contains(&id) {
+                    owners.push(id);
+                }
+            }
+        }
+        if settings::current(cx).sessions != owners {
+            settings::change(cx, |p| p.sessions = owners);
+        }
     }
 
     /// End the instance's session and start it again from its own page,
@@ -905,7 +978,8 @@ impl TerminalDock {
                     }
                 )
         });
-        let new_conversations = settings::current(cx).new_conversations;
+        let new_conversations =
+            settings::current(cx).new_conversations && !self.force_resume.remove(&owner);
         // Without a token the session could not carry its page: refused,
         // never started as if outside Acta.
         let Some(token) = acta_core::random_uuid() else {
@@ -1208,6 +1282,7 @@ impl TerminalDock {
             })
             .collect();
         cx.set_global(RunningIn(running));
+        self.save_sessions(cx);
     }
 
     /// The launch token of a running session.
@@ -1305,6 +1380,7 @@ impl TerminalDock {
             move |dock, _, event: &TerminalEvent, _, cx| {
                 match event {
                     TerminalEvent::Exited(_) => {
+                        dock.save_sessions(cx);
                         if let Some(one) = dock.one_off.as_mut()
                             && !one.ended
                         {

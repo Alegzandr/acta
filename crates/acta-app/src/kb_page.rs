@@ -371,6 +371,8 @@ pub struct KnowledgePage {
     row_focus: Vec<FocusHandle>,
     /// The entry of each row drawn, in order (the palette's target).
     row_ids: Vec<KbId>,
+    /// Scroll and focus across launches, as a page (interaction.md 6.6).
+    keep: Option<crate::page_keep::Keep>,
     focus_first_row: bool,
     seen_revision: u64,
     _load: Task<()>,
@@ -383,6 +385,49 @@ pub struct KnowledgePage {
 impl EventEmitter<PageEvent> for KnowledgePage {}
 
 impl KnowledgePage {
+    /// What Resume keeps of this page (interaction.md 6.6): its route
+    /// key and the focused row.
+    pub fn kept_state(
+        &self,
+        window: &Window,
+        _: &gpui_kit::App,
+    ) -> Option<(String, Option<String>)> {
+        let keep = self.keep.as_ref()?;
+        let focus = self
+            .row_focus
+            .iter()
+            .position(|h| h.is_focused(window))
+            .map(crate::resume::row_key);
+        Some((keep.route().to_owned(), focus))
+    }
+
+    /// Once the content is there: the kept scroll, and the kept row when
+    /// the page has the keyboard, on the next frame (after layout).
+    fn restore_kept(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !(self.listed_ready) {
+            return;
+        }
+        let Some(kept) = self.keep.as_mut().and_then(crate::page_keep::Keep::take) else {
+            return;
+        };
+        cx.on_next_frame(window, move |page, window, cx| {
+            if let Some(keep) = &page.keep {
+                keep.apply_scroll(&kept);
+            }
+            let row = kept.focus.as_deref().and_then(crate::resume::row_of);
+            if let Some(i) = row
+                && page
+                    .search
+                    .read(cx)
+                    .focus_handle(cx)
+                    .contains_focused(window, cx)
+                && let Some(h) = page.row_focus.get(i).cloned()
+            {
+                window.focus(&h, cx);
+            }
+        });
+    }
+
     #[cfg(windows)]
     /// A filter menu is open (the chat's web view hides under it).
     pub fn menu_open(&self) -> bool {
@@ -475,6 +520,9 @@ impl KnowledgePage {
             flags: Default::default(),
             row_focus: Vec::new(),
             row_ids: Vec::new(),
+            keep: (!as_view).then(|| {
+                crate::page_keep::Keep::new(crate::route::Route::Knowledge(project).key(), cx)
+            }),
             focus_first_row: false,
             seen_revision: 0,
             _load: Task::ready(()),
@@ -1283,7 +1331,19 @@ impl Render for KnowledgePage {
                 .child(column)
                 .into_any_element()
         } else {
+            self.restore_kept(window, cx);
             ui::page_scroll("knowledge-page")
+                .when_some(
+                    self.keep.as_ref().map(|k| k.scroll().clone()),
+                    |el, scroll| {
+                        el.track_scroll(&scroll)
+                            .on_scroll(cx.listener(|page, _, _, cx| {
+                                if let Some(keep) = page.keep.as_mut() {
+                                    keep.scrolled(cx);
+                                }
+                            }))
+                    },
+                )
                 .child(column)
                 .into_any_element()
         }
@@ -1346,6 +1406,11 @@ pub struct DocPage {
     copied: Option<usize>,
     /// Open the editor once the entry is loaded (a merge's survivor).
     pending_edit: bool,
+    /// Scroll and focus across launches (interaction.md 6.6), and the
+    /// editor's kept draft: read once, opened at the next frame.
+    keep: Option<crate::page_keep::Keep>,
+    doc_draft_read: bool,
+    pending_doc_draft: Option<(String, String, String)>,
     loading: bool,
     seen_revision: u64,
     _load: Task<()>,
@@ -1413,6 +1478,7 @@ impl DocPage {
         draft: Option<Draft>,
         cx: &mut Context<Self>,
     ) -> Self {
+        let scroll = gpui_kit::ScrollHandle::new();
         let project = draft.and_then(|d| crate::workspace::project_of(&ws, d.owner, cx));
         let sub = cx.observe(&ws, |page, ws, cx| {
             let revision = ws.read(cx).revision;
@@ -1441,7 +1507,7 @@ impl DocPage {
             conflict: None,
             doc_menu: false,
             doc_menu_anchor: Default::default(),
-            scroll: gpui_kit::ScrollHandle::new(),
+            scroll: scroll.clone(),
             headings: Default::default(),
             focus: cx.focus_handle(),
             show_theirs: false,
@@ -1450,6 +1516,11 @@ impl DocPage {
             defaults: Vec::new(),
             copied: None,
             pending_edit: false,
+            keep: id.map(|id| {
+                crate::page_keep::Keep::with_scroll(crate::route::Route::Kb(id).key(), scroll, cx)
+            }),
+            doc_draft_read: false,
+            pending_doc_draft: None,
             loading: false,
             seen_revision: 0,
             _load: Task::ready(()),
@@ -1468,6 +1539,7 @@ impl DocPage {
             let _ = page.update(cx, |page, cx| {
                 page.loading = false;
                 if let Ok(q) = loaded {
+                    page.read_doc_draft(cx);
                     cx.emit(PageEvent::Located(q.entry.project));
                     page.project = Some(q.entry.project);
                     page.entry = Some(q.entry.clone());
@@ -1584,6 +1656,127 @@ impl DocPage {
         cx.notify();
     }
 
+    // ---- resume (interaction.md 6.6) ----
+
+    /// What Resume keeps of this page: its route key, and the editor when
+    /// it has the keyboard.
+    pub fn kept_state(&self, window: &Window, cx: &App) -> Option<(String, Option<String>)> {
+        let keep = self.keep.as_ref()?;
+        let in_editor = self
+            .body
+            .as_ref()
+            .is_some_and(|b| b.read(cx).focus_handle(cx).contains_focused(window, cx))
+            || self
+                .title
+                .as_ref()
+                .is_some_and(|t| t.read(cx).focus_handle(cx).contains_focused(window, cx))
+            || self
+                .summary
+                .as_ref()
+                .is_some_and(|s| s.read(cx).focus_handle(cx).contains_focused(window, cx));
+        let focus = in_editor.then(|| crate::resume::FOCUS_EDITOR.to_owned());
+        Some((keep.route().to_owned(), focus))
+    }
+
+    fn doc_draft_key(&self) -> Option<String> {
+        Some(crate::resume::draft_key_of(
+            &self.id?.to_string(),
+            crate::resume::DraftField::Doc,
+        ))
+    }
+
+    /// The editor changed: its three fields are kept 400 ms after the last
+    /// change, when they differ from the entry.
+    fn write_doc_draft(&self, cx: &mut Context<Self>) {
+        let (Some(key), Some(entry)) = (self.doc_draft_key(), &self.entry) else {
+            return;
+        };
+        let read = |s: &Option<Entity<InputState>>| {
+            s.as_ref()
+                .map(|s| s.read(cx).value().to_string())
+                .unwrap_or_default()
+        };
+        let (title, summary) = (read(&self.title), read(&self.summary));
+        let body = self
+            .body
+            .as_ref()
+            .map(|b| b.read(cx).value().to_string())
+            .unwrap_or_default();
+        let same = title.trim() == entry.title.trim()
+            && summary.trim() == entry.summary.trim()
+            && body.trim_end() == entry.body.trim_end();
+        let value = (!same).then(|| crate::resume::encode_doc(&title, &summary, &body));
+        let db = self.ws.read(cx).db.clone();
+        crate::drafts::changed(&db, key, cx.entity_id().as_u64(), value, cx);
+    }
+
+    fn discard_doc_draft(&self, cx: &mut Context<Self>) {
+        let Some(key) = self.doc_draft_key() else {
+            return;
+        };
+        let db = self.ws.read(cx).db.clone();
+        crate::drafts::discard(&db, key, cx.entity_id().as_u64(), cx);
+    }
+
+    /// Once the entry is loaded: a kept draft reopens the editor with it,
+    /// and the kept scroll and focus come back.
+    fn read_doc_draft(&mut self, cx: &mut Context<Self>) {
+        if std::mem::replace(&mut self.doc_draft_read, true) {
+            return;
+        }
+        let Some(key) = self.doc_draft_key() else {
+            return;
+        };
+        let task = self
+            .ws
+            .read(cx)
+            .db
+            .run(cx, move |store| store.local_value(&key));
+        cx.spawn(async move |page, cx| {
+            let Ok(Some(raw)) = task.await else { return };
+            let _ = page.update(cx, |page, cx| {
+                if page.mode != Mode::Edit {
+                    page.pending_doc_draft = crate::resume::decode_doc(&raw);
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// In render: the kept draft's editor, then the kept scroll and focus.
+    fn restore_kept(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some((title, summary, body)) = self.pending_doc_draft.take() {
+            self.start_edit(window, cx);
+            for (state, value) in [(&self.title, title), (&self.summary, summary)] {
+                if let Some(state) = state {
+                    state.update(cx, |s, cx| s.set_value(value, window, cx));
+                }
+            }
+            if let Some(b) = &self.body {
+                b.update(cx, |s, cx| s.set_value(body, window, cx));
+            }
+            window.focus(&self.focus, cx);
+        }
+        if self.entry.is_none() || !self.doc_draft_read {
+            return;
+        }
+        let Some(kept) = self.keep.as_mut().and_then(crate::page_keep::Keep::take) else {
+            return;
+        };
+        cx.on_next_frame(window, move |page, window, cx| {
+            if let Some(keep) = &page.keep {
+                keep.apply_scroll(&kept);
+            }
+            if kept.focus.as_deref() == Some(crate::resume::FOCUS_EDITOR)
+                && page.focus.contains_focused(window, cx)
+                && let Some(b) = page.body.clone()
+            {
+                b.update(cx, |s, cx| s.focus(window, cx));
+            }
+        });
+    }
+
     pub fn start_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let locale = settings::locale(cx);
         let (title, summary, body) = match &self.entry {
@@ -1625,7 +1818,11 @@ impl DocPage {
                     InputEvent::PressEnter {
                         secondary: true, ..
                     } => page.save(window, cx),
-                    InputEvent::Change => cx.notify(),
+                    InputEvent::Change => {
+                        page.write_doc_draft(cx);
+                        cx.notify()
+                    }
+                    InputEvent::Focus => page.claim_doc_draft(cx),
                     _ => {}
                 },
             ));
@@ -1633,13 +1830,13 @@ impl DocPage {
         self._subs.push(cx.subscribe_in(
             &body_state,
             window,
-            |page, _, event: &InputEvent, window, cx| {
-                if let InputEvent::PressEnter {
+            |page, _, event: &InputEvent, window, cx| match event {
+                InputEvent::PressEnter {
                     secondary: true, ..
-                } = event
-                {
-                    page.save(window, cx);
-                }
+                } => page.save(window, cx),
+                InputEvent::Change => page.write_doc_draft(cx),
+                InputEvent::Focus => page.claim_doc_draft(cx),
+                _ => {}
             },
         ));
         self.title = Some(title_state);
@@ -1657,7 +1854,16 @@ impl DocPage {
         filled(&self.title) && filled(&self.summary)
     }
 
+    fn claim_doc_draft(&self, cx: &mut Context<Self>) {
+        if let Some(key) = self.doc_draft_key() {
+            crate::drafts::claim(&key, cx.entity_id().as_u64());
+        }
+    }
+
     fn cancel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.mode == Mode::Edit {
+            self.discard_doc_draft(cx);
+        }
         if self.mode == Mode::Edit && self.id.is_none() {
             // A draft never saved: back to where it was started from.
             if let Some(draft) = self.draft {
@@ -1778,6 +1984,7 @@ impl DocPage {
     }
 
     fn close_editor(&mut self, cx: &mut Context<Self>) {
+        self.discard_doc_draft(cx);
         self.mode = Mode::Read;
         self.title = None;
         self.summary = None;
@@ -2451,6 +2658,7 @@ impl DocPage {
 
 impl Render for DocPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.restore_kept(window, cx);
         // A merge's survivor: its editor opens once the merged text is in.
         if self.pending_edit && !self.loading && self.entry.is_some() && self.mode != Mode::Edit {
             self.pending_edit = false;
@@ -2962,6 +3170,11 @@ impl Render for DocPage {
                 div().flex_1().min_h_0().child(
                     ui::page_scroll("doc-page")
                         .track_scroll(&self.scroll)
+                        .on_scroll(cx.listener(|page, _, _, cx| {
+                            if let Some(keep) = page.keep.as_mut() {
+                                keep.scrolled(cx);
+                            }
+                        }))
                         .child(column),
                 ),
             )

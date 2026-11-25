@@ -313,3 +313,40 @@ fn nothing_the_agent_reaches_can_purge() {
     }
     assert!(checked > 5);
 }
+
+#[test]
+fn a_purged_page_takes_its_drafts_and_addresses_and_other_pages_keep_theirs() {
+    let mut ts = test_support::open();
+    let s = &mut ts.store;
+    let p = s.create_project("Alexandre's site", "", H).unwrap();
+    let gone = topic(s, p, None, "Hosting");
+    let kept = topic(s, p, None, "Domain");
+    for t in [gone, kept] {
+        let route = format!("T-{}", t.0);
+        s.set_local_value(
+            &format!("draft.{route}.description"),
+            Some("Alexandre's draft"),
+        )
+        .unwrap();
+        s.set_local_value(&format!("draft.{route}.state"), Some("Half a sentence"))
+            .unwrap();
+        s.set_local_value(
+            &format!("browser.addresses.{route}"),
+            Some("[\"https://example.com/\"]"),
+        )
+        .unwrap();
+    }
+    s.delete(Record::Topic(gone), H).unwrap();
+    s.trash_purge(&[Record::Topic(gone)]).unwrap();
+    let left = |s: &Store, t: TopicId| {
+        let route = format!("T-{}", t.0);
+        s.local_values(&format!("draft.{route}.")).unwrap().len()
+            + usize::from(
+                s.local_value(&format!("browser.addresses.{route}"))
+                    .unwrap()
+                    .is_some(),
+            )
+    };
+    assert_eq!(left(s, gone), 0);
+    assert_eq!(left(s, kept), 3);
+}

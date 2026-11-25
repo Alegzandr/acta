@@ -213,6 +213,10 @@ actions!(
         ZoomOut,
         /// `Mod+0`: back to 100%.
         ZoomReset,
+        /// `Mod+Shift+[` / `Mod+Shift+]`: collapse or expand every section
+        /// of the active page (components-records.md 5, Section fold).
+        CollapseSections,
+        ExpandSections,
         /// Settings: "Remove from Claude Code" (confirmed, 6.4).
         RemoveClaudeSetup,
         /// Settings: "Set up Claude Code" (confirmed, with what it touches).
@@ -262,6 +266,21 @@ pub fn bind_keys(cx: &mut App) {
 /// Quit Acta, unless an install runs and has not been confirmed: then the
 /// main window asks "Quit Acta?" first, whose Quit closes it (and the app
 /// with its last window). Every app-level quit goes through here.
+/// Before Acta quits, from any route (the window's close, the menu, the
+/// palette, `Cmd+Q`): every window keeps its pages' state, and the
+/// sessions that end now still restart next time (interaction.md 6.6).
+pub fn keep_all_for_quit(cx: &mut App) {
+    if crate::resume::quitting() {
+        return;
+    }
+    for handle in cx.windows() {
+        if let Some(shell) = handle.downcast::<Shell>() {
+            let _ = shell.update(cx, |shell, window, cx| shell.keep_resume_state(window, cx));
+        }
+    }
+    crate::resume::set_quitting();
+}
+
 pub fn request_quit(cx: &mut App) {
     if let Some(tool) = crate::ready::must_ask_quit(cx) {
         for handle in cx.windows() {
@@ -275,6 +294,7 @@ pub fn request_quit(cx: &mut App) {
             }
         }
     }
+    keep_all_for_quit(cx);
     cx.quit();
 }
 
@@ -381,6 +401,14 @@ fn key_bindings() -> Vec<KeyBinding> {
             crate::zoom::ZoomKey::Reset => KeyBinding::new(keys, ZoomReset, context),
         });
     }
+    // The brackets by position (6.1): GPUI on Windows reports the shifted
+    // key (`{`) with Shift consumed, macOS the bracket with Shift.
+    for keys in [m("cmd-shift-[", "ctrl-shift-["), m("cmd-{", "ctrl-{")] {
+        out.push(KeyBinding::new(keys, CollapseSections, app));
+    }
+    for keys in [m("cmd-shift-]", "ctrl-shift-]"), m("cmd-}", "ctrl-}")] {
+        out.push(KeyBinding::new(keys, ExpandSections, app));
+    }
     out.extend(crate::due_picker::bindings());
     out.extend(crate::record_page::questions::bindings());
     // interaction.md 6.1: only Windows has a chat panel to focus.
@@ -429,6 +457,24 @@ enum PageView {
 }
 
 impl PageView {
+    /// The page's route key and its focused element, for Resume
+    /// (interaction.md 6.6).
+    fn kept_state(&self, window: &Window, cx: &App) -> Option<(String, Option<String>)> {
+        match self {
+            PageView::Record(p) => {
+                let page = p.read(cx);
+                Some((page.owner.to_string(), page.kept_focus(window, cx)))
+            }
+            PageView::Inbox(p) => p.read(cx).kept_state(window, cx),
+            PageView::Knowledge(p) => p.read(cx).kept_state(window, cx),
+            PageView::Doc(p) => p.read(cx).kept_state(window, cx),
+            PageView::Questions(p) => p.read(cx).kept_state(window, cx),
+            PageView::Contacts(p) => p.read(cx).kept_state(window, cx),
+            PageView::Contact(p) => p.read(cx).kept_state(window, cx),
+            _ => None,
+        }
+    }
+
     fn view(&self) -> AnyView {
         match self {
             PageView::FirstRun(v) => v.clone().into(),
@@ -668,6 +714,10 @@ impl Shell {
         let me = cx.entity().downgrade();
         window.on_window_should_close(cx, move |window, cx| {
             let Some(tool) = crate::ready::must_ask_quit(cx) else {
+                // The window goes: what runs in it ends, and the
+                // Resume state must not follow that (interaction.md 6.6).
+                let _ = me.update(cx, |shell, cx| shell.keep_resume_state(window, cx));
+                crate::resume::set_quitting();
                 return true;
             };
             let _ = me.update(cx, |shell, cx| {
@@ -980,6 +1030,7 @@ impl Shell {
                 None => self.show_first_run(window, cx),
             }
             self.after_layout(window, cx);
+            self.resume_sessions(window, cx);
             self.dev_overlay(window, cx);
             return;
         }
@@ -1978,6 +2029,7 @@ impl Shell {
         if route == Route::Settings {
             crate::ready::check_if_stale(cx);
         }
+        self.keep_resume_state(window, cx);
         let (page, sub) = self.make_view(route, tab, window, cx);
         let Some(bench) = self.bench() else { return };
         bench.page = page;
@@ -2631,24 +2683,88 @@ impl Shell {
             _ => None,
         };
         let owner = crate::tools_model::owner_of(route, kb_owner)?;
-        let ws = bench.ws.read(cx);
-        let projects = &ws.projects;
-        let (project, name) = match owner {
-            Owner::Project(id) => (id, tree::locate_project(projects, id)?.project?.1),
-            Owner::Epic(id) => {
-                let l = tree::locate_epic(projects, id)?;
-                (l.project?.0, l.epic?.1)
+        origin_of(&bench.ws.read(cx).projects, owner)
+    }
+
+    /// What Resume keeps of the pages (interaction.md 6.6): the leaving
+    /// page's focused element, and only the open tabs' states.
+    pub(crate) fn keep_resume_state(&mut self, window: &Window, cx: &mut Context<Self>) {
+        let Some(bench) = self.bench() else { return };
+        // Every route a tab can go back or forward to keeps its state.
+        let mut open: Vec<String> = Vec::new();
+        for id in bench.layout.page_tabs() {
+            let history = if id == bench.current {
+                Some(&bench.history)
+            } else {
+                bench.slots.get(&id).map(|s| &s.history)
+            };
+            if let Some(history) = history {
+                open.extend(history.routes().map(|r| r.key()));
             }
-            Owner::Topic(id) => {
-                let l = tree::locate_topic(projects, id)?;
-                (l.project?.0, l.topic?.1)
-            }
-        };
-        Some(Origin {
-            owner,
-            project,
-            name,
+        }
+        // The page's own route, whatever the history says by now.
+        let focus = bench.page.kept_state(window, cx);
+        let mut pages = settings::current(cx).pages.clone();
+        if let Some((key, focus)) = focus {
+            crate::resume::set_focus(&mut pages, &key, focus);
+        }
+        crate::resume::prune(&mut pages, &open);
+        if pages != settings::current(cx).pages {
+            settings::change(cx, |p| p.pages = pages);
+        }
+    }
+
+    /// The sessions that ran when Acta last quit start again, each on its
+    /// page's conversation (interaction.md 6.6). A page gone meanwhile is
+    /// skipped.
+    fn resume_sessions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let owners: Vec<Owner> = settings::current(cx)
+            .sessions
+            .iter()
+            .filter_map(|id| crate::resume::parse_owner(id))
+            .collect();
+        let Some(bench) = self.bench() else { return };
+        // Quick capture's draft of the last launch.
+        let task = bench.ws.read(cx).db.run(cx, |store| {
+            store.local_value(crate::resume::CAPTURE_DRAFT_KEY)
+        });
+        cx.spawn(async move |shell, cx| {
+            let Ok(Some(draft)) = task.await else { return };
+            let _ = shell.update(cx, |shell, _| {
+                if let Some(bench) = shell.bench()
+                    && bench.capture_draft.is_empty()
+                {
+                    bench.capture_draft = draft;
+                }
+            });
         })
+        .detach();
+        let kept = settings::current(cx).sessions.clone();
+        let unsettled = settings::current(cx).resuming;
+        if !crate::resume::restart_sessions(&kept, unsettled) {
+            if unsettled {
+                // The last launch stopped while restarting them: not again.
+                settings::change(cx, |p| p.resuming = false);
+                let message = text(settings::locale(cx), Key::ResumeSessionsSkipped);
+                if let Some(bench) = self.bench() {
+                    bench
+                        .ws
+                        .update(cx, |ws, cx| ws.toast(message, ToastKind::Error, cx));
+                }
+            }
+            return;
+        }
+        let Some(bench) = self.bench() else { return };
+        let projects = bench.ws.read(cx).projects.clone();
+        let dock = bench.dock.clone();
+        let origins: Vec<Origin> = owners
+            .into_iter()
+            .filter_map(|owner| origin_of(&projects, owner))
+            .collect();
+        // The marker is on disk before any session starts.
+        settings::change(cx, |p| p.resuming = true);
+        settings::flush(cx);
+        dock.update(cx, |dock, cx| dock.resume_all(origins, kept, window, cx));
     }
 
     /// The Terminal view follows the current page (layout.md 4.5.1): set
@@ -2827,6 +2943,11 @@ impl Shell {
             overview: match &bench.page {
                 PageView::Record(page) => page.read(cx).overview_state(cx),
                 _ => None,
+            },
+            folds: match &bench.page {
+                PageView::Record(page) => page.read(cx).fold_commands(cx),
+                PageView::Contact(page) => page.read(cx).fold_commands(cx),
+                _ => (false, false),
             },
             folders: match &bench.page {
                 PageView::Record(page) => page.read(cx).folder_commands(),
@@ -3326,6 +3447,8 @@ impl Shell {
                     settings.update(cx, |page, cx| page.focus_profile(name, window, cx));
                 }
             }
+            Command::SectionsCollapse => self.fold_all(true, window, cx),
+            Command::SectionsExpand => self.fold_all(false, window, cx),
             Command::OverviewMore | Command::OverviewLess => {
                 let open = command == Command::OverviewMore;
                 self.with_record(cx, |page, _, cx| page.set_overview_open(open, cx), window)
@@ -3503,6 +3626,20 @@ impl Shell {
         }
     }
 
+    /// "Collapse all sections" / "Expand all sections" on the active page.
+    fn fold_all(&mut self, folded: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(bench) = self.bench() else { return };
+        match &bench.page {
+            PageView::Record(page) => {
+                page.update(cx, |page, cx| page.set_all_folds(folded, window, cx))
+            }
+            PageView::Contact(page) => {
+                page.update(cx, |page, cx| page.set_all_folds(folded, window, cx))
+            }
+            _ => {}
+        }
+    }
+
     fn go_project_page(
         &mut self,
         make: fn(ProjectId) -> Route,
@@ -3533,6 +3670,14 @@ impl Shell {
                     if let Some(bench) = shell.bench() {
                         bench.capture_draft = draft.clone();
                         bench.capture_tray = tray.clone();
+                        let db = bench.ws.read(cx).db.clone();
+                        crate::drafts::write_now(
+                            &db,
+                            crate::resume::CAPTURE_DRAFT_KEY.into(),
+                            crate::capture::draft_of(draft),
+                            cx,
+                        )
+                        .detach();
                     }
                     shell.close_overlay(window, cx);
                 }
@@ -4445,6 +4590,8 @@ impl Shell {
                         .update(cx, |ws, cx| ws.toast(message, ToastKind::Error, cx));
                 }
             }
+            // Handled by the dock (kept for the next launch).
+            BrowserEvent::Address => {}
         }
     }
 
@@ -6415,6 +6562,26 @@ fn row_project(projects: &[acta_core::model::ProjectTree], row: &Row) -> Option<
     }
 }
 
+/// The record that owns tools, with its project and title, from the tree.
+fn origin_of(projects: &[acta_core::model::ProjectTree], owner: Owner) -> Option<Origin> {
+    let (project, name) = match owner {
+        Owner::Project(id) => (id, tree::locate_project(projects, id)?.project?.1),
+        Owner::Epic(id) => {
+            let l = tree::locate_epic(projects, id)?;
+            (l.project?.0, l.epic?.1)
+        }
+        Owner::Topic(id) => {
+            let l = tree::locate_topic(projects, id)?;
+            (l.project?.0, l.topic?.1)
+        }
+    };
+    Some(Origin {
+        owner,
+        project,
+        name,
+    })
+}
+
 /// "New document" / "New memory": a draft's place in the tab and the
 /// breadcrumb.
 fn draft_label(locale: Locale, kind: KbKind) -> String {
@@ -6861,6 +7028,8 @@ impl Render for Shell {
                 layout_ui::on_resize_drag(s, handle, zoom::eff(p.x), zoom::eff(p.y), cx)
             }))
             .on_action(cx.listener(|s, _: &FocusPage, w, cx| s.focus_page(w, cx)))
+            .on_action(cx.listener(|s, _: &CollapseSections, w, cx| s.fold_all(true, w, cx)))
+            .on_action(cx.listener(|s, _: &ExpandSections, w, cx| s.fold_all(false, w, cx)))
             .on_action(cx.listener(|s, _: &ZoomIn, w, cx| s.zoom_in(w, cx)))
             .on_action(cx.listener(|s, _: &ZoomOut, _, cx| s.zoom_out(cx)))
             .on_action(cx.listener(|_, _: &ZoomReset, _, cx| settings::set_zoom(zoom::DEFAULT, cx)))

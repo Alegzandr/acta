@@ -109,6 +109,15 @@ impl History {
         }
     }
 
+    /// Every route of the tab: back, current and forward.
+    pub fn routes(&self) -> impl Iterator<Item = Route> + '_ {
+        self.back
+            .iter()
+            .chain(self.current.iter())
+            .chain(self.forward.iter())
+            .copied()
+    }
+
     pub fn current(&self) -> Option<Route> {
         self.current
     }

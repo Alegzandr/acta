@@ -153,6 +153,11 @@ pub struct BrowserDock {
     pipe: Option<PipeFailure>,
     clearing: bool,
     subs: HashMap<InstanceKey, Subscription>,
+    /// The kept addresses (interaction.md 6.6): the store, and the pages
+    /// whose browsers were read back.
+    db: Db,
+    restored: std::collections::HashSet<Owner>,
+    restoring: HashMap<Owner, Task<()>>,
     _jobs: Task<()>,
     _pipe: Task<()>,
     clear_task: Task<()>,
@@ -187,7 +192,7 @@ impl BrowserDock {
                 }
             }
         });
-        let pipe = start_pipe(db, registry.clone(), cx);
+        let pipe = start_pipe(db.clone(), registry.clone(), cx);
         Self {
             panels: Instances::new(tm::BROWSER_MAX),
             launches: HashMap::new(),
@@ -202,6 +207,9 @@ impl BrowserDock {
             pipe: None,
             clearing: false,
             subs: HashMap::new(),
+            db,
+            restored: Default::default(),
+            restoring: HashMap::new(),
             _jobs: listen,
             _pipe: pipe,
             clear_task: Task::ready(()),
@@ -268,12 +276,13 @@ impl BrowserDock {
             .unwrap_or_else(|p| p.into_inner())
             .insert((owner, key.n), Entry { host, opener });
         self.launches.insert(key, launch);
-        let sub = cx.subscribe(&panel, |_, _, event: &BrowserEvent, cx| {
+        let sub = cx.subscribe(&panel, move |dock, _, event: &BrowserEvent, cx| {
             cx.emit(match event {
                 BrowserEvent::View(a) => BrowserEvent::View(*a),
                 BrowserEvent::Clear => BrowserEvent::Clear,
                 BrowserEvent::ClearFailed => BrowserEvent::ClearFailed,
                 BrowserEvent::Kept(k) => BrowserEvent::Kept(*k),
+                BrowserEvent::Address => return dock.save_addresses(owner, cx),
             })
         });
         self.subs.insert(key, sub);
@@ -318,6 +327,7 @@ impl BrowserDock {
         if let Some(panel) = self.panels.close(key) {
             panel.update(cx, |p, cx| p.close_web(window, cx));
         }
+        self.save_addresses(owner, cx);
         self.sync(window, cx);
         cx.notify();
     }
@@ -341,9 +351,71 @@ impl BrowserDock {
         if self.current == origin {
             return;
         }
+        if let Some(owner) = origin.as_ref().map(|o| o.owner) {
+            self.restore_addresses(owner, window, cx);
+        }
         self.current = origin;
         self.sync(window, cx);
         cx.notify();
+    }
+
+    /// Writes the addresses of `owner`'s browsers (encrypted, local).
+    fn save_addresses(&self, owner: Owner, cx: &App) {
+        let addresses: Vec<String> = self
+            .panels
+            .keys_of(Holder::Page(owner))
+            .into_iter()
+            .filter_map(|k| self.panels.get(k))
+            .filter_map(|p| crate::resume::kept_address(p.read(cx).address()))
+            .collect();
+        let value = (!addresses.is_empty()).then(|| crate::resume::encode_addresses(&addresses));
+        let key = crate::resume::browser_key(owner);
+        self.db
+            .run(cx, move |store| {
+                store.set_local_value(&key, value.as_deref())
+            })
+            .detach();
+    }
+
+    /// The first time a page is current in this run: its browsers of the
+    /// last launch come back, each loading its address when shown
+    /// (interaction.md 6.6).
+    fn restore_addresses(&mut self, owner: Owner, window: &mut Window, cx: &mut Context<Self>) {
+        // Once per page and run, whatever other page becomes current while
+        // the read runs (one read per page).
+        if self.restored.contains(&owner) || self.restoring.contains_key(&owner) {
+            return;
+        }
+        let key = crate::resume::browser_key(owner);
+        let task = self.db.run(cx, move |store| {
+            let raw = store.local_value(&key)?;
+            // A record gone for good leaves nothing to reopen.
+            if raw.is_some() && !store.record_exists(owner)? {
+                store.set_local_value(&key, None)?;
+                return Ok(None);
+            }
+            Ok(raw)
+        });
+        let read = cx.spawn_in(window, async move |dock, cx| {
+            let raw = task.await;
+            let _ = dock.update_in(cx, |dock, window, cx| {
+                dock.restoring.remove(&owner);
+                dock.restored.insert(owner);
+                let Ok(Some(raw)) = raw else { return };
+                if !dock.panels.keys_of(Holder::Page(owner)).is_empty() {
+                    return;
+                }
+                for address in crate::resume::decode_addresses(&raw, tm::BROWSER_MAX) {
+                    if let Some(key) = dock.open(owner, None, None, window, cx)
+                        && let Some(panel) = dock.panels.get(key)
+                    {
+                        panel.update(cx, |p, _| p.set_address(address));
+                    }
+                }
+                dock.sync(window, cx);
+            });
+        });
+        self.restoring.insert(owner, read);
     }
 
     /// Every browser in view or parked: the current page's selected one

@@ -24,6 +24,7 @@ use gpui_kit::{
 use crate::contacts_model as cm;
 use crate::contacts_page;
 use crate::due;
+use crate::fold;
 use crate::i18n::{Arg, Key, Locale, text, tr};
 use crate::icons::{Icon, icon};
 use crate::menu::{Align, AnchorBounds};
@@ -169,6 +170,13 @@ pub struct ContactPage {
     name_error: bool,
     focus: FocusHandle,
     row_focus: Vec<FocusHandle>,
+    /// The fold toggles of the three sections (components-records.md 5,
+    /// Section fold).
+    fold_focus: std::collections::HashMap<fold::Section, FocusHandle>,
+    /// Scroll and focus across launches (interaction.md 6.6), and the
+    /// address draft, read once.
+    keep: Option<crate::page_keep::Keep>,
+    address_draft_read: bool,
     seen_revision: u64,
     _load: Task<()>,
     _subs: Vec<Subscription>,
@@ -198,6 +206,45 @@ const MENU: [MenuItem; 4] = [
 ];
 
 impl ContactPage {
+    /// What Resume keeps of this page (interaction.md 6.6): its route
+    /// key and the focused row.
+    pub fn kept_state(
+        &self,
+        window: &Window,
+        _: &gpui_kit::App,
+    ) -> Option<(String, Option<String>)> {
+        let keep = self.keep.as_ref()?;
+        let focus = self
+            .row_focus
+            .iter()
+            .position(|h| h.is_focused(window))
+            .map(crate::resume::row_key);
+        Some((keep.route().to_owned(), focus))
+    }
+
+    /// Once the content is there: the kept scroll, and the kept row when
+    /// the page has the keyboard, on the next frame (after layout).
+    fn restore_kept(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !(self.data.contact.is_some()) {
+            return;
+        }
+        let Some(kept) = self.keep.as_mut().and_then(crate::page_keep::Keep::take) else {
+            return;
+        };
+        cx.on_next_frame(window, move |page, window, cx| {
+            if let Some(keep) = &page.keep {
+                keep.apply_scroll(&kept);
+            }
+            let row = kept.focus.as_deref().and_then(crate::resume::row_of);
+            if let Some(i) = row
+                && Focusable::focus_handle(page, cx).contains_focused(window, cx)
+                && let Some(h) = page.row_focus.get(i).cloned()
+            {
+                window.focus(&h, cx);
+            }
+        });
+    }
+
     pub fn new(ws: Entity<Workspace>, id: ContactId, cx: &mut Context<Self>) -> Self {
         let subs = vec![cx.observe(&ws, |page, ws, cx| {
             let revision = ws.read(cx).revision;
@@ -221,12 +268,154 @@ impl ContactPage {
             name_error: false,
             focus: cx.focus_handle(),
             row_focus: Vec::new(),
+            fold_focus: [
+                fold::Section::Address,
+                fold::Section::Asked,
+                fold::Section::Report,
+            ]
+            .into_iter()
+            .map(|s| (s, cx.focus_handle()))
+            .collect(),
+            keep: Some(crate::page_keep::Keep::new(
+                crate::route::Route::Contact(id).key(),
+                cx,
+            )),
+            address_draft_read: false,
             seen_revision: 0,
             _load: Task::ready(()),
             _subs: subs,
         };
         page.reload(cx);
         page
+    }
+
+    fn folded(section: fold::Section, cx: &App) -> bool {
+        fold::is_folded(&settings::current(cx).folds, fold::Kind::Contact, section)
+    }
+
+    /// The sections drawn now, with whether each is folded.
+    fn drawn_sections(&self, cx: &App) -> Vec<(fold::Section, bool)> {
+        let Some(c) = &self.data.contact else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        if self.address.is_some() || c.address_note.is_some() {
+            out.push(fold::Section::Address);
+        }
+        if !self.data.asked.is_empty() {
+            out.push(fold::Section::Asked);
+        }
+        if !self.data.to_report.is_empty() || !self.data.reported.is_empty() {
+            out.push(fold::Section::Report);
+        }
+        out.into_iter().map(|s| (s, Self::folded(s, cx))).collect()
+    }
+
+    fn set_fold(
+        &mut self,
+        section: fold::Section,
+        folded: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // A section that holds the keyboard gives it to its toggle; the
+        // address draft is kept and comes back on unfold (6.4).
+        if folded
+            && !self.focus.is_focused(window)
+            && self.focus.contains_focused(window, cx)
+            && let Some(handle) = self.fold_focus.get(&section)
+        {
+            window.focus(handle, cx);
+        }
+        settings::change(cx, |p| {
+            fold::set(&mut p.folds, fold::Kind::Contact, section, folded);
+        });
+        cx.notify();
+    }
+
+    /// "Collapse all sections" / "Expand all sections".
+    pub fn set_all_folds(&mut self, folded: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if folded && !self.focus.is_focused(window) && self.focus.contains_focused(window, cx) {
+            window.focus(&self.focus, cx);
+        }
+        settings::change(cx, |p| {
+            if folded {
+                fold::collapse_all(&mut p.folds, fold::Kind::Contact);
+            } else {
+                fold::expand_all(&mut p.folds, fold::Kind::Contact);
+            }
+        });
+        cx.notify();
+    }
+
+    /// Whether "Collapse all sections" and "Expand all sections" apply.
+    pub fn fold_commands(&self, cx: &App) -> (bool, bool) {
+        let drawn = self.drawn_sections(cx);
+        (drawn.iter().any(|(_, f)| !f), drawn.iter().any(|(_, f)| *f))
+    }
+
+    /// A section header with its fold toggle (`Enter` or `Space` toggles,
+    /// `Left` folds, `Right` unfolds).
+    fn fold_header(
+        &self,
+        section: fold::Section,
+        label: Key,
+        locale: Locale,
+        window: &Window,
+        t: &Tokens,
+        cx: &mut Context<Self>,
+    ) -> gpui_kit::Div {
+        let folded = Self::folded(section, cx);
+        let name = text(locale, label);
+        let tip = tr(
+            locale,
+            if folded {
+                Key::SectionUnfold
+            } else {
+                Key::SectionFold
+            },
+            &[("section", Arg::Text(&name))],
+        );
+        let handle = self.fold_focus[&section].clone();
+        let look = ui::FoldLook {
+            folded,
+            focused: handle.is_focused(window),
+            unread: false,
+        };
+        let toggle = ui::focusable(
+            ui::fold_toggle(
+                gpui_kit::SharedString::from(format!("contact-fold-{section:?}")),
+                name,
+                None,
+                look,
+                tip,
+                t,
+            ),
+            t,
+            false,
+        )
+        .track_focus(&handle)
+        .on_click(
+            cx.listener(move |page, _, window, cx| page.set_fold(section, !folded, window, cx)),
+        )
+        .on_key_down(cx.listener(move |page, event: &KeyDownEvent, window, cx| {
+            if event.keystroke.modifiers.modified() {
+                return;
+            }
+            match event.keystroke.key.as_str() {
+                "enter" | "space" => page.set_fold(section, !folded, window, cx),
+                "left" => page.set_fold(section, true, window, cx),
+                "right" => page.set_fold(section, false, window, cx),
+                _ => return,
+            }
+            cx.stop_propagation();
+        }));
+        div()
+            .mt(px(32.))
+            .h(px(28.))
+            .flex()
+            .items_center()
+            .child(toggle)
     }
 
     /// The name, for the tab.
@@ -350,6 +539,16 @@ impl ContactPage {
                 .default_value(value)
         });
         editor.update(cx, |s, cx| s.focus(window, cx));
+        self.open_address_editor(editor, window, cx);
+    }
+
+    /// The address editor's events: save, the length cap, the draft.
+    fn open_address_editor(
+        &mut self,
+        editor: Entity<TextareaState>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let sub = cx.subscribe_in(
             &editor,
             window,
@@ -366,7 +565,11 @@ impl ContactPage {
                         let cut: String = v.chars().take(cm::ADDRESS_MAX).collect();
                         editor.update(cx, |s, cx| s.set_value(cut, window, cx));
                     }
+                    page.write_address_draft(&v, cx);
                     cx.notify();
+                }
+                InputEvent::Focus => {
+                    crate::drafts::claim(&page.address_key(), cx.entity_id().as_u64())
                 }
                 _ => {}
             },
@@ -376,8 +579,64 @@ impl ContactPage {
         cx.notify();
     }
 
+    /// Where this contact's address draft is kept.
+    fn address_key(&self) -> String {
+        crate::resume::draft_key_of(&self.id.to_string(), crate::resume::DraftField::Address)
+    }
+
+    fn write_address_draft(&self, typed: &str, cx: &mut Context<Self>) {
+        let stored = self
+            .contact()
+            .and_then(|c| c.address_note.clone())
+            .unwrap_or_default();
+        let value = crate::resume::draft_value(typed, &stored);
+        let db = self.ws.read(cx).db.clone();
+        crate::drafts::changed(&db, self.address_key(), cx.entity_id().as_u64(), value, cx);
+    }
+
+    fn discard_address_draft(&self, cx: &mut Context<Self>) {
+        let db = self.ws.read(cx).db.clone();
+        crate::drafts::discard(&db, self.address_key(), cx.entity_id().as_u64(), cx);
+    }
+
+    /// Once the contact is shown: a kept address draft reopens its editor.
+    fn read_address_draft(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.address_draft_read || self.data.contact.is_none() {
+            return;
+        }
+        self.address_draft_read = true;
+        let key = self.address_key();
+        let task = self
+            .ws
+            .read(cx)
+            .db
+            .run(cx, move |store| store.local_value(&key));
+        cx.spawn_in(window, async move |page, cx| {
+            let Ok(Some(draft)) = task.await else { return };
+            let _ = page.update_in(cx, |page, window, cx| {
+                let stored = page
+                    .contact()
+                    .and_then(|c| c.address_note.clone())
+                    .unwrap_or_default();
+                if page.address.is_some() || crate::resume::draft_value(&draft, &stored).is_none() {
+                    return;
+                }
+                let locale = settings::locale(cx);
+                let editor = cx.new(|cx| {
+                    TextareaState::new(window, cx)
+                        .auto_grow(3, 12)
+                        .placeholder(text(locale, Key::ContactAddressPlaceholder))
+                        .default_value(draft)
+                });
+                page.open_address_editor(editor, window, cx);
+            });
+        })
+        .detach();
+    }
+
     fn save_address(&mut self, note: String, window: &mut Window, cx: &mut Context<Self>) {
         self.address = None;
+        self.discard_address_draft(cx);
         let Some(c) = self.contact().cloned() else {
             return;
         };
@@ -855,15 +1114,6 @@ impl ContactPage {
     }
 }
 
-fn section_header(label: String, t: &Tokens) -> gpui_kit::Div {
-    div()
-        .mt(px(32.))
-        .h(px(28.))
-        .flex()
-        .items_center()
-        .child(ui::section_header(label, t))
-}
-
 impl Render for ContactPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.global::<Tokens>().clone();
@@ -1001,10 +1251,27 @@ impl Render for ContactPage {
             );
         }
         // How to address them.
-        if let Some(editor) = &self.address {
+        let address_folded = Self::folded(fold::Section::Address, cx);
+        if (self.address.is_some() || c.address_note.is_some()) && address_folded {
+            column = column.child(self.fold_header(
+                fold::Section::Address,
+                Key::ContactSectionAddress,
+                locale,
+                window,
+                &t,
+                cx,
+            ));
+        } else if let Some(editor) = &self.address {
             let n = editor.read(cx).value().chars().count();
             column = column
-                .child(section_header(text(locale, Key::ContactSectionAddress), &t))
+                .child(self.fold_header(
+                    fold::Section::Address,
+                    Key::ContactSectionAddress,
+                    locale,
+                    window,
+                    &t,
+                    cx,
+                ))
                 .child(
                     div()
                         .px(px(8.))
@@ -1037,7 +1304,14 @@ impl Render for ContactPage {
                 });
         } else if let Some(note) = &c.address_note {
             column = column
-                .child(section_header(text(locale, Key::ContactSectionAddress), &t))
+                .child(self.fold_header(
+                    fold::Section::Address,
+                    Key::ContactSectionAddress,
+                    locale,
+                    window,
+                    &t,
+                    cx,
+                ))
                 .child(
                     type_scale::READING
                         .el()
@@ -1074,8 +1348,18 @@ impl Render for ContactPage {
             );
         }
         let mut index = 0;
+        let asked_folded = Self::folded(fold::Section::Asked, cx);
         if !open_q.is_empty() || !closed_q.is_empty() {
-            column = column.child(section_header(text(locale, Key::PersonSectionAsked), &t));
+            column = column.child(self.fold_header(
+                fold::Section::Asked,
+                Key::PersonSectionAsked,
+                locale,
+                window,
+                &t,
+                cx,
+            ));
+        }
+        if (!open_q.is_empty() || !closed_q.is_empty()) && !asked_folded {
             let several = c.level == ContactLevel::All && self.data.projects_used > 1;
             let mut shown: Vec<Question> = open_q.clone();
             if self.asked_closed {
@@ -1186,8 +1470,18 @@ impl Render for ContactPage {
                 );
             }
         }
+        let report_folded = Self::folded(fold::Section::Report, cx);
         if !self.data.to_report.is_empty() || !self.data.reported.is_empty() {
-            column = column.child(section_header(text(locale, Key::PersonSectionReport), &t));
+            column = column.child(self.fold_header(
+                fold::Section::Report,
+                Key::PersonSectionReport,
+                locale,
+                window,
+                &t,
+                cx,
+            ));
+        }
+        if (!self.data.to_report.is_empty() || !self.data.reported.is_empty()) && !report_folded {
             let items = self.data.to_report.clone();
             for item in &items {
                 column = column.child(self.render_report_row(item, index, locale, &t, cx));
@@ -1220,8 +1514,20 @@ impl Render for ContactPage {
                 }
             }
         }
-        let _ = window;
+        self.restore_kept(window, cx);
+        self.read_address_draft(window, cx);
         ui::page_scroll("contact-page")
+            .when_some(
+                self.keep.as_ref().map(|k| k.scroll().clone()),
+                |el, scroll| {
+                    el.track_scroll(&scroll)
+                        .on_scroll(cx.listener(|page, _, _, cx| {
+                            if let Some(keep) = page.keep.as_mut() {
+                                keep.scrolled(cx);
+                            }
+                        }))
+                },
+            )
             .track_focus(&self.focus)
             .key_context("ContactPage")
             .on_key_down(cx.listener(|page, event: &KeyDownEvent, window, cx| {
@@ -1229,7 +1535,9 @@ impl Render for ContactPage {
                 if page.edit.is_some() || page.address.is_some() {
                     if k.key == "escape" {
                         page.edit = None;
-                        page.address = None;
+                        if page.address.take().is_some() {
+                            page.discard_address_draft(cx);
+                        }
                         window.focus(&page.focus, cx);
                         cx.stop_propagation();
                         cx.notify();

@@ -138,6 +138,11 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `overview.to_check` | {n} memory to check · {n} memories to check | {n} mémoire à vérifier · {n} mémoires à vérifier |
 | `overview.questions_late` | {n} question past its answer date · {n} questions past their answer date | {n} question dont la date de réponse est passée · {n} questions dont la date de réponse est passée |
 | `section.timeline` | Timeline | Journal |
+| `resume.sessions_skipped` | Claude Code sessions were not restarted: Acta stopped while restarting them last time. | Les sessions Claude Code n’ont pas été relancées : Acta s’est arrêté pendant leur relance la dernière fois. |
+| `section.topics` | Topics | Sujets |
+| `section.fold` | Collapse {section} | Replier « {section} » |
+| `section.unfold` | Expand {section} | Déplier « {section} » |
+| `section.count.entries` | {n} entry · {n} entries | {n} entrée · {n} entrées |
 | `state.updated` | Updated {when} by {author} | Modifié {when} par {author} |
 | `state.placeholder` | Where does this stand? One or two sentences. | Où en est-on ? Une ou deux phrases. |
 | `description.placeholder` | What is this topic about, and what does done look like? | De quoi s'agit-il, et à quoi verra-t-on que c'est terminé ? |
@@ -828,6 +833,8 @@ The authoritative text of every string the design system defines. Sections 4 to 
 | `cmd.theme` | Theme: {value} | Thème : {value} |
 | `cmd.text_size` | Text size: {value} | Taille du texte : {value} |
 | `cmd.reading_width` | Reading width: {value} | Largeur de lecture : {value} |
+| `cmd.sections_collapse` | Collapse all sections | Replier toutes les sections |
+| `cmd.sections_expand` | Expand all sections | Déplier toutes les sections |
 | `cmd.zoom_in` | Zoom in | Zoom avant |
 | `cmd.zoom_out` | Zoom out | Zoom arrière |
 | `cmd.zoom_reset` | Reset zoom | Réinitialiser le zoom |
@@ -1475,7 +1482,7 @@ Notes. *Mémoire* is feminine and *document* masculine, hence the `.document` / 
 
 ### 10.4.13 Keys of zoom and section folds
 
-New with zoom and section folds (2026-11-22; layout.md 4.9, components-records.md 5 Section fold, screens.md 8.34 and 8.35). The zoom keys are in 10.4 and `catalogue.rs` since `gpui-engineer/zoom-trash`, "Zoom: {value}" as `cmd.zoom_to` because `cmd.zoom` was already "Maximize focused area"; the `cmd.sections_*` and `section.*` keys are still pending, to be moved into 10.4 and `catalogue.rs` when they are implemented, `cmd.zoom*` and `cmd.sections_*` after `cmd.reading_width`, `settings.zoom*` after `settings.language.hint`, `zoom.*` beside the status bar's keys, `section.*` after `section.timeline`. `{value}`, `{applied}` and `{chosen}` are percents in the form of 10.2 ("150%", "150 %" with U+202F). `{section}` is the section's own label key (`section.timeline`, ...), in French between « » because it is a name inside a sentence.
+New with zoom and section folds (2026-11-22; layout.md 4.9, components-records.md 5 Section fold, screens.md 8.34 and 8.35). The zoom keys are in 10.4 and `catalogue.rs` since `gpui-engineer/zoom-trash`, "Zoom: {value}" as `cmd.zoom_to` because `cmd.zoom` was already "Maximize focused area"; the `cmd.sections_*` and `section.*` keys are in 10.4 and `catalogue.rs` since `gpui-engineer/resume-folds`, with one key the build needed and this table lacked: `section.topics` "Topics" / « Sujets », the label of the topic table's fold toggle (the table had no header of its own). `{value}`, `{applied}` and `{chosen}` are percents in the form of 10.2 ("150%", "150 %" with U+202F). `{section}` is the section's own label key (`section.timeline`, ...), in French between « » because it is a name inside a sentence.
 
 **Reused**, not duplicated: the folded Topics count is `table.count`; the stepper of the Zoom row is the Terminal text size row's.
 
