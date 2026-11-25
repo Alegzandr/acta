@@ -114,6 +114,11 @@ pub fn open(config: Option<StoreConfig>) -> Opened {
                 Ok(_) => {}
                 Err(_) => crate::log::line("folders: Claude Code settings could not be checked"),
             }
+            // No session Acta started can outlive it: their records and
+            // per-session settings files go (ADR 0011 addendum 2026-11-23).
+            if acta_core::claude_settings::page::end_all_sessions(&mut store).is_err() {
+                crate::log::line("sessions: launch records could not be cleared");
+            }
             Opened::Ready(store)
         }
         Err(OpenError::KeyMissing { db, .. }) => {
