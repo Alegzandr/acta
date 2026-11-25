@@ -115,6 +115,11 @@ Requested by the user on 2026-11-23 ("like Notepad on Windows 11: reopening Acta
 ## Small fixes
 - [ ] Sidebar: unread dots are not vertically aligned with the counters (user, 2026-11-23); align the trailing slot's dot, glyphs and counts on one baseline/centre line.
 
+## Open a folder in VS Code
+- A folder's menu (and the folder row's actions) gains "Open in VS Code" when VS Code is installed: `code` on PATH, or the usual install places (Windows `%LOCALAPPDATA%\Programs\Microsoft VS Code`, Program Files; macOS `/Applications/Visual Studio Code.app`; Linux `code`/`code-insiders` on PATH, Flatpak/Snap). Hidden otherwise, never an install offer.
+- Launched detached like "Show in folder": the folder path is the one process argument (same accepted case as the system file manager), no shell, no console window. Failure shows a toast.
+- One sentence in copy.md / catalogue; works in the folder list, the Files view and the palette ("Open in VS Code").
+
 ## Zoom and section folds
 Requested by the user on 2026-11-22 (zoom the whole interface with `Mod+=` / `Mod+-` for screen sharing; lists collapsible to show only what a call needs). Specified on `product-designer/zoom-collapse` (layout.md 4.9, workbench.md 4.8.10, typography.md 3.2, interaction.md 6.1 and 6.3, components-records.md 5 Section fold, components-app.md 5 Settings, screens.md 8.34 and 8.35, catalogue 10.4.13). A "Presenting" mode was considered and refused (4.9). Built in this order; each step lands with its tests.
 - [x] Spike (gpui-engineer, first): how the pinned GPUI scales a window, a multiplier on the window's scale factor or a factor applied by the theme's size helpers; crisp 1px borders at 110%, 125% and 175% on a 100% and a 150% display, captured with PrintWindow. The answer decides the next step.
