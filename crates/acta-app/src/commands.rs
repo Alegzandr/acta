@@ -40,6 +40,10 @@ pub enum Command {
     /// "Overview: Show more" / "Overview: Show less".
     OverviewMore,
     OverviewLess,
+    /// "Collapse all sections" / "Expand all sections" (components-records.md
+    /// 5, Section fold).
+    SectionsCollapse,
+    SectionsExpand,
     /// Memory quality (interaction.md 6.1), on the focused knowledge row,
     /// else the open entry: "Mark as still true", "Mark as no longer
     /// true", "Make live again", "Merge into...", "Keep both K-4 and K-9",
@@ -283,6 +287,9 @@ pub struct Context {
     /// The page shows an Overview (a project or an epic), and whether its
     /// "More" (or "Needs attention") is open.
     pub overview: Option<bool>,
+    /// The page has a foldable section that is unfolded, and one that is
+    /// folded: "Collapse all sections", "Expand all sections".
+    pub folds: (bool, bool),
     /// The working-folder commands the open page offers.
     pub folders: FolderCommands,
     /// The open topic or epic: whether it has a person, and is reported.
@@ -532,6 +539,12 @@ impl Command {
             Some(false) => out.push(Command::OverviewMore),
             Some(true) => out.push(Command::OverviewLess),
             None => {}
+        }
+        if ctx.folds.0 {
+            out.push(Command::SectionsCollapse);
+        }
+        if ctx.folds.1 {
+            out.push(Command::SectionsExpand);
         }
         if ctx.on_record {
             out.extend([
@@ -848,6 +861,8 @@ impl Command {
             },
             Command::OverviewMore => Key::CmdOverviewMore,
             Command::OverviewLess => Key::CmdOverviewLess,
+            Command::SectionsCollapse => Key::CmdSectionsCollapse,
+            Command::SectionsExpand => Key::CmdSectionsExpand,
             Command::QuestionNew => Key::CmdQuestionNew,
             Command::QuestionsOpen => Key::CmdQuestionsOpen,
             Command::ShowQuestionsLate => Key::CmdShowQuestionsLate,
@@ -957,6 +972,8 @@ impl Command {
             Command::ZoomIn => vec![m, "="],
             Command::ZoomOut => vec![m, "-"],
             Command::ZoomReset => vec![m, "0"],
+            Command::SectionsCollapse => vec![m, shift, "["],
+            Command::SectionsExpand => vec![m, shift, "]"],
             Command::TrashRestore => vec!["R"],
             Command::TrashDelete => vec![KeyName::Delete.label(locale, macos)],
             Command::Undo => vec![m, "Z"],
@@ -1178,6 +1195,26 @@ mod tests {
             "Projects: Collapse all"
         );
         assert!(!topic.contains(&Command::Forward));
+    }
+
+    #[test]
+    fn collapse_and_expand_all_are_offered_only_when_they_change_something() {
+        let page = |folds| {
+            Command::available(Context {
+                has_project: true,
+                on_record: true,
+                folds,
+                ..Context::default()
+            })
+        };
+        let none = page((false, false));
+        assert!(!none.contains(&Command::SectionsCollapse));
+        assert!(!none.contains(&Command::SectionsExpand));
+        let open = page((true, false));
+        assert!(open.contains(&Command::SectionsCollapse));
+        assert!(!open.contains(&Command::SectionsExpand));
+        let both = page((true, true));
+        assert!(both.contains(&Command::SectionsExpand));
     }
 
     #[test]

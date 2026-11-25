@@ -28,6 +28,8 @@ use gpui_kit::{
 
 use crate::due::{self, Outcome, Tone};
 use crate::due_picker::{AnchorBounds, DuePicker, DuePickerEvent};
+use crate::fold;
+use crate::fold_ui;
 use crate::i18n::{Arg, Key, KeyName, Locale, number, text, tr};
 use crate::icons::{Icon, icon};
 use crate::kb_model;
@@ -193,6 +195,14 @@ pub struct RecordPage {
     reveal_block: std::rc::Rc<std::cell::Cell<Option<record::Block>>>,
     /// An entry to focus once the timeline is loaded.
     pending_entry: Option<EntryId>,
+    /// Section folds (components-records.md 5): the folded sections
+    /// another process wrote in, what each section held at the last load,
+    /// and the headers' places for anchoring a fold change.
+    fold_unread: std::collections::HashSet<fold::Section>,
+    fold_stamps: std::collections::HashMap<fold::Section, fold::Stamps>,
+    fold_anchor: fold_ui::Anchor,
+    /// The fold toggle with the keyboard, as of this frame.
+    fold_focused: Option<fold::Section>,
     _load: Task<()>,
     _subs: Vec<Subscription>,
 }
@@ -318,6 +328,10 @@ impl RecordPage {
             block_focus: Default::default(),
             reveal_block: Default::default(),
             pending_entry: None,
+            fold_unread: Default::default(),
+            fold_stamps: Default::default(),
+            fold_anchor: Default::default(),
+            fold_focused: None,
             _load: Task::ready(()),
             _subs: subs,
         };
@@ -363,6 +377,7 @@ impl RecordPage {
                         if let Some(old) = &page.data {
                             data.folders.missing = old.folders.missing.clone();
                         }
+                        page.note_fold_writes(&data, cx);
                         let ids: Vec<KbId> = data.kb_flags.iter().map(|(id, _)| *id).collect();
                         page.kb_flags.set_store(data.kb_flags.clone());
                         page.data = Some(data);
@@ -589,6 +604,226 @@ impl RecordPage {
         cx.notify();
     }
 
+    // ---- section folds (components-records.md 5, Section fold) ----
+
+    pub fn fold_kind(&self) -> fold::Kind {
+        match self.owner {
+            Owner::Topic(_) => fold::Kind::Topic,
+            Owner::Epic(_) => fold::Kind::Epic,
+            Owner::Project(_) => fold::Kind::Project,
+        }
+    }
+
+    fn folded(&self, section: fold::Section, cx: &App) -> bool {
+        fold::is_folded(&settings::current(cx).folds, self.fold_kind(), section)
+    }
+
+    /// The foldable sections drawn now, in reading order, with whether
+    /// each is folded.
+    fn drawn_sections(&self, cx: &App) -> Vec<(fold::Section, bool)> {
+        let Some(data) = &self.data else {
+            return Vec::new();
+        };
+        let has_topics = !data.all_topics().is_empty();
+        self.fold_kind()
+            .sections()
+            .iter()
+            .copied()
+            .filter(|s| match s {
+                fold::Section::Overview => data.overview.is_some() && has_topics,
+                fold::Section::Topics => has_topics,
+                _ => true,
+            })
+            .map(|s| (s, self.folded(s, cx)))
+            .collect()
+    }
+
+    /// Fold or unfold one section from its toggle; the toggle keeps its
+    /// place on screen.
+    pub fn set_fold(
+        &mut self,
+        section: fold::Section,
+        folded: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let kind = self.fold_kind();
+        let order: Vec<fold::Section> = self.drawn_sections(cx).iter().map(|s| s.0).collect();
+        self.fold_anchor.hold(Some(section), &order, &self.scroll);
+        if folded {
+            self.focus_toggle_if_inside(&[section], window, cx);
+        } else {
+            self.fold_unread.remove(&section);
+        }
+        settings::change(cx, |p| {
+            fold::set(&mut p.folds, kind, section, folded);
+        });
+        cx.notify();
+    }
+
+    /// "Collapse all sections" / "Expand all sections" (`Mod+Shift+[` /
+    /// `]`): the section holding the top of the viewport keeps its header
+    /// where it is. The epic's Needs attention, remembered per epic, goes
+    /// with them.
+    pub fn set_all_folds(&mut self, folded: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let kind = self.fold_kind();
+        let order: Vec<fold::Section> = self.drawn_sections(cx).iter().map(|s| s.0).collect();
+        self.fold_anchor.hold(None, &order, &self.scroll);
+        if folded {
+            self.focus_toggle_if_inside(&order, window, cx);
+        } else {
+            self.fold_unread.clear();
+        }
+        settings::change(cx, |p| {
+            if folded {
+                fold::collapse_all(&mut p.folds, kind);
+            } else {
+                fold::expand_all(&mut p.folds, kind);
+            }
+        });
+        if matches!(self.owner, Owner::Epic(_))
+            && self
+                .data
+                .as_ref()
+                .and_then(|d| d.overview.as_ref())
+                .is_some()
+        {
+            self.set_overview_open(!folded, cx);
+        }
+        cx.notify();
+    }
+
+    /// Whether the palette offers "Collapse all sections" (a section is
+    /// unfolded) and "Expand all sections" (one is folded).
+    pub fn fold_commands(&self, cx: &App) -> (bool, bool) {
+        let drawn = self.drawn_sections(cx);
+        (drawn.iter().any(|(_, f)| !f), drawn.iter().any(|(_, f)| *f))
+    }
+
+    /// Reveal: the reader is taken inside `section`, which unfolds and
+    /// stays unfolded as if the human had unfolded it.
+    pub fn reveal_section(&mut self, section: fold::Section, cx: &mut Context<Self>) {
+        if !self.folded(section, cx) {
+            return;
+        }
+        let kind = self.fold_kind();
+        self.fold_unread.remove(&section);
+        settings::change(cx, |p| {
+            fold::reveal(&mut p.folds, kind, section);
+        });
+        cx.notify();
+    }
+
+    /// The foldable section that holds the keyboard, if any.
+    fn focused_section(&self, window: &Window, cx: &App) -> Option<fold::Section> {
+        match self.focused_block(window) {
+            Some(record::Block::Description) => return Some(fold::Section::Description),
+            Some(record::Block::Questions) => return Some(fold::Section::Questions),
+            Some(record::Block::Entry(_)) => return Some(fold::Section::Timeline),
+            _ => {}
+        }
+        if self.q.row_focus.iter().any(|h| h.is_focused(window)) {
+            return Some(fold::Section::Questions);
+        }
+        if self
+            .kb_row_focus
+            .borrow()
+            .iter()
+            .any(|h| h.is_focused(window))
+        {
+            return Some(fold::Section::Knowledge);
+        }
+        if self.table_focus.contains_focused(window, cx) {
+            return Some(fold::Section::Topics);
+        }
+        None
+    }
+
+    /// A section that holds the keyboard when it folds gives it to its
+    /// toggle.
+    fn focus_toggle_if_inside(
+        &mut self,
+        sections: &[fold::Section],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(section) = self.focused_section(window, cx)
+            && sections.contains(&section)
+        {
+            let handle = self.block_handle(record::Block::Fold(section), cx);
+            window.focus(&handle, cx);
+        }
+    }
+
+    /// Another process wrote inside a folded section: its unread dot,
+    /// until it is unfolded or the page is left.
+    fn note_fold_writes(&mut self, data: &Loaded, cx: &App) {
+        for section in self.fold_kind().sections() {
+            let stamps = data.fold_stamps(*section);
+            if self.folded(*section, cx)
+                && fold::wrote_inside(self.fold_stamps.get(section), &stamps)
+            {
+                self.fold_unread.insert(*section);
+            }
+            self.fold_stamps.insert(*section, stamps);
+        }
+    }
+
+    /// A section's fold toggle: a block of the page (`Up` / `Down`, `Tab`),
+    /// `Enter` or `Space` toggles, `Left` folds, `Right` unfolds.
+    fn fold_toggle(
+        &self,
+        section: fold::Section,
+        label: Key,
+        count: Option<String>,
+        locale: Locale,
+        t: &Tokens,
+        cx: &mut Context<Self>,
+    ) -> gpui_kit::Stateful<gpui_kit::Div> {
+        let folded = self.folded(section, cx);
+        let name = text(locale, label);
+        let tip = tr(
+            locale,
+            if folded {
+                Key::SectionUnfold
+            } else {
+                Key::SectionFold
+            },
+            &[("section", Arg::Text(&name))],
+        );
+        let look = ui::FoldLook {
+            folded,
+            focused: self.fold_focused == Some(section),
+            unread: self.fold_unread.contains(&section),
+        };
+        let toggle = ui::fold_toggle(
+            SharedString::from(format!("fold-{section:?}")),
+            name,
+            count,
+            look,
+            tip,
+            t,
+        )
+        .on_click(cx.listener(move |page, _, window, cx| {
+            cx.stop_propagation();
+            page.set_fold(section, !folded, window, cx);
+        }))
+        .on_key_down(cx.listener(move |page, event: &KeyDownEvent, window, cx| {
+            if event.keystroke.modifiers.modified() {
+                return;
+            }
+            match event.keystroke.key.as_str() {
+                "enter" | "space" => page.set_fold(section, !folded, window, cx),
+                "left" => page.set_fold(section, true, window, cx),
+                "right" => page.set_fold(section, false, window, cx),
+                _ => return,
+            }
+            cx.stop_propagation();
+        }))
+        .child(self.fold_anchor.measure(section, &self.scroll));
+        self.block_el(record::Block::Fold(section), toggle, t)
+    }
+
     /// Whether the page shows an Overview whose "More" (or expansion) the
     /// palette can toggle, and whether it is open.
     pub fn overview_state(&self, cx: &App) -> Option<bool> {
@@ -636,6 +871,7 @@ impl RecordPage {
     /// Scroll to the table and focus its first row once the page reloaded
     /// (the human asked, so 6.5 rule 2 is not broken).
     fn reveal_table_now(&mut self, cx: &mut Context<Self>) {
+        self.reveal_section(fold::Section::Topics, cx);
         self.reveal_table.set(true);
         self.focus_first_row = true;
         self.reload(cx);
@@ -1079,6 +1315,9 @@ impl RecordPage {
     /// now or once the timeline is loaded. An entry the timeline does not
     /// show (another filter) shows it with every type first.
     pub fn focus_entry(&mut self, entry: EntryId, window: &mut Window, cx: &mut Context<Self>) {
+        // Reveal: a folded timeline unfolds first (Section fold).
+        self.reveal_section(fold::Section::Timeline, cx);
+        self.block_order = self.block_order_now(cx);
         let block = record::Block::Entry(entry);
         let loaded = self
             .data
@@ -1094,6 +1333,21 @@ impl RecordPage {
         }
         self.pending_entry = Some(entry);
         cx.notify();
+    }
+
+    /// The blocks as the next frame will draw them (after a fold change).
+    fn block_order_now(&self, cx: &App) -> Vec<record::Block> {
+        let Some(data) = &self.data else {
+            return Vec::new();
+        };
+        let shown = record::timeline_entries(&data.entries);
+        let folders = data.folders.active().is_some();
+        record::blocks(
+            self.topic().is_some(),
+            folders,
+            &shown,
+            &self.drawn_sections(cx),
+        )
     }
 
     /// The handle of a block, made the first time it is drawn.
@@ -1176,6 +1430,8 @@ impl RecordPage {
                 Some(record::Block::Description) => self.open_editor(true, window, cx),
                 Some(record::Block::Questions) => self.enter_questions(window, cx),
                 Some(record::Block::Folders) => self.enter_folders(window, cx),
+                // The toggle's own keys took it.
+                Some(record::Block::Fold(_)) => return false,
                 Some(record::Block::Entry(id)) => {
                     let entry = self
                         .data
@@ -1775,29 +2031,41 @@ impl RecordPage {
         } else {
             markdown_view::short("description-body", data.description.clone(), t).into_any_element()
         };
+        let header = self.fold_toggle(
+            fold::Section::Description,
+            Key::SectionDescription,
+            None,
+            locale,
+            t,
+            cx,
+        );
+        let section = div()
+            .flex()
+            .flex_col()
+            .gap(px(4.))
+            .mt(px(32.))
+            .child(header);
+        // Folded: its header alone; a draft in its editor is kept and
+        // comes back on unfold (6.4).
+        if self.folded(fold::Section::Description, cx) {
+            return section.into_any_element();
+        }
         let el = div()
             .id("description")
             .flex()
             .flex_col()
             .gap(px(4.))
-            .mt(px(32.))
             .when(self.description_edit.is_none(), |this| {
                 this.cursor_text()
                     .on_click(cx.listener(|page, _, window, cx| page.open_editor(true, window, cx)))
             })
-            .child(
-                div()
-                    .h(px(28.))
-                    .flex()
-                    .items_center()
-                    .child(ui::section_header(text(locale, Key::SectionDescription), t)),
-            )
             .child(body)
             .children(strip.map(|s| div().mt(px(4.)).child(s)));
         if self.description_edit.is_some() {
-            return el.into_any_element();
+            return section.child(el).into_any_element();
         }
-        self.block_el(record::Block::Description, el, t)
+        section
+            .child(self.block_el(record::Block::Description, el, t))
             .into_any_element()
     }
 
@@ -1952,6 +2220,23 @@ impl RecordPage {
     ) -> AnyElement {
         let kb = &data.kb;
         let own_count = kb.own.len();
+        let folded = self.folded(fold::Section::Knowledge, cx);
+        let toggle = self.fold_toggle(
+            fold::Section::Knowledge,
+            Key::SectionKnowledge,
+            Some(number(locale, own_count as u64)),
+            locale,
+            t,
+            cx,
+        );
+        if folded {
+            return div()
+                .flex()
+                .flex_col()
+                .mt(px(32.))
+                .child(toggle)
+                .into_any_element();
+        }
         let mut section = div().flex().flex_col().mt(px(32.)).child(
             div()
                 .flex()
@@ -1959,14 +2244,7 @@ impl RecordPage {
                 .items_center()
                 .gap(px(8.))
                 .h(px(28.))
-                .child(ui::section_header(text(locale, Key::SectionKnowledge), t))
-                .child(
-                    type_scale::SMALL
-                        .el()
-                        .text_color(t.text_tertiary)
-                        .font_features(type_scale::tabular())
-                        .child(number(locale, own_count as u64)),
-                )
+                .child(toggle)
                 .child(div().flex_1())
                 .child(
                     div()
@@ -2153,6 +2431,23 @@ impl RecordPage {
         for (i, entry) in shown.iter().enumerate() {
             list = list.child(self.render_entry(entry, i, &human, locale, t, cx));
         }
+        let folded = self.folded(fold::Section::Timeline, cx);
+        // Folded, the size of what is hidden follows the label.
+        let count = folded.then(|| {
+            tr(
+                locale,
+                Key::SectionCountEntries,
+                &[("n", Arg::Count(shown_count(&shown)))],
+            )
+        });
+        let toggle = self.fold_toggle(
+            fold::Section::Timeline,
+            Key::SectionTimeline,
+            count,
+            locale,
+            t,
+            cx,
+        );
         div()
             .flex()
             .flex_col()
@@ -2163,10 +2458,12 @@ impl RecordPage {
                     .flex_row()
                     .items_center()
                     .justify_between()
-                    .child(ui::section_header(text(locale, Key::SectionTimeline), t))
-                    .child(ui::segmented(t).children(filters)),
+                    .child(toggle)
+                    .when(!folded, |this| {
+                        this.child(ui::segmented(t).children(filters))
+                    }),
             )
-            .child(list)
+            .when(!folded, |this| this.child(list))
             .into_any_element()
     }
 
@@ -2452,18 +2749,41 @@ impl RecordPage {
             Some((filter, _)) => self.render_chip(*filter, locale, t, cx),
             None => ui::segmented(t).children(filters).into_any_element(),
         };
+        let count_text = tr(locale, Key::TableCount, &[("n", Arg::Count(count as u64))]);
+        let folded = self.folded(fold::Section::Topics, cx);
+        let toggle = self.fold_toggle(
+            fold::Section::Topics,
+            Key::SectionTopics,
+            folded.then(|| count_text.clone()),
+            locale,
+            t,
+            cx,
+        );
+        if folded {
+            // The header alone: no segmented control, no `plus`.
+            return div()
+                .id("topic-table")
+                .track_focus(&self.table_focus)
+                .flex()
+                .flex_col()
+                .mt(px(32.))
+                .child(toggle)
+                .into_any_element();
+        }
         let toolbar = div()
             .flex()
             .flex_row()
             .items_center()
             .gap(px(12.))
             .h(px(28.))
+            .child(toggle)
             .child(control)
-            .child(type_scale::SMALL.el().text_color(t.text_tertiary).child(tr(
-                locale,
-                Key::TableCount,
-                &[("n", Arg::Count(count as u64))],
-            )))
+            .child(
+                type_scale::SMALL
+                    .el()
+                    .text_color(t.text_tertiary)
+                    .child(count_text),
+            )
             .when(self.table_sort.is_some(), |this| {
                 this.child(
                     ui::button(
@@ -2956,45 +3276,50 @@ impl RecordPage {
                     return None;
                 }
                 let n = line_els.len();
-                let header = ui::focusable(div().id("ov-attention"), t, false)
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(8.))
-                    .h(px(28.))
-                    .px(px(8.))
-                    .mx(px(-8.))
-                    .rounded(px(RADIUS_SM))
-                    .hover({
-                        let hover = t.fill_hover;
-                        move |s| s.bg(hover)
-                    })
-                    .on_click(cx.listener(move |page, _, _, cx| page.set_overview_open(!open, cx)))
-                    .on_key_down(cx.listener(|page, event: &KeyDownEvent, _, cx| {
+                // The fold toggle of Section fold, remembered per epic
+                // (`chevron-down` after the count since 2026-11-22).
+                let name = text(locale, Key::OverviewAttention);
+                let tip = tr(
+                    locale,
+                    if open {
+                        Key::SectionFold
+                    } else {
+                        Key::SectionUnfold
+                    },
+                    &[("section", Arg::Text(&name))],
+                );
+                let look = ui::FoldLook {
+                    folded: !open,
+                    focused: false,
+                    unread: false,
+                };
+                let header = ui::focusable(
+                    ui::fold_toggle(
+                        "ov-attention",
+                        name,
+                        Some(number(locale, n as u64)),
+                        look,
+                        tip,
+                        t,
+                    ),
+                    t,
+                    false,
+                )
+                .on_click(cx.listener(move |page, _, _, cx| page.set_overview_open(!open, cx)))
+                .on_key_down(cx.listener(
+                    move |page, event: &KeyDownEvent, _, cx| {
+                        if event.keystroke.modifiers.modified() {
+                            return;
+                        }
                         match event.keystroke.key.as_str() {
+                            "enter" | "space" => page.set_overview_open(!open, cx),
                             "right" => page.set_overview_open(true, cx),
                             "left" => page.set_overview_open(false, cx),
                             _ => return,
                         }
                         cx.stop_propagation();
-                    }))
-                    .child(icon(
-                        if open {
-                            Icon::ChevronDown
-                        } else {
-                            Icon::ChevronRight
-                        },
-                        14.,
-                        t.text_secondary,
-                    ))
-                    .child(ui::section_header(text(locale, Key::OverviewAttention), t))
-                    .child(
-                        type_scale::SMALL
-                            .el()
-                            .font_features(type_scale::tabular())
-                            .text_color(t.text_tertiary)
-                            .child(number(locale, n as u64)),
-                    );
+                    },
+                ));
                 Some(
                     div()
                         .flex()
@@ -3046,13 +3371,32 @@ impl RecordPage {
                         14.,
                         t.text_secondary,
                     ));
+                let toggle = self.fold_toggle(
+                    fold::Section::Overview,
+                    Key::OverviewTitle,
+                    None,
+                    locale,
+                    t,
+                    cx,
+                );
+                if self.folded(fold::Section::Overview, cx) {
+                    // The header alone; "More" is hidden with the rest.
+                    return Some(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .mt(px(24.))
+                            .child(toggle)
+                            .into_any_element(),
+                    );
+                }
                 let header = div()
                     .flex()
                     .flex_row()
                     .items_center()
                     .gap(px(8.))
                     .h(px(28.))
-                    .child(ui::section_header(text(locale, Key::OverviewTitle), t))
+                    .child(toggle)
                     .when(calm, |this| {
                         this.child(
                             type_scale::SMALL
@@ -3597,6 +3941,11 @@ impl RecordPage {
     }
 }
 
+/// The entries a timeline shows, system lines excluded (its folded count).
+fn shown_count(shown: &[Entry]) -> u64 {
+    shown.iter().filter(|e| e.kind != EntryKind::System).count() as u64
+}
+
 fn event_status(entry: &Entry) -> Option<Status> {
     entry
         .event
@@ -3913,10 +4262,16 @@ impl Render for RecordPage {
         if let Some(data) = &self.data {
             let shown = record::timeline_entries(&data.entries);
             let folders = data.folders.active().is_some();
-            self.block_order = record::blocks(self.topic().is_some(), folders, &shown);
+            let sections = self.drawn_sections(cx);
+            self.block_order = record::blocks(self.topic().is_some(), folders, &shown, &sections);
             for block in self.block_order.clone() {
                 self.block_handle(block, cx);
             }
+            self.fold_focused = sections.iter().map(|s| s.0).find(|s| {
+                self.block_focus
+                    .get(&record::Block::Fold(*s))
+                    .is_some_and(|h| h.is_focused(window))
+            });
             // "Logged as a decision" opened this page: its entry, once shown.
             if let Some(entry) = self.pending_entry
                 && self.block_order.contains(&record::Block::Entry(entry))

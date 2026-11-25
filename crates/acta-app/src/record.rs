@@ -275,6 +275,55 @@ impl Loaded {
         }
         all
     }
+
+    /// What Claude Code last changed inside `section`, for the unread dot
+    /// of a folded section (components-records.md 5, Section fold).
+    pub fn fold_stamps(&self, section: crate::fold::Section) -> crate::fold::Stamps {
+        use crate::fold::Section as S;
+        let claude = |by: Author| by == Author::Claude;
+        match section {
+            // The page's own stamp moves with any field; the text is what
+            // the section shows.
+            S::Description if claude(self.updated_by) => vec![(0, text_hash(&self.description))],
+            S::Timeline => self
+                .entries
+                .iter()
+                .filter(|e| e.kind != EntryKind::System && claude(e.stamp.updated_by))
+                .map(|e| (e.id.0, e.stamp.updated_at))
+                .collect(),
+            S::Knowledge => self
+                .kb
+                .own
+                .iter()
+                .filter(|k| claude(k.updated_by))
+                .map(|k| (k.id.0, k.updated_at))
+                .collect(),
+            S::Questions => self
+                .questions
+                .section
+                .open
+                .iter()
+                .chain(&self.questions.section.closed)
+                .filter(|q| claude(q.stamp.updated_by))
+                .map(|q| (q.id.0, q.stamp.updated_at))
+                .collect(),
+            S::Topics => self
+                .all_topics()
+                .iter()
+                .filter(|t| claude(t.updated_by))
+                .map(|t| (t.id.0, t.updated_at))
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+}
+
+/// A digest of a text, for comparing two loads of it in one run.
+fn text_hash(text: &str) -> i64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut h);
+    h.finish() as i64
 }
 
 /// A filter chip of the topic table and the topics it lists.
@@ -582,14 +631,16 @@ pub fn load(
 
 /// A block of a record page that `Up` / `Down` step through
 /// (interaction.md 6.1): the title, the folder row, the current state, the
-/// description, the Questions section and each entry of the timeline.
-/// `Enter` edits the focused block (or goes inside the folder row and the
-/// Questions section).
+/// fold toggle of each foldable section, the description, the Questions
+/// section and each entry of the timeline. `Enter` edits the focused block
+/// (or goes inside the folder row and the Questions section; toggles a
+/// fold).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Block {
     Title,
     Folders,
     State,
+    Fold(crate::fold::Section),
     Description,
     Questions,
     Entry(acta_core::model::EntryId),
@@ -597,8 +648,17 @@ pub enum Block {
 
 /// The blocks of a page, in reading order: a topic has a current state and
 /// a timeline (`entries`: the entries shown, system lines excluded, newest
-/// first); the folder row is a block while it is drawn.
-pub fn blocks(topic: bool, folders: bool, entries: &[Entry]) -> Vec<Block> {
+/// first); the folder row is a block while it is drawn. `sections` are the
+/// foldable sections drawn, in order, with whether each is folded: its
+/// toggle is a stop, and a folded section's blocks are not, so `Down` on a
+/// folded header goes to the next header (components-records.md 5).
+pub fn blocks(
+    topic: bool,
+    folders: bool,
+    entries: &[Entry],
+    sections: &[(crate::fold::Section, bool)],
+) -> Vec<Block> {
+    use crate::fold::Section as S;
     let mut out = vec![Block::Title];
     if folders {
         out.push(Block::Folders);
@@ -606,15 +666,22 @@ pub fn blocks(topic: bool, folders: bool, entries: &[Entry]) -> Vec<Block> {
     if topic {
         out.push(Block::State);
     }
-    out.push(Block::Description);
-    out.push(Block::Questions);
-    if topic {
-        out.extend(
-            entries
-                .iter()
-                .filter(|e| e.kind != EntryKind::System)
-                .map(|e| Block::Entry(e.id)),
-        );
+    for (section, folded) in sections {
+        out.push(Block::Fold(*section));
+        if *folded {
+            continue;
+        }
+        match section {
+            S::Description => out.push(Block::Description),
+            S::Questions => out.push(Block::Questions),
+            S::Timeline if topic => out.extend(
+                entries
+                    .iter()
+                    .filter(|e| e.kind != EntryKind::System)
+                    .map(|e| Block::Entry(e.id)),
+            ),
+            _ => {}
+        }
     }
     out
 }
@@ -717,34 +784,59 @@ mod tests {
 
     #[test]
     fn a_topic_page_steps_title_folders_state_description_questions_entries() {
+        use crate::fold::Section as S;
         let entries = [
             entry_of(3, EntryKind::Decision),
             entry_of(2, EntryKind::System),
             entry_of(1, EntryKind::Progress),
         ];
-        let order = blocks(true, true, &entries);
+        let open = [
+            (S::Description, false),
+            (S::Questions, false),
+            (S::Knowledge, false),
+            (S::Timeline, false),
+        ];
+        let order = blocks(true, true, &entries, &open);
         assert_eq!(
             order,
             vec![
                 Block::Title,
                 Block::Folders,
                 Block::State,
+                Block::Fold(S::Description),
                 Block::Description,
+                Block::Fold(S::Questions),
                 Block::Questions,
+                Block::Fold(S::Knowledge),
+                Block::Fold(S::Timeline),
                 Block::Entry(acta_core::model::EntryId(3)),
                 Block::Entry(acta_core::model::EntryId(1)),
             ]
         );
         // An epic has no state and no timeline; no folder row, no stop.
+        let epic = [
+            (S::Description, false),
+            (S::Questions, false),
+            (S::Knowledge, false),
+            (S::Topics, false),
+        ];
         assert_eq!(
-            blocks(false, false, &entries),
-            vec![Block::Title, Block::Description, Block::Questions]
+            blocks(false, false, &entries, &epic),
+            vec![
+                Block::Title,
+                Block::Fold(S::Description),
+                Block::Description,
+                Block::Fold(S::Questions),
+                Block::Questions,
+                Block::Fold(S::Knowledge),
+                Block::Fold(S::Topics),
+            ]
         );
         assert_eq!(step_block(&order, None, false), Some(Block::Title));
         assert_eq!(step_block(&order, None, true), None);
         assert_eq!(step_block(&order, Some(Block::Title), true), None);
         assert_eq!(
-            step_block(&order, Some(Block::Questions), false),
+            step_block(&order, Some(Block::Fold(S::Timeline)), false),
             Some(Block::Entry(acta_core::model::EntryId(3)))
         );
         assert_eq!(
@@ -758,6 +850,34 @@ mod tests {
         assert_eq!(
             step_block(&order, Some(Block::State), true),
             Some(Block::Folders)
+        );
+    }
+
+    #[test]
+    fn down_on_a_folded_header_goes_to_the_next_header() {
+        use crate::fold::Section as S;
+        let entries = [entry_of(1, EntryKind::Progress)];
+        let folded = [
+            (S::Description, true),
+            (S::Questions, true),
+            (S::Knowledge, false),
+            (S::Timeline, true),
+        ];
+        let order = blocks(true, false, &entries, &folded);
+        assert_eq!(
+            order,
+            vec![
+                Block::Title,
+                Block::State,
+                Block::Fold(S::Description),
+                Block::Fold(S::Questions),
+                Block::Fold(S::Knowledge),
+                Block::Fold(S::Timeline),
+            ]
+        );
+        assert_eq!(
+            step_block(&order, Some(Block::Fold(S::Description)), false),
+            Some(Block::Fold(S::Questions))
         );
     }
     use crate::db::test_support::temp_store;

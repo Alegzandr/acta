@@ -521,6 +521,22 @@ catalogue! {
         en: t("Timeline"),
         fr: t("Journal"),
     }
+    SectionTopics "section.topics" {
+        en: t("Topics"),
+        fr: t("Sujets"),
+    }
+    SectionFold "section.fold" {
+        en: t("Collapse {section}"),
+        fr: t("Replier «\u{202f}{section}\u{202f}»"),
+    }
+    SectionUnfold "section.unfold" {
+        en: t("Expand {section}"),
+        fr: t("Déplier «\u{202f}{section}\u{202f}»"),
+    }
+    SectionCountEntries "section.count.entries" {
+        en: p("{n} entry", "{n} entries"),
+        fr: p("{n} entrée", "{n} entrées"),
+    }
     StateUpdated "state.updated" {
         en: t("Updated {when} by {author}"),
         fr: t("Modifié {when} par {author}"),
@@ -3252,6 +3268,14 @@ catalogue! {
     CmdReadingWidth "cmd.reading_width" {
         en: t("Reading width: {value}"),
         fr: t("Largeur de lecture\u{a0}: {value}"),
+    }
+    CmdSectionsCollapse "cmd.sections_collapse" {
+        en: t("Collapse all sections"),
+        fr: t("Replier toutes les sections"),
+    }
+    CmdSectionsExpand "cmd.sections_expand" {
+        en: t("Expand all sections"),
+        fr: t("Déplier toutes les sections"),
     }
     CmdZoomIn "cmd.zoom_in" {
         en: t("Zoom in"),

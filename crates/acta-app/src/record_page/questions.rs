@@ -113,7 +113,7 @@ pub(super) struct QuestionUi {
     /// A row's menu: the question and the highlighted item.
     menu: Option<(QuestionId, usize, usize)>,
     menu_anchor: AnchorBounds,
-    row_focus: Vec<FocusHandle>,
+    pub(super) row_focus: Vec<FocusHandle>,
     row_ids: std::cell::RefCell<Vec<QuestionId>>,
     date: Option<RowDate>,
     /// Unread dots stay for as long as the page is open.
@@ -236,6 +236,8 @@ impl RecordPage {
         cx: &mut Context<Self>,
     ) {
         let Some(place) = self.q_place() else { return };
+        // Reveal: a folded Questions section unfolds for its composer.
+        self.reveal_section(crate::fold::Section::Questions, cx);
         let locale = settings::locale(cx);
         let text = cx.new(|cx| {
             TextareaState::new(window, cx)
@@ -1697,6 +1699,24 @@ impl RecordPage {
         self.q
             .seen_unread
             .extend(data.questions.unread.iter().copied());
+        let toggle = self.fold_toggle(
+            crate::fold::Section::Questions,
+            Key::SectionQuestions,
+            (s.open_total > 0).then(|| number(locale, s.open_total as u64)),
+            locale,
+            t,
+            cx,
+        );
+        // Folded: the header alone, its `plus` hidden (components-records.md
+        // 5, Section fold).
+        if self.folded(crate::fold::Section::Questions, cx) {
+            return div()
+                .flex()
+                .flex_col()
+                .mt(px(32.))
+                .child(toggle)
+                .into_any_element();
+        }
         // The header is the section's stop among the page's blocks: `Enter`
         // goes inside, to the first row (interaction.md 6.1).
         let header = div()
@@ -1709,16 +1729,7 @@ impl RecordPage {
             .px(px(8.))
             .mx(px(-8.))
             .rounded(px(RADIUS_SM))
-            .child(ui::section_header(text(locale, Key::SectionQuestions), t))
-            .when(s.open_total > 0, |this| {
-                this.child(
-                    type_scale::SMALL
-                        .el()
-                        .text_color(t.text_tertiary)
-                        .font_features(type_scale::tabular())
-                        .child(number(locale, s.open_total as u64)),
-                )
-            })
+            .child(toggle)
             .child(div().flex_1())
             .child(
                 ui::ghost_icon_button("q-new", Icon::Plus, 24., false, false, true, t)

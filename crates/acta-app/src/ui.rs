@@ -486,6 +486,90 @@ pub fn section_header(text: impl Into<SharedString>, tokens: &Tokens) -> Div {
         .child(text.into())
 }
 
+/// How a section's fold toggle is drawn (components-records.md 5, Section
+/// fold).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct FoldLook {
+    pub folded: bool,
+    /// The toggle has the keyboard: `chevron-up` shows on an unfolded one.
+    pub focused: bool,
+    /// Another process wrote inside the folded section.
+    pub unread: bool,
+}
+
+/// The fold toggle of a section header: one ghost hit target over the
+/// label, the count that follows it, the unread dot and a 14 chevron 4
+/// after them in `text.tertiary`. Unfolded at rest it is the plain header;
+/// hover or focus shows `chevron-up` and lifts the label to `text.primary`;
+/// folded, `chevron-down` always shows. No fill but the pressed one; the
+/// 2px ring for keyboard focus. The chevron is drawn after the text, so
+/// revealing it moves nothing. `tip_text` is the accessible name
+/// ("Collapse Timeline"), also the tooltip. The caller makes it a tab stop
+/// with its focus handle (a block of the page, or [`focusable`]).
+pub fn fold_toggle(
+    id: impl Into<SharedString>,
+    label: impl Into<SharedString>,
+    count: Option<String>,
+    look: FoldLook,
+    tip_text: String,
+    tokens: &Tokens,
+) -> Stateful<Div> {
+    let id: SharedString = id.into();
+    let (primary, pressed) = (tokens.text_primary, tokens.fill_pressed);
+    let lifted = look.focused && !look.folded;
+    let chevron = if look.folded {
+        Icon::ChevronDown
+    } else {
+        Icon::ChevronUp
+    };
+    div()
+        .id(id.clone())
+        .group(id.clone())
+        .relative()
+        .flex()
+        .flex_row()
+        .flex_shrink_0()
+        .items_center()
+        .h(px(28.))
+        .px(px(4.))
+        .mx(px(-4.))
+        .rounded(px(RADIUS_SM))
+        .active(move |s| s.bg(pressed))
+        .tooltip(tip(tip_text))
+        .child(
+            type_scale::UI_STRONG
+                .el()
+                .text_color(if lifted {
+                    primary
+                } else {
+                    tokens.text_secondary
+                })
+                .group_hover(id.clone(), move |s| s.text_color(primary))
+                .child(label.into()),
+        )
+        .children(count.map(|count| {
+            type_scale::SMALL
+                .el()
+                .ml(px(8.))
+                .text_color(tokens.text_tertiary)
+                .font_features(type_scale::tabular())
+                .child(count)
+        }))
+        .when(look.folded && look.unread, |this| {
+            this.child(unread_dot(tokens).ml(px(8.)))
+        })
+        .child(
+            div()
+                .ml(px(4.))
+                .size(px(14.))
+                .flex_shrink_0()
+                .when(!look.folded && !look.focused, |this| {
+                    this.invisible().group_hover(id.clone(), |s| s.visible())
+                })
+                .child(icon(chevron, 14., tokens.text_tertiary)),
+        )
+}
+
 /// A section label (`type.label`, `text.secondary`): "Current state",
 /// "Knowledge", "Timeline".
 pub fn label(text: impl Into<SharedString>, tokens: &Tokens) -> Div {

@@ -24,6 +24,7 @@ use gpui_kit::{
 use crate::contacts_model as cm;
 use crate::contacts_page;
 use crate::due;
+use crate::fold;
 use crate::i18n::{Arg, Key, Locale, text, tr};
 use crate::icons::{Icon, icon};
 use crate::menu::{Align, AnchorBounds};
@@ -169,6 +170,9 @@ pub struct ContactPage {
     name_error: bool,
     focus: FocusHandle,
     row_focus: Vec<FocusHandle>,
+    /// The fold toggles of the three sections (components-records.md 5,
+    /// Section fold).
+    fold_focus: std::collections::HashMap<fold::Section, FocusHandle>,
     seen_revision: u64,
     _load: Task<()>,
     _subs: Vec<Subscription>,
@@ -221,12 +225,149 @@ impl ContactPage {
             name_error: false,
             focus: cx.focus_handle(),
             row_focus: Vec::new(),
+            fold_focus: [
+                fold::Section::Address,
+                fold::Section::Asked,
+                fold::Section::Report,
+            ]
+            .into_iter()
+            .map(|s| (s, cx.focus_handle()))
+            .collect(),
             seen_revision: 0,
             _load: Task::ready(()),
             _subs: subs,
         };
         page.reload(cx);
         page
+    }
+
+    fn folded(section: fold::Section, cx: &App) -> bool {
+        fold::is_folded(&settings::current(cx).folds, fold::Kind::Contact, section)
+    }
+
+    /// The sections drawn now, with whether each is folded.
+    fn drawn_sections(&self, cx: &App) -> Vec<(fold::Section, bool)> {
+        let Some(c) = &self.data.contact else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        if self.address.is_some() || c.address_note.is_some() {
+            out.push(fold::Section::Address);
+        }
+        if !self.data.asked.is_empty() {
+            out.push(fold::Section::Asked);
+        }
+        if !self.data.to_report.is_empty() || !self.data.reported.is_empty() {
+            out.push(fold::Section::Report);
+        }
+        out.into_iter().map(|s| (s, Self::folded(s, cx))).collect()
+    }
+
+    fn set_fold(
+        &mut self,
+        section: fold::Section,
+        folded: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // A section that holds the keyboard gives it to its toggle; the
+        // address draft is kept and comes back on unfold (6.4).
+        if folded
+            && !self.focus.is_focused(window)
+            && self.focus.contains_focused(window, cx)
+            && let Some(handle) = self.fold_focus.get(&section)
+        {
+            window.focus(handle, cx);
+        }
+        settings::change(cx, |p| {
+            fold::set(&mut p.folds, fold::Kind::Contact, section, folded);
+        });
+        cx.notify();
+    }
+
+    /// "Collapse all sections" / "Expand all sections".
+    pub fn set_all_folds(&mut self, folded: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if folded && !self.focus.is_focused(window) && self.focus.contains_focused(window, cx) {
+            window.focus(&self.focus, cx);
+        }
+        settings::change(cx, |p| {
+            if folded {
+                fold::collapse_all(&mut p.folds, fold::Kind::Contact);
+            } else {
+                fold::expand_all(&mut p.folds, fold::Kind::Contact);
+            }
+        });
+        cx.notify();
+    }
+
+    /// Whether "Collapse all sections" and "Expand all sections" apply.
+    pub fn fold_commands(&self, cx: &App) -> (bool, bool) {
+        let drawn = self.drawn_sections(cx);
+        (drawn.iter().any(|(_, f)| !f), drawn.iter().any(|(_, f)| *f))
+    }
+
+    /// A section header with its fold toggle (`Enter` or `Space` toggles,
+    /// `Left` folds, `Right` unfolds).
+    fn fold_header(
+        &self,
+        section: fold::Section,
+        label: Key,
+        locale: Locale,
+        window: &Window,
+        t: &Tokens,
+        cx: &mut Context<Self>,
+    ) -> gpui_kit::Div {
+        let folded = Self::folded(section, cx);
+        let name = text(locale, label);
+        let tip = tr(
+            locale,
+            if folded {
+                Key::SectionUnfold
+            } else {
+                Key::SectionFold
+            },
+            &[("section", Arg::Text(&name))],
+        );
+        let handle = self.fold_focus[&section].clone();
+        let look = ui::FoldLook {
+            folded,
+            focused: handle.is_focused(window),
+            unread: false,
+        };
+        let toggle = ui::focusable(
+            ui::fold_toggle(
+                gpui_kit::SharedString::from(format!("contact-fold-{section:?}")),
+                name,
+                None,
+                look,
+                tip,
+                t,
+            ),
+            t,
+            false,
+        )
+        .track_focus(&handle)
+        .on_click(
+            cx.listener(move |page, _, window, cx| page.set_fold(section, !folded, window, cx)),
+        )
+        .on_key_down(cx.listener(move |page, event: &KeyDownEvent, window, cx| {
+            if event.keystroke.modifiers.modified() {
+                return;
+            }
+            match event.keystroke.key.as_str() {
+                "enter" | "space" => page.set_fold(section, !folded, window, cx),
+                "left" => page.set_fold(section, true, window, cx),
+                "right" => page.set_fold(section, false, window, cx),
+                _ => return,
+            }
+            cx.stop_propagation();
+        }));
+        div()
+            .mt(px(32.))
+            .h(px(28.))
+            .flex()
+            .items_center()
+            .child(toggle)
     }
 
     /// The name, for the tab.
@@ -855,15 +996,6 @@ impl ContactPage {
     }
 }
 
-fn section_header(label: String, t: &Tokens) -> gpui_kit::Div {
-    div()
-        .mt(px(32.))
-        .h(px(28.))
-        .flex()
-        .items_center()
-        .child(ui::section_header(label, t))
-}
-
 impl Render for ContactPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.global::<Tokens>().clone();
@@ -1001,10 +1133,27 @@ impl Render for ContactPage {
             );
         }
         // How to address them.
-        if let Some(editor) = &self.address {
+        let address_folded = Self::folded(fold::Section::Address, cx);
+        if (self.address.is_some() || c.address_note.is_some()) && address_folded {
+            column = column.child(self.fold_header(
+                fold::Section::Address,
+                Key::ContactSectionAddress,
+                locale,
+                window,
+                &t,
+                cx,
+            ));
+        } else if let Some(editor) = &self.address {
             let n = editor.read(cx).value().chars().count();
             column = column
-                .child(section_header(text(locale, Key::ContactSectionAddress), &t))
+                .child(self.fold_header(
+                    fold::Section::Address,
+                    Key::ContactSectionAddress,
+                    locale,
+                    window,
+                    &t,
+                    cx,
+                ))
                 .child(
                     div()
                         .px(px(8.))
@@ -1037,7 +1186,14 @@ impl Render for ContactPage {
                 });
         } else if let Some(note) = &c.address_note {
             column = column
-                .child(section_header(text(locale, Key::ContactSectionAddress), &t))
+                .child(self.fold_header(
+                    fold::Section::Address,
+                    Key::ContactSectionAddress,
+                    locale,
+                    window,
+                    &t,
+                    cx,
+                ))
                 .child(
                     type_scale::READING
                         .el()
@@ -1074,8 +1230,18 @@ impl Render for ContactPage {
             );
         }
         let mut index = 0;
+        let asked_folded = Self::folded(fold::Section::Asked, cx);
         if !open_q.is_empty() || !closed_q.is_empty() {
-            column = column.child(section_header(text(locale, Key::PersonSectionAsked), &t));
+            column = column.child(self.fold_header(
+                fold::Section::Asked,
+                Key::PersonSectionAsked,
+                locale,
+                window,
+                &t,
+                cx,
+            ));
+        }
+        if (!open_q.is_empty() || !closed_q.is_empty()) && !asked_folded {
             let several = c.level == ContactLevel::All && self.data.projects_used > 1;
             let mut shown: Vec<Question> = open_q.clone();
             if self.asked_closed {
@@ -1186,8 +1352,18 @@ impl Render for ContactPage {
                 );
             }
         }
+        let report_folded = Self::folded(fold::Section::Report, cx);
         if !self.data.to_report.is_empty() || !self.data.reported.is_empty() {
-            column = column.child(section_header(text(locale, Key::PersonSectionReport), &t));
+            column = column.child(self.fold_header(
+                fold::Section::Report,
+                Key::PersonSectionReport,
+                locale,
+                window,
+                &t,
+                cx,
+            ));
+        }
+        if (!self.data.to_report.is_empty() || !self.data.reported.is_empty()) && !report_folded {
             let items = self.data.to_report.clone();
             for item in &items {
                 column = column.child(self.render_report_row(item, index, locale, &t, cx));

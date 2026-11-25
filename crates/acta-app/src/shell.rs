@@ -213,6 +213,10 @@ actions!(
         ZoomOut,
         /// `Mod+0`: back to 100%.
         ZoomReset,
+        /// `Mod+Shift+[` / `Mod+Shift+]`: collapse or expand every section
+        /// of the active page (components-records.md 5, Section fold).
+        CollapseSections,
+        ExpandSections,
         /// Settings: "Remove from Claude Code" (confirmed, 6.4).
         RemoveClaudeSetup,
         /// Settings: "Set up Claude Code" (confirmed, with what it touches).
@@ -380,6 +384,14 @@ fn key_bindings() -> Vec<KeyBinding> {
             crate::zoom::ZoomKey::Out => KeyBinding::new(keys, ZoomOut, context),
             crate::zoom::ZoomKey::Reset => KeyBinding::new(keys, ZoomReset, context),
         });
+    }
+    // The brackets by position (6.1): GPUI on Windows reports the shifted
+    // key (`{`) with Shift consumed, macOS the bracket with Shift.
+    for keys in [m("cmd-shift-[", "ctrl-shift-["), m("cmd-{", "ctrl-{")] {
+        out.push(KeyBinding::new(keys, CollapseSections, app));
+    }
+    for keys in [m("cmd-shift-]", "ctrl-shift-]"), m("cmd-}", "ctrl-}")] {
+        out.push(KeyBinding::new(keys, ExpandSections, app));
     }
     out.extend(crate::due_picker::bindings());
     out.extend(crate::record_page::questions::bindings());
@@ -2828,6 +2840,11 @@ impl Shell {
                 PageView::Record(page) => page.read(cx).overview_state(cx),
                 _ => None,
             },
+            folds: match &bench.page {
+                PageView::Record(page) => page.read(cx).fold_commands(cx),
+                PageView::Contact(page) => page.read(cx).fold_commands(cx),
+                _ => (false, false),
+            },
             folders: match &bench.page {
                 PageView::Record(page) => page.read(cx).folder_commands(),
                 _ => commands::FolderCommands::default(),
@@ -3326,6 +3343,8 @@ impl Shell {
                     settings.update(cx, |page, cx| page.focus_profile(name, window, cx));
                 }
             }
+            Command::SectionsCollapse => self.fold_all(true, window, cx),
+            Command::SectionsExpand => self.fold_all(false, window, cx),
             Command::OverviewMore | Command::OverviewLess => {
                 let open = command == Command::OverviewMore;
                 self.with_record(cx, |page, _, cx| page.set_overview_open(open, cx), window)
@@ -3500,6 +3519,20 @@ impl Shell {
         let Some(bench) = self.bench() else { return };
         if let PageView::Record(page) = &bench.page {
             page.update(cx, |page, cx| f(page, window, cx));
+        }
+    }
+
+    /// "Collapse all sections" / "Expand all sections" on the active page.
+    fn fold_all(&mut self, folded: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(bench) = self.bench() else { return };
+        match &bench.page {
+            PageView::Record(page) => {
+                page.update(cx, |page, cx| page.set_all_folds(folded, window, cx))
+            }
+            PageView::Contact(page) => {
+                page.update(cx, |page, cx| page.set_all_folds(folded, window, cx))
+            }
+            _ => {}
         }
     }
 
@@ -6857,6 +6890,8 @@ impl Render for Shell {
                 layout_ui::on_resize_drag(s, handle, zoom::eff(p.x), zoom::eff(p.y), cx)
             }))
             .on_action(cx.listener(|s, _: &FocusPage, w, cx| s.focus_page(w, cx)))
+            .on_action(cx.listener(|s, _: &CollapseSections, w, cx| s.fold_all(true, w, cx)))
+            .on_action(cx.listener(|s, _: &ExpandSections, w, cx| s.fold_all(false, w, cx)))
             .on_action(cx.listener(|s, _: &ZoomIn, w, cx| s.zoom_in(w, cx)))
             .on_action(cx.listener(|s, _: &ZoomOut, _, cx| s.zoom_out(cx)))
             .on_action(cx.listener(|_, _: &ZoomReset, _, cx| settings::set_zoom(zoom::DEFAULT, cx)))

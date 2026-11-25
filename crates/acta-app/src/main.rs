@@ -33,6 +33,8 @@ mod diff;
 mod due;
 mod due_picker;
 mod first_run;
+mod fold;
+mod fold_ui;
 mod folders_model;
 mod folders_view;
 mod fonts;
