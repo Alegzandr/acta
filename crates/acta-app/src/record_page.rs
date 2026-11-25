@@ -37,6 +37,7 @@ use crate::markdown_view;
 use crate::menu;
 use crate::paths_view;
 use crate::record::{self, EntryFilterKind, Loaded};
+use crate::resume;
 use crate::route::Route;
 use crate::settings;
 use crate::table::{self, Column};
@@ -203,6 +204,12 @@ pub struct RecordPage {
     fold_anchor: fold_ui::Anchor,
     /// The fold toggle with the keyboard, as of this frame.
     fold_focused: Option<fold::Section>,
+    /// The pending draft writes of the state and description editors
+    /// (interaction.md 6.6), whether the kept drafts were read, and those
+    /// read back, opened at the next frame (an editor needs the window).
+    draft_writes: [Task<()>; 2],
+    drafts_read: bool,
+    pending_drafts: Vec<(bool, String)>,
     _load: Task<()>,
     _subs: Vec<Subscription>,
 }
@@ -332,6 +339,9 @@ impl RecordPage {
             fold_stamps: Default::default(),
             fold_anchor: Default::default(),
             fold_focused: None,
+            draft_writes: [Task::ready(()), Task::ready(())],
+            drafts_read: false,
+            pending_drafts: Vec::new(),
             _load: Task::ready(()),
             _subs: subs,
         };
@@ -378,6 +388,7 @@ impl RecordPage {
                             data.folders.missing = old.folders.missing.clone();
                         }
                         page.note_fold_writes(&data, cx);
+                        let first = page.data.is_none();
                         let ids: Vec<KbId> = data.kb_flags.iter().map(|(id, _)| *id).collect();
                         page.kb_flags.set_store(data.kb_flags.clone());
                         page.data = Some(data);
@@ -385,6 +396,9 @@ impl RecordPage {
                         page.read_kb_git(ids, cx);
                         if let Some(id) = page.kb_open {
                             page.load_kb_open(id, cx);
+                        }
+                        if first {
+                            page.read_drafts(cx);
                         }
                     }
                     // Deleted (here or by another process): stay readable
@@ -951,6 +965,19 @@ impl RecordPage {
     }
 
     fn open_editor(&mut self, description: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_editor_with(description, None, true, window, cx);
+    }
+
+    /// Open the state or description editor on `draft` (a kept draft) or
+    /// the stored text; `focus` gives it the keyboard.
+    fn open_editor_with(
+        &mut self,
+        description: bool,
+        draft: Option<String>,
+        focus: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(data) = &self.data else { return };
         let locale = settings::locale(cx);
         let (value, placeholder) = if description {
@@ -968,20 +995,21 @@ impl RecordPage {
             TextareaState::new(window, cx)
                 .auto_grow(3, 16)
                 .placeholder(text(locale, placeholder))
-                .default_value(value)
+                .default_value(draft.unwrap_or(value))
         });
-        state.update(cx, |state, cx| state.focus(window, cx));
+        if focus {
+            state.update(cx, |state, cx| state.focus(window, cx));
+        }
         crate::voice::attach(&state, window, cx);
         let sub = cx.subscribe_in(
             &state,
             window,
-            move |page, _, event: &InputEvent, window, cx| {
-                if let InputEvent::PressEnter {
+            move |page, _, event: &InputEvent, window, cx| match event {
+                InputEvent::PressEnter {
                     secondary: true, ..
-                } = event
-                {
-                    page.commit_editor(description, window, cx);
-                }
+                } => page.commit_editor(description, window, cx),
+                InputEvent::Change => page.write_draft(description, cx),
+                _ => {}
             },
         );
         self._subs.push(sub);
@@ -998,6 +1026,108 @@ impl RecordPage {
             self.state_edit = Some(state);
         }
         cx.notify();
+    }
+
+    // ---- drafts (data.md request 15, interaction.md 6.6) ----
+
+    fn draft_field(description: bool) -> resume::DraftField {
+        if description {
+            resume::DraftField::Description
+        } else {
+            resume::DraftField::State
+        }
+    }
+
+    /// The stored text an editor started from.
+    fn stored_text(&self, description: bool) -> String {
+        let Some(data) = &self.data else {
+            return String::new();
+        };
+        if description {
+            data.description.clone()
+        } else {
+            data.topic
+                .as_ref()
+                .map(|t| t.state.clone())
+                .unwrap_or_default()
+        }
+    }
+
+    /// The editor changed: its text goes to the encrypted database 400 ms
+    /// after the last change (a later change cancels the pending write),
+    /// so a crash or a restart keeps it.
+    fn write_draft(&mut self, description: bool, cx: &mut Context<Self>) {
+        let editor = if description {
+            &self.description_edit
+        } else {
+            &self.state_edit
+        };
+        let Some(editor) = editor else { return };
+        let typed = editor.read(cx).value().to_string();
+        let value = resume::draft_value(&typed, &self.stored_text(description));
+        let key = resume::draft_key(self.owner, Self::draft_field(description));
+        let db = self.ws.read(cx).db.clone();
+        let timer = cx
+            .background_executor()
+            .timer(std::time::Duration::from_millis(400));
+        self.draft_writes[usize::from(description)] = cx.background_executor().spawn(async move {
+            timer.await;
+            if let Err(err) = db.lock().set_local_value(&key, value.as_deref()) {
+                crate::log::line(&format!(
+                    "draft: write failed: {}",
+                    crate::workspace::err_kind(&err)
+                ));
+            }
+        });
+    }
+
+    /// The editor saved or was cancelled: its draft goes (and a pending
+    /// write with it).
+    fn clear_draft(&mut self, description: bool, cx: &mut Context<Self>) {
+        let key = resume::draft_key(self.owner, Self::draft_field(description));
+        let db = self.ws.read(cx).db.clone();
+        self.draft_writes[usize::from(description)] = cx.background_executor().spawn(async move {
+            let _ = db.lock().set_local_value(&key, None);
+        });
+    }
+
+    /// Once the page first loaded: the editors that had a draft reopen
+    /// with it, unfocused (the kept focus says where the keyboard goes).
+    fn read_drafts(&mut self, cx: &mut Context<Self>) {
+        if self.drafts_read {
+            return;
+        }
+        self.drafts_read = true;
+        let owner = self.owner;
+        let prefix = resume::draft_prefix(owner);
+        let task = self
+            .ws
+            .read(cx)
+            .db
+            .run(cx, move |store| store.local_values(&prefix));
+        cx.spawn(async move |page, cx| {
+            let Ok(kept) = task.await else { return };
+            let _ = page.update(cx, |page, cx| {
+                for (key, value) in kept {
+                    let description = match resume::draft_field(owner, &key) {
+                        Some(resume::DraftField::Description) => true,
+                        Some(resume::DraftField::State) if page.topic().is_some() => false,
+                        _ => continue,
+                    };
+                    let open = if description {
+                        page.description_edit.is_some()
+                    } else {
+                        page.state_edit.is_some()
+                    };
+                    let kept = resume::draft_value(&value, &page.stored_text(description));
+                    if !open && kept.is_some() {
+                        page.pending_drafts.push((description, value));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     fn new_tray(
@@ -1100,6 +1230,7 @@ impl RecordPage {
                     // Only the editor that was saved closes.
                     if open.as_ref() == Some(&editor) {
                         *open = None;
+                        page.clear_draft(description, cx);
                         if description {
                             page.description_tray = None;
                         }
@@ -1121,6 +1252,12 @@ impl RecordPage {
             .flatten()
         {
             tray.update(cx, |tray, cx| tray.discard(cx));
+        }
+        if self.state_edit.is_some() {
+            self.clear_draft(false, cx);
+        }
+        if self.description_edit.is_some() {
+            self.clear_draft(true, cx);
         }
         let had = self.state_edit.take().is_some()
             | self.description_edit.take().is_some()
@@ -4249,6 +4386,10 @@ impl Render for RecordPage {
                     window.focus(first, cx);
                 }
             });
+        }
+        // Kept drafts reopen their editors (interaction.md 6.6).
+        for (description, draft) in std::mem::take(&mut self.pending_drafts) {
+            self.open_editor_with(description, Some(draft), false, window, cx);
         }
         // A focus handle for each table row (`D` on a row, focus after a
         // click-through).

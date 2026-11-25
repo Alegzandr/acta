@@ -50,6 +50,12 @@ pub struct Preferences {
     /// (`topic.timeline`; components-records.md 5, Section fold), never a
     /// record id.
     pub folds: Vec<String>,
+    /// Each open tab's scroll and focused element, by route key
+    /// (interaction.md 6.6, Resume): numbers and fixed keys only.
+    pub pages: std::collections::BTreeMap<String, crate::resume::PageState>,
+    /// The record ids of the pages whose Claude Code session was running
+    /// at quit: they restart with the page's conversation.
+    pub sessions: Vec<String>,
     /// Terminal text size, 11 to 18; `None` is the default 13.
     pub terminal_text_size: Option<u8>,
     /// The size of reading text (typography.md 3.2) and the width of the
@@ -101,6 +107,8 @@ pub fn forget_records(prefs: &mut Preferences, sign_out: bool) {
     prefs.collapsed.clear();
     prefs.closed_shown.clear();
     prefs.overview_open.clear();
+    prefs.pages.clear();
+    prefs.sessions.clear();
     if let Some(saved) = &prefs.layout {
         prefs.layout = Saved::from_value(&saved.to_value(), |key| {
             matches!(key, "trash" | "settings" | "shortcuts" | "contacts")
@@ -133,6 +141,11 @@ struct Stored {
     overview_open: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     folds: Vec<String>,
+    /// Read forgivingly on its own, like the layout.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pages: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    sessions: Vec<String>,
     #[serde(default, skip_serializing)]
     sidebar_hidden: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -359,6 +372,8 @@ pub fn parse(text: &str) -> Result<Preferences, LoadError> {
             .filter(|k| is_reference(k))
             .collect(),
         folds: crate::fold::read(stored.folds),
+        pages: stored.pages.map(pages_of).unwrap_or_default(),
+        sessions: crate::resume::read_sessions(stored.sessions),
         terminal_text_size: stored
             .terminal_text_size
             .filter(|size| (11..=18).contains(size)),
@@ -388,6 +403,56 @@ pub fn parse(text: &str) -> Result<Preferences, LoadError> {
     })
 }
 
+/// The pages' states as stored: `{"T-4": {"scroll": 320, "focus":
+/// "entry:12"}}`. A damaged value reads as nothing kept.
+fn pages_of(
+    value: serde_json::Value,
+) -> std::collections::BTreeMap<String, crate::resume::PageState> {
+    #[derive(Deserialize)]
+    struct Stored {
+        #[serde(default)]
+        scroll: u32,
+        #[serde(default)]
+        focus: Option<String>,
+    }
+    let Ok(map) = serde_json::from_value::<std::collections::BTreeMap<String, Stored>>(value)
+    else {
+        return Default::default();
+    };
+    crate::resume::read_pages(
+        map.into_iter()
+            .map(|(k, v)| {
+                (
+                    k,
+                    crate::resume::PageState {
+                        scroll: v.scroll,
+                        focus: v.focus,
+                    },
+                )
+            })
+            .collect(),
+    )
+}
+
+fn pages_value(
+    pages: &std::collections::BTreeMap<String, crate::resume::PageState>,
+) -> serde_json::Value {
+    let map: serde_json::Map<String, serde_json::Value> = pages
+        .iter()
+        .map(|(route, state)| {
+            let mut v = serde_json::Map::new();
+            if state.scroll > 0 {
+                v.insert("scroll".into(), state.scroll.into());
+            }
+            if let Some(focus) = &state.focus {
+                v.insert("focus".into(), focus.clone().into());
+            }
+            (route.clone(), serde_json::Value::Object(v))
+        })
+        .collect();
+    serde_json::Value::Object(map)
+}
+
 /// The file's contents for `prefs`.
 pub fn serialize(prefs: &Preferences) -> String {
     let stored = Stored {
@@ -399,6 +464,8 @@ pub fn serialize(prefs: &Preferences) -> String {
         closed_shown: prefs.closed_shown.clone(),
         overview_open: prefs.overview_open.clone(),
         folds: prefs.folds.clone(),
+        pages: (!prefs.pages.is_empty()).then(|| pages_value(&prefs.pages)),
+        sessions: prefs.sessions.clone(),
         sidebar_hidden: false,
         terminal_text_size: prefs.terminal_text_size,
         text_size: text_size_name(prefs.text_size),
@@ -667,6 +734,16 @@ mod tests {
             closed_shown: vec!["closed:E-3".into()],
             overview_open: vec!["P-1".into(), "E-3".into()],
             folds: vec!["contact.report".into(), "topic.timeline".into()],
+            pages: [(
+                "T-42".to_owned(),
+                crate::resume::PageState {
+                    scroll: 320,
+                    focus: Some("entry:7".into()),
+                },
+            )]
+            .into_iter()
+            .collect(),
+            sessions: vec!["T-42".into(), "P-1".into()],
             terminal_text_size: Some(15),
             text_size: TextSize::Large,
             reading_width: ReadingWidth::Narrow,

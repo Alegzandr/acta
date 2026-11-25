@@ -145,3 +145,25 @@ The database is watched; changes land in the UI within 100 ms of the write. The 
 4. **A field being edited is never overwritten.** If the human is editing the current state and Claude Code updates it, the editor keeps the human's text and a notice line appears under it: `triangle-alert` 14 in `warning`, "Claude Code changed this while you were editing." with ghost actions "Show theirs" (side by side, read-only) and "Keep mine". Saving without choosing keeps the human's version and records the other as a Discussion entry by Claude Code, so nothing either side wrote is lost.
 5. **Structure changes do not reorder under the pointer.** Rows created, moved or closed by another process appear in their place immediately, but if the pointer or keyboard cursor is in that list, the row under the cursor keeps its screen position (same anchoring as rule 2).
 6. **Deleted while open.** If the open topic is deleted by another process, the page stays readable with a notice line at the top ("This topic was deleted by Claude Code.") and a "Restore" button.
+
+### 6.6 Resume where you left off
+
+Requested by the user on 2026-11-23: like Notepad on Windows 11, reopening Acta always resumes exactly where the human stopped, whether Acta was quit, the machine restarted, or the process crashed. Nothing asks; nothing is announced.
+
+What comes back, and where it is kept:
+
+| What | Kept in | Saved |
+|---|---|---|
+| The window, the layout, the page groups and their tabs | `preferences.json`, `layout` (workbench.md 4.8.12) | on change |
+| Each open tab's scroll position and focused element | `preferences.json`, `pages`: per route key, the scroll in effective px and a fixed focus key (`title`, `state`, `description`, `questions`, `folders`, `fold:timeline`, `entry:TE-12`); never a title or text. Only the routes of open tabs are kept, at most 64. | scroll 500 ms after it stops; focus at each page switch and at quit |
+| The tree's folds and the page sections' folds | `preferences.json`, `collapsed`, `closed_shown`, `folds` (components-records.md 5, Section fold) | on change |
+| Unsaved editors with their drafts (a record's current state and description) | the encrypted database, local values `draft.<record id>.<field>` (data.md request 15); never `preferences.json` | 400 ms after the last change, so a crash keeps them; removed when the editor saves or is cancelled with `Esc` |
+| The terminal sessions Acta started, per page | `preferences.json`, `sessions`: the record ids of the pages whose session was running at quit; their conversation ids stay in the database (layout.md 4.5.1) | at quit, and each time a session starts or ends |
+| Chats and agent browsers on their last address | the encrypted database, per page (ADR 0009, ADR 0010) | when the address changes |
+
+*On launch.* The tabs reopen; each page, once loaded, scrolls to its kept position (clamped to its height) without animating, and the active page gives the keyboard to its kept element if it still exists, else to the page (6.2). An editor that has a draft reopens with it, unfocused unless it was the focused element; a draft identical to the stored value is not a draft. A session in `sessions` restarts in the page's terminal with `claude --resume` on the page's last conversation, as "Start Claude Code here" does when "Continue the last conversation of each page" is on, whatever that setting says, since the human left it running; a conversation Claude Code no longer has starts a new one. Sessions not started by Acta (a terminal of the human's own) are not restarted. The order of restarts follows the tabs, and the limits of layout.md 4.5.1 apply.
+
+*Not restored*, by decision: a menu, dialog, palette or drag that was open (a half-done gesture is not a place); text selections and carets inside an editor (the editor reopens with its text, caret at the end); the terminal's scrollback (the conversation is what resumes; its transcript is Claude Code's).
+
+*Privacy.* Every value of `pages` and `sessions` is a record id, a fixed key or a number; the drafts, addresses and conversation ids are in the encrypted database. Reset Acta clears both (components-app.md 5, Reset).
+

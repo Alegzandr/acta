@@ -61,6 +61,7 @@ mod ready;
 mod ready_model;
 mod record;
 mod record_page;
+mod resume;
 mod route;
 mod sessions;
 mod sessions_view;
