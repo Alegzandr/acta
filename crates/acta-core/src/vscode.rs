@@ -381,7 +381,7 @@ mod tests {
             .join("System32")
             .join("whoami.exe");
         #[cfg(unix)]
-        let prog = PathBuf::from("/bin/true");
+        let prog = PathBuf::from("/usr/bin/true");
         VsCode::Program(prog).launch(tmp.path()).unwrap();
         assert!(
             VsCode::Program(tmp.path().join("no-such-code"))
