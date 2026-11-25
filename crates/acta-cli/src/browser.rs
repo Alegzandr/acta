@@ -154,8 +154,15 @@ mod windows_link {
         let name = acta_browser::pipe::pipe_name(&sid, &key, store.data_dir());
         let mutex = acta_browser::pipe::mutex_name(&sid, store.data_dir());
         let session = Session::resolve(&store, &Launch::from_env(), Author::Claude);
+        // The page the session belongs to: its focus, else its project.
+        let launch = Launch::from_env();
+        let page = session
+            .focus
+            .or(session.project.map(acta_core::model::Owner::Project));
         let hello = Hello {
             session: session.focus.map(|f| f.to_string()),
+            page: page.map(|p| p.to_string()),
+            launch: launch.token,
         };
         drop(store);
         match Client::connect(&name, &key, &hello) {
@@ -240,6 +247,7 @@ mod windows_link {
                     | "ACTA_EPIC"
                     | "ACTA_TOPIC"
                     | "ACTA_TERMINAL"
+                    | "ACTA_LAUNCH"
             )
     }
 
@@ -286,7 +294,7 @@ mod windows_link {
 impl BrowserServer {
     #[tool(
         name = "snapshot",
-        description = "Call first to see the page: its accessibility outline, one element per line with an e<n> ref for click and type. filter=interactive lists only controls; within=<ref> narrows; wait_for waits for text.",
+        description = "Call first: the page's accessibility outline, one element per line with an e<n> ref for click and type.",
         annotations(read_only_hint = true),
         meta = always_load()
     )]
@@ -296,7 +304,7 @@ impl BrowserServer {
 
     #[tool(
         name = "open",
-        description = "Call to load a URL (a local dev server, a site) in Acta's browser, or go back, forward or reload. Waits for the load; returns the URL and title.",
+        description = "Call to load a URL in Acta's browser, or go back, forward or reload; returns the URL and title.",
         annotations(idempotent_hint = false)
     )]
     async fn open(&self, Parameters(a): Parameters<OpenArgs>) -> CallToolResult {
@@ -305,7 +313,7 @@ impl BrowserServer {
 
     #[tool(
         name = "read",
-        description = "Call to read the page's text (articles, docs, results) a page at a time; pass the cursor it returns for more.",
+        description = "Call to read the page's text a page at a time; pass the cursor it returns for more.",
         annotations(read_only_hint = true)
     )]
     async fn read(&self, Parameters(a): Parameters<ReadArgs>) -> CallToolResult {
@@ -314,7 +322,7 @@ impl BrowserServer {
 
     #[tool(
         name = "click",
-        description = "Call to click an element by its ref from the latest snapshot. Says if a new page loaded.",
+        description = "Call to click an element by its snapshot ref.",
         annotations(idempotent_hint = false)
     )]
     async fn click(&self, Parameters(a): Parameters<ClickArgs>) -> CallToolResult {
@@ -323,7 +331,7 @@ impl BrowserServer {
 
     #[tool(
         name = "type",
-        description = "Call to type into a field by its ref, optionally clearing it first and pressing a key (Enter submits). Never for passwords or codes: use handoff.",
+        description = "Call to type into a field by its ref, then optionally press a key. Never for passwords or codes: use handoff.",
         annotations(idempotent_hint = false)
     )]
     async fn type_text(&self, Parameters(a): Parameters<TypeArgs>) -> CallToolResult {
@@ -332,7 +340,7 @@ impl BrowserServer {
 
     #[tool(
         name = "screenshot",
-        description = "Call when the layout or visuals matter: a JPEG of the visible page, or of one element with ref. Costs about 1,000 tokens at the default width.",
+        description = "Call when visuals matter: a JPEG of the visible page, or of one element with ref (about 1,000 tokens).",
         annotations(read_only_hint = true)
     )]
     async fn screenshot(&self, Parameters(a): Parameters<ScreenshotArgs>) -> CallToolResult {
@@ -341,7 +349,7 @@ impl BrowserServer {
 
     #[tool(
         name = "console",
-        description = "Call when debugging the page: console messages and uncaught errors since the last call.",
+        description = "Call when debugging: console messages and errors since the last call.",
         annotations(read_only_hint = true)
     )]
     async fn console(&self, Parameters(a): Parameters<ConsoleArgs>) -> CallToolResult {
@@ -350,7 +358,7 @@ impl BrowserServer {
 
     #[tool(
         name = "network",
-        description = "Call when debugging requests: method, status, type, size and URL of the requests finished since the last call. No bodies or headers.",
+        description = "Call when debugging requests: method, status, type, size and URL of requests since the last call.",
         annotations(read_only_hint = true)
     )]
     async fn network(&self, Parameters(a): Parameters<NetworkArgs>) -> CallToolResult {
@@ -359,7 +367,7 @@ impl BrowserServer {
 
     #[tool(
         name = "handoff",
-        description = "Call when the user must act in the browser (sign in, CAPTCHA, anything you must not do): shows your message with a Done button and waits up to 10 min.",
+        description = "Call when the user must act in the browser (sign in, CAPTCHA): shows your message with a Done button, waits up to 10 min.",
         annotations(idempotent_hint = false)
     )]
     async fn handoff(&self, Parameters(a): Parameters<HandoffArgs>) -> CallToolResult {
@@ -407,6 +415,7 @@ mod tests {
             "CLAUDE_PROJECT_DIR",
             "CLAUDE_PLUGIN_ROOT",
             "ACTA_TOPIC",
+            "ACTA_LAUNCH",
             "ANTHROPIC_API_KEY",
             "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
             "webview2_user_data_folder",

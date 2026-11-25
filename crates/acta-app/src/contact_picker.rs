@@ -10,6 +10,7 @@
 //! question composer, quick capture) the list floats under the input; in
 //! a popover (Report to) it is part of the popover.
 
+use crate::zoom::px;
 use acta_core::model::{ContactId, Place};
 use acta_core::store::ContactSummary;
 use gpui_kit::component::input::{
@@ -19,7 +20,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, ParentElement, Render, Styled, Subscription, Task, Window,
-    div, px,
+    div,
 };
 
 use crate::contacts_model::{self, NAME_MAX, Pick, PickerList};
@@ -220,6 +221,37 @@ impl ContactPicker {
         self.open = false;
         let name = self.value.name().to_owned();
         self.input.update(cx, |s, cx| s.set_value(name, window, cx));
+        cx.notify();
+    }
+
+    /// A store refusal (the contact `name` moved out of the record's sight
+    /// meanwhile): the field is restored to no contact and the inline
+    /// error says so under it, until the next keystroke
+    /// (components-contacts.md 5, Errors). The list loads again, so the
+    /// contact no longer shows.
+    pub fn refuse(
+        &mut self,
+        name: &str,
+        place: Place,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let locale = settings::locale(cx);
+        self.set_value(Value::None, window, cx);
+        self.error = Some(refusal(locale, name));
+        let task = self
+            .ws
+            .read(cx)
+            .db
+            .run(cx, move |store| store.contacts_visible(place));
+        self._load = cx.spawn(async move |picker, cx| {
+            if let Ok(visible) = task.await {
+                let _ = picker.update(cx, |picker, cx| {
+                    picker.visible = visible;
+                    cx.notify();
+                });
+            }
+        });
         cx.notify();
     }
 
@@ -504,7 +536,7 @@ impl ContactPicker {
                 .min_w(px(240.))
                 .w(px(self.anchor_width().max(300.)))
                 .bg(t.bg_overlay)
-                .border_1()
+                .border(px(1.))
                 .border_color(t.border_default)
                 .rounded(px(RADIUS_LG))
                 .shadow(vec![t.shadow_overlay()])
@@ -535,7 +567,7 @@ impl Render for ContactPicker {
             .gap(px(8.))
             .rounded(px(RADIUS_SM))
             .bg(t.bg_raised)
-            .border_1()
+            .border(px(1.))
             .border_color(if self.error.is_some() {
                 t.danger
             } else {
@@ -612,5 +644,26 @@ impl Render for ContactPicker {
             Mode::Popover => root = root.children(list),
         }
         root
+    }
+}
+
+/// The inline error of a store refusal: "Marie is no longer visible here.
+/// Choose again." (`contact.out_of_scope`).
+pub fn refusal(locale: crate::i18n::Locale, name: &str) -> String {
+    tr(locale, Key::ContactOutOfScope, &[("name", Arg::Text(name))])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::i18n::Locale;
+
+    #[test]
+    fn a_refusal_names_the_contact_in_both_languages() {
+        assert_eq!(
+            refusal(Locale::En, "Marie"),
+            "Marie is no longer visible here. Choose again."
+        );
+        assert!(refusal(Locale::Fr, "Marie").contains("Marie"));
     }
 }

@@ -11,12 +11,13 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::Instant;
 
+use crate::zoom::{self, px};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, AppContext as _, Bounds, Context, CursorStyle, DispatchPhase, Entity,
     FocusHandle, Focusable, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
     MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, SharedString, StatefulInteractiveElement,
-    Styled, Window, anchored, canvas, deferred, div, point, px,
+    Styled, Window, anchored, canvas, deferred, div, point,
 };
 
 use super::{Content, PageSlot, PageView, Shell};
@@ -123,10 +124,10 @@ impl Geometry {
 
 fn rect_of(bounds: Bounds<Pixels>) -> Rect {
     Rect::new(
-        f32::from(bounds.origin.x),
-        f32::from(bounds.origin.y),
-        f32::from(bounds.size.width),
-        f32::from(bounds.size.height),
+        zoom::eff(bounds.origin.x),
+        zoom::eff(bounds.origin.y),
+        zoom::eff(bounds.size.width),
+        zoom::eff(bounds.size.height),
     )
 }
 
@@ -258,6 +259,8 @@ pub(super) struct LayoutUi {
     pub menu_anchor: crate::menu::AnchorBounds,
     /// 4.8.10, step 1: the auto-hidden left sidebar shown over the page.
     pub left_overlay: bool,
+    /// 4.8.10, step 3: the auto-hidden right sidebar shown over the page.
+    pub right_overlay: bool,
     /// "Maximize focused area": that group fills the body until toggled.
     pub zoomed: Option<(Place, usize)>,
     /// The move the no-room toast offers to make with the right sidebar
@@ -281,6 +284,7 @@ impl LayoutUi {
             menu: None,
             menu_anchor: Default::default(),
             left_overlay: false,
+            right_overlay: false,
             zoomed: None,
             no_room: None,
             terminal_shown: false,
@@ -299,6 +303,7 @@ impl LayoutUi {
         layout_frame::Shown {
             zoomed: self.zoomed,
             left_overlay: self.left_overlay,
+            right_overlay: self.right_overlay,
         }
     }
 
@@ -317,6 +322,7 @@ pub(crate) fn view_name(view: ViewId) -> Key {
         ViewId::Chat => Key::ChatTitle,
         ViewId::AgentBrowser => Key::ViewAgentBrowser,
         ViewId::Sessions => Key::ViewSessions,
+        ViewId::FreeClaude => Key::ToolFree,
     }
 }
 
@@ -329,6 +335,7 @@ pub(crate) fn view_icon(view: ViewId) -> Icon {
         ViewId::Chat => Icon::MessageCircle,
         ViewId::AgentBrowser => Icon::Globe,
         ViewId::Sessions => Icon::Bot,
+        ViewId::FreeClaude => Icon::Terminal,
     }
 }
 
@@ -339,11 +346,8 @@ pub(crate) fn view_icon(view: ViewId) -> Icon {
 fn view_busy(bench: &super::Bench, view: ViewId, cx: &App) -> bool {
     match view {
         #[cfg(windows)]
-        ViewId::AgentBrowser => bench.browser.read(cx).busy(),
-        ViewId::Terminal => bench.active_project.is_some_and(|p| {
-            bench.dock.read(cx).session_state(p, cx)
-                == Some(acta_core::presence::SessionState::Waiting)
-        }),
+        ViewId::AgentBrowser => bench.browser.read(cx).busy(cx),
+        ViewId::Terminal => bench.dock.read(cx).any_waiting(cx),
         _ => false,
     }
 }
@@ -404,6 +408,7 @@ pub(crate) fn view_keys(
         ViewId::Knowledge => vec![m, "L"],
         ViewId::Terminal => vec![KeyName::Ctrl.label(locale, macos), "`"],
         ViewId::Chat => vec![m, shift, "H"],
+        ViewId::FreeClaude => vec![m, KeyName::Alt.label(locale, macos), "J"],
         // No key of its own (interaction.md 6.1): the toggle, the palette.
         ViewId::AgentBrowser | ViewId::Sessions => Vec::new(),
     }
@@ -609,18 +614,10 @@ impl Shell {
     /// The terminal starts the first time it becomes visible; the Inbox and
     /// Knowledge views exist while they are placed, for the active project.
     fn sync_tool_views(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let origin = self.origin(cx);
+        // Showing the Terminal view starts nothing: a page with no session
+        // shows "Start Claude Code here" (layout.md 4.5.1).
         let Some(bench) = self.bench() else { return };
-        let terminal = bench.layout.is_visible(ViewId::Terminal);
-        if terminal && !bench.ui.terminal_shown {
-            if let Some(origin) = origin {
-                let dock = bench.dock.clone();
-                dock.update(cx, |dock, cx| dock.show(origin, window, cx));
-                bench.ui.terminal_shown = true;
-            }
-        } else if !terminal {
-            bench.ui.terminal_shown = false;
-        }
+        bench.ui.terminal_shown = bench.layout.is_visible(ViewId::Terminal);
         self.sync_page_kind_views(window, cx);
     }
 
@@ -681,6 +678,7 @@ impl Shell {
         Some(match view {
             ViewId::Projects => bench.tree_focus.clone(),
             ViewId::Terminal => bench.dock.read(cx).focus_handle(cx),
+            ViewId::FreeClaude => bench.free_dock.read(cx).focus_handle(cx),
             ViewId::Sessions => bench.sessions.read(cx).focus_handle(cx),
             #[cfg(windows)]
             ViewId::Chat => bench.chat.read(cx).focus_handle(cx),
@@ -781,6 +779,7 @@ impl Shell {
         if let Some(bench) = self.bench() {
             bench.ui.zoomed = shown.zoomed;
             bench.ui.left_overlay = shown.left_overlay;
+            bench.ui.right_overlay = shown.right_overlay;
         }
         cx.notify();
     }
@@ -790,9 +789,17 @@ impl Shell {
     /// shows it over the page (4.8.10).
     pub(crate) fn toggle_area(&mut self, side: Side, window: &mut Window, cx: &mut Context<Self>) {
         let Some(bench) = self.bench() else { return };
-        if side == Side::Left && bench.layout.left.shown && self.left_auto_hidden(window) {
+        let (left_shown, right_shown) = (bench.layout.left.shown, bench.layout.right.shown);
+        if side == Side::Left && left_shown && self.left_auto_hidden(window) {
             if let Some(bench) = self.bench() {
                 bench.ui.left_overlay = !bench.ui.left_overlay;
+            }
+            cx.notify();
+            return;
+        }
+        if side == Side::Right && right_shown && self.right_auto_hidden(window) {
+            if let Some(bench) = self.bench() {
+                bench.ui.right_overlay = !bench.ui.right_overlay;
             }
             cx.notify();
             return;
@@ -819,6 +826,14 @@ impl Shell {
         let (w, h) = body_size(window);
         self.bench()
             .is_some_and(|b| layout_frame::frame(&b.layout, w, h).left_auto_hidden)
+    }
+
+    /// Whether the right sidebar is shown in the layout but has no room
+    /// (a zoomed window, 4.8.10 step 3).
+    pub(super) fn right_auto_hidden(&mut self, window: &Window) -> bool {
+        let (w, h) = body_size(window);
+        self.bench()
+            .is_some_and(|b| layout_frame::frame(&b.layout, w, h).right_auto_hidden)
     }
 
     /// A view action from a view menu, a tab or the palette (4.8.4, 4.8.7).
@@ -1105,6 +1120,7 @@ impl Shell {
         if let Some(bench) = self.bench() {
             bench.ui.zoomed = None;
             bench.ui.left_overlay = false;
+            bench.ui.right_overlay = false;
         }
         if self.change_layout(None, window, cx, |l| {
             l.reset(CHAT);
@@ -1306,7 +1322,8 @@ impl Shell {
         let side_stops = |side: Side, stops: &mut Vec<(Place, usize)>| {
             let shown = match side {
                 Side::Left => f.left.is_some() || bench.ui.left_overlay,
-                _ => f.side(side).is_some(),
+                Side::Right => f.right.is_some() || bench.ui.right_overlay,
+                Side::Bottom => f.bottom.is_some(),
             };
             if shown {
                 let n = bench.layout.side(side).groups.len();
@@ -1441,8 +1458,8 @@ impl Shell {
         if let Some(ui) = self.layout_ui() {
             ui.press = Some(Press {
                 dragged,
-                x: f32::from(event.position.x),
-                y: f32::from(event.position.y),
+                x: zoom::eff(event.position.x),
+                y: zoom::eff(event.position.y),
             });
         }
         cx.notify();
@@ -1454,7 +1471,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let (x, y) = (f32::from(event.position.x), f32::from(event.position.y));
+        let (x, y) = (zoom::eff(event.position.x), zoom::eff(event.position.y));
         let Some(bench) = self.bench() else { return };
         if let Some(press) = bench.ui.press {
             if event.pressed_button != Some(MouseButton::Left) {
@@ -1771,6 +1788,9 @@ impl Shell {
         if !f.left_auto_hidden {
             bench.ui.left_overlay = false;
         }
+        if !f.right_auto_hidden {
+            bench.ui.right_overlay = false;
+        }
         let zoomed = bench.ui.zoomed;
         self.sync_chat_visibility(&f, window, cx);
         let bulk = self.bulk_notice(cx);
@@ -1778,6 +1798,7 @@ impl Shell {
             return div().into_any_element();
         };
         let left_overlay = f.left_auto_hidden && bench.ui.left_overlay;
+        let right_overlay = f.right_auto_hidden && bench.ui.right_overlay;
         let body: AnyElement = if let Some((place, group)) = zoomed {
             let content = match place {
                 Place::Page => self.page_group(group, true, bulk, window, cx),
@@ -1857,7 +1878,35 @@ impl Shell {
                     .top_0()
                     .left_0()
                     .h_full()
-                    .border_r_1()
+                    .border_r(px(1.))
+                    .border_color(t.border_default)
+                    .shadow(vec![t.shadow_overlay()])
+                    .on_mouse_down_out(
+                        cx.listener(|shell, _, window, cx| shell.dismiss_sidebar(window, cx)),
+                    )
+                    .child(area),
+            )
+            .with_priority(1)
+            .into_any_element()
+        });
+        // Step 3 of 4.8.10, mirrored: the right sidebar over the page.
+        let right_over = right_overlay.then(|| {
+            let w = layout_frame::sidebar_width(
+                &self.bench().expect("workbench").layout,
+                Side::Right,
+                width,
+            )
+            .min(width - OVERLAY_GAP);
+            let area = self.side_area(Side::Right, w, &f, window, cx);
+            deferred(
+                div()
+                    .id("right-sidebar-overlay")
+                    .occlude()
+                    .absolute()
+                    .top_0()
+                    .right_0()
+                    .h_full()
+                    .border_l(px(1.))
                     .border_color(t.border_default)
                     .shadow(vec![t.shadow_overlay()])
                     .on_mouse_down_out(
@@ -1883,6 +1932,7 @@ impl Shell {
             .child(body_measure)
             .child(body)
             .children(overlay)
+            .children(right_over)
             .children(drag_layer)
             .children(menu)
             .child(pointer)
@@ -1918,7 +1968,7 @@ impl Shell {
                     if on_screen {
                         chat.show(window, cx)
                     } else {
-                        chat.hide(cx)
+                        chat.hide(window, cx)
                     }
                 });
             }
@@ -2101,7 +2151,7 @@ impl Shell {
             // room is the group's width less the padding and the buttons.
             // The view's own buttons, its menu, and the area's `minus`.
             let own = match active {
-                ViewId::Terminal => 1,
+                ViewId::Terminal | ViewId::FreeClaude => 2,
                 ViewId::Chat | ViewId::AgentBrowser => 2,
                 _ => 0,
             };
@@ -2196,7 +2246,7 @@ impl Shell {
         // the folded chevron.
         let available = {
             let own = match active {
-                ViewId::Terminal => 1,
+                ViewId::Terminal | ViewId::FreeClaude => 2,
                 ViewId::Chat | ViewId::AgentBrowser => 2,
                 _ => 0,
             };
@@ -2240,7 +2290,7 @@ impl Shell {
             .h(px(HEADER))
             .px(px(8.))
             .bg(t.bg_sunken)
-            .border_b_1()
+            .border_b(px(1.))
             .border_color(t.border_subtle)
             .when(single, |this| {
                 // A header whose group has one view drags that view.
@@ -2257,8 +2307,8 @@ impl Shell {
                     cx.stop_propagation();
                     shell.open_menu(
                         LayoutMenu::View(active),
-                        f32::from(e.position.x),
-                        f32::from(e.position.y),
+                        zoom::eff(e.position.x),
+                        zoom::eff(e.position.y),
                         cx,
                     )
                 }),
@@ -2411,8 +2461,8 @@ impl Shell {
                 cx.stop_propagation();
                 shell.open_menu(
                     LayoutMenu::View(view),
-                    f32::from(e.position.x),
-                    f32::from(e.position.y),
+                    zoom::eff(e.position.x),
+                    zoom::eff(e.position.y),
                     cx,
                 )
             }),
@@ -2474,14 +2524,12 @@ impl Shell {
                 let dock = bench.dock.clone();
                 dock.update(cx, |dock, cx| dock.header_context(available, cx))
             }
+            ViewId::FreeClaude => {
+                let dock = bench.free_dock.clone();
+                dock.update(cx, |dock, cx| dock.header_context(available, cx))
+            }
             #[cfg(windows)]
-            ViewId::Chat => Some(
-                type_scale::SMALL
-                    .el()
-                    .text_color(t.text_tertiary)
-                    .child("claude.ai")
-                    .into_any_element(),
-            ),
+            ViewId::Chat => bench.chat.read(cx).header_context(cx),
             #[cfg(windows)]
             ViewId::AgentBrowser => bench.browser.read(cx).header_context(cx),
             ViewId::Sessions => bench.sessions.read(cx).header_context(cx),
@@ -2522,6 +2570,10 @@ impl Shell {
                 let dock = bench.dock.clone();
                 Some(dock.update(cx, |dock, cx| dock.header_buttons(cx)))
             }
+            ViewId::FreeClaude => {
+                let dock = bench.free_dock.clone();
+                Some(dock.update(cx, |dock, cx| dock.header_buttons(cx)))
+            }
             #[cfg(windows)]
             ViewId::Chat => {
                 let can_split = bench.layout.can_split_off(ViewId::Chat);
@@ -2559,6 +2611,7 @@ impl Shell {
                 self.projects_view(window, cx)
             }
             ViewId::Terminal => bench.dock.clone().into_any_element(),
+            ViewId::FreeClaude => bench.free_dock.clone().into_any_element(),
             ViewId::Sessions => bench.sessions.clone().into_any_element(),
             #[cfg(windows)]
             ViewId::Chat => bench.chat.clone().into_any_element(),
@@ -2754,7 +2807,7 @@ impl Shell {
             .h(px(VIEW_STRIP))
             .px(px(8.))
             .bg(t.bg_sunken)
-            .border_b_1()
+            .border_b(px(1.))
             .border_color(t.border_subtle)
             .children(context)
             .child(div().flex_1())
@@ -2791,7 +2844,7 @@ impl Shell {
             .w_full()
             .overflow_x_scroll()
             .bg(t.bg_sunken)
-            .border_b_1()
+            .border_b(px(1.))
             .border_color(t.border_subtle);
         let ws = bench.ws.clone();
         for (i, tab) in g.tabs.iter().enumerate() {
@@ -2899,7 +2952,7 @@ impl Shell {
                 .on_mouse_down(
                     MouseButton::Right,
                     cx.listener(move |shell, e: &MouseDownEvent, _, cx| {
-                        let (x, y) = (f32::from(e.position.x), f32::from(e.position.y));
+                        let (x, y) = (zoom::eff(e.position.x), zoom::eff(e.position.y));
                         match (tab_v, view_kind) {
                             (Tab::View(v), _) => shell.open_menu(LayoutMenu::View(v), x, y, cx),
                             (Tab::Page(id), Some(v)) => {
@@ -3105,7 +3158,7 @@ impl Shell {
                 .w(px((r.w - 8.).max(0.)))
                 .h(px((r.h - 8.).max(0.)))
                 .rounded(px(RADIUS_MD))
-                .border_2()
+                .border(px(2.))
                 .border_color(t.accent)
                 .bg(t.fill_hover)
         });
@@ -3127,7 +3180,7 @@ impl Shell {
             .h(px(24.))
             .px(px(8.))
             .bg(t.bg_overlay)
-            .border_1()
+            .border(px(1.))
             .border_color(t.border_default)
             .rounded(px(RADIUS_SM))
             .shadow(vec![t.shadow_overlay()])
@@ -3589,7 +3642,7 @@ impl Shell {
         match event {
             PageEvent::Open(route) => self.navigate(*route, true, window, cx),
             PageEvent::NewKb(draft) => self.new_kb_draft(*draft, window, cx),
-            PageEvent::ShowTerminal(project) => self.show_session_terminal(*project, window, cx),
+            PageEvent::ShowTerminal(owner) => self.show_page_sessions(*owner, window, cx),
             PageEvent::Pick(picker, on_pick) => {
                 self.open_picker(picker.clone(), on_pick.clone(), window, cx)
             }
@@ -3597,8 +3650,12 @@ impl Shell {
             PageEvent::Confirm(confirm) => {
                 self.open_dialog(crate::dialogs::Kind::Confirm(confirm.clone()), window, cx)
             }
-            PageEvent::StaleMemories(project) => self.open_stale_memories(*project, window, cx),
+            PageEvent::KbChip(project, chip, kind) => {
+                self.open_kb_chip(*project, *chip, *kind, window, cx)
+            }
+            PageEvent::EditKb(id) => self.edit_kb(*id, window, cx),
             PageEvent::LateAnswers(scope) => self.open_late_answers(*scope, window, cx),
+            PageEvent::OpenEntry(topic, entry) => self.open_entry(*topic, *entry, window, cx),
             PageEvent::Saved(_) | PageEvent::Located(_) => cx.notify(),
         }
     }
@@ -3692,8 +3749,8 @@ pub(super) fn menu_row(
 pub(super) fn body_size(window: &Window) -> (f32, f32) {
     let viewport = window.viewport_size();
     (
-        f32::from(viewport.width),
-        f32::from(viewport.height) - crate::titlebar::HEIGHT - super::STATUS_BAR_HEIGHT,
+        zoom::eff(viewport.width),
+        zoom::eff(viewport.height) - crate::titlebar::HEIGHT - super::STATUS_BAR_HEIGHT,
     )
 }
 

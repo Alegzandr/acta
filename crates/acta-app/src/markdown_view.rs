@@ -6,9 +6,10 @@
 
 use std::sync::Arc;
 
+use crate::zoom::px;
 use gpui_kit::component::text::{TextView, TextViewStyle};
 use gpui_kit::{
-    Div, ElementId, HighlightStyle, ParentElement, SharedString, StyleRefinement, Styled, px, rems,
+    Div, ElementId, HighlightStyle, ParentElement, SharedString, StyleRefinement, Styled, rems,
 };
 
 use crate::theme::Tokens;

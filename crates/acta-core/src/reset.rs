@@ -66,6 +66,35 @@ impl std::fmt::Display for ResetError {
 
 impl std::error::Error for ResetError {}
 
+/// What a reset erases, counted for its confirmation (trash included).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ResetCounts {
+    pub projects: u64,
+    pub topics: u64,
+    pub notes: u64,
+    pub documents: u64,
+    pub memories: u64,
+    pub files: u64,
+    pub contacts: u64,
+}
+
+/// The counts of [`ResetCounts`].
+pub fn counts(store: &Store) -> crate::Result<ResetCounts> {
+    let n = |sql: &str| -> crate::Result<u64> {
+        let v: i64 = store.conn.query_row(sql, [], |r| r.get(0))?;
+        Ok(v.max(0) as u64)
+    };
+    Ok(ResetCounts {
+        projects: n("SELECT count(*) FROM projects")?,
+        topics: n("SELECT count(*) FROM topics")?,
+        notes: n("SELECT count(*) FROM notes")?,
+        documents: n("SELECT count(*) FROM kb_entries WHERE kind = 'document'")?,
+        memories: n("SELECT count(*) FROM kb_entries WHERE kind = 'memory'")?,
+        files: n("SELECT count(*) FROM attachments")?,
+        contacts: n("SELECT count(*) FROM contacts")?,
+    })
+}
+
 /// Step 1: takes Acta's entries out of every folder's Claude Code settings
 /// and records the request. Returns the folders restored and those left
 /// as they were (not on this computer). The caller restarts the app.
@@ -239,6 +268,8 @@ mod tests {
         let settings = repo.path().join(crate::claude_settings::LOCAL_SETTINGS);
         assert!(settings.exists());
 
+        let c = counts(&ts.store).unwrap();
+        assert_eq!((c.projects, c.topics, c.files), (1, 0, 0));
         let (restored, kept) = request(&mut ts.store, ResetOptions::default()).unwrap();
         assert_eq!((restored, kept), (1, 0));
         assert!(!settings.exists(), "the file Acta created is gone");

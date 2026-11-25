@@ -11,6 +11,7 @@
 
 use std::path::PathBuf;
 
+use crate::zoom::{self, px};
 use acta_core::date::{Date, DueState, due_state};
 use acta_core::model::{
     AttachOwner, Author, Entry, EntryId, EntryKind, KbId, KbKind, KbSummary, Owner, Record, Status,
@@ -22,7 +23,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, AppContext, ClipboardItem, Context, Entity, EventEmitter, FocusHandle,
     Focusable, InteractiveElement, IntoElement, KeyDownEvent, ParentElement, PathPromptOptions,
-    Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Task, Window, div, px,
+    Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Task, Window, div,
 };
 
 use crate::due::{self, Outcome, Tone};
@@ -47,6 +48,10 @@ mod folders;
 pub mod questions;
 
 /// What a page asks the window to do.
+/// A knowledge row drawn: its entry, revision, owner, kind and state (the
+/// palette's target).
+type KbRowId = (KbId, i64, Owner, KbKind, acta_core::model::KbState);
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum PageEvent {
     Open(Route),
@@ -58,8 +63,9 @@ pub enum PageEvent {
     /// The page learned which project it belongs to (a document opened by
     /// id): the active project follows it.
     Located(acta_core::model::ProjectId),
-    /// "Show terminal" on the Claude Code line: the project's terminal.
-    ShowTerminal(acta_core::model::ProjectId),
+    /// "Show terminal" on the Claude Code line: the page's own session
+    /// (layout.md 4.5.1).
+    ShowTerminal(Owner),
     /// Show the palette as a picker of these rows; the chosen one is
     /// handed to the page's callback.
     Pick(crate::palette::Picker, crate::palette::OnPick),
@@ -69,12 +75,22 @@ pub enum PageEvent {
     /// "File with Claude Code" (screens.md 8.2): run the triage command in
     /// the project's terminal.
     Triage(acta_core::model::ProjectId),
-    /// The Overview's memory line: the knowledge page with the chip "Not
-    /// updated for 90 days".
-    StaleMemories(acta_core::model::ProjectId),
+    /// The knowledge page with a chip: the Overview's memory line ("To
+    /// check", Kind: Memories), or the palette.
+    KbChip(
+        acta_core::model::ProjectId,
+        crate::kb_model::Chip,
+        Option<KbKind>,
+    ),
+    /// A merge's survivor opens in its editor (components-knowledge.md 5,
+    /// Merge).
+    EditKb(KbId),
     /// The Overview's late answers: the Questions page of this scope with
     /// Overdue selected.
     LateAnswers(Owner),
+    /// "Logged as a decision": the topic opens with that entry focused
+    /// (components-questions.md 5, Meta line).
+    OpenEntry(TopicId, EntryId),
 }
 
 gpui_kit::actions!(
@@ -126,7 +142,17 @@ pub struct RecordPage {
     table_filter: table::Filter,
     table_sort: Option<table::Sort>,
     kb_open: Option<KbId>,
+    /// The unfolded memory's notice and body, once loaded.
+    kb_open_q: Option<crate::kbq_ui::EntryQuality>,
     kb_inherited_open: bool,
+    /// Memory quality of the section's rows (ADR 0015): the store's flags
+    /// with the page, git's later; one focus handle and entry per row
+    /// drawn (`V`, the palette's target).
+    kb_flags: crate::kbq_model::FlagSet,
+    kb_row_focus: std::cell::RefCell<Vec<FocusHandle>>,
+    kb_row_ids: std::cell::RefCell<Vec<KbRowId>>,
+    _kb_git: Task<()>,
+    _kb_open: Task<()>,
     id_copied: bool,
     /// The pointer is over the properties block: its add chips show.
     props_hover: bool,
@@ -158,6 +184,15 @@ pub struct RecordPage {
     table_due: Option<TableDue>,
     /// The Questions section and the Report to row.
     q: questions::QuestionUi,
+    /// The blocks `Up` / `Down` step through (interaction.md 6.1), in the
+    /// order last drawn, and their focus handles.
+    block_order: Vec<record::Block>,
+    block_focus: std::collections::HashMap<record::Block, FocusHandle>,
+    /// A block to bring into view once laid out (stepped to, or the entry
+    /// "Logged as a decision" opened).
+    reveal_block: std::rc::Rc<std::cell::Cell<Option<record::Block>>>,
+    /// An entry to focus once the timeline is loaded.
+    pending_entry: Option<EntryId>,
     _load: Task<()>,
     _subs: Vec<Subscription>,
 }
@@ -254,7 +289,13 @@ impl RecordPage {
             table_filter: table::Filter::Open,
             table_sort: None,
             kb_open: None,
+            kb_open_q: None,
             kb_inherited_open: false,
+            kb_flags: Default::default(),
+            kb_row_focus: Default::default(),
+            kb_row_ids: Default::default(),
+            _kb_git: Task::ready(()),
+            _kb_open: Task::ready(()),
             id_copied: false,
             props_hover: false,
             table_height: Default::default(),
@@ -273,6 +314,10 @@ impl RecordPage {
             row_ids: Default::default(),
             table_due: None,
             q: questions::QuestionUi::default(),
+            block_order: Vec::new(),
+            block_focus: Default::default(),
+            reveal_block: Default::default(),
+            pending_entry: None,
             _load: Task::ready(()),
             _subs: subs,
         };
@@ -318,8 +363,14 @@ impl RecordPage {
                         if let Some(old) = &page.data {
                             data.folders.missing = old.folders.missing.clone();
                         }
+                        let ids: Vec<KbId> = data.kb_flags.iter().map(|(id, _)| *id).collect();
+                        page.kb_flags.set_store(data.kb_flags.clone());
                         page.data = Some(data);
                         page.gone = false;
+                        page.read_kb_git(ids, cx);
+                        if let Some(id) = page.kb_open {
+                            page.load_kb_open(id, cx);
+                        }
                     }
                     // Deleted (here or by another process): stay readable
                     // with the notice, keep the last data.
@@ -557,7 +608,11 @@ impl RecordPage {
         };
         match filter {
             OverviewFilter::Inbox => cx.emit(PageEvent::Open(Route::Inbox(project))),
-            OverviewFilter::StaleMemories => cx.emit(PageEvent::StaleMemories(project)),
+            OverviewFilter::StaleMemories => cx.emit(PageEvent::KbChip(
+                project,
+                crate::kb_model::Chip::ToCheck,
+                Some(KbKind::Memory),
+            )),
             OverviewFilter::Overdue => {
                 self.chip = None;
                 self.table_filter = table::Filter::Overdue;
@@ -1018,6 +1073,128 @@ impl RecordPage {
 
     // ---- keys ----
 
+    // ---- blocks (interaction.md 6.1) ----
+
+    /// "Logged as a decision": the entry is focused and brought into view,
+    /// now or once the timeline is loaded. An entry the timeline does not
+    /// show (another filter) shows it with every type first.
+    pub fn focus_entry(&mut self, entry: EntryId, window: &mut Window, cx: &mut Context<Self>) {
+        let block = record::Block::Entry(entry);
+        let loaded = self
+            .data
+            .as_ref()
+            .is_some_and(|d| d.entries.iter().any(|e| e.id == entry));
+        if loaded && self.block_order.contains(&block) {
+            self.focus_block(block, window, cx);
+            return;
+        }
+        if self.data.is_some() && self.filter != EntryFilterKind::All {
+            self.filter = EntryFilterKind::All;
+            self.reload(cx);
+        }
+        self.pending_entry = Some(entry);
+        cx.notify();
+    }
+
+    /// The handle of a block, made the first time it is drawn.
+    fn block_handle(&mut self, block: record::Block, cx: &mut Context<Self>) -> FocusHandle {
+        self.block_focus
+            .entry(block)
+            .or_insert_with(|| cx.focus_handle())
+            .clone()
+    }
+
+    /// The block with the keyboard.
+    fn focused_block(&self, window: &Window) -> Option<record::Block> {
+        self.block_order.iter().copied().find(|b| {
+            self.block_focus
+                .get(b)
+                .is_some_and(|h| h.is_focused(window))
+        })
+    }
+
+    /// Focus a block and scroll it into view by the least amount.
+    pub(super) fn focus_block(
+        &mut self,
+        block: record::Block,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let handle = self.block_handle(block, cx);
+        window.focus(&handle, cx);
+        self.reveal_block.set(Some(block));
+        cx.notify();
+    }
+
+    /// A block's element: its focus handle, the ring for the keyboard, and
+    /// the measure that brings it into view once stepped to.
+    /// The handles are made before drawing, in `render`.
+    pub(super) fn block_el(
+        &self,
+        block: record::Block,
+        el: gpui_kit::Stateful<gpui_kit::Div>,
+        t: &Tokens,
+    ) -> gpui_kit::Stateful<gpui_kit::Div> {
+        let handle = self.block_focus.get(&block).cloned();
+        let reveal = std::rc::Rc::clone(&self.reveal_block);
+        let scroll = self.scroll.clone();
+        ui::focusable(el, t, false)
+            .when_some(handle, |this, h| this.track_focus(&h))
+            .relative()
+            .child(ui::measure(move |bounds, window| {
+                if reveal.get() == Some(block) {
+                    reveal.set(None);
+                    ui::scroll_into_view(&scroll, bounds, ui::Reveal::Whole);
+                    window.refresh();
+                }
+            }))
+    }
+
+    /// `Up` / `Down` between blocks, `Enter` into the focused one. Whether
+    /// the key was taken.
+    fn block_keys(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let k = &event.keystroke;
+        if k.modifiers.modified() {
+            return false;
+        }
+        let at = self.focused_block(window);
+        let on_page = self.focus.is_focused(window);
+        match k.key.as_str() {
+            "up" | "down" if at.is_some() || on_page => {
+                if let Some(to) = record::step_block(&self.block_order, at, k.key == "up") {
+                    self.focus_block(to, window, cx);
+                }
+            }
+            "enter" => match at {
+                Some(record::Block::Title) => self.edit_title(window, cx),
+                Some(record::Block::State) => self.open_editor(false, window, cx),
+                Some(record::Block::Description) => self.open_editor(true, window, cx),
+                Some(record::Block::Questions) => self.enter_questions(window, cx),
+                Some(record::Block::Folders) => self.enter_folders(window, cx),
+                Some(record::Block::Entry(id)) => {
+                    let entry = self
+                        .data
+                        .as_ref()
+                        .and_then(|d| d.entries.iter().find(|e| e.id == id).cloned());
+                    match entry {
+                        Some(entry) => self.start_entry_edit(entry, window, cx),
+                        None => return false,
+                    }
+                }
+                None => return false,
+            },
+            _ => return false,
+        }
+        cx.stop_propagation();
+        cx.notify();
+        true
+    }
+
     fn on_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(menu) = self.entry_menu.as_mut() {
             if event.keystroke.modifiers.modified() {
@@ -1039,6 +1216,19 @@ impl RecordPage {
             return;
         }
         if self.folder_keys(event, window, cx) {
+            return;
+        }
+        if event.keystroke.key == "escape" && self.cancel_q_drag(cx) {
+            cx.stop_propagation();
+            return;
+        }
+        if self.status_menu.is_none()
+            && self.focused_block(window) == Some(record::Block::Folders)
+            && self.folder_row_keys(event, window, cx)
+        {
+            return;
+        }
+        if self.status_menu.is_none() && self.block_keys(event, window, cx) {
             return;
         }
         let Some(highlight) = self.status_menu else {
@@ -1116,7 +1306,7 @@ impl RecordPage {
             // input's default while editing).
             return type_scale::TITLE
                 .el()
-                .border_b_1()
+                .border_b(px(1.))
                 .border_color(t.border_strong)
                 .on_action(
                     cx.listener(|page, _: &Escape, window, cx| page.cancel_title(window, cx)),
@@ -1124,13 +1314,15 @@ impl RecordPage {
                 .child(ui::role_input(Input::new(state), type_scale::TITLE))
                 .into_any_element();
         }
-        type_scale::TITLE
+        let title = type_scale::TITLE
             .el()
             .id("page-title")
             .text_color(t.text_primary)
             .cursor_text()
+            .rounded(px(RADIUS_SM))
             .on_click(cx.listener(|page, _, window, cx| page.edit_title(window, cx)))
-            .child(data.title.clone())
+            .child(data.title.clone());
+        self.block_el(record::Block::Title, title, t)
             .into_any_element()
     }
 
@@ -1214,9 +1406,11 @@ impl RecordPage {
         ));
         let labels: Vec<&str> = rows.iter().map(|(l, _)| l.as_str()).collect();
         let width = ui::label_width(&labels, cx);
-        // The add chips: on one line under the last row, only while the
-        // pointer is over the block or the picker they open is open, so the
-        // page never moves under a reader who is not pointing at it.
+        // The add chips (components-records.md 5): only while the pointer
+        // is over the block (its band included) or the picker they open is
+        // open, drawn in the 24 band under the meta line, which is empty at
+        // rest: they never move the page (components.md 5, revealed
+        // controls).
         let report_chip = !matches!(self.owner, Owner::Project(_)) && data.report.to.is_none();
         let wanted = self.props_hover
             || self.due_picker.is_some()
@@ -1239,8 +1433,8 @@ impl RecordPage {
                 rows.into_iter()
                     .map(|(label, value)| ui::property(label, width, value, t)),
             )
-            .children(chips)
             .child(self.render_meta(data, locale, t, cx))
+            .child(add_band(chips, width))
             .into_any_element()
     }
 
@@ -1282,7 +1476,7 @@ impl RecordPage {
             .flex_row()
             .items_center()
             .gap(px(8.))
-            .h(px(28.))
+            .h(px(24.))
             .when(due, |this| this.child(chip).children(picker))
             .when(report, |this| {
                 this.child(self.render_report_chip(locale, t, cx))
@@ -1497,7 +1691,7 @@ impl RecordPage {
         } else {
             let state = topic.map(|t| t.state.clone()).unwrap_or_default();
             if state.trim().is_empty() {
-                type_scale::READING
+                type_scale::UI
                     .el()
                     .text_color(t.text_tertiary)
                     .child(text(locale, Key::StatePlaceholder))
@@ -1506,7 +1700,7 @@ impl RecordPage {
                 markdown_view::short("state-body", state, t).into_any_element()
             }
         };
-        div()
+        let el = div()
             .id("current-state")
             .flex()
             .flex_col()
@@ -1515,7 +1709,7 @@ impl RecordPage {
             .p(px(16.))
             .rounded(px(RADIUS_LG))
             .bg(t.bg_raised)
-            .border_1()
+            .border(px(1.))
             .border_color(t.border_subtle)
             .when(self.state_edit.is_none(), |this| {
                 this.cursor_text().on_click(
@@ -1532,7 +1726,11 @@ impl RecordPage {
                         meta.map(|m| type_scale::SMALL.el().text_color(t.text_tertiary).child(m)),
                     ),
             )
-            .child(body)
+            .child(body);
+        if self.state_edit.is_some() {
+            return el.into_any_element();
+        }
+        self.block_el(record::Block::State, el, t)
             .into_any_element()
     }
 
@@ -1569,7 +1767,7 @@ impl RecordPage {
                 Owner::Epic(_) => Key::DescriptionPlaceholderEpic,
                 Owner::Project(_) => Key::DescriptionPlaceholderProject,
             };
-            type_scale::READING
+            type_scale::UI
                 .el()
                 .text_color(t.text_tertiary)
                 .child(text(locale, placeholder))
@@ -1577,7 +1775,7 @@ impl RecordPage {
         } else {
             markdown_view::short("description-body", data.description.clone(), t).into_any_element()
         };
-        div()
+        let el = div()
             .id("description")
             .flex()
             .flex_col()
@@ -1595,8 +1793,78 @@ impl RecordPage {
                     .child(ui::section_header(text(locale, Key::SectionDescription), t)),
             )
             .child(body)
-            .children(strip.map(|s| div().mt(px(4.)).child(s)))
+            .children(strip.map(|s| div().mt(px(4.)).child(s)));
+        if self.description_edit.is_some() {
+            return el.into_any_element();
+        }
+        self.block_el(record::Block::Description, el, t)
             .into_any_element()
+    }
+
+    /// Git's flags of the section's entries, read off the UI thread.
+    fn read_kb_git(&mut self, ids: Vec<KbId>, cx: &mut Context<Self>) {
+        let task = crate::kbq_ui::list_git(&self.ws, ids, cx);
+        self._kb_git = cx.spawn(async move |page, cx| {
+            let flags = task.await;
+            let _ = page.update(cx, |page, cx| {
+                page.kb_flags.set_git(flags);
+                cx.notify();
+            });
+        });
+    }
+
+    /// The unfolded memory's notice and body.
+    fn load_kb_open(&mut self, id: KbId, cx: &mut Context<Self>) {
+        let task = crate::kbq_ui::load_entry(&self.ws, id, cx);
+        self._kb_open = cx.spawn(async move |page, cx| {
+            if let Ok(q) = task.await {
+                let _ = page.update(cx, |page, cx| {
+                    if page.kb_open == Some(q.entry.id) {
+                        page.kb_open_q = Some(q);
+                    }
+                    cx.notify();
+                });
+            }
+        });
+    }
+
+    /// The focused knowledge row's entry, for the palette.
+    pub fn kb_context(&self, window: &Window) -> Option<crate::commands::FocusedKb> {
+        let i = self
+            .kb_row_focus
+            .borrow()
+            .iter()
+            .position(|h| h.is_focused(window))?;
+        let (id, rev, owner, kind, state) = *self.kb_row_ids.borrow().get(i)?;
+        let reasons = self.kb_flags.reasons(id);
+        Some(crate::commands::FocusedKb {
+            id,
+            rev,
+            owner,
+            memory: kind == KbKind::Memory,
+            live: state == acta_core::model::KbState::Live,
+            conflict: reasons.iter().find_map(|r| match r {
+                crate::kbq_model::Reason::Conflict(x) => Some(*x),
+                _ => None,
+            }),
+            duplicate: reasons.iter().find_map(|r| match r {
+                crate::kbq_model::Reason::Duplicate(x) => Some(*x),
+                _ => None,
+            }),
+        })
+    }
+
+    /// "Mark as still true" on a row: its mark goes at once.
+    pub fn verify_kb(&mut self, id: KbId, cx: &mut Context<Self>) {
+        let owner = self
+            .kb_row_ids
+            .borrow()
+            .iter()
+            .find(|r| r.0 == id)
+            .map(|r| r.2);
+        self.kb_flags.mark_verified(id);
+        crate::kbq_ui::verify(&self.ws, id, owner, cx);
+        cx.notify();
     }
 
     fn render_kb_row(
@@ -1611,58 +1879,67 @@ impl RecordPage {
         let kind = entry.kind;
         let open = self.kb_open == Some(id);
         let unread = self.ws.read(cx).is_unread(acta_core::model::Record::Kb(id));
-        let row = crate::kb_page::kb_row(entry, None, unread, index, locale, t).on_click(
-            cx.listener(move |page, _, _, cx| match kind {
+        let reasons = self.kb_flags.reasons(id);
+        let signal = crate::kb_page::Signal::of(unread, &reasons, locale);
+        let handle = {
+            let mut focus = self.kb_row_focus.borrow_mut();
+            while focus.len() <= index {
+                focus.push(cx.focus_handle());
+            }
+            focus[index].clone()
+        };
+        {
+            let mut ids = self.kb_row_ids.borrow_mut();
+            ids.truncate(index);
+            ids.push((id, entry.rev, entry.owner, kind, entry.state));
+        }
+        let row = crate::kb_page::kb_row(entry, None, signal, false, index, locale, t)
+            .track_focus(&handle)
+            .on_key_down(
+                cx.listener(move |page, event: &gpui_kit::KeyDownEvent, _, cx| {
+                    // `V`: Mark as still true (components-knowledge.md 5).
+                    if !event.keystroke.modifiers.modified() && event.keystroke.key == "v" {
+                        page.verify_kb(id, cx);
+                        cx.stop_propagation();
+                    }
+                }),
+            )
+            .on_click(cx.listener(move |page, _, _, cx| match kind {
                 KbKind::Document => cx.emit(PageEvent::Open(Route::Kb(id))),
                 KbKind::Memory => {
                     page.kb_open = if page.kb_open == Some(id) {
+                        page.kb_open_q = None;
                         None
                     } else {
                         // Unfolded is shown: the dot goes.
                         page.ws.update(cx, |ws, cx| {
                             ws.mark_seen(acta_core::model::Record::Kb(id), cx)
                         });
+                        page.load_kb_open(id, cx);
                         Some(id)
                     };
                     cx.notify();
                 }
-            }),
-        );
+            }));
         if !open {
             return row.into_any_element();
         }
+        let ws = self.ws.clone();
+        let unfolded = crate::kb_page::unfolded(
+            id,
+            index,
+            self.kb_open_q.as_ref(),
+            &reasons,
+            &ws,
+            locale,
+            t,
+            cx,
+        );
         div()
             .flex()
             .flex_col()
             .child(row)
-            .child(
-                div()
-                    .pl(px(32.))
-                    .pb(px(8.))
-                    .flex()
-                    .flex_col()
-                    .gap(px(4.))
-                    .child(
-                        type_scale::READING
-                            .el()
-                            .text_color(t.text_primary)
-                            .child(entry.summary.clone()),
-                    )
-                    .child(
-                        div().flex().flex_row().gap(px(4.)).ml(px(-12.)).child(
-                            ui::button(
-                                ("kb-open", index),
-                                text(locale, Key::CommonOpen),
-                                Variant::Ghost,
-                                false,
-                                t,
-                            )
-                            .on_click(cx.listener(
-                                move |_, _, _, cx| cx.emit(PageEvent::Open(Route::Kb(id))),
-                            )),
-                        ),
-                    ),
-            )
+            .child(unfolded)
             .into_any_element()
     }
 
@@ -1867,9 +2144,9 @@ impl RecordPage {
         // system events alone is empty too.
         if shown.iter().all(|e| e.kind == EntryKind::System) {
             list = list.child(
-                type_scale::READING
+                type_scale::UI
                     .el()
-                    .text_color(t.text_secondary)
+                    .text_color(t.text_tertiary)
                     .child(text(locale, Key::TimelineEmpty)),
             );
         }
@@ -2074,7 +2351,20 @@ impl RecordPage {
             .child(header)
             .child(body);
         let entry_for_keys = entry.clone();
+        let block = record::Block::Entry(entry.id);
+        let handle = self.block_focus.get(&block).cloned();
+        let reveal = std::rc::Rc::clone(&self.reveal_block);
+        let scroll = self.scroll.clone();
         ui::focusable(div().id(("entry-row", index)), t, false)
+            .when_some(handle, |this, h| this.track_focus(&h))
+            .relative()
+            .child(ui::measure(move |bounds, window| {
+                if reveal.get() == Some(block) {
+                    reveal.set(None);
+                    ui::scroll_into_view(&scroll, bounds, ui::Reveal::Whole);
+                    window.refresh();
+                }
+            }))
             .on_key_down(cx.listener(move |page, event: &KeyDownEvent, window, cx| {
                 // Shift+F10 or the context-menu key: the entry menu.
                 let k = &event.keystroke;
@@ -2098,7 +2388,7 @@ impl RecordPage {
                     })
                     .py(px(12.))
                     .rounded(px(RADIUS_LG))
-                    .border_1()
+                    .border(px(1.))
                     .border_color(t.border_default)
             })
             .child(ui::author_mark(entry.author, human, t))
@@ -2243,7 +2533,7 @@ impl RecordPage {
             .mx(px(-8.))
             .mt(px(8.))
             .text_color(t.text_tertiary)
-            .border_b_1()
+            .border_b(px(1.))
             .border_color(t.border_subtle)
             .child(header_cell(
                 "th-status",
@@ -2543,7 +2833,7 @@ impl RecordPage {
             .relative()
             .min_h(px(self.table_floor))
             .child(ui::measure(move |bounds, _| {
-                height.set(f32::from(bounds.size.height));
+                height.set(zoom::eff(bounds.size.height));
             }));
         div()
             .id("topic-table")
@@ -3015,7 +3305,7 @@ impl RecordPage {
                             .text_color(t.text_primary)
                             .child(tr(
                                 locale,
-                                Key::OverviewMemories,
+                                Key::OverviewToCheck,
                                 &[("n", Arg::Count(o.stale_memories as u64))],
                             )),
                     );
@@ -3092,11 +3382,11 @@ impl RecordPage {
                     .child(text(locale, Key::TopicEmptyHeading)),
             )
             .child(
-                type_scale::READING
+                type_scale::UI
                     .el()
                     .mt(px(8.))
                     .max_w(px(480.))
-                    .text_color(t.text_secondary)
+                    .text_color(t.text_tertiary)
                     .child(text(locale, Key::TopicEmptyProject)),
             )
             .child(
@@ -3256,7 +3546,12 @@ impl RecordPage {
             .unwrap_or_default();
         let in_acta = on.iter().find_map(|s| {
             let token = s.launch.as_deref()?;
-            terminals.iter().find(|(t, _)| t == token).map(|(_, p)| *p)
+            terminals
+                .iter()
+                .find(|a| a.token == token)
+                .map(|a| a.key.holder)
+                .filter(|h| *h == crate::tools_model::Holder::Page(self.owner))
+                .map(|_| self.owner)
         });
         Some(
             div()
@@ -3264,7 +3559,8 @@ impl RecordPage {
                 .flex_row()
                 .items_center()
                 .gap(px(8.))
-                .mt(px(8.))
+                // Under the add chips' band (components-records.md 5).
+                .mt(px(ADD_BAND + 8.))
                 .min_w_0()
                 .child(icon(
                     Icon::Bot,
@@ -3281,7 +3577,7 @@ impl RecordPage {
                         .tooltip(ui::tip(tip))
                         .child(crate::sessions::here_text(locale, here)),
                 )
-                .when_some(in_acta, |this, project| {
+                .when_some(in_acta, |this, owner| {
                     this.child(
                         ui::button(
                             "claude-show-terminal",
@@ -3292,9 +3588,7 @@ impl RecordPage {
                         )
                         .h(px(24.))
                         .on_click(
-                            cx.listener(move |_, _, _, cx| {
-                                cx.emit(PageEvent::ShowTerminal(project))
-                            }),
+                            cx.listener(move |_, _, _, cx| cx.emit(PageEvent::ShowTerminal(owner))),
                         ),
                     )
                 })
@@ -3531,6 +3825,8 @@ fn editor_box_with(
         .line_height(px(type_scale::READING.line()));
     if let Some(tray) = tray {
         textarea = textarea.on_paste(crate::attach_ui::on_paste(tray));
+        // The palette's "Attach files..." finds this editor's tray.
+        crate::attach_ui::pair(editor, tray, cx);
     }
     let strip = tray.and_then(|tray| tray.update(cx, |tray, cx| tray.render_strip(cx)));
     let button = tray.map(|tray| crate::attach_ui::attach_button("editor", tray, cx));
@@ -3539,7 +3835,7 @@ fn editor_box_with(
         .flex_col()
         .rounded(px(RADIUS_LG))
         .bg(t.bg_raised)
-        .border_2()
+        .border(px(2.))
         .border_color(t.focus_ring)
         .px(px(16.))
         .py(px(12.))
@@ -3610,6 +3906,26 @@ impl Render for RecordPage {
         let rows = self.data.as_ref().map_or(0, |d| d.all_topics().len());
         while self.row_focus.len() < rows {
             self.row_focus.push(cx.focus_handle());
+        }
+        // The blocks `Up` / `Down` step through, in reading order, each
+        // with its handle (made here: drawing takes `&self` in places).
+        self.folder_handles(cx);
+        if let Some(data) = &self.data {
+            let shown = record::timeline_entries(&data.entries);
+            let folders = data.folders.active().is_some();
+            self.block_order = record::blocks(self.topic().is_some(), folders, &shown);
+            for block in self.block_order.clone() {
+                self.block_handle(block, cx);
+            }
+            // "Logged as a decision" opened this page: its entry, once shown.
+            if let Some(entry) = self.pending_entry
+                && self.block_order.contains(&record::Block::Entry(entry))
+            {
+                self.pending_entry = None;
+                cx.on_next_frame(window, move |page, window, cx| {
+                    page.focus_block(record::Block::Entry(entry), window, cx)
+                });
+            }
         }
         let mut column = ui::column();
         if self.gone {
@@ -3702,6 +4018,24 @@ impl Render for RecordPage {
             .child(column)
     }
 }
+
+/// The 24 band under a properties block (components-records.md 5): part
+/// of the block for hover, empty at rest, and taken back from the space
+/// above the next section (`mb -24`), so showing the add chips in it,
+/// lined up with the values' column, moves nothing.
+pub fn add_band(chips: Option<AnyElement>, label_width: f32) -> gpui_kit::Div {
+    div()
+        .h(px(ADD_BAND))
+        .mb(px(-ADD_BAND))
+        .pl(px(label_width + 16.))
+        .flex()
+        .flex_row()
+        .items_center()
+        .children(chips)
+}
+
+/// The height of the add chips' band.
+pub const ADD_BAND: f32 = 24.;
 
 #[cfg(test)]
 mod tests {

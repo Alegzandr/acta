@@ -5,11 +5,12 @@
 
 use std::sync::Arc;
 
+use crate::zoom::px;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     App, Bounds, Context, InteractiveElement, IntoElement, MouseButton, ParentElement, Render,
     Styled, Subscription, Window, WindowBounds, WindowControlArea, WindowDecorations,
-    WindowOptions, div, img, px, relative, size,
+    WindowOptions, div, img, relative, size,
 };
 
 use crate::i18n::{Key, percent, text};
@@ -47,7 +48,11 @@ pub fn window_options(focus: bool, cx: &App) -> WindowOptions {
         titlebar: None,
         window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
             None,
-            size(px(SIZE.0), px(SIZE.1)),
+            // Logical px: the window takes the chosen zoom (layout.md 4.9).
+            size(
+                gpui_kit::px(SIZE.0 * crate::zoom::as_factor(settings::zoom(cx))),
+                gpui_kit::px(SIZE.1 * crate::zoom::as_factor(settings::zoom(cx))),
+            ),
             cx,
         ))),
         window_decorations: Some(WindowDecorations::Client),
@@ -60,7 +65,10 @@ pub fn window_options(focus: bool, cx: &App) -> WindowOptions {
 }
 
 impl Render for UpdaterWindow {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Every window takes the zoom, the updater included (layout.md 4.9).
+        crate::zoom::set_factor(crate::zoom::as_factor(settings::zoom(cx)));
+        window.set_rem_size(crate::zoom::rem_size());
         let t = cx.global::<Tokens>().clone();
         let locale = settings::locale(cx);
         let status = self.state.status();
@@ -80,7 +88,7 @@ impl Render for UpdaterWindow {
             .flex_col()
             .p(px(24.))
             .bg(t.bg_base)
-            .border_1()
+            .border(px(1.))
             .border_color(t.border_default)
             .rounded(px(RADIUS_XL))
             .text_color(t.text_primary)

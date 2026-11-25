@@ -67,15 +67,20 @@ fn a_backup_round_trips_with_its_files_and_holds_no_plaintext() {
     assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
 
     let back = ExportFile::read_backup(&path, &pass("correct horse battery")).unwrap();
-    assert_eq!(back, ts.store.export(None).unwrap());
+    let mut now = ts.store.export(None).unwrap();
+    // Only the export time differs from the export the backup holds.
+    now.exported_at = back.exported_at;
+    assert_eq!(back, now);
     assert_eq!(back.blobs.len(), 1);
 
     let mut other = test_support::open();
     let rep = other.store.import(&back, false).unwrap();
     assert_eq!(rep.attachments.created, 1);
     assert_eq!(rep.projects.created, 1);
+    let mut again = other.store.export(None).unwrap();
+    again.exported_at = back.exported_at;
     assert_eq!(
-        other.store.export(None).unwrap().to_json().unwrap(),
+        again.to_json().unwrap(),
         back.to_json().unwrap(),
         "export, import, export again: identical"
     );

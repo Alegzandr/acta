@@ -19,11 +19,12 @@
 //! - Linux: 36 x 36 controls when the window is client-decorated; with
 //!   server-side decorations this is a plain toolbar without controls.
 
+use crate::zoom::{self, px};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     Context, Decorations, Hsla, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
     MouseMoveEvent, ParentElement, PathBuilder, Pixels, Point, SharedString, Stateful,
-    StatefulInteractiveElement, Styled, Window, WindowControlArea, canvas, div, point, px,
+    StatefulInteractiveElement, Styled, Window, WindowControlArea, canvas, div, point,
 };
 
 use crate::i18n::{Key, KeyName, text};
@@ -359,7 +360,7 @@ pub fn render(
             cx,
         ));
 
-    let narrow = f32::from(window.viewport_size().width) < SEARCH_LABEL_MIN;
+    let narrow = zoom::eff(window.viewport_size().width) < SEARCH_LABEL_MIN;
     let search_group = "titlebar-search";
     let hover = tokens.fill_hover;
     let label_hover = tertiary_if_inactive(tokens.text_primary);
@@ -391,7 +392,7 @@ pub fn render(
     // 4.8.5: one toggle per view (the chat on Windows only, ADR 0009),
     // then the area toggles and the Layout menu. Right click on a view
     // toggle opens its view menu; on an area toggle, the Layout menu.
-    let menu_at = |e: &MouseDownEvent| (f32::from(e.position.x), f32::from(e.position.y) + 8.);
+    let menu_at = |e: &MouseDownEvent| (zoom::eff(e.position.x), zoom::eff(e.position.y) + 8.);
     let mut views = div().flex().flex_row().items_center().gap(px(4.));
     for view in crate::shell::views() {
         let name = text(locale, crate::shell::view_name(view));
@@ -502,7 +503,7 @@ pub fn render(
         .w_full()
         .h(px(HEIGHT))
         .bg(tokens.bg_sunken)
-        .border_b_1()
+        .border_b(px(1.))
         .border_color(tokens.border_subtle)
         .when(!bare, |this| this.child(leading))
         .when(bare && show_icon, |this| {

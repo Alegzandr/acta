@@ -5,12 +5,13 @@
 
 use std::rc::Rc;
 
+use crate::zoom::{self, px};
 use acta_core::model::{EpicId, Owner, ProjectId, Status};
 use gpui_kit::component::input::{Escape, Input, InputState};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, Context, Entity, Hsla, InteractiveElement, IntoElement, ParentElement,
-    ScrollHandle, SharedString, StatefulInteractiveElement, Styled, Window, div, point, px,
+    ScrollHandle, SharedString, StatefulInteractiveElement, Styled, Window, div, point,
 };
 
 use super::{
@@ -42,6 +43,34 @@ pub(super) struct TreeState {
     /// row's chevron folded its project).
     to_top: Option<RowKey>,
     hovered: bool,
+    /// A press on a project, epic or topic row, not yet a drag; and the
+    /// drag (components.md 5, Tree row, Drag to reorder).
+    press: Option<TreePress>,
+    drag: Option<TreeDrag>,
+    /// A drag just ended: the click its release makes on the dragged row
+    /// (dropped on its own place) opens nothing.
+    swallow_click: Option<RowKey>,
+}
+
+/// A press that becomes a drag after 4 of movement.
+#[derive(Clone, Copy, Debug)]
+struct TreePress {
+    dragged: tree::Dragged,
+    key: RowKey,
+    x: f32,
+    y: f32,
+}
+
+/// A row being dragged, with the pointer in window coordinates; for a
+/// topic, the epic it was in (a drag whose record another process moved
+/// or deleted ends as cancelled).
+#[derive(Clone, Copy, Debug)]
+struct TreeDrag {
+    dragged: tree::Dragged,
+    key: RowKey,
+    epic: Option<Option<EpicId>>,
+    x: f32,
+    y: f32,
 }
 
 impl TreeState {
@@ -75,6 +104,9 @@ struct Look {
     sticky: bool,
     /// The view's width, for the title tooltip (shown when truncated).
     width: f32,
+    /// The row being dragged (60%), and the row a drop would land on.
+    dragged: bool,
+    target: bool,
 }
 
 impl Shell {
@@ -100,7 +132,7 @@ impl Shell {
         // interaction.md 6.5, rule 2: rows that come and go above the
         // first row in view do not move the rows on screen.
         if let Some(old) = &state.cache {
-            let scroll_top = -f32::from(state.scroll.offset().y);
+            let scroll_top = -zoom::eff(state.scroll.offset().y);
             if let Some(top) = old
                 .layout
                 .anchor(&old.rows, scroll_top)
@@ -117,6 +149,209 @@ impl Shell {
             layout: layout.clone(),
         });
         (rows, layout)
+    }
+
+    // ---- dragging rows (components.md 5, Tree row) ----
+
+    fn tree_press(&mut self, row: &Row, event: &gpui_kit::MouseDownEvent, cx: &mut Context<Self>) {
+        let Some(bench) = self.bench() else { return };
+        bench.tree.swallow_click = None;
+        let dragged = tree::Dragged::of(&bench.ws.read(cx).projects, row);
+        bench.tree.press = dragged.map(|dragged| TreePress {
+            dragged,
+            key: row.key(),
+            x: zoom::eff(event.position.x),
+            y: zoom::eff(event.position.y),
+        });
+        // The next frame follows the pointer.
+        cx.notify();
+    }
+
+    fn tree_pointer_moved(&mut self, event: &gpui_kit::MouseMoveEvent, cx: &mut Context<Self>) {
+        let (x, y) = (zoom::eff(event.position.x), zoom::eff(event.position.y));
+        let Some(bench) = self.bench() else { return };
+        if let Some(press) = bench.tree.press {
+            if event.pressed_button != Some(gpui_kit::MouseButton::Left) {
+                bench.tree.press = None;
+                return;
+            }
+            if (x - press.x).hypot(y - press.y) < 4. {
+                return;
+            }
+            bench.tree.press = None;
+            bench.tree_menu = None;
+            let epic = match press.dragged {
+                tree::Dragged::Topic(_, id) => {
+                    tree::locate_topic(&bench.ws.read(cx).projects, id).map(|l| l.epic.map(|e| e.0))
+                }
+                _ => None,
+            };
+            bench.tree.drag = Some(TreeDrag {
+                dragged: press.dragged,
+                key: press.key,
+                epic,
+                x,
+                y,
+            });
+        }
+        if let Some(drag) = bench.tree.drag.as_mut() {
+            drag.x = x;
+            drag.y = y;
+            cx.notify();
+        }
+    }
+
+    fn tree_pointer_released(&mut self, cx: &mut Context<Self>) {
+        let Some(bench) = self.bench() else { return };
+        bench.tree.press = None;
+        if bench.tree.drag.is_none() {
+            return;
+        }
+        let drop = self.tree_drop(cx);
+        let Some(bench) = self.bench() else { return };
+        let Some(drag) = bench.tree.drag.take() else {
+            return;
+        };
+        bench.tree.swallow_click = Some(drag.key);
+        cx.notify();
+        // A drop outside the tree, on no target or on the row's own place
+        // changes nothing.
+        let Some(drop) = drop else { return };
+        let ws = bench.ws.clone();
+        // One write, one undo step, no toast: the row is visibly where it
+        // was dropped.
+        ws.update(cx, |ws, cx| match drag.dragged {
+            tree::Dragged::Topic(project, id) if drag.epic != Some(drop.epic) => {
+                let _ = project;
+                ws.place_topic(id, drop.epic, drop.index, cx)
+            }
+            tree::Dragged::Topic(project, _) | tree::Dragged::Epic(project, _) => {
+                ws.reorder(drag.dragged.record(), drop.index, Some(project), cx)
+            }
+            tree::Dragged::Project(project) => {
+                ws.reorder(drag.dragged.record(), drop.index, Some(project), cx)
+            }
+        });
+    }
+
+    /// Debug builds' captures: the first open topic of an epic dragged
+    /// over the lower half of the next topic of that epic (`onto`: over
+    /// the project's row), as if the pointer were there.
+    #[cfg(debug_assertions)]
+    pub(super) fn dev_tree_drag(&mut self, onto: bool, cx: &mut Context<Self>) {
+        let (rows, layout) = self.tree_rows(cx);
+        let Some(bench) = self.bench() else { return };
+        let projects = bench.ws.read(cx).projects.clone();
+        let in_epic = |r: &Row| matches!(r, Row::Topic { depth: 2, .. });
+        let Some(from) = rows.iter().position(in_epic) else {
+            return;
+        };
+        let to = if onto {
+            rows.iter().position(|r| r.is_project())
+        } else {
+            (from + 1..rows.len()).find(|&i| in_epic(&rows[i]))
+        };
+        let Some(to) = to else { return };
+        let Some(dragged) = tree::Dragged::of(&projects, &rows[from]) else {
+            return;
+        };
+        let bounds = bench.tree.scroll.bounds();
+        let scroll_top = -zoom::eff(bench.tree.scroll.offset().y);
+        let y = zoom::eff(bounds.top()) + layout.top(to) - scroll_top + tree::ROW * 0.75;
+        let x = zoom::eff(bounds.left()) + 120.;
+        let epic = match dragged {
+            tree::Dragged::Topic(_, id) => {
+                tree::locate_topic(&projects, id).map(|l| l.epic.map(|e| e.0))
+            }
+            _ => None,
+        };
+        bench.tree.drag = Some(TreeDrag {
+            dragged,
+            key: rows[from].key(),
+            epic,
+            x,
+            y,
+        });
+    }
+
+    /// `Esc` during a drag: nothing changes. Whether a drag was on.
+    pub(super) fn cancel_tree_drag(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(bench) = self.bench() else {
+            return false;
+        };
+        bench.tree.press = None;
+        let Some(drag) = bench.tree.drag.take() else {
+            return false;
+        };
+        bench.tree.swallow_click = Some(drag.key);
+        cx.notify();
+        true
+    }
+
+    /// Where the dragged row would land now, from the pointer's place in
+    /// the tree's viewport; `None` outside the tree or on no target.
+    fn tree_drop(&mut self, cx: &mut Context<Self>) -> Option<tree::Drop> {
+        let (rows, layout) = self.tree_rows(cx);
+        let bench = self.bench()?;
+        let drag = bench.tree.drag?;
+        let bounds = bench.tree.scroll.bounds();
+        let (left, top) = (zoom::eff(bounds.left()), zoom::eff(bounds.top()));
+        let (w, h) = (zoom::eff(bounds.size.width), zoom::eff(bounds.size.height));
+        if drag.x < left || drag.x > left + w || drag.y < top || drag.y > top + h {
+            return None;
+        }
+        let scroll_top = -zoom::eff(bench.tree.scroll.offset().y);
+        let projects = &bench.ws.read(cx).projects;
+        tree::drop_at(
+            projects,
+            &rows,
+            &layout,
+            drag.dragged,
+            drag.y - top + scroll_top,
+        )
+    }
+
+    /// While a press or a drag is on, the pointer is followed everywhere in
+    /// the window, the cursor showing whether a drop would land.
+    fn tree_pointer_listener(&mut self, drop: bool, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let bench = self.bench()?;
+        let dragging = bench.tree.drag.is_some();
+        if bench.tree.press.is_none() && !dragging {
+            return None;
+        }
+        let weak = cx.entity().downgrade();
+        Some(
+            gpui_kit::canvas(
+                |_, _, _| (),
+                move |_, _, window, _| {
+                    if dragging {
+                        window.set_window_cursor_style(if drop {
+                            gpui_kit::CursorStyle::ClosedHand
+                        } else {
+                            gpui_kit::CursorStyle::OperationNotAllowed
+                        });
+                    }
+                    let moved = weak.clone();
+                    window.on_mouse_event(move |e: &gpui_kit::MouseMoveEvent, phase, _, cx| {
+                        if phase == gpui_kit::DispatchPhase::Capture {
+                            let _ = moved.update(cx, |shell, cx| shell.tree_pointer_moved(e, cx));
+                        }
+                    });
+                    let released = weak.clone();
+                    window.on_mouse_event(move |e: &gpui_kit::MouseUpEvent, phase, _, cx| {
+                        if phase == gpui_kit::DispatchPhase::Capture
+                            && e.button == gpui_kit::MouseButton::Left
+                        {
+                            let _ =
+                                released.update(cx, |shell, cx| shell.tree_pointer_released(cx));
+                        }
+                    });
+                },
+            )
+            .absolute()
+            .size_0()
+            .into_any_element(),
+        )
     }
 
     pub(super) fn toggle_fold(&mut self, key: String, cx: &mut Context<Self>) {
@@ -181,7 +416,7 @@ impl Shell {
     fn settle_scroll(&mut self, rows: &[Row], layout: &Layout, viewport: f32) -> f32 {
         let Some(bench) = self.bench() else { return 0. };
         let state = &mut bench.tree;
-        let mut scroll_top = -f32::from(state.scroll.offset().y);
+        let mut scroll_top = -zoom::eff(state.scroll.offset().y);
         // Before the first layout the viewport is unknown: wait for it.
         if viewport <= 0. {
             return scroll_top;
@@ -224,17 +459,47 @@ impl Shell {
         };
         let handle = bench.tree.scroll.clone();
         let bounds = handle.bounds();
-        let viewport = f32::from(bounds.size.height);
-        let width = f32::from(bounds.size.width);
+        let viewport = zoom::eff(bounds.size.height);
+        let width = zoom::eff(bounds.size.width);
         // Before the first layout the viewport is unknown; a pending
         // reveal or jump asks for the frame that knows it.
         if viewport <= 0. && (bench.tree.reveal.is_some() || bench.tree.to_top.is_some()) {
             window.request_animation_frame();
         }
+        // A drag whose record another process deleted or moved ends as
+        // cancelled; near the viewport's edges the tree scrolls.
+        if let Some(drag) = bench.tree.drag {
+            let projects = &bench.ws.read(cx).projects;
+            let still = match drag.dragged {
+                tree::Dragged::Topic(project, id) => {
+                    tree::locate_topic(projects, id).is_some_and(|l| {
+                        l.project.map(|p| p.0) == Some(project)
+                            && Some(l.epic.map(|e| e.0)) == drag.epic
+                    })
+                }
+                tree::Dragged::Epic(project, id) => tree::locate_epic(projects, id)
+                    .is_some_and(|l| l.project.map(|p| p.0) == Some(project)),
+                tree::Dragged::Project(id) => projects.iter().any(|t| t.project.id == id),
+            };
+            if !still {
+                bench.tree.drag = None;
+            } else if viewport > 0. {
+                let delta = tree::auto_scroll(drag.y - zoom::eff(bounds.top()), viewport);
+                if delta != 0. {
+                    let max = (layout.height - viewport).max(0.);
+                    let top = (-zoom::eff(handle.offset().y) + delta).clamp(0., max);
+                    handle.set_offset(point(px(0.), px(-top)));
+                    window.request_animation_frame();
+                }
+            }
+        }
         let scroll_top = self.settle_scroll(&rows, &layout, viewport);
+        let drop = self.tree_drop(cx);
+        let pointer = self.tree_pointer_listener(drop.is_some(), cx);
         let Some(bench) = self.bench() else {
             return div().into_any_element();
         };
+        let drag = bench.tree.drag;
         let cursor = bench.cursor.index(&rows);
         let tree_focus = bench.tree_focus.clone();
         // components.md 5: the keyboard cursor is a focus ring, which
@@ -290,6 +555,8 @@ impl Shell {
             cursor: !sticky && ring && i == cursor,
             sticky,
             width,
+            dragged: !sticky && drag.is_some_and(|d| d.key == row.key()),
+            target: !sticky && drop.is_some_and(|d| d.show == tree::DropShow::Onto(i)),
         };
         let mut items: Vec<AnyElement> = Vec::with_capacity(drawn.len() + 2);
         if !drawn.is_empty() {
@@ -353,7 +620,7 @@ impl Shell {
                 .right_0()
                 .px(px(tree::PAD))
                 .bg(t.bg_sunken)
-                .border_b_1()
+                .border_b(px(1.))
                 .border_color(t.border_subtle)
                 .child(tree_row(
                     row,
@@ -365,6 +632,60 @@ impl Shell {
                     cx,
                 ))
         });
+        // The insertion line (2 `accent`, `radius.xs` ends, from the
+        // target depth's leading slot to the rows' content edge) and the
+        // drag chip of 4.8.7 following the pointer.
+        let line = drop.and_then(|d| match d.show {
+            tree::DropShow::Line { y, depth } => Some(
+                div()
+                    .absolute()
+                    .top(px(y - scroll_top - 1.))
+                    .left(px(tree::PAD + 8. + f32::from(depth) * 16.))
+                    .right(px(tree::PAD + 8.))
+                    .h(px(2.))
+                    .rounded(px(crate::theme::RADIUS_XS))
+                    .bg(t.accent),
+            ),
+            tree::DropShow::Onto(_) => None,
+        });
+        let chip = drag.and_then(|d| {
+            let row = rows.iter().find(|r| r.key() == d.key)?;
+            let glyph = match row {
+                Row::Topic { status, .. } => ui::status_icon(*status),
+                Row::Project { expanded, .. } | Row::Epic { expanded, .. } if *expanded => {
+                    Icon::ChevronDown
+                }
+                _ => Icon::ChevronRight,
+            };
+            let name = row.title().unwrap_or_default().to_owned();
+            let chip = type_scale::SMALL
+                .el()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(4.))
+                .h(px(24.))
+                .max_w(px(240.))
+                .px(px(8.))
+                .bg(t.bg_overlay)
+                .border(px(1.))
+                .border_color(t.border_default)
+                .rounded(px(RADIUS_SM))
+                .shadow(vec![t.shadow_overlay()])
+                .text_color(t.text_primary)
+                .whitespace_nowrap()
+                .child(icon(glyph, 14., t.text_primary))
+                .child(div().min_w_0().truncate().child(name));
+            Some(
+                gpui_kit::deferred(
+                    gpui_kit::anchored()
+                        .position(point(px(d.x + 12.), px(d.y + 12.)))
+                        .snap_to_window()
+                        .child(chip),
+                )
+                .with_priority(4),
+            )
+        });
         let on_trash = current == Some(Route::Trash);
         let on_settings = current == Some(Route::Settings);
         let on_contacts = matches!(current, Some(Route::Contacts) | Some(Route::Contact(_)));
@@ -375,7 +696,7 @@ impl Shell {
             .flex_col()
             .flex_shrink_0()
             .p(px(8.))
-            .border_t_1()
+            .border_t(px(1.))
             .border_color(t.border_subtle)
             .when(has_contacts, |this| {
                 this.child(
@@ -468,7 +789,10 @@ impl Shell {
                         }
                     }))
                     .child(tree)
-                    .children(sticky),
+                    .children(sticky)
+                    .children(line)
+                    .children(chip)
+                    .children(pointer),
             )
             .child(pinned)
             .into_any_element()
@@ -532,7 +856,7 @@ fn text_width(role: TypeRole, label: &str, cx: &App) -> f32 {
     let mut font = gpui_kit::font(role.family());
     font.weight = role.weight;
     let font = system.resolve_font(&font);
-    let size = px(role.size());
+    let size = gpui_kit::px(role.size());
     label
         .chars()
         .map(|ch| {
@@ -600,7 +924,7 @@ fn tree_row(
             color
         }
     };
-    let rest = if selected || look.on_path {
+    let rest = if selected || look.on_path || look.target {
         t.text_primary
     } else {
         t.text_secondary
@@ -618,8 +942,14 @@ fn tree_row(
         .pl(px(8. + indent))
         .pr(px(8.))
         .rounded(px(RADIUS_SM))
-        .when(selected, |this| this.bg(t.fill_selected))
-        .when(!selected, |this| this.hover(move |s| s.bg(hover)))
+        .when(selected && !look.target, |this| this.bg(t.fill_selected))
+        .when(!selected && !look.target, |this| {
+            this.hover(move |s| s.bg(hover))
+        })
+        // The row a dragged topic would land on (2.2: nothing but
+        // `text.primary` on `accent.subtle`).
+        .when(look.target, |this| this.bg(t.accent_subtle))
+        .when(look.dragged, |this| this.opacity(0.6))
         .when(look.cursor, |this| this.shadow(ui::ring_shadow(t, false)));
     // A leading icon: `text.primary` on hover (status glyphs keep theirs).
     let lead = |glyph: Icon, size: f32, color: Hsla| {
@@ -923,6 +1253,12 @@ fn tree_row(
         el = el
             .on_click(
                 cx.listener(move |shell, event: &gpui_kit::ClickEvent, window, cx| {
+                    // The release that ends a drag is not a click.
+                    if let Some(bench) = shell.bench()
+                        && bench.tree.swallow_click.take() == Some(row_key)
+                    {
+                        return;
+                    }
                     let rows = shell.rows(cx);
                     if let Some(bench) = shell.bench() {
                         // The cursor goes to the real row (the sticky row
@@ -941,6 +1277,21 @@ fn tree_row(
                 gpui_kit::MouseButton::Middle,
                 cx.listener(move |shell, _, window, cx| shell.open_in_tab(route, window, cx)),
             );
+        if !look.sticky
+            && matches!(
+                row,
+                Row::Project { .. } | Row::Epic { .. } | Row::Topic { .. }
+            )
+        {
+            // A press that moves 4 starts a drag (components.md 5).
+            let pressed = row.clone();
+            el = el.on_mouse_down(
+                gpui_kit::MouseButton::Left,
+                cx.listener(move |shell, e: &gpui_kit::MouseDownEvent, _, cx| {
+                    shell.tree_press(&pressed, e, cx)
+                }),
+            );
+        }
         if !look.sticky {
             // A right click opens the row's menu (components.md 5).
             el = el.on_mouse_down(

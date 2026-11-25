@@ -16,7 +16,7 @@ use super::*;
 use crate::contact_picker::{ContactPicker, Mode, PickerEvent, Value};
 use crate::question_view::{self, RowLook};
 use crate::questions_model::{self as qm, Section};
-use crate::workspace::{ReportState, put_report, report_state, with_lifts};
+use crate::workspace::{ReportState, WriteError, put_report, report_state, with_lifts};
 
 gpui_kit::actions!(
     acta_questions,
@@ -127,6 +127,21 @@ pub(super) struct QuestionUi {
     reveal: std::rc::Rc<std::cell::Cell<bool>>,
     /// Captures: the section is scrolled to the top of the page.
     reveal_section: std::rc::Rc<std::cell::Cell<bool>>,
+    /// Dragging an open question: the press, then the drag; where each
+    /// open row and the section were last drawn (window coordinates).
+    press: Option<(QuestionId, usize, f32, f32)>,
+    drag: Option<QDrag>,
+    open_bounds: std::rc::Rc<std::cell::RefCell<Vec<(f32, f32)>>>,
+    section_bounds: std::rc::Rc<std::cell::Cell<Option<gpui_kit::Bounds<gpui_kit::Pixels>>>>,
+}
+
+/// An open question being dragged, the pointer in window coordinates.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct QDrag {
+    id: QuestionId,
+    from: usize,
+    x: f32,
+    y: f32,
 }
 
 impl RecordPage {
@@ -310,8 +325,9 @@ impl RecordPage {
         let owner = self.owner;
         let project = self.q_project();
         let Some(place) = self.q_place() else { return };
-        self.ws.update(cx, |ws, cx| {
-            ws.undoable(cx, project, None, move |store| {
+        let refused = (text.clone(), value.name().to_owned());
+        let task = self.ws.update(cx, |ws, cx| {
+            ws.write_undoable_picked(cx, project, move |store| {
                 let me = Author::Human;
                 let mut steps = Vec::new();
                 let asked = match value {
@@ -361,8 +377,18 @@ impl RecordPage {
                     Undo::Many(steps)
                 };
                 Ok((undo, ()))
-            });
+            })
         });
+        // A contact that moved out of sight meanwhile: the composer comes
+        // back with the text and the date, the picker says so.
+        cx.spawn_in(window, async move |page, cx| {
+            if let Err(WriteError::OutOfScope) = task.await {
+                let _ = page.update_in(cx, |page, window, cx| {
+                    page.composer_refused(editing, below, refused, date, place, window, cx)
+                });
+            }
+        })
+        .detach();
         match editing {
             Some(_) => self.close_composer(window, cx),
             None => {
@@ -379,6 +405,45 @@ impl RecordPage {
                 cx.notify();
             }
         }
+    }
+
+    /// The store refused the composer's contact (components-contacts.md 5,
+    /// Errors): the composer is open again on the same question with the
+    /// text and the date the human wrote, and the inline error under the
+    /// picker. A new question's composer that already holds a next draft
+    /// keeps it and only shows the error.
+    #[allow(clippy::too_many_arguments)]
+    fn composer_refused(
+        &mut self,
+        editing: Option<QuestionId>,
+        below: Option<usize>,
+        (text, name): (String, String),
+        date: Option<Date>,
+        place: acta_core::model::Place,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let reusable = self
+            .q
+            .composer
+            .as_ref()
+            .is_some_and(|c| c.editing == editing && c.text.read(cx).value().trim().is_empty());
+        if !reusable {
+            let question = editing.and_then(|id| self.question(id, cx));
+            if editing.is_some() && question.is_none() {
+                return;
+            }
+            self.open_composer(question.as_ref(), below, window, cx);
+        }
+        let Some(c) = &mut self.q.composer else {
+            return;
+        };
+        c.text.update(cx, |s, cx| s.set_value(text, window, cx));
+        c.date = date;
+        c.picker
+            .update(cx, |p, cx| p.refuse(&name, place, window, cx));
+        c.picker.update(cx, |p, cx| p.focus(window, cx));
+        cx.notify();
     }
 
     fn open_composer_date(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -835,8 +900,21 @@ impl RecordPage {
                 } else {
                     (at + 1 < rows.len()).then_some(at + 1)
                 };
-                if let Some(h) = to.and_then(|i| self.q.row_focus.get(i)) {
-                    window.focus(h, cx);
+                match to.and_then(|i| self.q.row_focus.get(i)) {
+                    Some(h) => window.focus(h, cx),
+                    // Past the first row, the section's header; past the
+                    // last, the page's next block.
+                    None if k.key == "up" => self.focus_block(record::Block::Questions, window, cx),
+                    None => {
+                        let next = record::step_block(
+                            &self.block_order,
+                            Some(record::Block::Questions),
+                            false,
+                        );
+                        if let Some(next) = next {
+                            self.focus_block(next, window, cx);
+                        }
+                    }
                 }
             }
             "f10" if k.modifiers.shift => {
@@ -859,11 +937,157 @@ impl RecordPage {
                     .unwrap_or(0);
                 self.q.menu = Some((id, row, 0));
             }
-            "escape" => window.focus(&self.focus, cx),
+            "escape" => self.focus_block(record::Block::Questions, window, cx),
             _ => return,
         }
         cx.stop_propagation();
         cx.notify();
+    }
+
+    // ---- dragging (components-questions.md 5: Alt+Up / Alt+Down, drag) ----
+
+    /// The gap a drop would land in now; `None` outside the section.
+    fn q_drop_gap(&self) -> Option<usize> {
+        let drag = self.q.drag?;
+        let section = self.q.section_bounds.get()?;
+        if !section.contains(&gpui_kit::point(px(drag.x), px(drag.y))) {
+            return None;
+        }
+        Some(qm::drop_gap(&self.q.open_bounds.borrow(), drag.y))
+    }
+
+    fn q_pointer_moved(&mut self, e: &gpui_kit::MouseMoveEvent, cx: &mut Context<Self>) {
+        let (x, y) = (zoom::eff(e.position.x), zoom::eff(e.position.y));
+        if let Some((id, from, px0, py0)) = self.q.press {
+            if e.pressed_button != Some(gpui_kit::MouseButton::Left) {
+                self.q.press = None;
+                return;
+            }
+            if (x - px0).hypot(y - py0) < 4. {
+                return;
+            }
+            self.q.press = None;
+            self.q.menu = None;
+            self.q.drag = Some(QDrag { id, from, x, y });
+        }
+        if let Some(d) = self.q.drag.as_mut() {
+            d.x = x;
+            d.y = y;
+            cx.notify();
+        }
+    }
+
+    /// The release: one write, one undo step, no toast; outside the
+    /// section or on the row's own place nothing changes.
+    fn q_pointer_released(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.q.press = None;
+        let gap = self.q_drop_gap();
+        let Some(drag) = self.q.drag.take() else {
+            return;
+        };
+        cx.notify();
+        let Some(to) = gap.and_then(|g| qm::gap_target(drag.from, g)) else {
+            return;
+        };
+        let (id, from) = (drag.id, drag.from);
+        let project = self.q_project();
+        self.ws.update(cx, |ws, cx| {
+            ws.undoable(cx, project, None, move |store| {
+                store.reorder_question(id, to, Author::Human)?;
+                Ok((
+                    Undo::QuestionOrder {
+                        id,
+                        back: from,
+                        expect: to,
+                    },
+                    (),
+                ))
+            });
+        });
+        if let Some(h) = self.q.row_focus.get(to) {
+            window.focus(h, cx);
+        }
+    }
+
+    /// `Esc` during a drag: nothing changes. Whether one was on.
+    pub(super) fn cancel_q_drag(&mut self, cx: &mut Context<Self>) -> bool {
+        self.q.press = None;
+        let was = self.q.drag.take().is_some();
+        if was {
+            cx.notify();
+        }
+        was
+    }
+
+    /// While a press or a drag is on, the pointer is followed everywhere.
+    fn q_pointer_listener(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.q.press.is_none() && self.q.drag.is_none() {
+            return None;
+        }
+        let dragging = self.q.drag.is_some();
+        let landing = self.q_drop_gap().is_some();
+        let weak = cx.entity().downgrade();
+        Some(
+            gpui_kit::canvas(
+                |_, _, _| (),
+                move |_, _, window, _| {
+                    if dragging {
+                        window.set_window_cursor_style(if landing {
+                            gpui_kit::CursorStyle::ClosedHand
+                        } else {
+                            gpui_kit::CursorStyle::OperationNotAllowed
+                        });
+                    }
+                    let moved = weak.clone();
+                    window.on_mouse_event(move |e: &gpui_kit::MouseMoveEvent, phase, _, cx| {
+                        if phase == gpui_kit::DispatchPhase::Capture {
+                            let _ = moved.update(cx, |page, cx| page.q_pointer_moved(e, cx));
+                        }
+                    });
+                    let released = weak.clone();
+                    window.on_mouse_event(move |e: &gpui_kit::MouseUpEvent, phase, window, cx| {
+                        if phase == gpui_kit::DispatchPhase::Capture
+                            && e.button == gpui_kit::MouseButton::Left
+                        {
+                            let _ =
+                                released.update(cx, |page, cx| page.q_pointer_released(window, cx));
+                        }
+                    });
+                },
+            )
+            .absolute()
+            .size_0()
+            .into_any_element(),
+        )
+    }
+
+    /// The insertion line in a gap: 2 `accent`, `radius.xs` ends, taking
+    /// no height.
+    fn q_line(t: &Tokens) -> AnyElement {
+        div()
+            .relative()
+            .h(px(0.))
+            .child(
+                div()
+                    .absolute()
+                    .top(px(-1.))
+                    .left(px(-8.))
+                    .right(px(-8.))
+                    .h(px(2.))
+                    .rounded(px(RADIUS_XS))
+                    .bg(t.accent),
+            )
+            .into_any_element()
+    }
+
+    /// `Enter` on the section's header: the first row, or the composer
+    /// when there is none.
+    pub(super) fn enter_questions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let first = !self.q.row_ids.borrow().is_empty();
+        match self.q.row_focus.first() {
+            Some(h) if first => window.focus(h, cx),
+            _ => self.open_composer(None, None, window, cx),
+        }
     }
 
     /// The palette's question commands: the focused row's state.
@@ -937,8 +1161,25 @@ impl RecordPage {
             |page, _, event: &PickerEvent, window, cx| match event {
                 PickerEvent::Taken(value, _) => {
                     let value = value.clone();
+                    let name = value.name().to_owned();
                     page.close_report(window, cx);
-                    page.set_report(value, cx);
+                    let Some(task) = page.write_report(value, cx) else {
+                        return;
+                    };
+                    // A contact that moved out of sight meanwhile: the
+                    // popover opens again with the inline error.
+                    cx.spawn_in(window, async move |page, cx| {
+                        if let Err(WriteError::OutOfScope) = task.await {
+                            let _ = page.update_in(cx, |page, window, cx| {
+                                page.open_report_to(window, cx);
+                                let place = page.q_place();
+                                if let (Some((picker, _)), Some(place)) = (&page.q.report, place) {
+                                    picker.update(cx, |p, cx| p.refuse(&name, place, window, cx));
+                                }
+                            });
+                        }
+                    })
+                    .detach();
                 }
                 PickerEvent::Cancel => page.close_report(window, cx),
                 _ => {}
@@ -972,10 +1213,20 @@ impl RecordPage {
     /// Set, change or clear the person: one undo step; a new contact is
     /// created in the same step.
     pub fn set_report(&mut self, value: Value, cx: &mut Context<Self>) {
-        let Some(record) = self.report_record() else {
-            return;
-        };
-        let Some(place) = self.q_place() else { return };
+        if let Some(task) = self.write_report(value, cx) {
+            task.detach();
+        }
+    }
+
+    /// [`Self::set_report`], with the write to wait for (`None`: nothing
+    /// to write).
+    fn write_report(
+        &mut self,
+        value: Value,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<(), WriteError>>> {
+        let record = self.report_record()?;
+        let place = self.q_place()?;
         let current = self
             .data
             .as_ref()
@@ -984,14 +1235,14 @@ impl RecordPage {
         if let Value::Contact(id, _) = &value
             && Some(*id) == current
         {
-            return;
+            return None;
         }
         if value == Value::None && current.is_none() {
-            return;
+            return None;
         }
         let project = self.q_project();
-        self.ws.update(cx, |ws, cx| {
-            ws.undoable(cx, project, None, move |store| {
+        Some(self.ws.update(cx, |ws, cx| {
+            ws.write_undoable_picked(cx, project, move |store| {
                 let me = Author::Human;
                 let back = report_state(store, record)?;
                 let mut extra = Vec::new();
@@ -1021,8 +1272,8 @@ impl RecordPage {
                     Undo::Many(steps)
                 };
                 Ok((undo, ()))
-            });
-        });
+            })
+        }))
     }
 
     /// "Mark reported" / "Mark not reported".
@@ -1127,6 +1378,42 @@ impl RecordPage {
             "q-menu" => {
                 if let Some(id) = first {
                     self.q.menu = Some((id, 0, 0));
+                }
+            }
+            // The first open question held over the lower half of the
+            // second, as if the pointer were there.
+            "q-drag" => {
+                let bounds = self.q.open_bounds.borrow().clone();
+                if let (Some(id), Some((top, bottom))) = (first, bounds.get(1).copied()) {
+                    let x = self
+                        .q
+                        .section_bounds
+                        .get()
+                        .map_or(200., |b| zoom::eff(b.left()) + 100.);
+                    self.q.drag = Some(QDrag {
+                        id,
+                        from: 0,
+                        x,
+                        y: bottom - (bottom - top) / 4.,
+                    });
+                }
+            }
+            // The composer after the store refused its contact.
+            "q-refused" => {
+                self.open_composer(None, None, window, cx);
+                let place = self.q_place();
+                if let (Some(c), Some(place)) = (&self.q.composer, place) {
+                    let typed = "Who signs the export policy?";
+                    c.text.update(cx, |s, cx| s.set_value(typed, window, cx));
+                    c.picker
+                        .update(cx, |p, cx| p.refuse("Marie Dubois", place, window, cx));
+                }
+            }
+            // The keyboard on the page's second block (the folder row, or
+            // the current state).
+            "blocks" => {
+                if let Some(second) = self.block_order.get(1).copied() {
+                    self.focus_block(second, window, cx);
                 }
             }
             "report-popover" => {
@@ -1324,7 +1611,7 @@ impl RecordPage {
             .flex()
             .flex_col()
             .bg(t.bg_overlay)
-            .border_1()
+            .border(px(1.))
             .border_color(t.border_default)
             .rounded(px(RADIUS_LG))
             .shadow(vec![t.shadow_overlay()])
@@ -1410,12 +1697,18 @@ impl RecordPage {
         self.q
             .seen_unread
             .extend(data.questions.unread.iter().copied());
+        // The header is the section's stop among the page's blocks: `Enter`
+        // goes inside, to the first row (interaction.md 6.1).
         let header = div()
+            .id("q-header")
             .flex()
             .flex_row()
             .items_center()
             .gap(px(8.))
             .h(px(28.))
+            .px(px(8.))
+            .mx(px(-8.))
+            .rounded(px(RADIUS_SM))
             .child(ui::section_header(text(locale, Key::SectionQuestions), t))
             .when(s.open_total > 0, |this| {
                 this.child(
@@ -1434,8 +1727,11 @@ impl RecordPage {
                         page.open_composer(None, None, window, cx)
                     })),
             );
+        let header = self.block_el(record::Block::Questions, header, t);
         let reveal = std::rc::Rc::clone(&self.q.reveal_section);
         let scroll = self.scroll.clone();
+        let section_bounds = std::rc::Rc::clone(&self.q.section_bounds);
+        let pointer = self.q_pointer_listener(cx);
         let mut section = div()
             .id("questions")
             .relative()
@@ -1443,7 +1739,9 @@ impl RecordPage {
             .flex_col()
             .mt(px(32.))
             .child(header)
+            .children(pointer)
             .child(ui::measure(move |bounds, window| {
+                section_bounds.set(Some(bounds));
                 if reveal.replace(false) {
                     ui::scroll_into_view(&scroll, bounds, ui::Reveal::Top);
                     window.refresh();
@@ -1460,7 +1758,7 @@ impl RecordPage {
         *self.q.row_ids.borrow_mut() = drawn.iter().map(|q| q.id).collect();
         if s.is_empty() && self.q.composer.is_none() {
             section = section.child(
-                type_scale::READING
+                type_scale::UI
                     .el()
                     .mt(px(4.))
                     .text_color(t.text_tertiary)
@@ -1474,6 +1772,17 @@ impl RecordPage {
             .as_ref()
             .filter(|c| c.editing.is_none())
             .map(|c| c.below.map(|r| r + 1).unwrap_or(usize::MAX));
+        // Dragging: where the line goes, and each open row's place.
+        let gap = self.q_drop_gap().filter(|g| {
+            self.q
+                .drag
+                .is_some_and(|d| qm::gap_target(d.from, *g).is_some())
+        });
+        let dragged = self.q.drag.map(|d| d.id);
+        {
+            let mut b = self.q.open_bounds.borrow_mut();
+            b.resize(s.open.len(), (0., 0.));
+        }
         for (i, q) in s.open.iter().enumerate() {
             if new_at == Some(i) {
                 section = section.child(self.render_composer(locale, t, window, cx));
@@ -1482,7 +1791,34 @@ impl RecordPage {
                 section = section.child(self.render_composer(locale, t, window, cx));
                 continue;
             }
-            section = section.child(self.render_q_row(q, i, locale, t, today, cx));
+            if gap == Some(i) {
+                section = section.child(Self::q_line(t));
+            }
+            let bounds = std::rc::Rc::clone(&self.q.open_bounds);
+            let id = q.id;
+            section = section.child(
+                div()
+                    .relative()
+                    .when(dragged == Some(id), |this| this.opacity(0.6))
+                    // A press that moves 4 starts a drag (open rows only).
+                    .on_mouse_down(
+                        gpui_kit::MouseButton::Left,
+                        cx.listener(move |page, e: &gpui_kit::MouseDownEvent, _, cx| {
+                            page.q.press =
+                                Some((id, i, zoom::eff(e.position.x), zoom::eff(e.position.y)));
+                            cx.notify();
+                        }),
+                    )
+                    .child(self.render_q_row(q, i, locale, t, today, cx))
+                    .child(ui::measure(move |b, _| {
+                        if let Some(slot) = bounds.borrow_mut().get_mut(i) {
+                            *slot = (zoom::eff(b.top()), zoom::eff(b.bottom()));
+                        }
+                    })),
+            );
+        }
+        if gap.is_some_and(|g| g >= s.open.len()) {
+            section = section.child(Self::q_line(t));
         }
         if new_at.is_some_and(|at| at >= s.open.len()) {
             section = section.child(self.render_composer(locale, t, window, cx));
@@ -1660,7 +1996,7 @@ impl RecordPage {
             .children(answer_btn)
             .child(div().relative().child(more))
             .into_any_element();
-        let topic = self.topic();
+        let logged = q.decision_entry;
         let mut row = question_view::row(
             q,
             &look,
@@ -1671,11 +2007,13 @@ impl RecordPage {
                     let _ = page.update(cx, |_, cx| cx.emit(PageEvent::Open(Route::Contact(c))));
                 }
             },
+            // The decision entry is on this page's own timeline: it is
+            // focused and brought into view.
             {
                 let page = cx.entity().downgrade();
-                move |_, _, cx| {
-                    if let Some(t) = topic {
-                        let _ = page.update(cx, |_, cx| cx.emit(PageEvent::Open(Route::Topic(t))));
+                move |_, window, cx| {
+                    if let Some(entry) = logged {
+                        let _ = page.update(cx, |page, cx| page.focus_entry(entry, window, cx));
                     }
                 }
             },
@@ -2017,7 +2355,7 @@ impl RecordPage {
                                     .px(px(8.))
                                     .rounded(px(RADIUS_SM))
                                     .bg(t.bg_raised)
-                                    .border_1()
+                                    .border(px(1.))
                                     .border_color(t.border_default)
                                     // Dictation: the microphone in the
                                     // field's trailing slot, compact

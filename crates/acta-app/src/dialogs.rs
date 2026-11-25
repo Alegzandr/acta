@@ -6,6 +6,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::zoom::px;
 use acta_core::model::ProjectId;
 use acta_core::snapshots::{Snapshot, SnapshotKind};
 use acta_core::store::{ExportFile, FileTotals, ImportReport, Passphrase, Strength};
@@ -15,7 +16,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
     IntoElement, ParentElement, Render, StatefulInteractiveElement, Styled, Subscription, Window,
-    div, px,
+    div,
 };
 
 use crate::i18n::{Arg, Key, Locale, number, text, tr};
@@ -88,6 +89,8 @@ pub enum Kind {
         voice_models: bool,
         /// Voice models are on this computer (the checkbox shows).
         has_models: bool,
+        /// What is erased, once counted.
+        counts: Option<acta_core::reset::ResetCounts>,
     },
     /// A page's own confirmation (a git action where a session works).
     Confirm(Confirm),
@@ -227,6 +230,25 @@ pub fn passphrase_hint(first: &str, repeat: &str) -> Option<(Key, bool)> {
         Strength::Fair => (Key::ExportPassphraseFair, false),
         Strength::Strong => (Key::ExportPassphraseStrong, false),
     })
+}
+
+/// "4 projects · 120 topics · 2 files": what a reset erases, kinds with
+/// none left out.
+pub fn reset_counts_line(locale: Locale, c: &acta_core::reset::ResetCounts) -> String {
+    [
+        (Key::CountProjects, c.projects),
+        (Key::CountTopics, c.topics),
+        (Key::CountNotes, c.notes),
+        (Key::CountDocuments, c.documents),
+        (Key::CountMemories, c.memories),
+        (Key::CountFiles, c.files),
+        (Key::CountContacts, c.contacts),
+    ]
+    .into_iter()
+    .filter(|(_, n)| *n > 0)
+    .map(|(key, n)| tr(locale, key, &[("n", Arg::Count(n))]))
+    .collect::<Vec<_>>()
+    .join(" \u{b7} ")
 }
 
 /// The reset's confirmation word, typed in either case, spaces around it
@@ -421,6 +443,24 @@ impl Dialog {
                     let _ = dialog.update(cx, |d, cx| {
                         if let Kind::Export { files, .. } = &mut d.kind {
                             *files = Some(totals);
+                        }
+                        cx.notify();
+                    });
+                }
+            })
+            .detach();
+        }
+        // The reset says what it erases, in numbers.
+        if let (Kind::Reset { .. }, Some(ws)) = (&kind, &ws) {
+            let task = ws
+                .read(cx)
+                .db
+                .run(cx, |store| acta_core::reset::counts(store));
+            cx.spawn(async move |dialog, cx| {
+                if let Ok(found) = task.await {
+                    let _ = dialog.update(cx, |d, cx| {
+                        if let Kind::Reset { counts, .. } = &mut d.kind {
+                            *counts = Some(found);
                         }
                         cx.notify();
                     });
@@ -918,7 +958,9 @@ impl Dialog {
                 sign_out,
                 voice_models,
                 has_models,
+                counts,
             } => {
+                let counted = counts.map(|c| reset_counts_line(locale, &c));
                 let (sign_out, voice_models, has_models) = (*sign_out, *voice_models, *has_models);
                 let check = |id: &'static str, on: bool, label: String| {
                     div()
@@ -965,6 +1007,19 @@ impl Dialog {
                                 .el()
                                 .text_color(t.text_primary)
                                 .child(text(locale, Key::ResetBody)),
+                        )
+                        .children(counted.filter(|line| !line.is_empty()).map(|line| {
+                            type_scale::UI
+                                .el()
+                                .font_features(type_scale::tabular())
+                                .text_color(t.text_primary)
+                                .child(line)
+                        }))
+                        .child(
+                            type_scale::SMALL
+                                .el()
+                                .text_color(t.text_secondary)
+                                .child(text(locale, Key::ResetKept)),
                         )
                         .child(
                             div().flex().flex_row().child(
@@ -1662,7 +1717,7 @@ impl Render for Dialog {
                     .flex_col()
                     .p(px(24.))
                     .bg(t.bg_overlay)
-                    .border_1()
+                    .border(px(1.))
                     .border_color(t.border_default)
                     .rounded(px(RADIUS_XL))
                     .shadow(vec![t.shadow_overlay()])
@@ -1735,6 +1790,21 @@ mod tests {
             ),
             "Au moins 8 caractères"
         );
+    }
+
+    #[test]
+    fn the_reset_counts_name_each_kind_once() {
+        let c = acta_core::reset::ResetCounts {
+            projects: 4,
+            topics: 1,
+            files: 2,
+            ..Default::default()
+        };
+        assert_eq!(
+            reset_counts_line(Locale::En, &c),
+            "4 projects \u{b7} 1 topic \u{b7} 2 files"
+        );
+        assert_eq!(reset_counts_line(Locale::Fr, &Default::default()), "");
     }
 
     #[test]

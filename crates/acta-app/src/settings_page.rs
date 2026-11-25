@@ -13,12 +13,13 @@
 //! or `Down` open the menu, `Up` / `Down` move in it, `Enter` / `Space`
 //! choose and `Esc` closes.
 
+use crate::zoom::px;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     App, AppContext, Context, Div, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, KeyDownEvent, ParentElement, Render,
-    StatefulInteractiveElement, Styled, Subscription, Task, Window, div, px,
+    StatefulInteractiveElement, Styled, Subscription, Task, Window, div,
 };
 
 use crate::i18n::{Key, Locale, text};
@@ -109,7 +110,7 @@ fn choice_control<T: Copy + PartialEq + 'static>(
                 .flex_row()
                 .h(px(28.))
                 .rounded(px(RADIUS_SM))
-                .border_1()
+                .border(px(1.))
                 .border_color(t.border_strong)
                 .overflow_hidden()
                 .children(segments),
@@ -412,7 +413,7 @@ impl SettingsPage {
                     .flex_row()
                     .h(px(28.))
                     .rounded(px(RADIUS_SM))
-                    .border_1()
+                    .border(px(1.))
                     .border_color(t.border_strong)
                     .overflow_hidden()
                     .children(segments),
@@ -434,7 +435,7 @@ impl SettingsPage {
             .h(px(28.))
             .px(px(12.))
             .rounded(px(RADIUS_SM))
-            .border_1()
+            .border(px(1.))
             .border_color(t.border_strong)
             .text_color(t.text_primary)
             .hover(move |style| style.bg(hover))
@@ -562,6 +563,7 @@ impl Render for SettingsPage {
         );
         let language = self.language_control(locale, &t, cx);
         let text_size = self.text_size_control(&t, cx);
+        let zoom_control = zoom_control(window, &t, cx);
         let claude = self.claude_section(locale, &t, cx);
         // Voice, after Claude Code and before Data (components-voice.md 5).
         let voice = self.voice.clone().map(|voice| {
@@ -627,6 +629,19 @@ impl Render for SettingsPage {
                         &t,
                     ))
                     .child(setting_row(
+                        text(locale, Key::SettingsLanguage),
+                        text(locale, Key::SettingsLanguageHint),
+                        language,
+                        &t,
+                    ))
+                    // layout.md 4.9: after Language, before Text size.
+                    .child(setting_row(
+                        text(locale, Key::SettingsZoom),
+                        text(locale, Key::SettingsZoomHint),
+                        zoom_control,
+                        &t,
+                    ))
+                    .child(setting_row(
                         text(locale, Key::SettingsTextSize),
                         text(locale, Key::SettingsTextSizeHint),
                         text_size_control,
@@ -636,12 +651,6 @@ impl Render for SettingsPage {
                         text(locale, Key::SettingsReadingWidth),
                         String::new(),
                         reading_width_control,
-                        &t,
-                    ))
-                    .child(setting_row(
-                        text(locale, Key::SettingsLanguage),
-                        text(locale, Key::SettingsLanguageHint),
-                        language,
                         &t,
                     ))
                     .child(setting_row(
@@ -672,6 +681,51 @@ impl Render for SettingsPage {
                     .children(about),
             )
     }
+}
+
+/// The Zoom row's stepper (layout.md 4.9), the Terminal text size row's:
+/// "[- 150% +]", minus off at 90%, plus off at the largest step the
+/// window's work area holds.
+fn zoom_control(window: &Window, t: &Tokens, cx: &mut Context<SettingsPage>) -> Div {
+    let applied = (crate::zoom::factor() * 100.).round() as u16;
+    let max = window.display(cx).map_or(crate::zoom::STEPS[6], |d| {
+        let a = d.visible_bounds().size;
+        crate::zoom::largest_fitting(f32::from(a.width), f32::from(a.height))
+    });
+    let locale = settings::locale(cx);
+    div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(4.))
+        .child(
+            ui::ghost_icon_button(
+                "zoom-down",
+                Icon::Minus,
+                24.,
+                false,
+                applied <= crate::zoom::STEPS[0],
+                true,
+                t,
+            )
+            .on_click(|_, window, cx| window.dispatch_action(Box::new(crate::shell::ZoomOut), cx)),
+        )
+        .child(
+            type_scale::UI
+                .el()
+                .min_w(px(44.))
+                .flex()
+                .justify_center()
+                .font_features(type_scale::tabular())
+                .text_color(t.text_primary)
+                .child(crate::i18n::percent(locale, u64::from(applied))),
+        )
+        .child(
+            ui::ghost_icon_button("zoom-up", Icon::Plus, 24., false, applied >= max, true, t)
+                .on_click(|_, window, cx| {
+                    window.dispatch_action(Box::new(crate::shell::ZoomIn), cx)
+                }),
+        )
 }
 
 /// What the Working folders and Data sections show (docs/design/data.md 11:
@@ -797,7 +851,7 @@ impl SettingsPage {
                 .items_center()
                 .rounded(px(crate::theme::RADIUS_SM))
                 .bg(t.bg_raised)
-                .border_1()
+                .border(px(1.))
                 .border_color(t.border_default)
                 .child(
                     Input::new(input)
@@ -1736,7 +1790,7 @@ pub(crate) fn checkbox(id: &'static str, checked: bool, t: &Tokens) -> gpui_kit:
                 .child(icon(Icon::Check, 12., t.text_on_accent))
         })
         .when(!checked, |this| {
-            this.border_1()
+            this.border(px(1.))
                 .border_color(t.border_strong)
                 .hover(move |s| s.bg(hover))
         })

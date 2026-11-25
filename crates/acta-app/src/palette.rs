@@ -4,15 +4,16 @@
 //! to the selected row's group; `Enter` runs; with nothing found, `Enter`
 //! creates a topic with the typed title.
 
+use crate::zoom::px;
 use acta_core::model::{KbKind, PageReq, ProjectTree, Record, Status, TopicId};
-use acta_core::store::{SearchKind, SearchQuery};
+use acta_core::store::SearchQuery;
 use gpui_kit::component::input::{
     Escape, IndentInline, Input, InputEvent, InputState, MoveDown, MoveUp,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, AppContext, Context, Entity, EventEmitter, InteractiveElement, IntoElement,
-    ParentElement, Render, StatefulInteractiveElement, Styled, Subscription, Task, Window, div, px,
+    ParentElement, Render, StatefulInteractiveElement, Styled, Subscription, Task, Window, div,
 };
 
 use crate::commands::{self, Command};
@@ -20,7 +21,7 @@ use crate::db::Db;
 use crate::i18n::{Arg, Key, KeyName, Locale, text, tr};
 use crate::icons::{Icon, icon};
 use crate::kb_model;
-use crate::palette_model::{self, Group, Item, Target};
+use crate::palette_model::{self, Found, Group, Item, Target};
 use crate::settings;
 use crate::theme::{RADIUS_SM, RADIUS_XL, Tokens};
 use crate::type_scale;
@@ -213,41 +214,33 @@ impl Palette {
         if self.create.is_none()
             && self.picker.is_none()
             && !query.is_empty()
-            && self.scope.is_none_or(|s| s == Group::Knowledge)
+            && self
+                .scope
+                .is_none_or(|s| s == Group::Knowledge || s == Group::Content)
         {
             let db = self.db.clone();
+            // Titles and content of every kind (the user's report of
+            // 2026-11-22): knowledge rows keep their group, the rest form
+            // "In content", each with its excerpt in place of the path.
             let task = db.run(cx, move |store| {
-                store.search(
+                let page = store.search(
                     &SearchQuery {
                         text: query,
-                        project: None,
-                        kinds: vec![SearchKind::Kb],
                         ..SearchQuery::default()
                     },
-                    PageReq::first(5),
+                    PageReq::first(20),
+                )?;
+                Ok::<_, acta_core::Error>(
+                    page.items
+                        .into_iter()
+                        .filter_map(|hit| found_item(store, hit))
+                        .collect::<Vec<Item>>(),
                 )
             });
             self._search = cx.spawn(async move |palette, cx| {
                 let hits = task.await;
                 let _ = palette.update(cx, |palette, cx| {
-                    palette.knowledge = hits
-                        .map(|page| {
-                            page.items
-                                .into_iter()
-                                .filter_map(|hit| match hit.record {
-                                    Record::Kb(id) => Some(Item {
-                                        group: Group::Knowledge,
-                                        target: Target::Kb(id, KbKind::Document),
-                                        title: hit.title,
-                                        detail: kb_model::excerpt_plain(&hit.snippet),
-                                        matched: vec![],
-                                        score: 0,
-                                    }),
-                                    _ => None,
-                                })
-                                .collect()
-                        })
-                        .unwrap_or_default();
+                    palette.knowledge = hits.unwrap_or_default();
                     cx.notify();
                 });
             });
@@ -352,7 +345,19 @@ impl Palette {
 
     fn shown(&self) -> Vec<Item> {
         let mut all = self.items.clone();
-        all.extend(self.knowledge.iter().cloned());
+        // A record the title groups show is not repeated under "In content".
+        all.extend(
+            self.knowledge
+                .iter()
+                .filter(|k| match &k.target {
+                    Target::Found(route, _) => !self
+                        .items
+                        .iter()
+                        .any(|i| palette_model::Found::same_as(*route, &i.target)),
+                    _ => true,
+                })
+                .cloned(),
+        );
         let limit = if self.scope.is_some() { ROWS } else { 5 };
         let query = self.query_text.clone();
         let mut out = palette_model::arrange(all, self.scope, limit, &query);
@@ -423,6 +428,23 @@ impl Palette {
                 icon(Icon::Pin, 16., t.text_secondary).into_any_element()
             }
             Target::Kb(..) => icon(Icon::FileText, 16., t.text_secondary).into_any_element(),
+            Target::Found(_, Found::Topic(status)) => {
+                ui::status_glyph(*status, 16., t).into_any_element()
+            }
+            Target::Found(_, found) => icon(
+                match found {
+                    Found::Entry => Icon::MessageSquare,
+                    Found::Note => Icon::StickyNote,
+                    Found::Project => Icon::Folder,
+                    Found::Epic => Icon::Layers,
+                    Found::Question => Icon::CircleQuestionMark,
+                    Found::Contact => Icon::User,
+                    Found::File | Found::Topic(_) => Icon::Paperclip,
+                },
+                16.,
+                t.text_secondary,
+            )
+            .into_any_element(),
             // No glyph for commands: chevron-right is Claude Code's author
             // mark, and commands have no kind to show; the slot keeps the
             // titles aligned.
@@ -543,6 +565,7 @@ impl Palette {
                 Group::Topics => Key::PaletteTopics,
                 Group::Epics => Key::PaletteEpics,
                 Group::Knowledge => Key::SectionKnowledge,
+                Group::Content => Key::PaletteContent,
                 Group::Commands => Key::PaletteCommands,
                 Group::Projects => Key::PaletteProjects,
                 Group::Choices => {
@@ -650,7 +673,7 @@ impl Render for Palette {
             .flex()
             .flex_col()
             .bg(t.bg_overlay)
-            .border_1()
+            .border(px(1.))
             .border_color(t.border_default)
             .rounded(px(RADIUS_XL))
             .shadow(vec![t.shadow_overlay()])
@@ -691,7 +714,7 @@ impl Render for Palette {
                     .gap(px(8.))
                     .h(px(44.))
                     .px(px(12.))
-                    .border_b_1()
+                    .border_b(px(1.))
                     .border_color(t.border_default)
                     .child(icon(Icon::Search, 16., t.text_tertiary))
                     .children(chip)
@@ -715,7 +738,7 @@ impl Render for Palette {
                     .py(px(8.))
                     .max_h(px(16. * 4. + 16.))
                     .overflow_hidden()
-                    .border_t_1()
+                    .border_t(px(1.))
                     .border_color(t.border_default)
                     .text_color(t.text_secondary)
                     .child(why)
@@ -728,7 +751,7 @@ impl Render for Palette {
                     .gap(px(16.))
                     .h(px(28.))
                     .px(px(12.))
-                    .border_t_1()
+                    .border_t(px(1.))
                     .border_color(t.border_default)
                     // Naming a new topic or epic: Enter creates it, and
                     // there is nothing to open in a tab.
@@ -746,4 +769,96 @@ impl Render for Palette {
                     .child(hint(Key::PaletteHintClose, &[esc])),
             )
     }
+}
+
+/// A search hit as a palette row: knowledge under Knowledge (its title
+/// and excerpt), every other kind under "In content", opening where the
+/// record lives. Titled records show the excerpt in place of the path;
+/// entries and notes show the excerpt as their title and where they are
+/// as the path.
+fn found_item(store: &acta_core::Store, hit: acta_core::store::SearchHit) -> Option<Item> {
+    use crate::route::Route;
+    use acta_core::model::{AttachOwner, Owner};
+    let excerpt = kb_model::excerpt_plain(&hit.snippet);
+    let excerpt = excerpt.split_whitespace().collect::<Vec<_>>().join(" ");
+    let topic_title = |t| store.topic(t).map(|x| x.title).unwrap_or_default();
+    let item = |target, title: String, detail: String| Item {
+        group: Group::Content,
+        target,
+        title,
+        detail,
+        matched: vec![],
+        score: 0,
+    };
+    Some(match hit.record {
+        Record::Kb(id) => Item {
+            group: Group::Knowledge,
+            target: Target::Kb(id, KbKind::Document),
+            title: hit.title,
+            detail: excerpt,
+            matched: vec![],
+            score: 0,
+        },
+        Record::Topic(t) => {
+            let status = store.topic(t).ok()?.status;
+            item(
+                Target::Found(Route::Topic(t), Found::Topic(status)),
+                hit.title,
+                excerpt,
+            )
+        }
+        Record::Epic(e) => item(
+            Target::Found(Route::Epic(e), Found::Epic),
+            hit.title,
+            excerpt,
+        ),
+        Record::Project(p) => item(
+            Target::Found(Route::Project(p), Found::Project),
+            hit.title,
+            excerpt,
+        ),
+        Record::Entry(_) => {
+            let t = hit.topic?;
+            item(
+                Target::Found(Route::Topic(t), Found::Entry),
+                excerpt,
+                topic_title(t),
+            )
+        }
+        Record::Note(n) => {
+            let note = store.note(n).ok()?;
+            let (route, place) = match note.filed_topic {
+                Some(t) => (Route::Topic(t), topic_title(t)),
+                None => (Route::Inbox(note.project), String::new()),
+            };
+            item(Target::Found(route, Found::Note), excerpt, place)
+        }
+        Record::Question(q) => {
+            let owner = store.question(q).ok()?.owner;
+            item(
+                Target::Found(Route::Questions(owner), Found::Question),
+                hit.title,
+                excerpt,
+            )
+        }
+        Record::Contact(c) => item(
+            Target::Found(Route::Contact(c), Found::Contact),
+            hit.title,
+            excerpt,
+        ),
+        Record::Attachment(a) => {
+            let route = match store.attachment(a).ok()?.owner {
+                AttachOwner::Topic(t) => Route::Topic(t),
+                AttachOwner::Epic(e) => Route::Epic(e),
+                AttachOwner::Entry(_) => Route::Topic(hit.topic?),
+                AttachOwner::Note(n) => match store.note(n).ok()?.filed_topic {
+                    Some(t) => Route::Topic(t),
+                    None => Route::Inbox(hit.project),
+                },
+            };
+            let _ = Owner::Project(hit.project);
+            item(Target::Found(route, Found::File), hit.title, excerpt)
+        }
+        _ => return None,
+    })
 }

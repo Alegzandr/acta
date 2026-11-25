@@ -140,8 +140,24 @@ pub fn kept_by_app(key: &Key, os: Os) -> bool {
     if k == "f6" && !m.ctrl && !m.alt && !m.platform {
         return true;
     }
-    // Ctrl+` and Ctrl+Tab / Ctrl+Shift+Tab on every platform.
-    if m.ctrl && !m.alt && !m.platform && (k == "tab" || (k == "`" && !m.shift)) {
+    // Ctrl+` (Ctrl+Shift+`: a new Claude Code session), Ctrl+Tab /
+    // Ctrl+Shift+Tab and Ctrl+PageUp / Ctrl+PageDown (the previous and
+    // next instance of the view) on every platform.
+    if m.ctrl
+        && !m.alt
+        && !m.platform
+        && (k == "tab" || k == "`" || (!m.shift && (k == "pageup" || k == "pagedown")))
+    {
+        return true;
+    }
+    // Claude Code (no project): Ctrl+Alt+J, Cmd+Option+J on macOS.
+    let free = match os {
+        Os::Other => m.ctrl && !m.platform,
+        Os::Mac => m.platform && !m.ctrl,
+    };
+    // Where AltGr+J types a character, the character wins (6.1).
+    let typed_other = key.key_char.is_some_and(|c| c != k);
+    if free && m.alt && !m.shift && k == "j" && !typed_other {
         return true;
     }
     match os {
@@ -149,10 +165,16 @@ pub fn kept_by_app(key: &Key, os: Os) -> bool {
             if !m.ctrl || m.alt || m.platform {
                 return false;
             }
+            // The window's zoom (Acta's layout.md 4.9): `Ctrl+=`,
+            // `Ctrl++` (Shift consumed or not, the numpad's too) and
+            // `Ctrl+0` (`à` on AZERTY); `Ctrl+-` stays Claude Code's undo.
+            if matches!(k, "=" | "+") {
+                return true;
+            }
             if m.shift {
                 matches!(k, "k" | "j" | "h" | "enter")
             } else {
-                digit
+                digit || matches!(k, "0" | "à")
             }
         }
         Os::Mac => {
@@ -483,6 +505,24 @@ mod tests {
     }
 
     #[test]
+    fn the_window_zoom_keys_go_to_the_app_but_ctrl_minus_stays() {
+        assert_eq!(route(&ctrl("="), NONE, Os::Other), Route::App);
+        assert_eq!(route(&ctrl("+"), NONE, Os::Other), Route::App);
+        assert_eq!(route(&ctrl("0"), NONE, Os::Other), Route::App);
+        assert_eq!(route(&ctrl("à"), NONE, Os::Other), Route::App);
+        assert_eq!(send(&ctrl("-"), NONE), b"");
+        // Ctrl+Alt+= is still the terminal's own text size.
+        let ctrl_alt = with("=", |m| {
+            m.ctrl = true;
+            m.alt = true
+        });
+        assert_eq!(
+            route(&ctrl_alt, NONE, Os::Other),
+            Route::Command(Command::TextLarger)
+        );
+    }
+
+    #[test]
     fn claude_code_undo_keys_reach_the_child() {
         // Ctrl+- and Ctrl+Shift+- (Windows reports the latter as "_").
         assert_eq!(send(&ctrl("-"), NONE), b"\x1f");
@@ -573,6 +613,14 @@ mod tests {
         assert_eq!(route(&ctrl_shift("h"), NONE, Os::Other), Route::App);
         assert_eq!(route(&ctrl_shift("enter"), NONE, Os::Other), Route::App);
         assert_eq!(route(&ctrl("`"), NONE, Os::Other), Route::App);
+        assert_eq!(route(&ctrl_shift("`"), NONE, Os::Other), Route::App);
+        assert_eq!(route(&ctrl("pagedown"), NONE, Os::Other), Route::App);
+        assert_eq!(route(&ctrl("pageup"), NONE, Os::Other), Route::App);
+        let ctrl_alt_j = with("j", |m| {
+            m.ctrl = true;
+            m.alt = true
+        });
+        assert_eq!(route(&ctrl_alt_j, NONE, Os::Other), Route::App);
         assert_eq!(route(&ctrl("3"), NONE, Os::Other), Route::App);
         assert_eq!(route(&ctrl("tab"), NONE, Os::Other), Route::App);
         assert_eq!(route(&ctrl_shift("tab"), NONE, Os::Other), Route::App);

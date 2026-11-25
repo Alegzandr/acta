@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use crate::zoom::{self, px};
 use acta_core::Store;
 use acta_core::model::{
     AttachOwner, Attachment, AttachmentId, Author, FileKind, ProjectId, Record,
@@ -22,7 +23,7 @@ use gpui_kit::{
     EventEmitter, ExternalPaths, FocusHandle, Focusable, Global, ImageCacheError, ImageSource,
     InteractiveElement, IntoElement, KeyDownEvent, ObjectFit, ParentElement, PathPromptOptions,
     Pixels, Point, Render, RenderImage, ScrollHandle, SharedString, StatefulInteractiveElement,
-    Styled, StyledImage, Task, WeakEntity, Window, div, img, px,
+    Styled, StyledImage, Task, WeakEntity, Window, div, img,
 };
 
 use crate::attach::{self, Draft, DraftFile, Paste, Refusal};
@@ -138,6 +139,9 @@ pub struct Files {
     /// The last folder Save as wrote to in this session.
     save_dir: Option<PathBuf>,
     focus: HashMap<AttachmentId, FocusHandle>,
+    /// Each file as last drawn: the palette's "Save file as..." acts on
+    /// the one with the keyboard.
+    drawn: HashMap<AttachmentId, Attachment>,
     /// Where each file was last drawn (the menu opened from the keyboard).
     bounds: BoundsMap,
 }
@@ -150,8 +154,15 @@ impl Files {
             ws,
             save_dir: None,
             focus: HashMap::new(),
+            drawn: HashMap::new(),
             bounds: Default::default(),
         }
+    }
+
+    /// The file of a strip that has the keyboard.
+    pub fn focused(&self, window: &Window) -> Option<Attachment> {
+        let (id, _) = self.focus.iter().find(|(_, h)| h.is_focused(window))?;
+        self.drawn.get(id).cloned()
     }
 
     fn focus_for(&mut self, id: AttachmentId, cx: &mut App) -> FocusHandle {
@@ -406,6 +417,67 @@ fn hub(cx: &App) -> Option<Entity<Files>> {
     cx.try_global::<FilesHub>().map(|h| h.0.clone())
 }
 
+/// "Save file as..." from the palette: the file of a strip that has the
+/// keyboard, if any.
+pub fn focused_file(window: &Window, cx: &App) -> Option<Attachment> {
+    hub(cx)?.read(cx).focused(window)
+}
+
+/// The palette's "Save file as..." on the focused file.
+pub fn save_focused(window: &Window, cx: &mut App) {
+    let Some(hub) = hub(cx) else { return };
+    let Some(file) = hub.read(cx).focused(window) else {
+        return;
+    };
+    hub.update(cx, |h, cx| h.save_as(&file, cx));
+}
+
+/// The editors that take files, each with its tray, so the palette's
+/// "Attach files..." finds the tray of the editor that has (or last had)
+/// the focus.
+#[derive(Default)]
+struct Trays(HashMap<gpui_kit::EntityId, WeakEntity<Tray>>);
+
+impl Global for Trays {}
+
+/// Pair an editor with its tray (each frame it is drawn).
+pub fn pair(
+    editor: &Entity<gpui_kit::component::input::TextareaState>,
+    tray: &Entity<Tray>,
+    cx: &mut App,
+) {
+    let trays = cx.default_global::<Trays>();
+    trays.0.retain(|_, t| t.upgrade().is_some());
+    trays.0.insert(editor.entity_id(), tray.downgrade());
+}
+
+/// The editor that has, or last had, the focus (the one dictation acts
+/// on), when it takes files, with its tray.
+pub fn target_tray(
+    cx: &App,
+) -> Option<(
+    Entity<gpui_kit::component::input::TextareaState>,
+    Entity<Tray>,
+)> {
+    let editor = crate::voice::get(cx)?.read(cx).target_editor()?;
+    let tray = cx
+        .try_global::<Trays>()?
+        .0
+        .get(&editor.entity_id())?
+        .upgrade()?;
+    Some((editor, tray))
+}
+
+/// The palette's "Attach files...": the open dialog of that editor's
+/// tray, the editor focused again.
+pub fn attach_to_target(window: &mut Window, cx: &mut App) {
+    let Some((editor, tray)) = target_tray(cx) else {
+        return;
+    };
+    editor.update(cx, |s, cx| s.focus(window, cx));
+    tray.update(cx, |tray, cx| tray.pick(cx));
+}
+
 // ---- the strip ----
 
 /// How a strip is drawn.
@@ -438,7 +510,10 @@ pub fn strip(
     let mut tiles = Vec::new();
     let mut chips = Vec::new();
     for (i, file) in ordered.iter().enumerate() {
-        let handle = hub.update(cx, |h, cx| h.focus_for(file.id, cx));
+        let handle = hub.update(cx, |h, cx| {
+            h.drawn.insert(file.id, (*file).clone());
+            h.focus_for(file.id, cx)
+        });
         // One stop: the first file; arrows move inside the strip.
         let handle = handle.tab_stop(i == 0);
         let el = file_element(
@@ -568,7 +643,7 @@ fn file_element(
             .rounded(px(RADIUS_SM))
             .overflow_hidden()
             .bg(t.bg_sunken)
-            .border_1()
+            .border(px(1.))
             .border_color(t.border_subtle)
             .hover(move |s| s.border_color(strong))
             .child(
@@ -614,7 +689,7 @@ fn chip(
         .h(px(28.))
         .px(px(8.))
         .rounded(px(RADIUS_SM))
-        .border_1()
+        .border(px(1.))
         .border_color(t.border_default)
         .hover(move |s| s.bg(hover))
         .child(icon(glyph, 16., t.text_secondary))
@@ -1105,7 +1180,7 @@ impl Tray {
                         .rounded(px(RADIUS_SM))
                         .overflow_hidden()
                         .bg(t.bg_sunken)
-                        .border_1()
+                        .border(px(1.))
                         .border_color(t.border_subtle)
                         .hover(move |s| s.border_color(strong))
                         .children(thumb)
@@ -1572,6 +1647,8 @@ pub struct Viewer {
     /// Images: fitted, or at 100%.
     fit: bool,
     scroll: ScrollHandle,
+    /// At 100%, the image dragged by the pointer: where it last was.
+    grab: Option<Point<Pixels>>,
     focus: FocusHandle,
     _load: Task<()>,
 }
@@ -1599,6 +1676,7 @@ impl Viewer {
             content: Content::Loading,
             fit: true,
             scroll: ScrollHandle::new(),
+            grab: None,
             focus,
             _load: Task::ready(()),
         };
@@ -1706,9 +1784,24 @@ impl Viewer {
     fn pan(&mut self, dx: f32, dy: f32) {
         let o = self.scroll.offset();
         let max = self.scroll.max_offset();
-        let x = (o.x - px(dx)).clamp(-max.x, px(0.));
-        let y = (o.y - px(dy)).clamp(-max.y, px(0.));
-        self.scroll.set_offset(Point { x, y });
+        let (x, y) = attach::panned(
+            (f32::from(o.x), f32::from(o.y)),
+            (f32::from(max.x), f32::from(max.y)),
+            (dx, dy),
+        );
+        // Offsets are logical px, as GPUI measures them.
+        self.scroll.set_offset(Point {
+            x: gpui_kit::px(x),
+            y: gpui_kit::px(y),
+        });
+    }
+
+    /// At 100%, the pointer drags the image: it follows the pointer.
+    fn drag_to(&mut self, at: Point<Pixels>, cx: &mut Context<Self>) {
+        let Some(from) = self.grab else { return };
+        self.grab = Some(at);
+        self.pan(f32::from(from.x - at.x), f32::from(from.y - at.y));
+        cx.notify();
     }
 }
 
@@ -1723,7 +1816,7 @@ impl Render for Viewer {
         let locale = settings::locale(cx);
         let macos = cfg!(target_os = "macos");
         let viewport = window.viewport_size();
-        let (vw, vh) = (f32::from(viewport.width), f32::from(viewport.height));
+        let (vw, vh) = (zoom::eff(viewport.width), zoom::eff(viewport.height));
         let inset = if vw < 880. || vh < 560. { 24. } else { 32. };
         let Some(file) = self.file().cloned() else {
             return div().into_any_element();
@@ -1737,7 +1830,7 @@ impl Render for Viewer {
             .h(px(44.))
             .px(px(16.))
             .flex_shrink_0()
-            .border_b_1()
+            .border_b(px(1.))
             .border_color(t.border_default)
             .child(
                 type_scale::UI_STRONG
@@ -1869,7 +1962,37 @@ impl Render for Viewer {
                     .bg(t.bg_sunken)
                     .rounded_b(px(RADIUS_XL - 1.))
                     .when(!fit, |this| {
-                        this.overflow_scroll().track_scroll(&self.scroll)
+                        // At 100% the pointer drags the image (the wheel
+                        // still scrolls it).
+                        let grabbing = self.grab.is_some();
+                        this.overflow_scroll()
+                            .track_scroll(&self.scroll)
+                            .cursor(if grabbing {
+                                gpui_kit::CursorStyle::ClosedHand
+                            } else {
+                                gpui_kit::CursorStyle::OpenHand
+                            })
+                            .on_mouse_down(
+                                gpui_kit::MouseButton::Left,
+                                cx.listener(|v, e: &gpui_kit::MouseDownEvent, _, cx| {
+                                    v.grab = Some(e.position);
+                                    cx.notify();
+                                }),
+                            )
+                            .on_mouse_move(cx.listener(|v, e: &gpui_kit::MouseMoveEvent, _, cx| {
+                                if e.pressed_button == Some(gpui_kit::MouseButton::Left) {
+                                    v.drag_to(e.position, cx);
+                                } else if v.grab.take().is_some() {
+                                    cx.notify();
+                                }
+                            }))
+                            .on_mouse_up(
+                                gpui_kit::MouseButton::Left,
+                                cx.listener(|v, _, _, cx| {
+                                    v.grab = None;
+                                    cx.notify();
+                                }),
+                            )
                     })
                     .child(
                         div()
@@ -1924,7 +2047,7 @@ impl Render for Viewer {
                         div()
                             .px(px(16.))
                             .py(px(8.))
-                            .border_t_1()
+                            .border_t(px(1.))
                             .border_color(t.border_default)
                             .child(line(
                                 Icon::Info,
@@ -1956,7 +2079,7 @@ impl Render for Viewer {
                     .flex()
                     .flex_col()
                     .bg(t.bg_overlay)
-                    .border_1()
+                    .border(px(1.))
                     .border_color(t.border_default)
                     .rounded(px(RADIUS_XL))
                     .shadow(vec![t.shadow_overlay()])

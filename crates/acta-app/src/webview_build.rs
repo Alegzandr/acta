@@ -26,9 +26,47 @@ impl HasWindowHandle for Parent {
     }
 }
 
-/// Build a web view as a child of `parent`.
+/// Build a web view as a child of `parent`, at the window's zoom with
+/// its own zoom turned off (layout.md 4.9: `Ctrl+wheel`, a pinch and the
+/// zoom keys never give one view a zoom of its own).
 pub fn build(builder: wry::WebViewBuilder<'_>, parent: &Parent) -> wry::Result<wry::WebView> {
-    builder.build_as_child(parent)
+    let view = builder.with_hotkeys_zoom(false).build_as_child(parent)?;
+    let _ = view.zoom(f64::from(crate::zoom::factor()));
+    #[cfg(windows)]
+    LIVE.with(|live| {
+        use wry::WebViewExtWindows as _;
+        live.borrow_mut().push(view.controller());
+    });
+    Ok(view)
+}
+
+#[cfg(windows)]
+thread_local! {
+    /// The controllers of the web views built so far, to follow a zoom
+    /// change; one that is closed fails the call and is dropped.
+    static LIVE: std::cell::RefCell<Vec<webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Controller>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+    static APPLIED: std::cell::Cell<f32> = const { std::cell::Cell::new(1.) };
+}
+
+/// Give every live web view the window's zoom (WebView2 `ZoomFactor`).
+/// Cheap when nothing changed: called on every frame of the main window.
+/// Elsewhere a view takes the zoom when it is built.
+pub fn set_zoom(factor: f32) {
+    #[cfg(windows)]
+    {
+        if APPLIED.with(|a| a.replace(factor)) == factor {
+            return;
+        }
+        LIVE.with(|live| {
+            // SAFETY: COM calls on controllers this list keeps alive; a
+            // closed one returns an error and leaves the list.
+            live.borrow_mut()
+                .retain(|c| unsafe { c.SetZoomFactor(f64::from(factor)) }.is_ok());
+        });
+    }
+    #[cfg(not(windows))]
+    let _ = factor;
 }
 
 /// A builder made from the context the web view keeps (the closure form

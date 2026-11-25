@@ -46,6 +46,8 @@ Why neutral greys: the surfaces are greys with a trace of warmth (blue one to th
 
 Why verdigris: the semantic colours (red, amber, green) are all warm, so a warm accent would collide with danger or warning on a focus ring next to an error. A grey-green copper patina stays calm on neutral greys, separates from all three semantics, and is neither the blue nor the purple of the three references, so nothing in Acta reads as borrowed.
 
+Three syntax colours for code blocks (`syntax.keyword`, `syntax.string`, `syntax.constant`, aliases of terminal slots 5, 2 and 4) are specified, with their measured ratios, in components-editor.md 5 and move into the two tables here when they are added to `Tokens`.
+
 ### 2.2 Measured contrast (WCAG 2.x, computed from the hex values)
 
 | Pair | Dark | Light | Requirement |

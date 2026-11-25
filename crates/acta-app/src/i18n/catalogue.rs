@@ -157,6 +157,10 @@ catalogue! {
         en: p("{n} topic", "{n} topics"),
         fr: p("{n} sujet", "{n} sujets"),
     }
+    CountItems "count.items" {
+        en: p("{n} item", "{n} items"),
+        fr: p("{n} élément", "{n} éléments"),
+    }
     CountNotes "count.notes" {
         en: p("{n} note", "{n} notes"),
         fr: p("{n} note", "{n} notes"),
@@ -168,6 +172,14 @@ catalogue! {
     CountMemories "count.memories" {
         en: p("{n} memory", "{n} memories"),
         fr: p("{n} mémoire", "{n} mémoires"),
+    }
+    CountFiles "count.files" {
+        en: p("{n} file", "{n} files"),
+        fr: p("{n} fichier", "{n} fichiers"),
+    }
+    CountContacts "count.contacts" {
+        en: p("{n} contact", "{n} contacts"),
+        fr: p("{n} contact", "{n} contacts"),
     }
     TreeInbox "tree.inbox" {
         en: t("Inbox"),
@@ -497,9 +509,9 @@ catalogue! {
         en: p("{n} complete epic", "{n} complete epics"),
         fr: p("{n} epic terminé", "{n} epics terminés"),
     }
-    OverviewMemories "overview.memories" {
-        en: p("{n} memory not updated for 90 days", "{n} memories not updated for 90 days"),
-        fr: p("{n} mémoire non mise à jour depuis 90 jours", "{n} mémoires non mises à jour depuis 90 jours"),
+    OverviewToCheck "overview.to_check" {
+        en: p("{n} memory to check", "{n} memories to check"),
+        fr: p("{n} mémoire à vérifier", "{n} mémoires à vérifier"),
     }
     OverviewQuestionsLate "overview.questions_late" {
         en: p("{n} question past its answer date", "{n} questions past their answer date"),
@@ -741,9 +753,13 @@ catalogue! {
         en: t("Created in the last 7 days"),
         fr: t("Créés ces 7 derniers jours"),
     }
-    FilterStaleMemories "filter.stale_memories" {
-        en: t("Not updated for 90 days"),
-        fr: t("Non mises à jour depuis 90 jours"),
+    FilterToCheck "filter.to_check" {
+        en: t("To check"),
+        fr: t("À vérifier"),
+    }
+    FilterInactive "filter.inactive" {
+        en: t("Superseded and retired"),
+        fr: t("Remplacés et obsolètes"),
     }
     FilterClear "filter.clear" {
         en: t("Clear filter"),
@@ -1389,6 +1405,250 @@ catalogue! {
         en: t("Nothing in this project mentions \"{query}\"."),
         fr: t("Rien dans ce projet ne mentionne «\u{202f}{query}\u{202f}»."),
     }
+    KbInactiveRow "kb.inactive_row" {
+        en: t("{n} superseded or retired"),
+        fr: p("{n} élément remplacé ou obsolète", "{n} éléments remplacés ou obsolètes"),
+    }
+    KbToCheckEmpty "kb.to_check_empty" {
+        en: t("Nothing to check."),
+        fr: t("Rien à vérifier."),
+    }
+    KbInactiveEmpty "kb.inactive_empty" {
+        en: t("Nothing is superseded or retired."),
+        fr: t("Aucun élément remplacé ou obsolète."),
+    }
+    KbReasonConflict "kb.reason.conflict" {
+        en: t("May contradict {id}"),
+        fr: t("Contredit peut-être {id}"),
+    }
+    KbReasonDuplicate "kb.reason.duplicate" {
+        en: t("Possible duplicate of {id}"),
+        fr: t("Doublon possible de {id}"),
+    }
+    KbReasonFileGone "kb.reason.file_gone" {
+        en: t("{file} was deleted or moved"),
+        fr: t("{file} a été supprimé ou déplacé"),
+    }
+    KbReasonFileGoneMore "kb.reason.file_gone_more" {
+        en: p("{file} and {n} more file were deleted or moved", "{file} and {n} more files were deleted or moved"),
+        fr: p("{file} et {n} autre fichier ont été supprimés ou déplacés", "{file} et {n} autres fichiers ont été supprimés ou déplacés"),
+    }
+    KbReasonFileChanged "kb.reason.file_changed" {
+        en: t("{file} changed since it was checked"),
+        fr: t("{file} a changé depuis la dernière vérification"),
+    }
+    KbReasonFileChangedMore "kb.reason.file_changed_more" {
+        en: p("{file} and {n} more file changed since they were checked", "{file} and {n} more files changed since they were checked"),
+        fr: p("{file} et {n} autre fichier ont changé depuis la dernière vérification", "{file} et {n} autres fichiers ont changé depuis la dernière vérification"),
+    }
+    KbReasonBranchGone "kb.reason.branch_gone" {
+        en: t("Branch {branch} no longer exists"),
+        fr: t("La branche {branch} n\u{2019}existe plus"),
+    }
+    KbReasonBranchMerged "kb.reason.branch_merged" {
+        en: t("Branch {branch} was merged"),
+        fr: t("La branche {branch} a été fusionnée"),
+    }
+    KbReasonFolderRemoved "kb.reason.folder_removed" {
+        en: t("Its folder was removed from Acta"),
+        fr: t("Son dossier a été retiré d\u{2019}Acta"),
+    }
+    KbReasonTopicDone "kb.reason.topic_done" {
+        en: t("Its topic is done"),
+        fr: t("Son sujet est terminé"),
+    }
+    KbReasonTopicDropped "kb.reason.topic_dropped" {
+        en: t("Its topic was dropped"),
+        fr: t("Son sujet a été abandonné"),
+    }
+    KbReasonOld "kb.reason.old" {
+        en: t("Not checked for {days} days"),
+        fr: t("Non vérifiée depuis {days} jours"),
+    }
+    KbVerify "kb.verify" {
+        en: t("Mark as still true"),
+        fr: t("Marquer comme toujours valable"),
+    }
+    KbRetire "kb.retire" {
+        en: t("Mark as no longer true"),
+        fr: t("Marquer comme obsolète"),
+    }
+    KbRetiredToastDocument "kb.retired_toast.document" {
+        en: t("Marked as no longer true."),
+        fr: t("Marqué comme obsolète."),
+    }
+    KbRetiredToastMemory "kb.retired_toast.memory" {
+        en: t("Marked as no longer true."),
+        fr: t("Marquée comme obsolète."),
+    }
+    KbMakeLive "kb.make_live" {
+        en: t("Make live again"),
+        fr: t("Rétablir"),
+    }
+    KbNoticeSupersededDocument "kb.notice.superseded.document" {
+        en: t("Superseded by {title} on {date}."),
+        fr: t("Remplacé le {date} par {title}."),
+    }
+    KbNoticeSupersededMemory "kb.notice.superseded.memory" {
+        en: t("Superseded by {title} on {date}."),
+        fr: t("Remplacée le {date} par {title}."),
+    }
+    KbNoticeRetiredDocument "kb.notice.retired.document" {
+        en: t("Retired by {author} on {date}."),
+        fr: t("Rendu obsolète le {date} par {author}."),
+    }
+    KbNoticeRetiredMemory "kb.notice.retired.memory" {
+        en: t("Retired by {author} on {date}."),
+        fr: t("Rendue obsolète le {date} par {author}."),
+    }
+    KbNoticeConflict "kb.notice.conflict" {
+        en: t("May contradict {id}."),
+        fr: t("Contredit peut-être {id}."),
+    }
+    KbNoticeDuplicate "kb.notice.duplicate" {
+        en: t("Possible duplicate of {id}."),
+        fr: t("Doublon possible de {id}."),
+    }
+    KbThisReplaces "kb.this_replaces" {
+        en: t("This replaces it"),
+        fr: t("Celle-ci la remplace"),
+    }
+    KbReplacedToast "kb.replaced_toast" {
+        en: t("{id} is now superseded by this."),
+        fr: t("{id} est désormais remplacée par celle-ci."),
+    }
+    KbMergeIntoId "kb.merge_into_id" {
+        en: t("Merge into {id}"),
+        fr: t("Fusionner dans {id}"),
+    }
+    KbMergeHere "kb.merge_here" {
+        en: t("Merge {id} into this"),
+        fr: t("Fusionner {id} dans celle-ci"),
+    }
+    KbMergeInto "kb.merge_into" {
+        en: t("Merge into\u{2026}"),
+        fr: t("Fusionner dans\u{2026}"),
+    }
+    KbMerged "kb.merged" {
+        en: t("Merged into {id}."),
+        fr: t("Fusionnée dans {id}."),
+    }
+    KbPropBranch "kb.prop.branch" {
+        en: t("Branch"),
+        fr: t("Branche"),
+    }
+    KbPropSources "kb.prop.sources" {
+        en: t("Sources"),
+        fr: t("Sources"),
+    }
+    KbBranchMerged "kb.branch.merged" {
+        en: t("merged"),
+        fr: t("fusionnée"),
+    }
+    KbBranchGone "kb.branch.gone" {
+        en: t("no longer exists"),
+        fr: t("n\u{2019}existe plus"),
+    }
+    KbBranchTip "kb.branch.tip" {
+        en: t("True only on this branch, in {folder}."),
+        fr: t("Valable seulement sur cette branche, dans {folder}."),
+    }
+    KbSourceEntry "kb.source.entry" {
+        en: t("{topic}, entry of {date}"),
+        fr: t("{topic}, entrée du {date}"),
+    }
+    KbSourceMissing "kb.source.missing" {
+        en: t("A record not in this database"),
+        fr: t("Un élément absent de cette base"),
+    }
+    KbSourceCommit "kb.source.commit" {
+        en: t("Commit {sha}"),
+        fr: t("Commit {sha}"),
+    }
+    KbSourceCopyCommit "kb.source.copy_commit" {
+        en: t("Copy commit id"),
+        fr: t("Copier l\u{2019}identifiant du commit"),
+    }
+    KbSourceCopyPath "kb.source.copy_path" {
+        en: t("{folder} · Copy path"),
+        fr: t("{folder} · Copier le chemin"),
+    }
+    KbSourceChanged "kb.source.changed" {
+        en: t("changed since checked"),
+        fr: t("modifié depuis la vérification"),
+    }
+    KbSourceGone "kb.source.gone" {
+        en: t("deleted or moved"),
+        fr: t("supprimé ou déplacé"),
+    }
+    KbProvFrom "kb.prov.from" {
+        en: t("From topic {id}"),
+        fr: t("Depuis le sujet {id}"),
+    }
+    KbProvBranch "kb.prov.branch" {
+        en: t("On branch {branch}"),
+        fr: t("Sur la branche {branch}"),
+    }
+    KbProvCheckedDocument "kb.prov.checked.document" {
+        en: t("Checked {when} by {author}"),
+        fr: t("Vérifié {when} par {author}"),
+    }
+    KbProvCheckedMemory "kb.prov.checked.memory" {
+        en: t("Checked {when} by {author}"),
+        fr: t("Vérifiée {when} par {author}"),
+    }
+    KbSessionOn "kb.session.on" {
+        en: t("A Claude Code session on {topic}"),
+        fr: t("Une session Claude Code sur {topic}"),
+    }
+    KbSessionAny "kb.session.any" {
+        en: t("A Claude Code session"),
+        fr: t("Une session Claude Code"),
+    }
+    KbSessionBranch "kb.session.branch" {
+        en: t("Branch {branch}"),
+        fr: t("Branche {branch}"),
+    }
+    KbAlsoOpenMemory "kb.also_open.memory" {
+        en: t("Claude Code is working with this memory on {topic}"),
+        fr: t("Claude Code travaille avec cette mémoire sur {topic}"),
+    }
+    KbAlsoOpenDocument "kb.also_open.document" {
+        en: t("Claude Code is working with this document on {topic}"),
+        fr: t("Claude Code travaille avec ce document sur {topic}"),
+    }
+    KbAlsoOpenMemoryAny "kb.also_open.memory_any" {
+        en: t("Claude Code is working with this memory"),
+        fr: t("Claude Code travaille avec cette mémoire"),
+    }
+    KbAlsoOpenDocumentAny "kb.also_open.document_any" {
+        en: t("Claude Code is working with this document"),
+        fr: t("Claude Code travaille avec ce document"),
+    }
+    KbAlsoOpenRead "kb.also_open.read" {
+        en: t("Last read {when}"),
+        fr: t("Dernière lecture {when}"),
+    }
+    KbAlsoOpenWrote "kb.also_open.wrote" {
+        en: t("Last changed {when}"),
+        fr: t("Dernière modification {when}"),
+    }
+    KbSaveMerged "kb.save_merged" {
+        en: t("Saved. Claude Code\u{2019}s changes to other sections are kept."),
+        fr: t("Enregistré. Les modifications de Claude Code dans les autres sections sont conservées."),
+    }
+    KbScanFound "kb.scan_found" {
+        en: p("Found {n} possible duplicate.", "Found {n} possible duplicates."),
+        fr: p("{n} doublon possible trouvé.", "{n} doublons possibles trouvés."),
+    }
+    KbScanShow "kb.scan_show" {
+        en: t("Show"),
+        fr: t("Afficher"),
+    }
+    KbScanNone "kb.scan_none" {
+        en: t("No possible duplicates found."),
+        fr: t("Aucun doublon possible trouvé."),
+    }
     QuestionsNew "questions.new" {
         en: t("New question"),
         fr: t("Nouvelle question"),
@@ -1661,6 +1921,14 @@ catalogue! {
         en: t("{name} is now a contact of project {project}, so {record} still sees them."),
         fr: t("Contact étendu au projet {project} pour rester visible depuis {record} : {name}."),
     }
+    ContactLiftKept "contact.lift_kept" {
+        en: t("{name} stays a contact of all projects."),
+        fr: t("Le contact reste dans tous les projets : {name}."),
+    }
+    ContactLiftKeptProject "contact.lift_kept.project" {
+        en: t("{name} stays a contact of project {project}."),
+        fr: t("Le contact reste au niveau du projet {project} : {name}."),
+    }
     ContactsTitle "contacts.title" {
         en: t("Contacts"),
         fr: t("Contacts"),
@@ -1877,6 +2145,50 @@ catalogue! {
         en: t("Created"),
         fr: t("Créée"),
     }
+    HistoryVerifiedDocument "history.verified.document" {
+        en: t("Marked as still true"),
+        fr: t("Marqué comme toujours valable"),
+    }
+    HistoryVerifiedMemory "history.verified.memory" {
+        en: t("Marked as still true"),
+        fr: t("Marquée comme toujours valable"),
+    }
+    HistorySupersededDocument "history.superseded.document" {
+        en: t("Superseded by {id}"),
+        fr: t("Remplacé par {id}"),
+    }
+    HistorySupersededMemory "history.superseded.memory" {
+        en: t("Superseded by {id}"),
+        fr: t("Remplacée par {id}"),
+    }
+    HistoryRetiredDocument "history.retired.document" {
+        en: t("Retired"),
+        fr: t("Rendu obsolète"),
+    }
+    HistoryRetiredMemory "history.retired.memory" {
+        en: t("Retired"),
+        fr: t("Rendue obsolète"),
+    }
+    HistoryRetiredReasonDocument "history.retired_reason.document" {
+        en: t("Retired: {reason}"),
+        fr: t("Rendu obsolète\u{a0}: {reason}"),
+    }
+    HistoryRetiredReasonMemory "history.retired_reason.memory" {
+        en: t("Retired: {reason}"),
+        fr: t("Rendue obsolète\u{a0}: {reason}"),
+    }
+    HistoryMadeLiveDocument "history.made_live.document" {
+        en: t("Made live again"),
+        fr: t("Rétabli"),
+    }
+    HistoryMadeLiveMemory "history.made_live.memory" {
+        en: t("Made live again"),
+        fr: t("Rétablie"),
+    }
+    HistoryMerged "history.merged" {
+        en: t("Merged {id} into this"),
+        fr: t("Fusion de {id}"),
+    }
     FoldersTitle "folders.title" {
         en: t("Working folders"),
         fr: t("Dossiers de travail"),
@@ -1925,9 +2237,21 @@ catalogue! {
         en: t("Also attached to epic {name}."),
         fr: t("Également rattaché à l\u{2019}epic {name}."),
     }
+    FoldersAlsoTwo "folders.also_two" {
+        en: t("Also attached to {a} and {b}."),
+        fr: t("Également rattaché à {a} et à {b}."),
+    }
     FoldersAlsoMore "folders.also_more" {
-        en: t("Also attached to topics {a}, {b} and {n} more."),
-        fr: p("Également rattaché aux sujets {a}, {b} et {n} autre.", "Également rattaché aux sujets {a}, {b} et {n} autres."),
+        en: t("Also attached to {a}, {b} and {n} more."),
+        fr: p("Également rattaché à {a}, à {b} et à {n} autre.", "Également rattaché à {a}, à {b} et à {n} autres."),
+    }
+    FoldersAlsoNameTopic "folders.also_name.topic" {
+        en: t("topic {name}"),
+        fr: t("sujet {name}"),
+    }
+    FoldersAlsoNameEpic "folders.also_name.epic" {
+        en: t("epic {name}"),
+        fr: t("epic {name}"),
     }
     FoldersAlsoTip "folders.also.tip" {
         en: t("A session started in this folder outside Acta opens on {level} and is told about both."),
@@ -2333,10 +2657,6 @@ catalogue! {
         en: t("project {name}"),
         fr: t("projet {name}"),
     }
-    TerminalRestartHere "terminal.restart_here" {
-        en: t("Restart here"),
-        fr: t("Redémarrer ici"),
-    }
     TerminalEnded "terminal.ended" {
         en: t("Session ended. {keys} to restart."),
         fr: t("Session terminée. {keys} pour relancer."),
@@ -2420,10 +2740,6 @@ catalogue! {
     TerminalRunningIn "terminal.running_in" {
         en: t("(running in {name})"),
         fr: t("(lancé dans {name})"),
-    }
-    TerminalRestartIn "terminal.restart_in" {
-        en: t("Restart in {name}"),
-        fr: t("Redémarrer dans {name}"),
     }
     TerminalCloseTitle "terminal.close.title" {
         en: t("Close the terminal?"),
@@ -2697,6 +3013,10 @@ catalogue! {
         en: t("Epics"),
         fr: t("Epics"),
     }
+    PaletteContent "palette.content" {
+        en: t("In content"),
+        fr: t("Dans le contenu"),
+    }
     PaletteHintOpen "palette.hint.open" {
         en: t("{keys} open"),
         fr: t("{keys} ouvrir"),
@@ -2761,9 +3081,13 @@ catalogue! {
         en: t("Show topics created in the last 7 days"),
         fr: t("Afficher les sujets créés ces 7 derniers jours"),
     }
-    CmdShowStaleMemories "cmd.show_stale_memories" {
-        en: t("Show memories not updated for 90 days"),
-        fr: t("Afficher les mémoires non mises à jour depuis 90 jours"),
+    CmdShowToCheck "cmd.show_to_check" {
+        en: t("Show knowledge to check"),
+        fr: t("Afficher les connaissances à vérifier"),
+    }
+    CmdShowInactive "cmd.show_inactive" {
+        en: t("Show superseded and retired"),
+        fr: t("Afficher les éléments remplacés et obsolètes"),
     }
     CmdShowQuestionsLate "cmd.show_questions_late" {
         en: t("Show questions past their answer date"),
@@ -2929,6 +3253,22 @@ catalogue! {
         en: t("Reading width: {value}"),
         fr: t("Largeur de lecture\u{a0}: {value}"),
     }
+    CmdZoomIn "cmd.zoom_in" {
+        en: t("Zoom in"),
+        fr: t("Zoom avant"),
+    }
+    CmdZoomOut "cmd.zoom_out" {
+        en: t("Zoom out"),
+        fr: t("Zoom arrière"),
+    }
+    CmdZoomReset "cmd.zoom_reset" {
+        en: t("Reset zoom"),
+        fr: t("Réinitialiser le zoom"),
+    }
+    CmdZoomTo "cmd.zoom_to" {
+        en: t("Zoom: {value}"),
+        fr: t("Zoom\u{a0}: {value}"),
+    }
     CmdLanguage "cmd.language" {
         en: t("Language: {value}"),
         fr: t("Langue\u{a0}: {value}"),
@@ -2968,10 +3308,6 @@ catalogue! {
     CmdToggleBottom "cmd.toggle_bottom" {
         en: t("Toggle bottom panel"),
         fr: t("Afficher ou masquer le panneau du bas"),
-    }
-    CmdRestartTerminal "cmd.restart_terminal" {
-        en: t("Restart terminal here"),
-        fr: t("Redémarrer le terminal ici"),
     }
     CmdViewShow "cmd.view_show" {
         en: t("{view}: Show"),
@@ -3100,6 +3436,34 @@ catalogue! {
     CmdKbToDocument "cmd.kb_to_document" {
         en: t("Change kind to document"),
         fr: t("Convertir en document"),
+    }
+    CmdKbVerify "cmd.kb_verify" {
+        en: t("Mark as still true"),
+        fr: t("Marquer comme toujours valable"),
+    }
+    CmdKbRetire "cmd.kb_retire" {
+        en: t("Mark as no longer true"),
+        fr: t("Marquer comme obsolète"),
+    }
+    CmdKbMakeLive "cmd.kb_make_live" {
+        en: t("Make live again"),
+        fr: t("Rétablir"),
+    }
+    CmdKbMerge "cmd.kb_merge" {
+        en: t("Merge into\u{2026}"),
+        fr: t("Fusionner dans\u{2026}"),
+    }
+    CmdKbKeepBoth "cmd.kb_keep_both" {
+        en: t("Keep both {a} and {b}"),
+        fr: t("Garder les deux\u{a0}: {a} et {b}"),
+    }
+    CmdKbReplace "cmd.kb_replace" {
+        en: t("Replace {id} with this"),
+        fr: t("Remplacer {id} par celle-ci"),
+    }
+    CmdKbFindDuplicates "cmd.kb_find_duplicates" {
+        en: t("Find duplicate memories"),
+        fr: t("Trouver les mémoires en double"),
     }
     CmdGoHeading "cmd.go_heading" {
         en: t("Go to heading\u{2026}"),
@@ -3593,6 +3957,14 @@ catalogue! {
         en: t("What you and Claude Code write is never translated."),
         fr: t("Ce que vous et Claude Code écrivez n\u{2019}est jamais traduit."),
     }
+    SettingsZoom "settings.zoom" {
+        en: t("Zoom"),
+        fr: t("Zoom"),
+    }
+    SettingsZoomHint "settings.zoom.hint" {
+        en: t("Everything in the window."),
+        fr: t("Tout le contenu de la fenêtre."),
+    }
     SettingsTextSize "settings.text_size" {
         en: t("Text size"),
         fr: t("Taille du texte"),
@@ -3845,6 +4217,18 @@ catalogue! {
         en: t("Claude Code: not installed"),
         fr: t("Claude Code\u{a0}: non installé"),
     }
+    ZoomStatus "zoom.status" {
+        en: t("Zoom {value}"),
+        fr: t("Zoom {value}"),
+    }
+    ZoomStatusTip "zoom.status.tip" {
+        en: t("Reset to 100%"),
+        fr: t("Revenir à 100\u{202f}%"),
+    }
+    ZoomLimited "zoom.limited" {
+        en: t("You chose {chosen}. {applied} is the most this window can show."),
+        fr: t("Vous avez choisi {chosen}. Cette fenêtre ne peut pas afficher plus de {applied}."),
+    }
     StatusClaudeSignedOut "status.claude.signed_out" {
         en: t("Claude Code: not signed in"),
         fr: t("Claude Code\u{a0}: non connecté"),
@@ -4062,8 +4446,12 @@ catalogue! {
         fr: t("Réinitialiser Acta\u{202f}?"),
     }
     ResetBody "reset.body" {
-        en: t("Erases every project, note, memory, file and contact, and the snapshots. Your settings, layout and voice models stay."),
-        fr: t("Efface tous les projets, notes, mémoires, fichiers et contacts, ainsi que les instantanés. Vos réglages, votre disposition et les modèles vocaux sont conservés."),
+        en: t("Erases everything in Acta. This cannot be undone."),
+        fr: t("Efface tout ce que contient Acta. C\u{2019}est irréversible."),
+    }
+    ResetKept "reset.kept" {
+        en: t("The snapshots go too. Your settings, layout and voice models stay."),
+        fr: t("Les instantanés aussi. Vos réglages, votre disposition et les modèles vocaux sont conservés."),
     }
     ResetBackup "reset.backup" {
         en: t("Back up first\u{2026}"),
@@ -4128,6 +4516,62 @@ catalogue! {
     TrashKeptNamed "trash.kept_named" {
         en: p("Kept: still named in {n} place", "Kept: still named in {n} places"),
         fr: p("Conservé : encore cité à {n} endroit", "Conservé : encore cité à {n} endroits"),
+    }
+    TrashSelected "trash.selected" {
+        en: t("{n} selected"),
+        fr: p("{n} sélectionné", "{n} sélectionnés"),
+    }
+    TrashDeleteSelected "trash.delete_selected" {
+        en: t("Delete permanently\u{2026}"),
+        fr: t("Supprimer définitivement\u{2026}"),
+    }
+    TrashEmptyAll "trash.empty_all" {
+        en: t("Empty trash\u{2026}"),
+        fr: t("Vider la corbeille\u{2026}"),
+    }
+    TrashRestoredN "trash.restored_n" {
+        en: p("{n} item restored.", "{n} items restored."),
+        fr: p("{n} élément restauré.", "{n} éléments restaurés."),
+    }
+    TrashConfirmTitle "trash.confirm_title" {
+        en: p("Delete {n} item permanently?", "Delete {n} items permanently?"),
+        fr: p("Supprimer définitivement {n} élément\u{202f}?", "Supprimer définitivement {n} éléments\u{202f}?"),
+    }
+    TrashConfirmEmptyTitle "trash.confirm_empty_title" {
+        en: t("Empty the trash?"),
+        fr: t("Vider la corbeille\u{202f}?"),
+    }
+    TrashConfirmBody "trash.confirm_body" {
+        en: t("They are removed from Acta\u{2019}s database now and cannot be restored. Snapshots made before now still hold them until they are replaced."),
+        fr: t("Ils sont retirés dès maintenant de la base de données d\u{2019}Acta et ne pourront pas être restaurés. Les sauvegardes déjà faites les gardent jusqu\u{2019}à leur remplacement."),
+    }
+    TrashConfirmProject "trash.confirm_project" {
+        en: p("{n} project with {content}", "{n} projects with {content}"),
+        fr: p("{n} projet avec {content}", "{n} projets avec {content}"),
+    }
+    TrashConfirmDelete "trash.confirm_delete" {
+        en: t("Delete permanently"),
+        fr: t("Supprimer définitivement"),
+    }
+    TrashDeleteFailed "trash.delete_failed" {
+        en: t("Could not delete. The database is busy; try again."),
+        fr: t("Suppression impossible. La base de données est occupée\u{202f}; réessayez."),
+    }
+    TrashKeptTip "trash.kept_tip" {
+        en: t("Still named in Acta, so it cannot be deleted."),
+        fr: t("Encore cité dans Acta\u{a0}: il ne peut pas être supprimé."),
+    }
+    CmdTrashRestore "cmd.trash_restore" {
+        en: t("Restore selected"),
+        fr: t("Restaurer la sélection"),
+    }
+    CmdTrashDelete "cmd.trash_delete" {
+        en: t("Delete selected permanently\u{2026}"),
+        fr: t("Supprimer définitivement la sélection\u{2026}"),
+    }
+    CmdTrashEmpty "cmd.trash_empty" {
+        en: t("Empty trash\u{2026}"),
+        fr: t("Vider la corbeille\u{2026}"),
     }
     SnapshotDaily "snapshot.daily" {
         en: t("Daily"),
@@ -4496,6 +4940,106 @@ catalogue! {
     BrowserPipeFailed "browser.pipe.failed" {
         en: t("Claude Code cannot reach this browser. Restart Acta; the log says why."),
         fr: t("Claude Code ne peut pas joindre ce navigateur. Redémarrez Acta\u{202f}; le journal indique pourquoi."),
+    }
+    BrowserDevtools "browser.devtools" {
+        en: t("Open developer tools"),
+        fr: t("Ouvrir les outils de développement"),
+    }
+    CmdBrowserDevtools "cmd.browser_devtools" {
+        en: t("Agent browser: Open developer tools"),
+        fr: t("Navigateur de l\u{2019}agent\u{a0}: ouvrir les outils de développement"),
+    }
+    ToolOwner "tool.owner" {
+        en: t("{level} {id} {title}"),
+        fr: t("{level} {id} {title}"),
+    }
+    ToolClaudeN "tool.claude_n" {
+        en: t("Claude {n}"),
+        fr: t("Claude {n}"),
+    }
+    ToolChatN "tool.chat_n" {
+        en: t("Chat {n}"),
+        fr: t("Chat {n}"),
+    }
+    ToolBrowserN "tool.browser_n" {
+        en: t("Browser {n}"),
+        fr: t("Navigateur {n}"),
+    }
+    ToolBrowserFor "tool.browser_for" {
+        en: t("Browser for Claude {n}"),
+        fr: t("Navigateur de Claude {n}"),
+    }
+    ToolDrivenBy "tool.driven_by" {
+        en: t("driven by Claude {n}"),
+        fr: t("piloté par Claude {n}"),
+    }
+    ToolClaudeStart "tool.claude_start" {
+        en: t("Start Claude Code here"),
+        fr: t("Démarrer Claude Code ici"),
+    }
+    ToolClaudeNew "tool.claude_new" {
+        en: t("New Claude Code session here"),
+        fr: t("Nouvelle session Claude Code ici"),
+    }
+    ToolClaudeNone "tool.claude_none" {
+        en: t("No Claude Code on this {level_lower}"),
+        fr: p_by("level_lower", "Pas de Claude Code sur ce {level_lower}", "Pas de Claude Code sur cet {level_lower}"),
+    }
+    ToolClaudeNoneBody "tool.claude_none_body" {
+        en: t("Starts in {folder} with what this {level_lower} knows."),
+        fr: t("Démarre dans {folder} avec ce que sait ce {level_lower}."),
+    }
+    ToolNoOwner "tool.no_owner" {
+        en: t("Claude Code belongs to a project, an epic or a topic. Open one to start it or see its sessions."),
+        fr: t("Claude Code appartient à un projet, un epic ou un sujet. Ouvrez-en un pour le démarrer ou voir ses sessions."),
+    }
+    ToolChatNew "tool.chat_new" {
+        en: t("New chat here"),
+        fr: t("Nouveau chat ici"),
+    }
+    ToolBrowserNew "tool.browser_new" {
+        en: t("New browser here"),
+        fr: t("Nouveau navigateur ici"),
+    }
+    ToolRestartIn "tool.restart_in" {
+        en: t("Restart in {folder}"),
+        fr: t("Redémarrer dans {folder}"),
+    }
+    ToolLimit "tool.limit" {
+        en: t("{n} is the most on one page."),
+        fr: t("{n} au maximum sur une même page."),
+    }
+    ToolFree "tool.free" {
+        en: t("Claude Code (no project)"),
+        fr: t("Claude Code (sans projet)"),
+    }
+    ToolFreeContext "tool.free_context" {
+        en: t("In your home folder, without Acta\u{2019}s context"),
+        fr: t("Dans votre dossier personnel, sans le contexte d\u{2019}Acta"),
+    }
+    ToolFreeTitle "tool.free_title" {
+        en: t("Claude Code without a project"),
+        fr: t("Claude Code sans projet"),
+    }
+    ToolFreeBody "tool.free_body" {
+        en: t("For work that needs no project: it starts in your home folder and knows nothing about Acta."),
+        fr: t("Pour un travail sans projet\u{a0}: il démarre dans votre dossier personnel et ne sait rien d\u{2019}Acta."),
+    }
+    ToolFreeStart "tool.free_start" {
+        en: t("Start"),
+        fr: t("Démarrer"),
+    }
+    ToolFreeNew "tool.free_new" {
+        en: t("New Claude Code (no project)"),
+        fr: t("Nouveau Claude Code (sans projet)"),
+    }
+    CmdClaudeRestart "cmd.claude_restart" {
+        en: t("Restart Claude Code"),
+        fr: t("Redémarrer Claude Code"),
+    }
+    ChatClearAllBody "chat.clear_all_body" {
+        en: t("This deletes the cookies and site data of every chat from this computer. Your conversations stay in your Claude account."),
+        fr: t("Cela supprime de cet ordinateur les cookies et données de site de tous les chats. Vos conversations restent dans votre compte Claude."),
     }
     TerminalClaude "terminal.claude" {
         en: t("Claude"),

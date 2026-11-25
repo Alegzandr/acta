@@ -8,7 +8,8 @@
 
 use std::borrow::Cow;
 
-use gpui_kit::{AssetSource, Hsla, Result, SharedString, Styled, Svg, px, svg};
+use crate::zoom::px;
+use gpui_kit::{AssetSource, Hsla, Result, SharedString, Styled, Svg, svg};
 
 macro_rules! icons {
     ($( $variant:ident => $file:literal, )*) => {
@@ -79,6 +80,7 @@ icons! {
     Search => "search",
     Settings => "settings",
     SquareTerminal => "square-terminal",
+    Terminal => "terminal",
     Trash2 => "trash-2",
     ExternalLink => "external-link",
     ListTree => "list-tree",
@@ -90,6 +92,7 @@ icons! {
     Mic => "mic",
     Play => "play",
     Bot => "bot",
+    Flag => "flag",
     Clock => "clock",
     ClockAlert => "clock-alert",
     FolderGit2 => "folder-git-2",

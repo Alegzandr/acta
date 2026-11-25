@@ -1,41 +1,40 @@
-//! The Agent browser view (ADR 0010; docs/design/components-app.md 5,
-//! Agent browser; workbench.md 4.8): Claude Code's browser, a WebView2 in
-//! its own profile, driven over an authenticated pipe by `acta mcp
-//! browser`. Windows only; elsewhere the MCP tools point to Claude in
-//! Chrome.
+//! One agent browser (ADR 0010; docs/design/components-app.md 5, Agent
+//! browser; layout.md 4.5.1): a WebView2 on the shared agent profile,
+//! driven over the authenticated pipe by `acta mcp browser`. A page can
+//! have several; the Agent browser view (browser_dock.rs) shows the
+//! current page's. Windows only; elsewhere the MCP tools point to Claude
+//! in Chrome.
 //!
 //! The pipe threads run the operations of `acta-browser` against
-//! [`AppHost`], which hands every DevTools call to this view on the UI
+//! [`AppHost`], which hands every DevTools call to this browser on the UI
 //! thread through a job channel. The web view is created on the first
-//! call (or when the human opens an address), lives on while the view is
-//! hidden, and is "parked" (visible, outside the window's client area) when
-//! it is not on screen, so Chromium keeps rendering screenshots (ADR 0010,
-//! decision 8). It closes after 10 minutes without use while off screen;
-//! its profile stays.
+//! call (or when the human opens an address), lives on while it is not in
+//! view, and is "parked" (visible, outside the window's client area) then,
+//! so Chromium keeps rendering screenshots (ADR 0010, decision 8). The
+//! shell closes it after 10 minutes off screen and unused, keeping its
+//! address; its profile stays.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
+use crate::zoom::px;
 use acta_browser::events::{Events, Notice};
 use acta_browser::ops::{Activity, Handoff, Host, STOPPED};
 use acta_browser::policy::{Policy, origin_of};
-use acta_browser::server::{Server, Status};
 use async_channel::{Receiver, Sender};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, ParentElement, Render, StatefulInteractiveElement, Styled,
-    Subscription, Task, Window, anchored, deferred, div, point, px,
+    Subscription, Task, Window, anchored, deferred, div, point,
 };
 use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2;
 use wry::WebViewExtWindows as _;
-use zeroize::Zeroizing;
 
 use crate::browser_host::{self, DebugPort};
 use crate::chat::Kept;
-use crate::db::Db;
 use crate::i18n::{Arg, Key, text, tr};
 use crate::icons::Icon;
 use crate::layout::{Place, Side, ViewAction};
@@ -47,8 +46,6 @@ use crate::ui::{self, Variant};
 
 /// A DevTools call that has not answered by then has failed.
 const CDP_WAIT: Duration = Duration::from_secs(10);
-/// Off screen and unused this long, the web view closes (ADR 0010).
-const IDLE_CLOSE: Duration = Duration::from_secs(600);
 /// The element acted on stays highlighted this long.
 const HIGHLIGHT: Duration = Duration::from_millis(300);
 /// The size a web view takes when it was never on screen.
@@ -56,8 +53,6 @@ const PARKED_SIZE: (f64, f64) = (1024., 700.);
 /// The web view behind a page that paints no background: white, as in
 /// any browser (RGBA).
 const PAGE_BACKGROUND: (u8, u8, u8, u8) = (255, 255, 255, 255);
-const CLEAR_ATTEMPTS: u32 = 40;
-const CLEAR_PAUSE: Duration = Duration::from_millis(250);
 
 pub enum BrowserEvent {
     /// An item of the view menu in the browser's own menu.
@@ -92,7 +87,6 @@ enum Job {
     HandoffEnd,
     Driver(Option<String>, bool),
     Busy(bool),
-    PipeFailed(PipeFailure),
     /// A pop-up or `target=_blank` link the policy allows: opened here.
     OpenHere(String),
     /// The page finished loading this URL (for the address field).
@@ -217,12 +211,14 @@ impl Host for AppHost {
     }
 }
 
-impl Status for AppHost {
-    fn driver(&self, session: Option<&str>, connected: bool) {
+impl AppHost {
+    /// Who drives this browser, as the header shows it.
+    pub fn driver(&self, session: Option<&str>, connected: bool) {
         self.post(Job::Driver(session.map(str::to_string), connected));
     }
 
-    fn busy(&self, busy: bool) {
+    /// A call is running.
+    pub fn busy(&self, busy: bool) {
         self.post(Job::Busy(busy));
     }
 }
@@ -288,10 +284,9 @@ pub struct BrowserPanel {
     url: String,
     clearing: bool,
     last_used: Instant,
+    host: Arc<AppHost>,
     _jobs_task: Task<()>,
     _signals_task: Task<()>,
-    _pipe_task: Task<()>,
-    idle_task: Task<()>,
     /// The web view being created (crate::webview_build), and what waits
     /// for it.
     web_task: Task<()>,
@@ -299,7 +294,6 @@ pub struct BrowserPanel {
     /// Bumped by every build and every close: a build that lands for an
     /// older one is discarded.
     build_generation: u64,
-    clear_task: Task<()>,
     _subs: Vec<Subscription>,
 }
 
@@ -312,7 +306,7 @@ impl Focusable for BrowserPanel {
 }
 
 impl BrowserPanel {
-    pub fn new(db: Db, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let (jobs, jobs_rx) = async_channel::unbounded();
         let (signals, signals_rx) = async_channel::unbounded();
         let shared = Arc::new(Shared {
@@ -337,7 +331,7 @@ impl BrowserPanel {
             jobs: jobs.clone(),
             shared: shared.clone(),
         });
-        let mut panel = Self {
+        Self {
             phase: Phase::Idle,
             focus: cx.focus_handle(),
             shown: false,
@@ -362,18 +356,57 @@ impl BrowserPanel {
             url: String::new(),
             clearing: false,
             last_used: Instant::now(),
+            host,
             _jobs_task: Self::listen(jobs_rx, window, cx),
             _signals_task: Self::listen_signals(signals_rx, window, cx),
-            _pipe_task: Task::ready(()),
-            idle_task: Task::ready(()),
             web_task: Task::ready(()),
             waiting: Vec::new(),
             build_generation: 0,
-            clear_task: Task::ready(()),
             _subs: vec![sub],
-        };
-        panel._pipe_task = Self::start_pipe(db, host, cx);
-        panel
+        }
+    }
+
+    /// What the pipe threads drive.
+    pub fn host(&self) -> Arc<AppHost> {
+        self.host.clone()
+    }
+
+    /// The pipe is not served (shown as a notice).
+    pub fn set_pipe(&mut self, failure: Option<PipeFailure>, cx: &mut Context<Self>) {
+        self.pipe = failure;
+        cx.notify();
+    }
+
+    /// The profile is being deleted: no web view meanwhile.
+    pub fn set_clearing(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.clearing = on;
+        cx.notify();
+    }
+
+    /// Shown again after an idle close: the web view comes back at its
+    /// address.
+    pub fn reopen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.web.is_some() || self.phase != Phase::Idle || self.url.is_empty() {
+            return;
+        }
+        let url = self.url.clone();
+        self.ensure_then(window, cx, move |panel, created, _, cx| {
+            if created.is_ok()
+                && let Some(web) = &panel.web
+            {
+                let _ = web.view.read(cx).raw().load_url(&url);
+            }
+        });
+    }
+
+    /// For the 10-minute rule: whether a web view exists, when it was last
+    /// used, and whether a call or a handoff holds it.
+    pub fn web_use(&self) -> (bool, Instant, bool) {
+        (
+            self.web.is_some(),
+            self.last_used,
+            self.busy || self.handoff.is_some() || self.phase == Phase::Starting,
+        )
     }
 
     fn listen(rx: Receiver<Job>, window: &mut Window, cx: &mut Context<Self>) -> Task<()> {
@@ -407,35 +440,6 @@ impl BrowserPanel {
                 {
                     break;
                 }
-            }
-        })
-    }
-
-    /// Derives the pipe key from the database key off the UI thread, then
-    /// serves the pipe on its own threads for the life of the app.
-    fn start_pipe(db: Db, host: Arc<AppHost>, cx: &mut Context<Self>) -> Task<()> {
-        cx.background_spawn(async move {
-            let (key, data_dir) = {
-                let store = db.lock();
-                (
-                    store.derive_secret(acta_browser::auth::KEY_LABEL),
-                    store.data_dir().to_path_buf(),
-                )
-            };
-            let sid = match acta_browser::pipe::user_sid() {
-                Ok(sid) => sid,
-                Err(e) => {
-                    crate::log::line(&format!("browser: no user id: {:?}", e.kind()));
-                    host.post(Job::PipeFailed(PipeFailure::Other));
-                    return;
-                }
-            };
-            let name = acta_browser::pipe::pipe_name(&sid, &key, &data_dir);
-            let spawned = std::thread::Builder::new()
-                .name("acta-browser-pipe".into())
-                .spawn(move || serve_pipe(&name, &sid, key, host));
-            if let Err(e) = spawned {
-                crate::log::line(&format!("browser: pipe thread: {:?}", e.kind()));
             }
         })
     }
@@ -485,11 +489,6 @@ impl BrowserPanel {
                 self.busy = busy;
                 cx.notify();
             }
-            Job::PipeFailed(f) => {
-                crate::log::line(&format!("browser: the pipe is not served: {f:?}"));
-                self.pipe = Some(f);
-                cx.notify();
-            }
             Job::OpenHere(url) => {
                 if let Some(web) = &self.web {
                     let _ = web.view.read(cx).raw().load_url(&url);
@@ -509,6 +508,7 @@ impl BrowserPanel {
                 cx.notify();
             }
             Job::Focused => window.focus(&self.focus, cx),
+            Job::Key(crate::chat::Kept::DevTools) => self.open_devtools(cx),
             Job::Key(kept) => cx.emit(BrowserEvent::Kept(kept)),
         }
     }
@@ -627,7 +627,11 @@ impl BrowserPanel {
                 // a page that sets none is black on white for the human and in
                 // the agent's screenshots, as in any browser.
                 .with_background_color(PAGE_BACKGROUND)
-                .with_devtools(false)
+                // The DevTools window, for the human only (ADR 0010, 3,
+                // amended): allowed from creation, before the first
+                // navigation, since a later settings change applies only
+                // from the next one. An in-process window, never a port.
+                .with_devtools(true)
                 // Never take the keyboard on creation: created on an agent's
                 // call, it must not activate Acta's window (run: a new view
                 // made Acta the foreground window when it could).
@@ -719,7 +723,7 @@ impl BrowserPanel {
                 let hooks = browser_host::install(&webview, self.shared.events.clone(), allowed)
                     .map_err(|e| crate::log::line(&format!("browser: events not hooked: {e}")))
                     .ok();
-                let keys = crate::chat_windows::install(view.raw(), self.signals.clone())
+                let keys = crate::chat_windows::install(view.raw(), self.signals.clone(), true)
                     .map_err(|e| crate::log::line(&format!("browser: keys not hooked: {e}")))
                     .ok();
                 if hooks.is_none() {
@@ -738,7 +742,7 @@ impl BrowserPanel {
                     _context: context,
                 });
                 self.phase = Phase::Live;
-                self.schedule_idle(window, cx);
+                let _ = window;
                 Ok(())
             }
             Err(err) => {
@@ -751,35 +755,9 @@ impl BrowserPanel {
         }
     }
 
-    /// Checks every minute whether the web view has been unused and off
-    /// screen for 10 minutes, and closes it then.
-    fn schedule_idle(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.idle_task = cx.spawn_in(window, async move |panel, cx| {
-            loop {
-                cx.background_executor()
-                    .timer(Duration::from_secs(60))
-                    .await;
-                let closed = panel.update_in(cx, |panel, window, cx| {
-                    let idle = panel.last_used.elapsed() >= IDLE_CLOSE
-                        && !panel.shown
-                        && panel.handoff.is_none()
-                        && !panel.busy;
-                    if idle && panel.web.is_some() {
-                        crate::log::line("browser: closed after 10 minutes unused");
-                        panel.close_web(window, cx);
-                    }
-                    panel.web.is_none()
-                });
-                if closed.unwrap_or(true) {
-                    break;
-                }
-            }
-        });
-    }
-
     /// Closes the web view, or gives up the one being created: what
     /// waited for it is told so.
-    fn close_web(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn close_web(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.web_task = Task::ready(());
         self.build_generation += 1;
         if self.phase == Phase::Starting {
@@ -909,6 +887,21 @@ impl BrowserPanel {
         });
     }
 
+    /// "Open developer tools" (`F12`, the view menu, the palette): the
+    /// DevTools window of the page in view, for the human only; no pipe
+    /// operation opens or reads it (components-app.md 5; ADR 0010, 3).
+    pub fn open_devtools(&mut self, cx: &mut Context<Self>) {
+        if let Some(web) = &self.web {
+            browser_host::open_devtools(&web.webview);
+        }
+        cx.notify();
+    }
+
+    /// Whether a page is open to inspect.
+    pub fn has_page(&self) -> bool {
+        self.web.is_some()
+    }
+
     fn stop(&mut self, cx: &mut Context<Self>) {
         self.shared.stopped.store(true, Ordering::SeqCst);
         if let Some((_, reply)) = self.handoff.take() {
@@ -938,45 +931,6 @@ impl BrowserPanel {
         self.ensure_then(window, cx, |_, _, _, _| {});
     }
 
-    /// "Clear browser data", confirmed: the web view closes and its profile
-    /// is deleted, retrying while its processes let go of the files.
-    pub fn clear_data(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.close_web(window, cx);
-        let Some(dir) = browser_host::profile_dir() else {
-            return;
-        };
-        self.clearing = true;
-        self.clear_task = cx.spawn_in(window, async move |panel, cx| {
-            let mut removed = false;
-            for _ in 0..CLEAR_ATTEMPTS {
-                let target = dir.clone();
-                let result = cx
-                    .background_spawn(async move { std::fs::remove_dir_all(&target) })
-                    .await;
-                removed = match result {
-                    Ok(()) => true,
-                    Err(err) => err.kind() == std::io::ErrorKind::NotFound,
-                };
-                if removed {
-                    break;
-                }
-                cx.background_executor().timer(CLEAR_PAUSE).await;
-            }
-            crate::log::line(if removed {
-                "browser: profile deleted"
-            } else {
-                "browser: the profile could not be deleted"
-            });
-            let _ = panel.update(cx, |panel, cx| {
-                panel.clearing = false;
-                if !removed {
-                    cx.emit(BrowserEvent::ClearFailed);
-                }
-                cx.notify();
-            });
-        });
-    }
-
     fn activity_text(&self, locale: crate::i18n::Locale) -> Option<String> {
         let (key, target) = match self.activity.as_ref()? {
             Activity::Opened(o) => (Key::BrowserActOpened, Some(o.as_str())),
@@ -994,28 +948,18 @@ impl BrowserPanel {
         })
     }
 
-    /// The header's context text: who drives the browser.
-    pub fn header_context(&self, cx: &App) -> Option<AnyElement> {
-        let t = cx.global::<Tokens>();
-        let locale = settings::locale(cx);
-        let line = match (&self.driver, self.connected) {
-            (Some(session), true) => tr(
+    /// Who drives the browser, for the header: "driven by T-42", or
+    /// `None` while no session is connected.
+    pub fn driver_text(&self, locale: crate::i18n::Locale) -> Option<String> {
+        match (&self.driver, self.connected) {
+            (Some(session), true) => Some(tr(
                 locale,
                 Key::BrowserDriver,
                 &[("session", Arg::Text(session))],
-            ),
-            (None, true) => text(locale, Key::BrowserDriverUnnamed),
-            _ => return None,
-        };
-        Some(
-            type_scale::SMALL
-                .el()
-                .min_w_0()
-                .truncate()
-                .text_color(t.text_tertiary)
-                .child(line)
-                .into_any_element(),
-        )
+            )),
+            (None, true) => Some(text(locale, Key::BrowserDriverUnnamed)),
+            _ => None,
+        }
     }
 
     /// Stop or Resume, then the menu holding "Clear browser data..." and the
@@ -1048,7 +992,7 @@ impl BrowserPanel {
                                 .py(px(4.))
                                 .whitespace_nowrap()
                                 .bg(t.bg_overlay)
-                                .border_1()
+                                .border(px(1.))
                                 .border_color(t.border_default)
                                 .rounded(px(crate::theme::RADIUS_MD))
                                 .shadow(vec![t.shadow_overlay()])
@@ -1132,8 +1076,26 @@ impl BrowserPanel {
             panel.menu = false;
             cx.notify();
         };
+        let live = self.web.is_some();
+        let devtools = text(locale, Key::BrowserDevtools);
         let mut panel = menu::panel("browser-menu-panel", t)
             .on_mouse_down_out(cx.listener(move |panel, _, _, cx| close(panel, cx)))
+            .child(if live {
+                menu::item(
+                    "browser-menu-devtools",
+                    None,
+                    devtools,
+                    Some(crate::ui::kbd(&["F12"], t).into_any_element()),
+                    false,
+                    t,
+                )
+                .on_click(cx.listener(move |panel, _, _, cx| {
+                    close(panel, cx);
+                    panel.open_devtools(cx);
+                }))
+            } else {
+                menu::disabled_item("browser-menu-devtools", devtools, None, t)
+            })
             .child(
                 menu::item(
                     "browser-menu-clear",
@@ -1222,7 +1184,7 @@ impl BrowserPanel {
                     .items_center()
                     .rounded(px(RADIUS_SM))
                     .bg(t.bg_raised)
-                    .border_1()
+                    .border(px(1.))
                     .border_color(t.border_strong)
                     .child(
                         Input::new(&self.address)
@@ -1405,58 +1367,6 @@ impl BrowserPanel {
     }
 }
 
-/// Serves the pipe until the app exits: one thread per connection, the
-/// lease and the operations in `acta_browser::server`.
-fn serve_pipe(name: &str, sid: &str, key: Zeroizing<[u8; 32]>, host: Arc<AppHost>) {
-    let mut pipe = match acta_browser::pipe::Server::new(name, sid) {
-        Ok(p) => p,
-        Err(e) => {
-            crate::log::line(&format!("browser: pipe: {:?}", e.kind()));
-            host.post(Job::PipeFailed(PipeFailure::Other));
-            return;
-        }
-    };
-    let key = Arc::new(key);
-    let server = Arc::new(Server::new(host.clone(), host.clone() as Arc<dyn Status>));
-    let mut first = true;
-    loop {
-        let accepted = match pipe.accept() {
-            Ok(a) => a,
-            Err(e) => {
-                // The first instance failing means the name is taken.
-                crate::log::line(&format!("browser: pipe not served: {:?}", e.kind()));
-                host.post(Job::PipeFailed(if first {
-                    PipeFailure::Taken
-                } else {
-                    PipeFailure::Other
-                }));
-                return;
-            }
-        };
-        if first {
-            // The user's SID is not logged.
-            let dacl = accepted.dacl.replace(sid, "<user>");
-            crate::log::line(&format!("browser: pipe served, DACL {dacl}"));
-        }
-        first = false;
-        let (server, key) = (server.clone(), key.clone());
-        let spawned = std::thread::Builder::new()
-            .name("acta-browser-conn".into())
-            .spawn(move || {
-                let Ok(writer) = accepted.file.try_clone() else {
-                    return;
-                };
-                let conn = acta_browser::wire::Conn::new(accepted.file, writer);
-                if let Err(why) = server.serve(conn, &key) {
-                    crate::log::line(&format!("browser: a client was refused: {why}"));
-                }
-            });
-        if let Err(e) = spawned {
-            crate::log::line(&format!("browser: connection thread: {:?}", e.kind()));
-        }
-    }
-}
-
 impl Render for BrowserPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.global::<Tokens>().clone();
@@ -1464,7 +1374,17 @@ impl Render for BrowserPanel {
         let body = self.body(cx);
         div()
             .id("browser-view")
+            .key_context("ToolView")
             .track_focus(&self.focus)
+            // `F12` while the view (its address field) has the keyboard;
+            // from the page it comes through the kept keys.
+            .on_key_down(cx.listener(|panel, e: &gpui_kit::KeyDownEvent, _, cx| {
+                let m = &e.keystroke.modifiers;
+                if e.keystroke.key == "f12" && !m.control && !m.alt && !m.shift && !m.platform {
+                    panel.open_devtools(cx);
+                    cx.stop_propagation();
+                }
+            }))
             .flex()
             .flex_col()
             .size_full()

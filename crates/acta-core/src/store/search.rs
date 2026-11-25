@@ -1,11 +1,21 @@
-//! Full-text search over topics, timeline entries, notes and knowledge
-//! (ADR 0003): FTS5, joined to the base tables to drop trashed rows, short
-//! excerpts with `snippet()`, ordered by rank.
+//! Full-text search (ADR 0003) over titles and content: projects, epics
+//! and topics (title, description, state), timeline entries, notes,
+//! questions and their answers, contacts (name, job title, company),
+//! live knowledge (title, summary, body) and attached files (name, and
+//! the text of a small text file). FTS5 with accents folded, joined to the
+//! base tables to drop trashed rows; short excerpts with `snippet()`;
+//! a match in the title ranks first, then bm25.
+//!
+//! Typed words are matched as words and, from four letters, by the stem
+//! of the memory checker ([`crate::kb_quality::stem`], English and French
+//! plurals and endings), so "fichiers" finds "fichier" and "configured"
+//! finds "configuration".
 
 use super::Store;
 use crate::error::Result;
 use crate::model::{
-    EntryId, EpicId, KbId, KbKind, NoteId, Owner, Page, PageReq, ProjectId, Record, Status, TopicId,
+    AttachmentId, ContactId, EntryId, EpicId, KbId, KbKind, NoteId, Owner, Page, PageReq,
+    ProjectId, QuestionId, Record, Status, TopicId,
 };
 
 /// Marks the start and end of a matched term in [`SearchHit::snippet`].
@@ -13,6 +23,9 @@ pub const SNIPPET_OPEN: char = '\u{2}';
 pub const SNIPPET_CLOSE: char = '\u{3}';
 /// Upper bound of hits ranked per query; pages are cut from these.
 const MAX_HITS: i64 = 500;
+/// Matches ranked per kind: the newest ones (palette budget, interaction.md
+/// 7: 30 ms over 10,000 topics).
+const PER_KIND: i64 = 200;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SearchKind {
@@ -20,6 +33,11 @@ pub enum SearchKind {
     Entry,
     Note,
     Kb,
+    Project,
+    Epic,
+    Question,
+    Contact,
+    Attachment,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -33,7 +51,7 @@ pub struct SearchQuery {
     /// Topic statuses kept (empty: all). Applies to topics and to entries
     /// through their topic; notes and knowledge are not filtered by it.
     pub statuses: Vec<Status>,
-    /// Only topics of this epic and their entries; notes and knowledge are
+    /// Only topics of this epic and their entries; the other kinds are
     /// left out when set.
     pub epic: Option<EpicId>,
 }
@@ -44,26 +62,53 @@ pub struct SearchHit {
     pub project: ProjectId,
     /// The topic of an entry, for `T-42#14`.
     pub topic: Option<TopicId>,
-    /// Title of the topic or knowledge entry; empty for entries and notes.
+    /// Title of the record (a question's text, a contact's name, a file's
+    /// name); empty for entries and notes.
     pub title: String,
+    /// The words matched the title (these rank first).
+    pub in_title: bool,
     /// About a dozen words around the match, terms wrapped in
     /// [`SNIPPET_OPEN`] and [`SNIPPET_CLOSE`].
     pub snippet: String,
     pub rank: f64,
 }
 
-/// Turns typed text into a safe FTS5 query: every word quoted, the last one
-/// a prefix. `None` when there is nothing to search for.
+/// Turns typed text into a safe FTS5 query: every word quoted, the last
+/// one a prefix, and a word of four letters or more also matched by its
+/// stem as a prefix. `None` when there is nothing to search for.
 pub(crate) fn fts_query(text: &str) -> Option<String> {
     let words: Vec<String> = text
         .split_whitespace()
         .map(|w| w.replace('"', ""))
         .filter(|w| w.chars().any(char::is_alphanumeric))
+        .take(16)
         .collect();
-    let (last, rest) = words.split_last()?;
-    let mut q: Vec<String> = rest.iter().map(|w| format!("\"{w}\"")).collect();
-    q.push(format!("\"{last}\"*"));
-    Some(q.join(" "))
+    let n = words.len();
+    if n == 0 {
+        return None;
+    }
+    let terms: Vec<String> = words
+        .iter()
+        .enumerate()
+        .map(|(i, w)| {
+            let star = if i + 1 == n { "*" } else { "" };
+            let folded = crate::kb_quality::fold(w);
+            let stem = crate::kb_quality::stem(&folded);
+            let alnum = stem.chars().all(char::is_alphanumeric);
+            if alnum && stem.chars().count() >= 4 && stem != folded {
+                format!("(\"{w}\"{star} OR \"{stem}\"*)")
+            } else {
+                format!("\"{w}\"{star}")
+            }
+        })
+        .collect();
+    Some(terms.join(" AND "))
+}
+
+/// The same query restricted to one column (a title), as an SQL string
+/// literal.
+fn in_column(col: &str, fts: &str) -> String {
+    format!("'{col} : ({})'", fts.replace('\'', "''"))
 }
 
 impl Store {
@@ -94,41 +139,123 @@ impl Store {
             topic_filter.push_str(&format!(" AND t.epic_id = {}", e.0));
         }
         let unfiled = query.epic.is_none();
-        let (o, c) = (SNIPPET_OPEN, SNIPPET_CLOSE);
         let mut parts = Vec::new();
+        let mut tables: Vec<&str> = Vec::new();
+        // One SELECT per kind: kind, id, project, topic, title, an empty
+        // excerpt (made below for the page only: `snippet()` on every
+        // match cost 140 ms for a common word over 200,000 entries), bm25,
+        // whether the title matched.
+        let titled = |table: &str, col: &str| {
+            format!(
+                "(x.id IN (SELECT rowid FROM {table} WHERE {table} MATCH {}))",
+                in_column(col, &fts)
+            )
+        };
         if wants(SearchKind::Topic) {
+            tables.push("topics_fts");
             parts.push(format!(
-                "SELECT 'topic', x.id, x.project_id, NULL, x.title,
-                        snippet(topics_fts, -1, '{o}', '{c}', '…', 12), bm25(topics_fts)
+                "SELECT * FROM (SELECT 'topic', x.id, x.project_id, NULL, x.title,
+                        '', bm25(topics_fts), {}
                  FROM topics_fts JOIN topics x ON x.id = topics_fts.rowid
-                 WHERE topics_fts MATCH ?1 AND x.deleted_at IS NULL{project}{}",
+                 WHERE topics_fts MATCH ?1 AND x.deleted_at IS NULL{project}{}
+                 ORDER BY topics_fts.rowid DESC LIMIT {PER_KIND})",
+                titled("topics_fts", "title"),
                 topic_filter.replace("t.", "x.")
             ));
         }
         if wants(SearchKind::Entry) {
+            tables.push("entries_fts");
             parts.push(format!(
-                "SELECT 'entry', x.id, t.project_id AS project_id, x.topic_id, '',
-                        snippet(entries_fts, -1, '{o}', '{c}', '…', 12), bm25(entries_fts)
+                "SELECT * FROM (SELECT 'entry', x.id, t.project_id AS project_id, x.topic_id, '',
+                        '', bm25(entries_fts), 0
                  FROM entries_fts JOIN entries x ON x.id = entries_fts.rowid
                  JOIN topics t ON t.id = x.topic_id
-                 WHERE entries_fts MATCH ?1 AND x.deleted_at IS NULL AND t.deleted_at IS NULL{}{topic_filter}",
+                 WHERE entries_fts MATCH ?1 AND x.deleted_at IS NULL AND t.deleted_at IS NULL{}{topic_filter}
+                 ORDER BY entries_fts.rowid DESC LIMIT {PER_KIND})",
                 project.replace("x.project_id", "t.project_id")
             ));
         }
         if wants(SearchKind::Note) && unfiled {
+            tables.push("notes_fts");
             parts.push(format!(
-                "SELECT 'note', x.id, x.project_id, x.filed_topic_id, '',
-                        snippet(notes_fts, -1, '{o}', '{c}', '…', 12), bm25(notes_fts)
+                "SELECT * FROM (SELECT 'note', x.id, x.project_id, x.filed_topic_id, '',
+                        '', bm25(notes_fts), 0
                  FROM notes_fts JOIN notes x ON x.id = notes_fts.rowid
-                 WHERE notes_fts MATCH ?1 AND x.deleted_at IS NULL{project}"
+                 WHERE notes_fts MATCH ?1 AND x.deleted_at IS NULL{project}
+                 ORDER BY notes_fts.rowid DESC LIMIT {PER_KIND})"
             ));
         }
         if wants(SearchKind::Kb) && unfiled {
+            tables.push("kb_fts");
             parts.push(format!(
-                "SELECT 'kb', x.id, x.project_id, x.topic_id, x.title,
-                        snippet(kb_fts, -1, '{o}', '{c}', '…', 12), bm25(kb_fts)
+                "SELECT * FROM (SELECT 'kb', x.id, x.project_id, x.topic_id, x.title,
+                        '', bm25(kb_fts), {}
                  FROM kb_fts JOIN kb_entries x ON x.id = kb_fts.rowid
-                 WHERE kb_fts MATCH ?1 AND x.deleted_at IS NULL AND x.state = 'live'{project}"
+                 WHERE kb_fts MATCH ?1 AND x.deleted_at IS NULL AND x.state = 'live'{project}
+                 ORDER BY kb_fts.rowid DESC LIMIT {PER_KIND})",
+                titled("kb_fts", "title")
+            ));
+        }
+        if wants(SearchKind::Project) && unfiled {
+            tables.push("projects_fts");
+            parts.push(format!(
+                "SELECT * FROM (SELECT 'project', x.id, x.id, NULL, x.title,
+                        '', bm25(projects_fts), {}
+                 FROM projects_fts JOIN projects x ON x.id = projects_fts.rowid
+                 WHERE projects_fts MATCH ?1 AND x.deleted_at IS NULL{}
+                 ORDER BY projects_fts.rowid DESC LIMIT {PER_KIND})",
+                titled("projects_fts", "title"),
+                project.replace("x.project_id", "x.id")
+            ));
+        }
+        if wants(SearchKind::Epic) && unfiled {
+            tables.push("epics_fts");
+            parts.push(format!(
+                "SELECT * FROM (SELECT 'epic', x.id, x.project_id, NULL, x.title,
+                        '', bm25(epics_fts), {}
+                 FROM epics_fts JOIN epics x ON x.id = epics_fts.rowid
+                 WHERE epics_fts MATCH ?1 AND x.deleted_at IS NULL{project}
+                 ORDER BY epics_fts.rowid DESC LIMIT {PER_KIND})",
+                titled("epics_fts", "title")
+            ));
+        }
+        if wants(SearchKind::Question) && unfiled {
+            tables.push("questions_fts");
+            parts.push(format!(
+                "SELECT * FROM (SELECT 'question', x.id, x.project_id, x.topic_id, x.text,
+                        '', bm25(questions_fts), {}
+                 FROM questions_fts JOIN questions x ON x.id = questions_fts.rowid
+                 WHERE questions_fts MATCH ?1 AND x.deleted_at IS NULL{project}
+                 ORDER BY questions_fts.rowid DESC LIMIT {PER_KIND})",
+                titled("questions_fts", "text")
+            ));
+        }
+        if wants(SearchKind::Contact) && unfiled {
+            tables.push("contacts_fts");
+            // A contact at "all projects" is seen from every project.
+            let contact_project = query.project.map_or(String::new(), |p| {
+                format!(" AND (x.project_id IS NULL OR x.project_id = {})", p.0)
+            });
+            parts.push(format!(
+                "SELECT * FROM (SELECT 'contact', x.id, coalesce(x.project_id, 0), NULL, x.name,
+                        '', bm25(contacts_fts), {}
+                 FROM contacts_fts JOIN contacts x ON x.id = contacts_fts.rowid
+                 WHERE contacts_fts MATCH ?1 AND x.deleted_at IS NULL{contact_project}
+                 ORDER BY contacts_fts.rowid DESC LIMIT {PER_KIND})",
+                titled("contacts_fts", "name")
+            ));
+        }
+        if wants(SearchKind::Attachment) && unfiled {
+            tables.push("attachments_fts");
+            parts.push(format!(
+                "SELECT * FROM (SELECT 'attachment', x.id, x.project_id,
+                        coalesce(x.topic_id, (SELECT e.topic_id FROM entries e WHERE e.id = x.entry_id)),
+                        x.name,
+                        '', bm25(attachments_fts), {}
+                 FROM attachments_fts JOIN attachments x ON x.id = attachments_fts.rowid
+                 WHERE attachments_fts MATCH ?1 AND x.deleted_at IS NULL{project}
+                 ORDER BY attachments_fts.rowid DESC LIMIT {PER_KIND})",
+                titled("attachments_fts", "name")
             ));
         }
         if parts.is_empty() {
@@ -140,7 +267,7 @@ impl Store {
             });
         }
         let sql = format!(
-            "SELECT * FROM ({}) ORDER BY 7, 1, 2 LIMIT {}",
+            "SELECT * FROM ({}) ORDER BY 8 DESC, 7, 2 DESC, 1 LIMIT {}",
             parts.join(" UNION ALL "),
             MAX_HITS + 1
         );
@@ -153,6 +280,11 @@ impl Store {
                     "topic" => Record::Topic(TopicId(id)),
                     "entry" => Record::Entry(EntryId(id)),
                     "note" => Record::Note(NoteId(id)),
+                    "project" => Record::Project(ProjectId(id)),
+                    "epic" => Record::Epic(EpicId(id)),
+                    "question" => Record::Question(QuestionId(id)),
+                    "contact" => Record::Contact(ContactId(id)),
+                    "attachment" => Record::Attachment(AttachmentId(id)),
                     _ => Record::Kb(KbId(id)),
                 };
                 let topic = match record {
@@ -166,17 +298,71 @@ impl Store {
                     title: r.get(4)?,
                     snippet: r.get(5)?,
                     rank: r.get(6)?,
+                    in_title: r.get(7)?,
                 })
             })?
             .collect::<rusqlite::Result<_>>()?;
-        let capped = all.len() as i64 > MAX_HITS;
+        // Each kind ranks its newest PER_KIND returnable matches only (the
+        // trash, the project, the state and the topic filters are applied
+        // before the cap; bm25 on every match of a common word cost about
+        // 120 ms over 200,000 entries): a kind that has more matches says
+        // the total may be capped.
+        let mut capped = all.len() as i64 > MAX_HITS;
+        for table in tables {
+            if capped {
+                break;
+            }
+            let n: i64 = self.conn.query_row(
+                &format!(
+                    "SELECT count(*) FROM (SELECT rowid FROM {table} WHERE {table} MATCH ?1 LIMIT {})",
+                    PER_KIND + 1
+                ),
+                [&fts],
+                |r| r.get(0),
+            )?;
+            capped = n > PER_KIND;
+        }
         let total = (all.len() as i64).min(MAX_HITS);
-        let items = all
+        let mut items: Vec<SearchHit> = all
             .into_iter()
             .take(MAX_HITS as usize)
             .skip(offset as usize)
             .take(limit as usize)
             .collect();
+        let (o, c) = (SNIPPET_OPEN, SNIPPET_CLOSE);
+        for hit in &mut items {
+            let table = match hit.record {
+                Record::Topic(_) => "topics_fts",
+                Record::Entry(_) => "entries_fts",
+                Record::Note(_) => "notes_fts",
+                Record::Project(_) => "projects_fts",
+                Record::Epic(_) => "epics_fts",
+                Record::Question(_) => "questions_fts",
+                Record::Contact(_) => "contacts_fts",
+                Record::Attachment(_) => "attachments_fts",
+                _ => "kb_fts",
+            };
+            let id = match hit.record {
+                Record::Topic(TopicId(x))
+                | Record::Entry(EntryId(x))
+                | Record::Note(NoteId(x))
+                | Record::Project(ProjectId(x))
+                | Record::Epic(EpicId(x))
+                | Record::Question(QuestionId(x))
+                | Record::Contact(ContactId(x))
+                | Record::Attachment(AttachmentId(x))
+                | Record::Kb(KbId(x)) => x,
+                _ => continue,
+            };
+            hit.snippet = self.conn.query_row(
+                &format!(
+                    "SELECT snippet({table}, -1, '{o}', '{c}', '…', 12) FROM {table}
+                     WHERE {table} MATCH ?1 AND rowid = ?2"
+                ),
+                rusqlite::params![fts, id],
+                |r| r.get(0),
+            )?;
+        }
         Ok(Page {
             items,
             total,
@@ -236,6 +422,7 @@ impl Store {
                     title: r.get(3)?,
                     snippet: r.get(4)?,
                     rank: r.get(5)?,
+                    in_title: false,
                 })
             })?
             .collect::<rusqlite::Result<_>>()?;
@@ -254,8 +441,19 @@ mod tests {
 
     #[test]
     fn typed_text_cannot_inject_fts_syntax() {
-        assert_eq!(fts_query("key chain"), Some("\"key\" \"chain\"*".into()));
-        assert_eq!(fts_query("a\" OR b"), Some("\"a\" \"OR\" \"b\"*".into()));
+        assert_eq!(
+            fts_query("key chain"),
+            Some("\"key\" AND \"chain\"*".into())
+        );
+        assert_eq!(
+            fts_query("a\" OR b"),
+            Some("\"a\" AND \"OR\" AND \"b\"*".into())
+        );
+        // From four letters, the stem as a prefix too.
+        assert_eq!(
+            fts_query("fichiers configured"),
+            Some("(\"fichiers\" OR \"fichi\"*) AND (\"configured\"* OR \"configur\"*)".into())
+        );
         assert_eq!(fts_query("  - * "), None);
         assert_eq!(fts_query(""), None);
     }
