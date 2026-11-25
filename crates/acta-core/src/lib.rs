@@ -24,6 +24,7 @@ pub mod person;
 pub mod prereqs;
 pub mod presence;
 pub mod process;
+pub mod reset;
 pub mod schema;
 pub mod snapshots;
 mod sql;

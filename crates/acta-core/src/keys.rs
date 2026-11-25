@@ -110,6 +110,8 @@ pub trait KeyStore: Send + Sync {
     /// from an error (for example a Secret Service that does not answer).
     fn load(&self) -> Result<Option<Key>, KeyStoreError>;
     fn save(&self, key: &Key) -> Result<(), KeyStoreError>;
+    /// Deletes the key (Reset Acta, ADR 0006). No key is not an error.
+    fn delete(&self) -> Result<(), KeyStoreError>;
 }
 
 /// The stores a database may use, in order of preference for a new database.
@@ -202,6 +204,13 @@ impl KeyStore for OsKeychain {
             .set_password(&key.to_hex())
             .map_err(keyring_error)
     }
+
+    fn delete(&self) -> Result<(), KeyStoreError> {
+        match self.entry()?.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(e) => Err(keyring_error(e)),
+        }
+    }
 }
 
 /// A key file: mode 0600 in a 0700 directory on Unix, the profile ACL on
@@ -239,6 +248,14 @@ impl KeyStore for KeyFile {
         let mut file = crate::fsutil::create_new_private_file(&self.path).map_err(err)?;
         file.write_all(key.to_hex().as_bytes()).map_err(err)?;
         file.sync_all().map_err(err)
+    }
+
+    fn delete(&self) -> Result<(), KeyStoreError> {
+        match fs::remove_file(&self.path) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(KeyStoreError(format!("key file: {e}"))),
+        }
     }
 }
 
@@ -295,6 +312,12 @@ impl KeyStore for MemoryKeyStore {
     fn save(&self, key: &Key) -> Result<(), KeyStoreError> {
         self.check()?;
         self.set(key.clone());
+        Ok(())
+    }
+
+    fn delete(&self) -> Result<(), KeyStoreError> {
+        self.check()?;
+        self.forget();
         Ok(())
     }
 }
