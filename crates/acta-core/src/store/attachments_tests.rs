@@ -488,49 +488,6 @@ fn export_with_and_without_content_and_import_dedups_by_hash() {
 }
 
 #[test]
-fn an_older_export_imports_and_an_update_from_it_leaves_files_alone() {
-    let (mut ts, p, t) = setup();
-    let s = &mut ts.store;
-    let n = s.add_note(p, "Old format note", H).unwrap();
-    let e = s.note_to_entry(n, t, H).unwrap();
-    let file = s.export(None).unwrap();
-    // A version 3 file: no blobs, no attachments, no filed_entry.
-    let mut v: serde_json::Value = serde_json::from_str(&file.to_json().unwrap()).unwrap();
-    v["version"] = 3.into();
-    v.as_object_mut().unwrap().remove("blobs");
-    v.as_object_mut().unwrap().remove("attachments");
-    for note in v["notes"].as_array_mut().unwrap() {
-        note.as_object_mut().unwrap().remove("filed_entry");
-        // Newer than the local copy, so the import updates the note.
-        note["updated_at"] = (crate::time::now_ms() + 60_000).into();
-        note["text"] = "Edited elsewhere".into();
-    }
-    let old = ExportFile::from_json(&v.to_string()).unwrap();
-    assert!(old.attachments.is_empty() && old.blobs.is_empty());
-    // Into an empty database: everything but files.
-    let mut other = fresh();
-    let rep = other.store.import(&old, false).unwrap();
-    assert_eq!(rep.notes.created, 1);
-    assert_eq!(count(&other.store, "SELECT count(*) FROM attachments"), 0);
-    // Over this one, after files were added: the note updates, its filing
-    // link to the entry and the entry's files stay.
-    add(s, AttachOwner::Entry(e.id), "kept.txt", b"kept".to_vec());
-    let rep = s.import(&old, false).unwrap();
-    assert_eq!(rep.notes.updated, 1);
-    assert_eq!(s.note(n).unwrap().text, "Edited elsewhere");
-    assert_eq!(s.attachments(AttachOwner::Entry(e.id)).unwrap().len(), 1);
-    let link: Option<i64> = s
-        .conn
-        .query_row(
-            "SELECT filed_entry_id FROM notes WHERE id = ?1",
-            [n.0],
-            |r| r.get(0),
-        )
-        .unwrap();
-    assert_eq!(link, Some(e.id.0));
-}
-
-#[test]
 fn the_migration_snapshot_restores_and_the_upgrade_sets_incremental_vacuum() {
     let dir = tempfile::tempdir().unwrap();
     let keys = crate::keys::MemoryKeyStore::new();

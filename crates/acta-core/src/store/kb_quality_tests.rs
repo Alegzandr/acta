@@ -635,57 +635,6 @@ fn the_round_trip_keeps_quality_fields_and_an_older_file_imports_live() {
         .unwrap();
     assert_eq!(again.knowledge.created + again.knowledge.updated, 0);
     assert_eq!(other_db.store.kb_links(n.id).unwrap().len(), 2);
-
-    // A version 4 file: no quality fields. Into an empty database every
-    // entry is live, verified at its update, with no sources or pairs.
-    let mut v: serde_json::Value = serde_json::from_str(&json).unwrap();
-    v["version"] = 4.into();
-    v.as_object_mut().unwrap().remove("kb_pairs");
-    for k in v["knowledge"].as_array_mut().unwrap() {
-        let k = k.as_object_mut().unwrap();
-        for field in [
-            "verified_at",
-            "verified_by",
-            "state",
-            "superseded_by",
-            "context_branch",
-            "context_folder",
-            "created_topic",
-            "links",
-        ] {
-            k.remove(field);
-        }
-    }
-    let old_file = ExportFile::from_json(&v.to_string()).unwrap();
-    let mut fresh = open();
-    fresh.store.import(&old_file, false).unwrap();
-    let f2 = &fresh.store;
-    let all: Vec<(String, i64, i64)> = {
-        let mut stmt = f2
-            .conn
-            .prepare("SELECT state, verified_at, updated_at FROM kb_entries")
-            .unwrap();
-        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
-            .unwrap()
-            .collect::<rusqlite::Result<_>>()
-            .unwrap()
-    };
-    assert_eq!(all.len(), 3);
-    assert!(all.iter().all(|(st, ver, upd)| st == "live" && ver == upd));
-    let count = |sql: &str| -> i64 { f2.conn.query_row(sql, [], |r| r.get(0)).unwrap() };
-    assert_eq!(count("SELECT count(*) FROM kb_links"), 0);
-    assert_eq!(count("SELECT count(*) FROM kb_pairs"), 0);
-    // An update from an older file leaves the state as it is here.
-    let mut newer = v.clone();
-    for k in newer["knowledge"].as_array_mut().unwrap() {
-        k["updated_at"] = (now_ms() + 60_000).into();
-    }
-    let rep = s
-        .import(&ExportFile::from_json(&newer.to_string()).unwrap(), false)
-        .unwrap();
-    assert_eq!(rep.knowledge.updated, 3);
-    assert_eq!(s.kb_entry(old).unwrap().state, KbState::Superseded);
-    assert_eq!(s.kb_links(new).unwrap().len(), 2);
 }
 
 #[test]

@@ -19,3 +19,10 @@ lto = "thin"
 strip = true
 # panic stays "unwind" (the default) on purpose: export and update work runs on
 # background threads, and a panic there must end that thread, not the app.
+
+# scrypt (a backup's passphrase, ADR 0006) is optimised in debug builds too:
+# unoptimised, one backup's key derivation takes tens of seconds.
+[profile.dev.package.scrypt]
+opt-level = 3
+[profile.dev.package.salsa20]
+opt-level = 3

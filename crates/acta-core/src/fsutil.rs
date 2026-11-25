@@ -40,9 +40,19 @@ pub fn create_new_private_file(path: &Path) -> io::Result<File> {
 /// or reused; flushed, then renamed over the target. On Unix the file is
 /// 0600. On Windows it inherits the ACL of the directory it is written in:
 /// private in the data directory, as open as that directory elsewhere (an
-/// export the user saves to a shared folder is readable there).
+/// a backup the user saves to a shared folder is readable there).
 pub fn write_private_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     use std::io::Write as _;
+    write_private_atomic_with(path, |file| file.write_all(bytes))
+}
+
+/// [`write_private_atomic`] with the content written by `write`, which may
+/// stream it: the target appears whole once `write` succeeded, and the
+/// temporary file is removed on any failure.
+pub fn write_private_atomic_with<E: From<io::Error>>(
+    path: &Path,
+    write: impl FnOnce(&mut File) -> Result<(), E>,
+) -> Result<(), E> {
     let dir = path
         .parent()
         .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
@@ -51,9 +61,9 @@ pub fn write_private_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let suffix: String = random.iter().map(|b| format!("{b:02x}")).collect();
     let temp = dir.join(format!(".{suffix}.tmp"));
     let mut file = create_new_private_file(&temp)?;
-    let written = file.write_all(bytes).and_then(|()| file.sync_all());
+    let written = write(&mut file).and_then(|()| file.sync_all().map_err(E::from));
     drop(file);
-    let result = written.and_then(|()| fs::rename(&temp, path));
+    let result = written.and_then(|()| fs::rename(&temp, path).map_err(E::from));
     if result.is_err() {
         let _ = fs::remove_file(&temp);
     }
@@ -81,7 +91,7 @@ mod tests {
     #[test]
     fn a_private_atomic_write_replaces_the_file_and_leaves_nothing_behind() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("acta-2026-11-21.acta.json");
+        let path = dir.path().join("acta-2026-11-21.acta-backup");
         fs::write(&path, "old").unwrap();
         write_private_atomic(&path, b"{\"format\":\"acta\"}").unwrap();
         assert_eq!(fs::read_to_string(&path).unwrap(), "{\"format\":\"acta\"}");

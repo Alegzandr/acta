@@ -35,6 +35,10 @@ windows-sys = { version = "0.61", features = [
 libc = "0.2"
 
 [dependencies]
+# Backups (ADR 0006, amended 2026-11-22): the age v1 format with its scrypt
+# (passphrase) recipient and ChaCha20-Poly1305 STREAM payload. Standard and
+# interoperable: `age -d` opens a backup without Acta.
+age = { version = "0.12.1", default-features = false }
 # Attachments (ADR 0012): the export's blob content.
 base64 = "0.22"
 # The local time zone for "today" and local days (date.rs, Zone::system).
